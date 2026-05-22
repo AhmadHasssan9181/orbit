@@ -1,0 +1,9 @@
+﻿.gradle/
+.idea/
+build/
+**/build/
+gradle-8.5/
+*.iml
+local.properties
+.DS_Store
+*.zip
