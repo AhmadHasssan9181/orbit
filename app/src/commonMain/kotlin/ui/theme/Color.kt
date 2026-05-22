@@ -1,104 +1,269 @@
 package ui.theme
 
+import androidx.compose.material3.ColorScheme
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 
-// ═══════════════════════════════════════════════════════════════
-// ONICHAT DESIGN SYSTEM — "Cosmic Dark" Palette
-// Deep space blacks + violet/indigo gradients + neon glow accents
-// ═══════════════════════════════════════════════════════════════
 
-// ─── Base Surfaces ───────────────────────────────────────────────
-/** Absolute deepest background — almost pure black with a blue tint */
-val Color_DeepBlack    = Color(0xFF080A0F)   // Server Rail bg
-/** Deep surface — primary app shell */
-val Color_DeepDark     = Color(0xFF0D0E14)   // Old: 0xFF202225
-/** Primary surface — channel drawer */
-val Color_DarkGray     = Color(0xFF111318)   // Old: 0xFF2F3136
-/** Chat area background */
-val Color_ChatBackground = Color(0xFF141720) // Old: 0xFF36393F
-/** Input field surface */
-val Color_InputBackground = Color(0xFF1C1F2B)// Old: 0xFF383A40
-/** Bottom user bar */
-val Color_UserBar      = Color(0xFF0A0C12)   // Old: 0xFF292B2F
+fun OverridableColourScheme.applyTo(colorScheme: ColorScheme): ColorScheme {
+    var newScheme = colorScheme.copy()
 
-// ─── Glass / Overlay Surfaces ────────────────────────────────────
-/** Glassmorphic card surface */
-val Color_GlassSurface = Color(0x14FFFFFF)   // white @ 8% alpha
-/** Glassmorphic card border */
-val Color_GlassBorder  = Color(0x1AFFFFFF)   // white @ 10% alpha
-/** Hover background */
-val Color_HoverBg      = Color(0x0FFFFFFF)   // white @ 6%
-/** Selected / active background */
-val Color_ActiveBg     = Color(0x1A7C6AF0)   // accent @ 10%
-/** Selected channel highlight */
-val Color_ChannelSelected = Color(0x2A7C6AF0)
+    primary?.let { newScheme = newScheme.copy(primary = Color(it)) }
+    onPrimary?.let { newScheme = newScheme.copy(onPrimary = Color(it)) }
+    primaryContainer?.let {
+        newScheme =
+            newScheme.copy(primaryContainer = Color(it))
+    }
+    onPrimaryContainer?.let {
+        newScheme =
+            newScheme.copy(onPrimaryContainer = Color(it))
+    }
+    inversePrimary?.let {
+        newScheme =
+            newScheme.copy(inversePrimary = Color(it))
+    }
+    secondary?.let { newScheme = newScheme.copy(secondary = Color(it)) }
+    onSecondary?.let { newScheme = newScheme.copy(onSecondary = Color(it)) }
+    secondaryContainer?.let {
+        newScheme =
+            newScheme.copy(secondaryContainer = Color(it))
+    }
+    onSecondaryContainer?.let {
+        newScheme =
+            newScheme.copy(onSecondaryContainer = Color(it))
+    }
+    tertiary?.let { newScheme = newScheme.copy(tertiary = Color(it)) }
+    onTertiary?.let { newScheme = newScheme.copy(onTertiary = Color(it)) }
+    tertiaryContainer?.let {
+        newScheme =
+            newScheme.copy(tertiaryContainer = Color(it))
+    }
+    onTertiaryContainer?.let {
+        newScheme =
+            newScheme.copy(onTertiaryContainer = Color(it))
+    }
+    background?.let { newScheme = newScheme.copy(background = Color(it)) }
+    onBackground?.let { newScheme = newScheme.copy(onBackground = Color(it)) }
+    surface?.let { newScheme = newScheme.copy(surface = Color(it)) }
+    onSurface?.let { newScheme = newScheme.copy(onSurface = Color(it)) }
+    surfaceVariant?.let {
+        newScheme =
+            newScheme.copy(surfaceVariant = Color(it))
+    }
+    onSurfaceVariant?.let {
+        newScheme =
+            newScheme.copy(onSurfaceVariant = Color(it))
+    }
+    surfaceTint?.let { newScheme = newScheme.copy(surfaceTint = Color(it)) }
+    inverseSurface?.let {
+        newScheme =
+            newScheme.copy(inverseSurface = Color(it))
+    }
+    inverseOnSurface?.let {
+        newScheme =
+            newScheme.copy(inverseOnSurface = Color(it))
+    }
+    error?.let { newScheme = newScheme.copy(error = Color(it)) }
+    onError?.let { newScheme = newScheme.copy(onError = Color(it)) }
+    errorContainer?.let {
+        newScheme =
+            newScheme.copy(errorContainer = Color(it))
+    }
+    onErrorContainer?.let {
+        newScheme =
+            newScheme.copy(onErrorContainer = Color(it))
+    }
+    outline?.let { newScheme = newScheme.copy(outline = Color(it)) }
+    outlineVariant?.let {
+        newScheme =
+            newScheme.copy(outlineVariant = Color(it))
+    }
+    scrim?.let { newScheme = newScheme.copy(scrim = Color(it)) }
 
-// ─── Text ────────────────────────────────────────────────────────
-val Text_White         = Color(0xFFEAECF5)   // Slightly cool white
-val Text_Secondary     = Color(0xFFB4B8D0)   // Bright muted
-val Text_Muted         = Color(0xFF6B7094)   // Standard muted
-val Text_Disabled      = Color(0xFF3D4160)   // Near-invisible
+    return newScheme
+}
 
-// ─── Accent — Cosmic Violet ───────────────────────────────────────
-/** Primary accent — vibrant violet */
-val Color_OrbitAccent  = Color(0xFF7C6AF0)   // Old: 0xFF5865F2
-/** Accent lighter — for gradients */
-val Color_AccentLight  = Color(0xFFA78BFA)
-/** Accent very light — for hover glows */
-val Color_AccentGhost  = Color(0x337C6AF0)   // accent @ 20%
-/** Accent glow — for shadows/borders on selected */
-val Color_AccentGlow   = Color(0x557C6AF0)   // accent @ 33%
+fun OverridableColourScheme.applyFromKeyValueMap(map: Map<String, Int>): OverridableColourScheme {
+    var newScheme = this
 
-// ─── Semantic / Status ────────────────────────────────────────────
-/** Online — emerald green with vibrancy */
-val Color_SuccessGreen = Color(0xFF34D399)   // Old: 0xFF57F287
-/** Idle — warm amber */
-val Color_WarningAmber = Color(0xFFFBBF24)   // Old: 0xFFFEE75C
-/** Do-not-disturb — coral red */
-val Color_DNDRed       = Color(0xFFF87171)   // Old: 0xFFF47B69
-/** Offline — very muted */
-val Color_OfflineGray  = Color(0xFF3D4160)
+    map.filterKeys { it in overridableColourSchemeFieldNames }.forEach { (key, value) ->
+        when (key) {
+            "primary" -> newScheme = newScheme.copy(primary = value)
+            "onPrimary" -> newScheme = newScheme.copy(onPrimary = value)
+            "primaryContainer" -> newScheme = newScheme.copy(primaryContainer = value)
+            "onPrimaryContainer" -> newScheme =
+                newScheme.copy(onPrimaryContainer = value)
 
-// ─── Status Dot Aliases ──────────────────────────────────────────
-val StatusDotGreen     = Color_SuccessGreen
-val StatusDotAmber     = Color_WarningAmber
-val StatusDotRed       = Color_DNDRed
+            "inversePrimary" -> newScheme = newScheme.copy(inversePrimary = (value))
+            "secondary" -> newScheme = newScheme.copy(secondary = (value))
+            "onSecondary" -> newScheme = newScheme.copy(onSecondary = (value))
+            "secondaryContainer" -> newScheme =
+                newScheme.copy(secondaryContainer = (value))
 
-// ─── Gradient Definitions ────────────────────────────────────────
-/** Primary gradient — violet to indigo (accent) */
-val Color_GradientStart = Color(0xFF7C6AF0)
-val Color_GradientMid   = Color(0xFF9B87F5)
-val Color_GradientEnd   = Color(0xFFA78BFA)
+            "onSecondaryContainer" -> newScheme =
+                newScheme.copy(onSecondaryContainer = (value))
 
-/** Server icon gradients — each server type */
-val Gradient_Blue   = listOf(Color(0xFF3B82F6), Color(0xFF6366F1))
-val Gradient_Green  = listOf(Color(0xFF10B981), Color(0xFF059669))
-val Gradient_Amber  = listOf(Color(0xFFF59E0B), Color(0xFFD97706))
-val Gradient_Red    = listOf(Color(0xFFEF4444), Color(0xFFDC2626))
-val Gradient_Pink   = listOf(Color(0xFFEC4899), Color(0xFFDB2777))
-val Gradient_Violet = listOf(Color(0xFF7C6AF0), Color(0xFFA78BFA))
-val Gradient_Teal   = listOf(Color(0xFF14B8A6), Color(0xFF0D9488))
+            "tertiary" -> newScheme = newScheme.copy(tertiary = (value))
+            "onTertiary" -> newScheme = newScheme.copy(onTertiary = (value))
+            "tertiaryContainer" -> newScheme = newScheme.copy(tertiaryContainer = (value))
+            "onTertiaryContainer" -> newScheme =
+                newScheme.copy(onTertiaryContainer = (value))
 
-/** DM / user avatar gradients */
-val Gradient_Avatar1 = listOf(Color(0xFF7C6AF0), Color(0xFFA78BFA))
-val Gradient_Avatar2 = listOf(Color(0xFF10B981), Color(0xFF6EE7B7))
-val Gradient_Avatar3 = listOf(Color(0xFFF59E0B), Color(0xFFFDE68A))
-val Gradient_Avatar4 = listOf(Color(0xFFEF4444), Color(0xFFFCA5A5))
-val Gradient_Avatar5 = listOf(Color(0xFF3B82F6), Color(0xFF93C5FD))
+            "background" -> newScheme = newScheme.copy(background = (value))
+            "onBackground" -> newScheme = newScheme.copy(onBackground = (value))
+            "surface" -> newScheme = newScheme.copy(surface = (value))
+            "onSurface" -> newScheme = newScheme.copy(onSurface = (value))
+            "surfaceVariant" -> newScheme = newScheme.copy(surfaceVariant = (value))
+            "onSurfaceVariant" -> newScheme = newScheme.copy(onSurfaceVariant = (value))
+            "surfaceTint" -> newScheme = newScheme.copy(surfaceTint = (value))
+            "inverseSurface" -> newScheme = newScheme.copy(inverseSurface = (value))
+            "inverseOnSurface" -> newScheme = newScheme.copy(inverseOnSurface = (value))
+            "error" -> newScheme = newScheme.copy(error = (value))
+            "onError" -> newScheme = newScheme.copy(onError = (value))
+            "errorContainer" -> newScheme = newScheme.copy(errorContainer = (value))
+            "onErrorContainer" -> newScheme = newScheme.copy(onErrorContainer = (value))
+            "outline" -> newScheme = newScheme.copy(outline = (value))
+            "outlineVariant" -> newScheme = newScheme.copy(outlineVariant = (value))
+            "scrim" -> newScheme = newScheme.copy(scrim = (value))
+        }
+    }
 
-// ─── Separator / Divider ─────────────────────────────────────────
-val Color_Separator    = Color(0xFF1C1F2B)
-val Color_SeparatorMid = Color(0xFF252838)
+    return newScheme
+}
 
-// ─── Surface Variants ────────────────────────────────────────────
-val Color_SurfaceLight  = Color(0xFF1C1F2B)
-val Color_HoverActive   = Color(0xFF1E2130)
+fun OverridableColourScheme.getFieldByName(name: String): Int? {
+    return when (name) {
+        "primary" -> primary
+        "onPrimary" -> onPrimary
+        "primaryContainer" -> primaryContainer
+        "onPrimaryContainer" -> onPrimaryContainer
+        "inversePrimary" -> inversePrimary
+        "secondary" -> secondary
+        "onSecondary" -> onSecondary
+        "secondaryContainer" -> secondaryContainer
+        "onSecondaryContainer" -> onSecondaryContainer
+        "tertiary" -> tertiary
+        "onTertiary" -> onTertiary
+        "tertiaryContainer" -> tertiaryContainer
+        "onTertiaryContainer" -> onTertiaryContainer
+        "background" -> background
+        "onBackground" -> onBackground
+        "surface" -> surface
+        "onSurface" -> onSurface
+        "surfaceVariant" -> surfaceVariant
+        "onSurfaceVariant" -> onSurfaceVariant
+        "surfaceTint" -> surfaceTint
+        "inverseSurface" -> inverseSurface
+        "inverseOnSurface" -> inverseOnSurface
+        "error" -> error
+        "onError" -> onError
+        "errorContainer" -> errorContainer
+        "onErrorContainer" -> onErrorContainer
+        "outline" -> outline
+        "outlineVariant" -> outlineVariant
+        "scrim" -> scrim
+        else -> null
+    }
+}
 
-// ─── Lite Mode (WhatsApp-inspired) ───────────────────────────────
-val Color_LiteChatBg          = Color(0xFFEAE6DF)
-val Color_LiteInputBg         = Color(0xFFF0F2F5)
-val Color_LiteHeader          = Color(0xFF075E54)
-val Color_LiteTextPrimary     = Color(0xFF111B21)
-val Color_LiteTextSecondary   = Color(0xFF54656F)
-val Color_LiteBubbleReceived  = Color(0xFFFFFFFF)
-val Color_LiteBubbleSent      = Color(0xFFD9FDD3)
+val overridableColourSchemeFieldNames: List<String>
+    get() = listOf(
+        "primary",
+        "onPrimary",
+        "primaryContainer",
+        "onPrimaryContainer",
+        "inversePrimary",
+        "secondary",
+        "onSecondary",
+        "secondaryContainer",
+        "onSecondaryContainer",
+        "tertiary",
+        "onTertiary",
+        "tertiaryContainer",
+        "onTertiaryContainer",
+        "background",
+        "onBackground",
+        "surface",
+        "onSurface",
+        "surfaceVariant",
+        "onSurfaceVariant",
+        "surfaceTint",
+        "inverseSurface",
+        "inverseOnSurface",
+        "error",
+        "onError",
+        "errorContainer",
+        "onErrorContainer",
+        "outline",
+        "outlineVariant",
+        "scrim"
+    )
+
+val overridableColourSchemeFieldNameToResource: Map<String, Int>
+    get() = mapOf(
+        "primary" to 0,
+        "onPrimary" to 0,
+        "primaryContainer" to 0,
+        "onPrimaryContainer" to 0,
+        "inversePrimary" to 0,
+        "secondary" to 0,
+        "onSecondary" to 0,
+        "secondaryContainer" to 0,
+        "onSecondaryContainer" to 0,
+        "tertiary" to 0,
+        "onTertiary" to 0,
+        "tertiaryContainer" to 0,
+        "onTertiaryContainer" to 0,
+        "background" to 0,
+        "onBackground" to 0,
+        "surface" to 0,
+        "onSurface" to 0,
+        "surfaceVariant" to 0,
+        "onSurfaceVariant" to 0,
+        "surfaceTint" to 0,
+        "inverseSurface" to 0,
+        "inverseOnSurface" to 0,
+        "error" to 0,
+        "onError" to 0,
+        "errorContainer" to 0,
+        "onErrorContainer" to 0,
+        "outline" to 0,
+        "outlineVariant" to 0,
+        "scrim" to 0
+    )
+
+
+fun ColorScheme.getFieldByName(name: String): Int? {
+    return when (name) {
+        "primary" -> primary.toArgb()
+        "onPrimary" -> onPrimary.toArgb()
+        "primaryContainer" -> primaryContainer.toArgb()
+        "onPrimaryContainer" -> onPrimaryContainer.toArgb()
+        "inversePrimary" -> inversePrimary.toArgb()
+        "secondary" -> secondary.toArgb()
+        "onSecondary" -> onSecondary.toArgb()
+        "secondaryContainer" -> secondaryContainer.toArgb()
+        "onSecondaryContainer" -> onSecondaryContainer.toArgb()
+        "tertiary" -> tertiary.toArgb()
+        "onTertiary" -> onTertiary.toArgb()
+        "tertiaryContainer" -> tertiaryContainer.toArgb()
+        "onTertiaryContainer" -> onTertiaryContainer.toArgb()
+        "background" -> background.toArgb()
+        "onBackground" -> onBackground.toArgb()
+        "surface" -> surface.toArgb()
+        "onSurface" -> onSurface.toArgb()
+        "surfaceVariant" -> surfaceVariant.toArgb()
+        "onSurfaceVariant" -> onSurfaceVariant.toArgb()
+        "surfaceTint" -> surfaceTint.toArgb()
+        "inverseSurface" -> inverseSurface.toArgb()
+        "inverseOnSurface" -> inverseOnSurface.toArgb()
+        "error" -> error.toArgb()
+        "onError" -> onError.toArgb()
+        "errorContainer" -> errorContainer.toArgb()
+        "onErrorContainer" -> onErrorContainer.toArgb()
+        "outline" -> outline.toArgb()
+        "outlineVariant" -> outlineVariant.toArgb()
+        "scrim" -> scrim.toArgb()
+        else -> null
+    }
+}

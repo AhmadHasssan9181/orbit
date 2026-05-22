@@ -47,7 +47,7 @@ fun OrbitTheme(
 ) {
     MaterialTheme(
         colorScheme = if (darkMode) CosmicDarkScheme else LiteScheme,
-        typography  = OrbitTypography.Typography,
+        typography  = StoatTypography,
         content     = content
     )
 }

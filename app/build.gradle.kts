@@ -1,4 +1,4 @@
-﻿plugins {
+plugins {
     kotlin("multiplatform")
     id("org.jetbrains.compose")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -18,6 +18,7 @@ kotlin {
                 implementation(compose.foundation)
                 implementation(compose.material)
                 implementation(compose.material3)
+                implementation(compose.components.resources)
                 implementation(compose.materialIconsExtended)
 
                 implementation("org.jetbrains.kotlin:kotlin-reflect:2.1.0")
