@@ -6,6 +6,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.graphics.Color
 
 val LightColorScheme = lightColorScheme(
@@ -83,6 +84,9 @@ private val DefaultColorScheme = darkColorScheme(
     surfaceContainerHigh = Colour.SurfaceContainerHighDark,
     surfaceContainerHighest = Colour.SurfaceContainerHighestDark,
 )
+
+val LocalIsLiteMode = compositionLocalOf<Boolean> { false }
+val LocalOnLiteModeChange = compositionLocalOf<(Boolean) -> Unit> { {} }
 
 val AmoledColorScheme = DefaultColorScheme.copy(
     background = Color(0xff000000),
