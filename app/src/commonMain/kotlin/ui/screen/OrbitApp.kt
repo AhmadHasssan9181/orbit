@@ -18,6 +18,7 @@ import ui.model.*
 import ui.theme.LocalIsLiteMode
 import ui.theme.LocalOnLiteModeChange
 import ui.theme.rememberCosmicTokens
+import repository.CredentialManager
 
 // ─── Cosmic Design Tokens ──────────────────────────────────────
 private val App_Bg: Color @Composable get() = rememberCosmicTokens().Bg
@@ -44,6 +45,19 @@ fun OrbitApp(modifier: Modifier = Modifier) {
             requestedTheme = activeTheme,
             requestedUserInterfaceFont = ui.theme.UserInterfaceFont.Default
         ) {
+            LaunchedEffect(Unit) {
+                val token = CredentialManager.accessToken
+                val hs = CredentialManager.homeserverUrl
+                val uId = CredentialManager.userId
+                if (token != null && hs != null && uId != null) {
+                    val repo = MatrixOrbitRepository(hs)
+                    repo.setAccessToken(token)
+                    repo.setUserId(uId)
+                    repository = repo
+                    repo.startSync()
+                }
+            }
+
             if (repository == null) {
                 // Show login screen
                 LoginScreen(
