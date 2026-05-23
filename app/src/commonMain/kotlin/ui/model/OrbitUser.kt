@@ -9,7 +9,8 @@ data class OrbitUser(
     val displayName: String,
     val avatarColor: Int, // Material color Int for rendering
     val status: UserStatus = UserStatus.ONLINE,
-    val isBot: Boolean = false
+    val isBot: Boolean = false,
+    val avatarUrl: String? = null
 )
 
 enum class UserStatus {

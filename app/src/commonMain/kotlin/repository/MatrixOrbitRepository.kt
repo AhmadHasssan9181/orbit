@@ -107,7 +107,8 @@ data class SpaceHierarchyResponse(
 // Live message observer state
 // ─────────────────────────────────────────────────────────────
 private class LiveMessageState(
-    val flow: MutableSharedFlow<List<OrbitMessage>>
+    val flow: MutableSharedFlow<List<OrbitMessage>>,
+    val messages: MutableList<OrbitMessage> = mutableListOf()
 )
 
 // ─────────────────────────────────────────────────────────────
@@ -119,7 +120,8 @@ data class RoomMetadata(
     val topic: String,
     val isDM: Boolean,
     val isSpace: Boolean,
-    val memberCount: Int
+    val memberCount: Int,
+    val avatarUrl: String? = null
 )
 
 /**
@@ -409,7 +411,8 @@ class MatrixOrbitRepository(
                 name = space.name,
                 iconColor = hashToColor(space.id),
                 description = space.topic,
-                isDM = false
+                isDM = false,
+                avatarUrl = space.avatarUrl?.let { convertMxcUrl(it) }
             ))
         }
         
@@ -535,10 +538,11 @@ class MatrixOrbitRepository(
                     rooms.filter { !it.isDM && !it.isSpace }.forEach { room ->
                         channels.add(OrbitChannel(
                             id = room.id,
-                            name = extractChannelName(room.name.ifBlank { room.id }),
+                            name = room.name ?: "#${room.id.takeLast(8)}",
                             type = ChannelType.TEXT,
                             categoryId = "rooms",
-                            topic = room.topic
+                            topic = room.topic ?: "",
+                            avatarUrl = room.avatarUrl?.let { convertMxcUrl(it) }
                         ))
                     }
                 }
@@ -617,13 +621,17 @@ class MatrixOrbitRepository(
                 val displayName = (event.content as? JsonObject)?.get("displayname")?.let {
                     (it as? JsonPrimitive)?.content
                 } ?: userId
+                val avatarUrl = (event.content as? JsonObject)?.get("avatar_url")?.let {
+                    (it as? JsonPrimitive)?.content
+                }
 
                 OrbitUser(
                     id = userId,
                     username = userId,
                     displayName = displayName,
                     avatarColor = hashToColor(userId),
-                    status = UserStatus.ONLINE // Fallback status
+                    status = UserStatus.ONLINE, // Fallback status
+                    avatarUrl = avatarUrl?.let { convertMxcUrl(it) }
                 )
             }
         } catch (e: Exception) {
@@ -638,13 +646,23 @@ class MatrixOrbitRepository(
         fromToken: String?
     ): List<OrbitMessage> {
         return try {
+            if (fromToken == null) {
+                // Return cached recent messages from sync if available
+                synchronized(liveMessageStates) {
+                    val state = liveMessageStates[channelId]
+                    if (state != null && state.messages.isNotEmpty()) {
+                        return state.messages.takeLast(limit)
+                    }
+                }
+            }
+
             val urlPath = buildString {
                 append("/rooms/$channelId/messages")
                 append("?limit=$limit")
                 if (fromToken != null) {
                     append("&dir=b&from=$fromToken")
                 } else {
-                    append("&dir=f")
+                    append("&dir=b") // fetch history backward
                 }
             }
 
@@ -760,7 +778,8 @@ class MatrixOrbitRepository(
                 username = userId.split(":").first().removePrefix("@"),
                 displayName = profile.displayname ?: userId,
                 avatarColor = hashToColor(userId),
-                status = UserStatus.ONLINE
+                status = UserStatus.ONLINE,
+                avatarUrl = profile.avatarUrl?.let { convertMxcUrl(it) }
             )
         } catch (e: Exception) {
             null
@@ -868,6 +887,7 @@ class MatrixOrbitRepository(
             var topic = _roomCache[roomId]?.topic ?: ""
             var isSpace = _roomCache[roomId]?.isSpace ?: false
             val isDM = _roomCache[roomId]?.isDM ?: false
+            var avatarUrl = _roomCache[roomId]?.avatarUrl
 
             val allStateEvents = mutableListOf<JsonObject>()
             state?.forEach { if (it is JsonObject) allStateEvents.add(it) }
@@ -879,13 +899,17 @@ class MatrixOrbitRepository(
                 when (type) {
                     "m.room.name" -> name = (content?.get("name") as? JsonPrimitive)?.content ?: name
                     "m.room.topic" -> topic = (content?.get("topic") as? JsonPrimitive)?.content ?: topic
-                    "m.room.create" -> isSpace = (content?.get("type") as? JsonPrimitive)?.content == "m.space"
+                    "m.room.create" -> {
+                        if ((content?.get("type") as? JsonPrimitive)?.content == "m.space") isSpace = true
+                    }
+                    "m.space.child" -> isSpace = true
+                    "m.room.avatar" -> avatarUrl = (content?.get("url") as? JsonPrimitive)?.content ?: avatarUrl
                 }
             }
             
             // Check DM via m.direct (For now, simplified, but we keep the current isDM flag)
             
-            val updatedMetadata = RoomMetadata(roomId, name, topic, isDM, isSpace, 0)
+            val updatedMetadata = RoomMetadata(roomId, name, topic, isDM, isSpace, 0, avatarUrl)
             if (_roomCache[roomId] != updatedMetadata) {
                 synchronized(_roomCache) { _roomCache[roomId] = updatedMetadata }
                 roomsUpdated = true
@@ -917,7 +941,9 @@ class MatrixOrbitRepository(
             }
 
             synchronized(liveMessageStates) {
-                liveMessageStates[roomId]?.flow?.tryEmit(messages)
+                val state = liveMessageStates.getOrPut(roomId) { LiveMessageState(MutableSharedFlow(replay = 0)) }
+                state.messages.addAll(messages)
+                state.flow.tryEmit(messages)
             }
         }
         
@@ -948,7 +974,10 @@ class MatrixOrbitRepository(
 
     private fun extractMessageBody(content: JsonElement?): String? {
         return content?.let {
-            (it as? JsonObject)?.get("body")?.let { it2 -> (it2 as JsonPrimitive).content }
+            val obj = it as? JsonObject
+            if (obj?.get("msgtype")?.let { t -> (t as JsonPrimitive).content } == "m.text") {
+                obj["body"]?.let { b -> (b as JsonPrimitive).content }
+            } else null
         }
     }
 
@@ -962,6 +991,13 @@ class MatrixOrbitRepository(
 
     private fun extractUserIdFromToken(): String? {
         return _userId
+    }
+
+    private fun convertMxcUrl(mxcUrl: String): String {
+        if (!mxcUrl.startsWith("mxc://")) return mxcUrl
+        val parts = mxcUrl.removePrefix("mxc://").split("/")
+        if (parts.size != 2) return mxcUrl
+        return "${homeserverUrl.trimEnd('/')}/_matrix/media/r3/download/${parts[0]}/${parts[1]}"
     }
 
     private fun extractRoomFromEventId(eventId: String): String {
