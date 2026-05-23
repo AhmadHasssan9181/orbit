@@ -48,10 +48,6 @@ kotlin {
                 implementation("io.coil-kt.coil3:coil-compose:3.0.4")
                 implementation("com.russhwolf:multiplatform-settings:1.1.1")
                 implementation("com.russhwolf:multiplatform-settings-no-arg:1.1.1")
-                
-                // Matrix SDK
-                implementation("net.folivo:trixnity-client:4.22.7")
-                implementation("net.folivo:trixnity-client-media-okio:4.22.7")
             }
         }
         val jvmMain by getting {
