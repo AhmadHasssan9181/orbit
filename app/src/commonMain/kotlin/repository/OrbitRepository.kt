@@ -59,6 +59,49 @@ interface OrbitRepository {
         body: String
     ): Result<String> // returns eventId
 
+    suspend fun sendReaction(
+        channelId: String,
+        eventId: String,
+        key: String
+    ): Result<String>
+
+    /**
+     * Upload raw bytes to the Matrix media repository.
+     * Returns an mxc:// URI that can be referenced in message events.
+     */
+    suspend fun uploadMedia(
+        bytes: ByteArray,
+        mimeType: String,
+        filename: String
+    ): Result<String> // returns mxc:// URI
+
+    suspend fun sendImageMessage(
+        channelId: String,
+        mxcUrl: String,
+        filename: String,
+        mimeType: String,
+        width: Int? = null,
+        height: Int? = null,
+        size: Long? = null
+    ): Result<String>
+
+    suspend fun sendFileMessage(
+        channelId: String,
+        mxcUrl: String,
+        filename: String,
+        mimeType: String,
+        size: Long? = null
+    ): Result<String>
+
+    suspend fun sendAudioMessage(
+        channelId: String,
+        mxcUrl: String,
+        filename: String,
+        mimeType: String,
+        durationMs: Int? = null,
+        size: Long? = null
+    ): Result<String>
+
     suspend fun editMessage(
         eventId: String,
         newBody: String
