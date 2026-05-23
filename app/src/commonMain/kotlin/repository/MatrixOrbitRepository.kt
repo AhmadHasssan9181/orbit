@@ -121,7 +121,8 @@ data class RoomMetadata(
     val isDM: Boolean,
     val isSpace: Boolean,
     val memberCount: Int,
-    val avatarUrl: String? = null
+    val avatarUrl: String? = null,
+    val prevBatch: String? = null
 )
 
 /**
@@ -151,6 +152,10 @@ class MatrixOrbitRepository(
 
     fun setAccessToken(token: String) {
         _accessToken = token
+    }
+    
+    fun setUserId(id: String) {
+        _userId = id
     }
 
     fun getLoggedInUserId(): String? = _userId
@@ -255,7 +260,14 @@ class MatrixOrbitRepository(
             deviceId = deviceId,
             homeserverUrl = homeserverUrl,
             userId = userId
-        ).also { _accessToken = it.accessToken; _userId = it.userId }
+        ).also { 
+            _accessToken = it.accessToken
+            _userId = it.userId
+            CredentialManager.accessToken = it.accessToken
+            CredentialManager.deviceId = it.deviceId
+            CredentialManager.homeserverUrl = it.homeserverUrl
+            CredentialManager.userId = it.userId
+        }
     }
 
     /**
@@ -646,6 +658,7 @@ class MatrixOrbitRepository(
         fromToken: String?
     ): List<OrbitMessage> {
         return try {
+            var actualFromToken = fromToken
             if (fromToken == null) {
                 // Return cached recent messages from sync if available
                 synchronized(liveMessageStates) {
@@ -654,15 +667,14 @@ class MatrixOrbitRepository(
                         return state.messages.takeLast(limit)
                     }
                 }
+                actualFromToken = synchronized(_roomCache) { _roomCache[channelId]?.prevBatch }
             }
 
             val urlPath = buildString {
                 append("/rooms/$channelId/messages")
-                append("?limit=$limit")
-                if (fromToken != null) {
-                    append("&dir=b&from=$fromToken")
-                } else {
-                    append("&dir=b") // fetch history backward
+                append("?limit=$limit&dir=b")
+                if (actualFromToken != null) {
+                    append("&from=$actualFromToken")
                 }
             }
 
@@ -850,9 +862,9 @@ class MatrixOrbitRepository(
             while (isActive) {
                 try {
                     val urlPath = if (since != null) {
-                        "/sync?since=$since"
+                        "/sync?timeout=30000&since=$since"
                     } else {
-                        "/sync"
+                        "/sync?timeout=30000&full_state=true"
                     }
                     val resp: SyncResponse = client.get(fullUrl(urlPath)) {
                         authHeader()?.let { header(HttpHeaders.Authorization, it) }
@@ -878,6 +890,7 @@ class MatrixOrbitRepository(
 
         for ((roomId, roomDataEl) in joinRooms) {
             val roomData = roomDataEl as? JsonObject ?: continue
+            val prevBatch = (roomData["timeline"] as? JsonObject)?.get("prev_batch")?.let { (it as? JsonPrimitive)?.content }
             val state = (roomData["state"] as? JsonObject)?.get("events") as? JsonArray
             val timelineObj = roomData["timeline"] as? JsonObject
             val timelineEvents = timelineObj?.get("events") as? JsonArray
@@ -909,7 +922,7 @@ class MatrixOrbitRepository(
             
             // Check DM via m.direct (For now, simplified, but we keep the current isDM flag)
             
-            val updatedMetadata = RoomMetadata(roomId, name, topic, isDM, isSpace, 0, avatarUrl)
+            val updatedMetadata = RoomMetadata(roomId, name, topic, isDM, isSpace, 0, avatarUrl, prevBatch)
             if (_roomCache[roomId] != updatedMetadata) {
                 synchronized(_roomCache) { _roomCache[roomId] = updatedMetadata }
                 roomsUpdated = true
