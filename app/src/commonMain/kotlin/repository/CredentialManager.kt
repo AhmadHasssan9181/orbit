@@ -1,11 +1,7 @@
 package repository
 
-import com.russhwolf.settings.Settings
-import com.russhwolf.settings.set
-import com.russhwolf.settings.get
-
 object CredentialManager {
-    private val settings = Settings()
+    private val settings: Settings = createCredentialSettings()
 
     var homeserverUrl: String?
         get() = settings.getStringOrNull("homeserverUrl")

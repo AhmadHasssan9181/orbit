@@ -1,22 +1,31 @@
 package repository
 
-import io.ktor.client.*
-import io.ktor.client.call.*
+import io.ktor.client.HttpClient
+import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
-import io.ktor.client.plugins.contentnegotiation.*
-import io.ktor.http.*
-import io.ktor.serialization.kotlinx.json.*
-import io.ktor.client.request.*
-import io.ktor.client.statement.*
-import io.ktor.http.HttpHeaders
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.logging.LogLevel
 import io.ktor.client.plugins.logging.Logging
-
-import kotlinx.coroutines.*
+import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.put
+import io.ktor.client.request.setBody
+import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
+import io.ktor.http.contentType
+import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.datetime.Instant
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -26,8 +35,13 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import kotlinx.datetime.Instant
-import ui.model.*
+import ui.model.ChannelType
+import ui.model.OrbitChannel
+import ui.model.OrbitMessage
+import ui.model.OrbitServer
+import ui.model.OrbitUser
+import ui.model.UserStatus
+import util.openUrlInBrowser
 
 // ─────────────────────────────────────────────────────────────
 // Matrix API DTOs (minimal, for the endpoints we use)
@@ -286,7 +300,7 @@ class MatrixOrbitRepository(
         val ssoUrl = "${homeserverUrl.trimEnd('/')}${CLIENT_PREFIX}/login/sso/redirect?redirectUrl=${
             java.net.URLEncoder.encode(redirectUrl, "UTF-8")
         }"
-        java.awt.Desktop.getDesktop().browse(java.net.URI(ssoUrl))
+        openUrlInBrowser(ssoUrl)
 
         // Wait for the callback (blocking on IO dispatcher)
         val loginToken: String
@@ -446,7 +460,7 @@ class MatrixOrbitRepository(
 
     override suspend fun joinSpace(roomIdOrAlias: String): Result<String> {
         return try {
-            val encodedId = roomIdOrAlias.replace("#", "%23")
+            val encodedId = roomIdOrAlias.replace("#", "%23").replace("!", "%21").replace(":", "%3A")
             val resp: JoinResponse = client.post(fullUrl("/join/$encodedId")) {
                 authHeader()?.let { header(HttpHeaders.Authorization, it) }
             }.body()
@@ -589,8 +603,9 @@ class MatrixOrbitRepository(
 
     override suspend fun getChannelById(channelId: String): OrbitChannel? {
         return try {
+            val encodedId = channelId.replace("!", "%21").replace(":", "%3A")
             // Room state is returned as a JSON array of events, not wrapped in an object
-            val stateEvents: List<MatrixEvent> = client.get(fullUrl("/rooms/$channelId/state")) {
+            val stateEvents: List<MatrixEvent> = client.get(fullUrl("/rooms/$encodedId/state")) {
                 authHeader()?.let { header(HttpHeaders.Authorization, it) }
             }.body()
 
@@ -628,8 +643,10 @@ class MatrixOrbitRepository(
 
     override suspend fun getRoomMembers(roomId: String): List<OrbitUser> {
         return try {
-            val response = matrixGet<TimelineResponse>("/rooms/$roomId/members?membership=join")
-            response.events.mapNotNull { event ->
+            val encodedId = roomId.replace("!", "%21").replace(":", "%3A")
+            val response = matrixGet<TimelineResponse>("/rooms/$encodedId/members?membership=join")
+            val eventsList = response.events
+            eventsList.mapNotNull { event ->
                 if (event.type != "m.room.member") return@mapNotNull null
                 val userId = event.stateKey ?: return@mapNotNull null
                 val displayName = (event.content as? JsonObject)?.get("displayname")?.let {
@@ -675,8 +692,9 @@ class MatrixOrbitRepository(
                 }
             }
 
+            val encodedChannelId = channelId.replace("!", "%21").replace(":", "%3A")
             val urlPath = buildString {
-                append("/rooms/$channelId/messages")
+                append("/rooms/$encodedChannelId/messages")
                 append("?limit=$limit&dir=b")
                 if (actualFromToken != null) {
                     append("&from=$actualFromToken")
@@ -687,7 +705,8 @@ class MatrixOrbitRepository(
                 authHeader()?.let { header(HttpHeaders.Authorization, it) }
             }.body()
 
-            resp.events.mapNotNull { event ->
+            val eventsList = resp.events
+            eventsList.mapNotNull { event ->
                 if (event.type != "m.room.message") return@mapNotNull null
                 val body = extractMessageBody(event.content) ?: return@mapNotNull null
                 val sender = event.sender ?: return@mapNotNull null
@@ -708,9 +727,10 @@ class MatrixOrbitRepository(
 
     override suspend fun sendMessage(channelId: String, body: String): Result<String> {
         return try {
-            val txnId = "orbit-${channelId}-${System.currentTimeMillis()}"
+            val encodedChannelId = channelId.replace("!", "%21").replace(":", "%3A")
+            val txnId = "orbit-msg-${System.currentTimeMillis()}"
             val resp: SendResponse = client.put(
-                fullUrl("/rooms/$channelId/send/m.room.message/$txnId")
+                fullUrl("/rooms/$encodedChannelId/send/m.room.message/$txnId")
             ) {
                 authHeader()?.let { header(HttpHeaders.Authorization, it) }
                 contentType(ContentType.Application.Json)

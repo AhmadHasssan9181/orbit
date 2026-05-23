@@ -1,6 +1,5 @@
 package ui.model
 
-import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
@@ -13,12 +12,11 @@ data class OrbitMessage(
     val userId: String,
     val username: String,
     val body: String,
-    val timestamp: Instant = Clock.System.now(),
+    val timestamp: Instant,              // <-- No default here
     val serverId: String? = null,
     val channelId: String? = null
 ) {
     fun formatTime(): String {
-        // Simple manual formatting to replace DateTimeFormatter for now
         val dt = timestamp.toLocalDateTime(TimeZone.currentSystemDefault())
         val amPm = if (dt.hour >= 12) "PM" else "AM"
         val hour12 = if (dt.hour % 12 == 0) 12 else dt.hour % 12
