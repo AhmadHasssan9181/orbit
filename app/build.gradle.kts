@@ -5,6 +5,8 @@ plugins {
     id("org.jetbrains.compose")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.android.application")
+    id("com.google.devtools.ksp")
+    id("androidx.room")
 }
 
 kotlin {
@@ -41,16 +43,21 @@ kotlin {
 
                 // Serialization & Core
                 implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
-                implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
+                implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
 
                 // Ktor Common Network
                 implementation("io.ktor:ktor-client-core:3.0.1")
                 implementation("io.ktor:ktor-client-content-negotiation:3.0.1")
                 implementation("io.ktor:ktor-serialization-kotlinx-json:3.0.1")
 
+                implementation("androidx.room:room-runtime:2.7.0-alpha11")
+                implementation("androidx.sqlite:sqlite-bundled:2.5.0-alpha11")
+
                 // Trixnity Matrix SDK Core
                 implementation("de.connect2x.trixnity:trixnity-client:5.4.0")
-
+                implementation("de.connect2x.trixnity:trixnity-client-repository-room:5.4.0")
+                implementation("de.connect2x.trixnity:trixnity-client-media-okio:5.4.0")
+                implementation("de.connect2x.trixnity:trixnity-client-cryptodriver-vodozemac:5.4.0")
 
                 implementation("io.coil-kt.coil3:coil-compose:3.0.0")
                 implementation("io.coil-kt.coil3:coil-network-ktor3:3.0.0")
@@ -101,4 +108,12 @@ compose.desktop {
     application {
         mainClass = "ui.screen.MainKt"
     }
+}
+
+room {
+    schemaDirectory("$projectDir/schemas")
+}
+
+dependencies {
+    ksp("androidx.room:room-compiler:2.7.0-alpha11")
 }

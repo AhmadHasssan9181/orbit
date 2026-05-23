@@ -9,4 +9,7 @@ plugins {
 
     // Leave this alone
     id("org.jetbrains.compose") version "1.7.3" apply false
+
+    id("com.google.devtools.ksp") version "2.0.21-1.0.27" apply false
+    id("androidx.room") version "2.7.0-alpha11" apply false
 }
