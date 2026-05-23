@@ -5,6 +5,7 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
@@ -18,30 +19,33 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ui.data.MockData
 import ui.model.*
 
 import ui.theme.LocalIsLiteMode
+import ui.theme.rememberCosmicTokens
 
-// ─── Cosmic Design Tokens ───────────────────────────────────────
-private val Drawer_Bg: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFFF0F2F5) else Color(0xFF111318)
-private val UserBar_Bg: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFFEAE6DF) else Color(0xFF0A0C12)
-private val Accent: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFF075E54) else Color(0xFF7C6AF0)
-private val AccentLight: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFF128C7E) else Color(0xFFA78BFA)
-private val AccentGhost: Color @Composable get() = if (LocalIsLiteMode.current) Color(0x1A075E54) else Color(0x1A7C6AF0)
-private val AccentSelected: Color @Composable get() = if (LocalIsLiteMode.current) Color(0x2A075E54) else Color(0x2A7C6AF0)
-private val AccentBorder: Color @Composable get() = if (LocalIsLiteMode.current) Color(0x55075E54) else Color(0x557C6AF0)
-private val Text_White: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFF111B21) else Color(0xFFEAECF5)
-private val Text_Secondary: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFF54656F) else Color(0xFFB4B8D0)
-private val Text_Muted: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFF667781) else Color(0xFF6B7094)
-private val Separator: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFFD1D7DB) else Color(0xFF1C1F2B)
+// â”€â”€â”€ Cosmic Design Tokens â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+private val Drawer_Bg: Color @Composable get() = rememberCosmicTokens().Drawer_Bg
+private val UserBar_Bg: Color @Composable get() = rememberCosmicTokens().UserBar_Bg
+private val Accent: Color @Composable get() = rememberCosmicTokens().Accent
+private val AccentLight: Color @Composable get() = rememberCosmicTokens().AccentLight
+private val AccentGhost: Color @Composable get() = rememberCosmicTokens().AccentGhost
+private val Text_White: Color @Composable get() = rememberCosmicTokens().Text_White
+private val Text_Secondary: Color @Composable get() = rememberCosmicTokens().Text_Secondary
+private val Text_Muted: Color @Composable get() = rememberCosmicTokens().Text_Muted
+private val Separator: Color @Composable get() = rememberCosmicTokens().Separator
+private val ChannelSelected_Bg: Color @Composable get() = rememberCosmicTokens().ChannelSelected_Bg
+private val ChannelHover_Bg: Color @Composable get() = rememberCosmicTokens().ChannelHover_Bg
 
 @Composable
 fun ChannelDrawer(
@@ -81,8 +85,9 @@ fun ChannelDrawer(
                 "Communities" -> WhatsAppCommunitiesDrawer()
             }
         } else {
+            // â”€â”€ Server header â€” Discord/Revolt style â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             ServerHeader(server.name, showArrow = !server.isDM)
-            GradientSeparator()
+            HorizontalDivider(color = Separator.copy(alpha = 0.3f), thickness = 1.dp)
 
             if (server.isDM) {
                 DmListContent(
@@ -102,7 +107,7 @@ fun ChannelDrawer(
             }
         }
 
-        GradientSeparator()
+        HorizontalDivider(color = Separator.copy(alpha = 0.3f), thickness = 1.dp)
         UserProfileBar(
             user = currentUser,
             onMicToggle = {},
@@ -111,49 +116,46 @@ fun ChannelDrawer(
     }
 }
 
-// ─── ServerHeader ────────────────────────────────────────────────
+// â”€â”€â”€ ServerHeader â€” Revolt/Discord style â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @Composable
 private fun ServerHeader(serverName: String, showArrow: Boolean) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isHovered by interactionSource.collectIsHoveredAsState()
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(50.dp)
-            .clickable {}
-            .padding(horizontal = 14.dp),
+            .height(48.dp)
+            .hoverable(interactionSource)
+            .clickable(interactionSource = interactionSource, indication = null, onClick = {})
+            .background(if (isHovered) ChannelHover_Bg else Color.Transparent)
+            .padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Text(
             text = serverName,
-            style = MaterialTheme.typography.titleMedium.copy(
+            style = MaterialTheme.typography.titleSmall.copy(
                 fontWeight = FontWeight.Bold,
-                color = Text_White,
-                fontSize = 15.sp
+                color = Text_White
             ),
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f)
         )
         if (showArrow) {
-            Box(
-                modifier = Modifier
-                    .size(22.dp)
-                    .clip(CircleShape)
-                    .background(Color(0x12FFFFFF)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.KeyboardArrowDown,
-                    contentDescription = null,
-                    tint = Text_Muted,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
+            Icon(
+                imageVector = Icons.Default.MoreVert,
+                contentDescription = null,
+                tint = Text_Muted,
+                modifier = Modifier.size(18.dp).alpha(0.7f)
+            )
         }
     }
 }
 
-// ─── ChannelListContent ──────────────────────────────────────────
+// â”€â”€â”€ ChannelListContent â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @Composable
 private fun ChannelListContent(
@@ -200,7 +202,7 @@ private fun ChannelListContent(
     }
 }
 
-// ─── DmListContent ───────────────────────────────────────────────
+// â”€â”€â”€ DmListContent â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @Composable
 private fun DmListContent(
@@ -223,7 +225,8 @@ private fun DmListContent(
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontWeight = FontWeight.Bold,
                         color = Text_Muted,
-                        letterSpacing = 0.8.sp
+                        letterSpacing = 0.8.sp,
+                        fontSize = 10.sp
                     ),
                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp)
                 )
@@ -234,8 +237,8 @@ private fun DmListContent(
             val mockLastMsg = when (user.displayName) {
                 "Nova" -> "The dense message mode is such a smart UX choice."
                 "Phoenix" -> "Let's build something cool together!"
-                "Orbit Bot" -> "That's a great idea — I'll throw together a prototype."
-                "Stella" -> "The Lite Mode gives serious WhatsApp vibes — in a good way."
+                "Orbit Bot" -> "That's a great idea â€” I'll throw together a prototype."
+                "Stella" -> "The Lite Mode gives serious WhatsApp vibes â€” in a good way."
                 "Raven" -> "Matrix backend here we come \uD83C\uDFAF"
                 else -> "Aoa, sir \uD83D\uDD38Subject: Update..."
             }
@@ -262,7 +265,7 @@ private fun DmListContent(
     }
 }
 
-// ─── DmItem ──────────────────────────────────────────────────────
+// â”€â”€â”€ DmItem â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @Composable
 private fun DmItem(
@@ -280,8 +283,8 @@ private fun DmItem(
 
     val bgColor by animateColorAsState(
         targetValue = when {
-            isSelected -> if (isLiteMode) Color(0xFFF0F2F5) else AccentSelected
-            isHovered  -> if (isLiteMode) Color(0xFFF5F6F6) else Color(0x0FFFFFFF)
+            isSelected -> ChannelSelected_Bg
+            isHovered  -> ChannelHover_Bg
             else       -> Color.Transparent
         },
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
@@ -341,17 +344,10 @@ private fun DmItem(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
+                .clip(RoundedCornerShape(4.dp))
                 .background(bgColor)
-                .then(
-                    if (isSelected) Modifier.border(
-                        width = 1.dp,
-                        color = AccentBorder,
-                        shape = RoundedCornerShape(8.dp)
-                    ) else Modifier
-                )
                 .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
-                .padding(horizontal = 8.dp, vertical = 5.dp),
+                .padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             DmAvatar(displayName, avatarColor, status, size = 32.dp)
@@ -360,16 +356,26 @@ private fun DmItem(
                 text = displayName,
                 style = MaterialTheme.typography.bodySmall.copy(
                     color = textColor,
-                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                    fontSize = 14.sp
                 ),
                 maxLines = 1,
                 modifier = Modifier.weight(1f)
             )
+            // Close icon on hover like Discord
+            if (isHovered) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = null,
+                    tint = Text_Muted,
+                    modifier = Modifier.size(14.dp).alpha(0.6f)
+                )
+            }
         }
     }
 }
 
-// ─── DmAvatar ────────────────────────────────────────────────────
+// â”€â”€â”€ DmAvatar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @Composable
 private fun DmAvatar(displayName: String, avatarColor: Int, status: UserStatus, size: androidx.compose.ui.unit.Dp = 32.dp) {
@@ -394,7 +400,7 @@ private fun DmAvatar(displayName: String, avatarColor: Int, status: UserStatus, 
         val dotColor = statusColor(status)
         Box(
             modifier = Modifier
-                .size(10.dp)
+                .size(if (size > 40.dp) 14.dp else 10.dp)
                 .align(Alignment.BottomEnd)
                 .border(2.dp, Drawer_Bg, CircleShape)
                 .padding(2.dp)
@@ -404,7 +410,7 @@ private fun DmAvatar(displayName: String, avatarColor: Int, status: UserStatus, 
     }
 }
 
-// ─── CategoryHeader ──────────────────────────────────────────────
+// â”€â”€â”€ CategoryHeader â€” Discord/Revolt style â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @Composable
 private fun CategoryHeader(name: String, isExpanded: Boolean, onToggle: () -> Unit) {
@@ -413,34 +419,38 @@ private fun CategoryHeader(name: String, isExpanded: Boolean, onToggle: () -> Un
         animationSpec = spring(stiffness = Spring.StiffnessMedium),
         label = "chevronRot"
     )
+    val interactionSource = remember { MutableInteractionSource() }
+    val isHovered by interactionSource.collectIsHoveredAsState()
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .hoverable(interactionSource)
             .clickable(onClick = onToggle)
-            .padding(horizontal = 4.dp, vertical = 5.dp),
+            .padding(horizontal = 2.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Start
     ) {
         Icon(
             imageVector = Icons.Default.KeyboardArrowDown,
             contentDescription = null,
-            tint = Text_Muted,
-            modifier = Modifier.size(13.dp).rotate(rotation)
+            tint = if (isHovered) Text_Secondary else Text_Muted,
+            modifier = Modifier.size(12.dp).rotate(rotation)
         )
-        Spacer(Modifier.width(3.dp))
+        Spacer(Modifier.width(2.dp))
         Text(
             text = name.uppercase(),
             style = MaterialTheme.typography.labelSmall.copy(
-                fontWeight = FontWeight.Bold,
-                color = Text_Muted,
-                letterSpacing = 0.8.sp,
-                fontSize = 10.sp
+                fontWeight = FontWeight.SemiBold,
+                color = if (isHovered) Text_Secondary else Text_Muted,
+                letterSpacing = 0.5.sp,
+                fontSize = 11.sp
             )
         )
     }
 }
 
-// ─── ChannelItem ─────────────────────────────────────────────────
+// â”€â”€â”€ ChannelItem â€” Discord/Revolt style â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @Composable
 private fun ChannelItem(channel: OrbitChannel, isSelected: Boolean, onClick: () -> Unit) {
@@ -449,8 +459,8 @@ private fun ChannelItem(channel: OrbitChannel, isSelected: Boolean, onClick: () 
 
     val bgColor by animateColorAsState(
         targetValue = when {
-            isSelected -> AccentSelected
-            isHovered  -> Color(0x0DFFFFFF)
+            isSelected -> ChannelSelected_Bg
+            isHovered  -> ChannelHover_Bg
             else       -> Color.Transparent
         },
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
@@ -466,66 +476,74 @@ private fun ChannelItem(channel: OrbitChannel, isSelected: Boolean, onClick: () 
         label = "chText"
     )
     val iconColor by animateColorAsState(
-        targetValue = if (isSelected) Accent else Text_Muted,
+        targetValue = when {
+            isSelected -> Text_White
+            isHovered  -> Text_Secondary
+            else       -> Text_Muted
+        },
         label = "chIcon"
     )
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(7.dp))
+            .clip(RoundedCornerShape(4.dp))
             .background(bgColor)
-            .then(
-                if (isSelected) Modifier.border(1.dp, AccentBorder, RoundedCornerShape(7.dp))
-                else Modifier
-            )
+            .hoverable(interactionSource)
             .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 5.dp),
+            .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Left accent bar
-        if (isSelected) {
-            Box(
-                modifier = Modifier
-                    .width(2.5.dp)
-                    .height(16.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(Brush.verticalGradient(listOf(Accent, AccentLight)))
-            )
-            Spacer(Modifier.width(6.dp))
-        }
-
         when (channel.type) {
-            ChannelType.TEXT -> Text(
-                text = "#",
-                style = MaterialTheme.typography.bodySmall.copy(
-                    fontWeight = FontWeight.Bold,
-                    color = iconColor,
-                    fontSize = 14.sp
-                ),
-                modifier = Modifier.padding(end = 6.dp)
-            )
-            ChannelType.VOICE -> Icon(
-                imageVector = Icons.Default.Mic,
+            ChannelType.TEXT -> Icon(
+                imageVector = Icons.Default.Tag,
                 contentDescription = null,
                 tint = iconColor,
-                modifier = Modifier.size(14.dp).padding(end = 6.dp)
+                modifier = Modifier.size(18.dp)
+            )
+            ChannelType.VOICE -> Icon(
+                imageVector = Icons.Default.VolumeUp,
+                contentDescription = null,
+                tint = iconColor,
+                modifier = Modifier.size(18.dp)
             )
         }
+
+        Spacer(Modifier.width(6.dp))
 
         Text(
             text = channel.name,
-            style = MaterialTheme.typography.bodySmall.copy(
+            style = MaterialTheme.typography.bodyMedium.copy(
                 color = textColor,
-                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                fontSize = 13.sp
+                fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal,
+                fontSize = 14.sp
             ),
-            maxLines = 1
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
         )
+
+        // Action icons on hover (like Discord)
+        if (isHovered) {
+            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                Icon(
+                    imageVector = Icons.Default.PersonAdd,
+                    contentDescription = null,
+                    tint = Text_Muted,
+                    modifier = Modifier.size(14.dp).alpha(0.6f)
+                )
+                Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = null,
+                    tint = Text_Muted,
+                    modifier = Modifier.size(14.dp).alpha(0.6f)
+                )
+            }
+        }
     }
 }
 
-// ─── UserProfileBar ──────────────────────────────────────────────
+// â”€â”€â”€ UserProfileBar â€” Discord-style â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @Composable
 private fun UserProfileBar(
@@ -537,8 +555,8 @@ private fun UserProfileBar(
         modifier = Modifier
             .fillMaxWidth()
             .background(UserBar_Bg)
-            .padding(horizontal = 8.dp, vertical = 6.dp)
-            .height(46.dp),
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .height(52.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         UserAvatar(user.displayName, user.avatarColor, user.status)
@@ -548,10 +566,11 @@ private fun UserProfileBar(
             Text(
                 text = user.displayName,
                 style = MaterialTheme.typography.labelMedium.copy(
-                    fontWeight = FontWeight.Bold,
-                    brush = Brush.horizontalGradient(listOf(Color(0xFF7C6AF0), Color(0xFFA78BFA)))
+                    fontWeight = FontWeight.SemiBold,
+                    color = Text_White
                 ),
-                maxLines = 1
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
             Text(
                 text = "Online",
@@ -563,6 +582,7 @@ private fun UserProfileBar(
         }
 
         BarIconBtn(icon = Icons.Default.Mic, desc = "Mic", onClick = onMicToggle)
+        BarIconBtn(icon = Icons.Default.Headset, desc = "Deafen", onClick = {})
         BarIconBtn(icon = Icons.Default.Settings, desc = "Settings", onClick = onSettingsClick)
     }
 }
@@ -576,53 +596,44 @@ private fun BarIconBtn(
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
     val tint by animateColorAsState(
-        targetValue = if (isHovered) Color(0xFF7C6AF0) else Color(0xFF6B7094),
+        targetValue = if (isHovered) Text_White else Text_Muted,
         label = "barIconTint"
     )
     IconButton(
         onClick = onClick,
-        modifier = Modifier.size(30.dp),
+        modifier = Modifier.size(32.dp),
         interactionSource = interactionSource
     ) {
-        Icon(imageVector = icon, contentDescription = desc, tint = tint, modifier = Modifier.size(16.dp))
+        Icon(imageVector = icon, contentDescription = desc, tint = tint, modifier = Modifier.size(18.dp))
     }
 }
 
-// ─── UserAvatar ──────────────────────────────────────────────────
+// â”€â”€â”€ UserAvatar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @Composable
 private fun UserAvatar(displayName: String, avatarColor: Int, status: UserStatus) {
-    Box(modifier = Modifier.size(36.dp)) {
+    Box(modifier = Modifier.size(32.dp)) {
         val base = Color(avatarColor)
-        // Gradient ring
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .clip(CircleShape)
-                .background(Brush.linearGradient(listOf(Color(0xFF7C6AF0), Color(0xFFA78BFA))))
-                .padding(2.dp)
+                .background(Brush.linearGradient(listOf(base, base.copy(alpha = 0.7f)))),
+            contentAlignment = Alignment.Center
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clip(CircleShape)
-                    .background(Brush.linearGradient(listOf(base, base.copy(alpha = 0.7f)))),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = displayName.take(2).uppercase(),
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                        fontSize = 10.sp
-                    )
+            Text(
+                text = displayName.take(2).uppercase(),
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    fontSize = 10.sp
                 )
-            }
+            )
         }
         val dotColor = statusColor(status)
         Box(
             modifier = Modifier
-                .size(11.dp)
+                .size(10.dp)
                 .align(Alignment.BottomEnd)
                 .border(2.dp, UserBar_Bg, CircleShape)
                 .padding(2.dp)
@@ -632,23 +643,7 @@ private fun UserAvatar(displayName: String, avatarColor: Int, status: UserStatus
     }
 }
 
-// ─── GradientSeparator ───────────────────────────────────────────
-
-@Composable
-private fun GradientSeparator() {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(1.dp)
-            .background(
-                Brush.horizontalGradient(
-                    listOf(Color.Transparent, Color(0xFF1C1F2B), Color.Transparent)
-                )
-            )
-    )
-}
-
-// ─── Status color helper ─────────────────────────────────────────
+// â”€â”€â”€ Status color helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 private fun statusColor(status: UserStatus) = when (status) {
     UserStatus.ONLINE        -> Color(0xFF34D399)
@@ -657,14 +652,15 @@ private fun statusColor(status: UserStatus) = when (status) {
     UserStatus.OFFLINE       -> Color(0xFF3D4160)
 }
 
-// ─── WhatsApp Drawer Components ──────────────────────────────────
+// â”€â”€â”€ Lite Mode Drawer Components â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @Composable
 private fun WhatsAppDrawerHeader() {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(60.dp)
+            .height(52.dp)
+            .background(rememberCosmicTokens().Header_Bg)
             .padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
@@ -673,35 +669,38 @@ private fun WhatsAppDrawerHeader() {
             text = "Orbit",
             style = MaterialTheme.typography.titleLarge.copy(
                 fontWeight = FontWeight.Bold,
-                color = ui.theme.LocalIsLiteMode.current.let { if(it) Color(0xFF111B21) else Color.White },
-                fontSize = 22.sp
+                color = Text_White,
+                fontSize = 20.sp
             )
         )
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(androidx.compose.material.icons.Icons.Default.AddBox, contentDescription = "New Chat", tint = Color(0xFF54656F), modifier = Modifier.size(24.dp))
-            Spacer(Modifier.width(16.dp))
-            Icon(androidx.compose.material.icons.Icons.Default.MoreVert, contentDescription = "Menu", tint = Color(0xFF54656F), modifier = Modifier.size(24.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            IconButton(onClick = {}, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Default.Edit, contentDescription = "New Chat", tint = Text_Muted, modifier = Modifier.size(18.dp))
+            }
+            IconButton(onClick = {}, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Default.MoreVert, contentDescription = "Menu", tint = Text_Muted, modifier = Modifier.size(18.dp))
+            }
         }
     }
 }
 
 @Composable
 private fun WhatsAppSearchBar() {
-    Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+    Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(36.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(Color(0xFFF0F2F5))
+                .clip(RoundedCornerShape(10.dp))
+                .background(rememberCosmicTokens().Input_Bg)
                 .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(androidx.compose.material.icons.Icons.Default.Search, contentDescription = "Search", tint = Color(0xFF54656F), modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(12.dp))
+            Icon(Icons.Default.Search, contentDescription = "Search", tint = Text_Muted, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(10.dp))
             Text(
-                text = "Search or start a new chat",
-                style = MaterialTheme.typography.bodySmall.copy(color = Color(0xFF54656F), fontSize = 14.sp)
+                text = "Search conversations...",
+                style = MaterialTheme.typography.bodySmall.copy(color = Text_Muted, fontSize = 13.sp)
             )
         }
     }
@@ -711,67 +710,95 @@ private fun WhatsAppSearchBar() {
 private fun WhatsAppFilterChips() {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        WhatsAppChip("All", isSelected = true)
-        WhatsAppChip("Unread 1", isSelected = false)
-        WhatsAppChip("Favourites", isSelected = false)
-        WhatsAppChip("Groups", isSelected = false)
+        LiteChip("All", isSelected = true)
+        LiteChip("Unread", isSelected = false)
+        LiteChip("Favourites", isSelected = false)
+        LiteChip("Groups", isSelected = false)
     }
 }
 
 @Composable
-private fun WhatsAppChip(text: String, isSelected: Boolean) {
-    val bgColor = if (isSelected) Color(0xFFD9FDD3) else Color(0xFFF0F2F5)
-    val textColor = if (isSelected) Color(0xFF111B21) else Color(0xFF54656F)
+private fun LiteChip(text: String, isSelected: Boolean) {
+    val bgColor by animateColorAsState(
+        targetValue = if (isSelected) Accent.copy(alpha = 0.15f)
+        else rememberCosmicTokens().CardBg,
+        label = "chipBg"
+    )
+    val textColor by animateColorAsState(
+        targetValue = if (isSelected) Accent else Text_Muted,
+        label = "chipText"
+    )
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(16.dp))
             .background(bgColor)
             .clickable {}
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .padding(horizontal = 12.dp, vertical = 5.dp),
         contentAlignment = Alignment.Center
     ) {
-        Text(text, color = textColor, fontSize = 13.sp, fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal)
+        Text(
+            text,
+            color = textColor,
+            fontSize = 12.sp,
+            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+        )
     }
 }
 
 @Composable
 private fun WhatsAppCallsDrawer() {
-    Column(modifier = Modifier.fillMaxSize().background(Color.White)) {
-        Row(
-            modifier = Modifier.fillMaxWidth().height(60.dp).padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text("Calls", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold, color = Color(0xFF111B21), fontSize = 22.sp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(androidx.compose.material.icons.Icons.Default.Add, contentDescription = "New Call", tint = Color(0xFF54656F), modifier = Modifier.size(24.dp))
-                Spacer(Modifier.width(16.dp))
-                Icon(androidx.compose.material.icons.Icons.Default.MoreVert, contentDescription = "Menu", tint = Color(0xFF54656F), modifier = Modifier.size(24.dp))
+    Column(modifier = Modifier.fillMaxSize().background(Drawer_Bg)) {
+        LiteDrawerHeader("Calls") {
+            IconButton(onClick = {}, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Default.Add, contentDescription = "New Call", tint = Accent, modifier = Modifier.size(20.dp))
             }
         }
         WhatsAppSearchBar()
-        
-        LazyColumn(modifier = Modifier.weight(1f), contentPadding = PaddingValues(vertical = 8.dp)) {
-            items(10) { i ->
+
+        LazyColumn(modifier = Modifier.weight(1f), contentPadding = PaddingValues(vertical = 4.dp)) {
+            val names = listOf("Nova", "Phoenix", "Stella", "Raven", "Orbit Bot", "Alice", "Bob", "Charlie", "Diana", "Eve")
+            items(names.size) { i ->
+                val interactionSource = remember { MutableInteractionSource() }
+                val isHovered by interactionSource.collectIsHoveredAsState()
                 Row(
-                    modifier = Modifier.fillMaxWidth().clickable{}.padding(horizontal = 16.dp, vertical = 12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .hoverable(interactionSource)
+                        .background(if (isHovered) rememberCosmicTokens().ChannelHover_Bg else Color.Transparent)
+                        .clickable {}
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box(modifier = Modifier.size(48.dp).clip(CircleShape).background(Color(0xFF00A884)), contentAlignment = Alignment.Center) {
-                        Text("C$i", color = Color.White, fontWeight = FontWeight.Bold)
+                    val hue = (i * 47) % 360
+                    Box(
+                        modifier = Modifier.size(44.dp).clip(CircleShape)
+                            .background(Brush.linearGradient(listOf(
+                                hslToColorLocal(hue.toFloat()),
+                                hslToColorLocal((hue + 30f) % 360)
+                            ))),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(names[i].take(2).uppercase(), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     }
-                    Spacer(Modifier.width(14.dp))
+                    Spacer(Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Mock User $i", style = MaterialTheme.typography.bodyMedium.copy(color = Color(0xFF111B21), fontWeight = FontWeight.Bold, fontSize = 16.sp))
+                        Text(names[i], style = MaterialTheme.typography.bodyMedium.copy(color = Text_White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(if (i % 2 == 0) androidx.compose.material.icons.Icons.Default.CallMade else androidx.compose.material.icons.Icons.Default.CallReceived, contentDescription = null, tint = if (i % 2 == 0) Color(0xFF00A884) else Color(0xFFF87171), modifier = Modifier.size(16.dp))
+                            Icon(
+                                if (i % 2 == 0) Icons.Default.CallMade else Icons.Default.CallReceived,
+                                contentDescription = null,
+                                tint = if (i % 2 == 0) Accent else Color(0xFFF87171),
+                                modifier = Modifier.size(14.dp)
+                            )
                             Spacer(Modifier.width(4.dp))
-                            Text("Today, 10:${10 + i} AM", style = MaterialTheme.typography.bodySmall.copy(color = Color(0xFF54656F), fontSize = 14.sp))
+                            Text("Today, ${10 + i}:${10 + i * 3} AM", style = MaterialTheme.typography.bodySmall.copy(color = Text_Muted, fontSize = 12.sp))
                         }
                     }
-                    Icon(androidx.compose.material.icons.Icons.Default.Call, contentDescription = null, tint = Color(0xFF00A884), modifier = Modifier.size(24.dp))
+                    IconButton(onClick = {}, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.Call, contentDescription = null, tint = Accent, modifier = Modifier.size(18.dp))
+                    }
                 }
             }
         }
@@ -780,56 +807,74 @@ private fun WhatsAppCallsDrawer() {
 
 @Composable
 private fun WhatsAppStatusDrawer() {
-    Column(modifier = Modifier.fillMaxSize().background(Color.White)) {
-        Row(
-            modifier = Modifier.fillMaxWidth().height(60.dp).padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text("Status", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold, color = Color(0xFF111B21), fontSize = 22.sp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(androidx.compose.material.icons.Icons.Default.Add, contentDescription = "New Status", tint = Color(0xFF54656F), modifier = Modifier.size(24.dp))
-                Spacer(Modifier.width(16.dp))
-                Icon(androidx.compose.material.icons.Icons.Default.MoreVert, contentDescription = "Menu", tint = Color(0xFF54656F), modifier = Modifier.size(24.dp))
+    Column(modifier = Modifier.fillMaxSize().background(Drawer_Bg)) {
+        LiteDrawerHeader("Status") {
+            IconButton(onClick = {}, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Default.AddCircle, contentDescription = "New Status", tint = Accent, modifier = Modifier.size(20.dp))
             }
         }
-        
+
+        // My status
         Row(
-            modifier = Modifier.fillMaxWidth().clickable{}.padding(horizontal = 16.dp, vertical = 12.dp),
+            modifier = Modifier.fillMaxWidth().clickable {}.padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(modifier = Modifier.size(48.dp).clip(CircleShape).background(Color(0xFFE2E8F0)), contentAlignment = Alignment.Center) {
-                Icon(androidx.compose.material.icons.Icons.Default.Person, contentDescription = null, tint = Color.White)
-                Box(modifier = Modifier.align(Alignment.BottomEnd).size(16.dp).clip(CircleShape).background(Color(0xFF00A884)), contentAlignment = Alignment.Center) {
-                    Icon(androidx.compose.material.icons.Icons.Default.Add, contentDescription = null, tint = Color.White, modifier = Modifier.size(12.dp))
+            Box(modifier = Modifier.size(48.dp)) {
+                Box(
+                    modifier = Modifier.fillMaxSize().clip(CircleShape)
+                        .background(Brush.linearGradient(listOf(Accent, AccentLight))),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.Person, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
+                }
+                Box(
+                    modifier = Modifier.align(Alignment.BottomEnd).size(16.dp).clip(CircleShape)
+                        .background(Accent),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null, tint = Color.White, modifier = Modifier.size(10.dp))
                 }
             }
-            Spacer(Modifier.width(14.dp))
+            Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text("My status", style = MaterialTheme.typography.bodyMedium.copy(color = Color(0xFF111B21), fontWeight = FontWeight.Bold, fontSize = 16.sp))
-                Text("No updates", style = MaterialTheme.typography.bodySmall.copy(color = Color(0xFF54656F), fontSize = 14.sp))
+                Text("My status", style = MaterialTheme.typography.bodyMedium.copy(color = Text_White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp))
+                Text("Tap to add status update", style = MaterialTheme.typography.bodySmall.copy(color = Text_Muted, fontSize = 12.sp))
             }
         }
+
+        HorizontalDivider(color = Separator, modifier = Modifier.padding(horizontal = 14.dp))
 
         Text(
             text = "RECENT",
-            style = MaterialTheme.typography.labelSmall.copy(color = Color(0xFF00A884), fontWeight = FontWeight.Bold),
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            style = MaterialTheme.typography.labelSmall.copy(color = Accent, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
         )
 
         LazyColumn(modifier = Modifier.weight(1f)) {
-            items(3) { i ->
+            val names = listOf("Phoenix", "Stella", "Nova")
+            items(names.size) { i ->
                 Row(
-                    modifier = Modifier.fillMaxWidth().clickable{}.padding(horizontal = 16.dp, vertical = 12.dp),
+                    modifier = Modifier.fillMaxWidth().clickable {}.padding(horizontal = 14.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box(modifier = Modifier.size(48.dp).border(2.dp, Color(0xFF00A884), CircleShape).padding(2.dp).clip(CircleShape).background(Color(0xFF94A3B8)), contentAlignment = Alignment.Center) {
-                        Text("S$i", color = Color.White, fontWeight = FontWeight.Bold)
+                    val hue = ((i + 3) * 67) % 360
+                    Box(
+                        modifier = Modifier.size(48.dp)
+                            .border(2.dp, Accent, CircleShape)
+                            .padding(3.dp)
+                            .clip(CircleShape)
+                            .background(Brush.linearGradient(listOf(
+                                hslToColorLocal(hue.toFloat()),
+                                hslToColorLocal((hue + 25f) % 360)
+                            ))),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(names[i].take(2).uppercase(), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     }
-                    Spacer(Modifier.width(14.dp))
+                    Spacer(Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Contact $i", style = MaterialTheme.typography.bodyMedium.copy(color = Color(0xFF111B21), fontWeight = FontWeight.Bold, fontSize = 16.sp))
-                        Text("Today, 9:${40 + i} AM", style = MaterialTheme.typography.bodySmall.copy(color = Color(0xFF54656F), fontSize = 14.sp))
+                        Text(names[i], style = MaterialTheme.typography.bodyMedium.copy(color = Text_White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp))
+                        Text("Today, 9:${40 + i * 7} AM", style = MaterialTheme.typography.bodySmall.copy(color = Text_Muted, fontSize = 12.sp))
                     }
                 }
             }
@@ -839,27 +884,84 @@ private fun WhatsAppStatusDrawer() {
 
 @Composable
 private fun WhatsAppCommunitiesDrawer() {
-    Column(modifier = Modifier.fillMaxSize().background(Color.White)) {
+    Column(modifier = Modifier.fillMaxSize().background(Drawer_Bg)) {
+        LiteDrawerHeader("Communities")
+
+        // New community
         Row(
-            modifier = Modifier.fillMaxWidth().height(60.dp).padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text("Communities", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold, color = Color(0xFF111B21), fontSize = 22.sp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(androidx.compose.material.icons.Icons.Default.MoreVert, contentDescription = "Menu", tint = Color(0xFF54656F), modifier = Modifier.size(24.dp))
-            }
-        }
-        
-        Row(
-            modifier = Modifier.fillMaxWidth().clickable{}.padding(horizontal = 16.dp, vertical = 12.dp),
+            modifier = Modifier.fillMaxWidth().clickable {}.padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFFD1D7DB)), contentAlignment = Alignment.Center) {
-                Icon(androidx.compose.material.icons.Icons.Default.Groups, contentDescription = null, tint = Color.White)
+            Box(
+                modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp))
+                    .background(Accent.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Default.Groups, contentDescription = null, tint = Accent, modifier = Modifier.size(24.dp))
             }
-            Spacer(Modifier.width(14.dp))
-            Text("New community", style = MaterialTheme.typography.bodyMedium.copy(color = Color(0xFF111B21), fontWeight = FontWeight.Bold, fontSize = 16.sp))
+            Spacer(Modifier.width(12.dp))
+            Text("New community", style = MaterialTheme.typography.bodyMedium.copy(color = Text_White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp))
+        }
+
+        HorizontalDivider(color = Separator, modifier = Modifier.padding(horizontal = 14.dp))
+
+        // Empty state
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.Default.Forum, contentDescription = null, tint = Text_Muted.copy(alpha = 0.4f), modifier = Modifier.size(48.dp))
+                Spacer(Modifier.height(8.dp))
+                Text("No communities yet", style = MaterialTheme.typography.bodyMedium.copy(color = Text_Muted))
+                Text("Create or join a community to get started", style = MaterialTheme.typography.bodySmall.copy(color = Text_Muted.copy(alpha = 0.6f), fontSize = 12.sp))
+            }
         }
     }
+}
+
+@Composable
+private fun LiteDrawerHeader(title: String, actions: @Composable () -> Unit = {}) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(52.dp)
+            .background(rememberCosmicTokens().Header_Bg)
+            .padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium.copy(
+                fontWeight = FontWeight.Bold,
+                color = Text_White
+            )
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            actions()
+            IconButton(onClick = {}, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Default.MoreVert, contentDescription = "Menu", tint = Text_Muted, modifier = Modifier.size(18.dp))
+            }
+        }
+    }
+}
+
+// â”€â”€â”€ HSL helper (local to ChannelDrawer) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+private fun hslToColorLocal(hue: Float): Color {
+    val s = 0.65f; val l = 0.55f
+    val q = if (l < 0.5f) l * (1 + s) else l + s - l * s
+    val p = 2 * l - q
+    fun h2r(t: Float): Float {
+        var x = t; if (x < 0) x += 1f; if (x > 1) x -= 1f
+        return when {
+            x < 1f / 6f -> p + (q - p) * 6f * x
+            x < 0.5f -> q
+            x < 2f / 3f -> p + (q - p) * (2f / 3f - x) * 6f
+            else -> p
+        }
+    }
+    return Color(
+        h2r(hue / 360f + 1f / 3f).coerceIn(0f, 1f),
+        h2r(hue / 360f).coerceIn(0f, 1f),
+        h2r(hue / 360f - 1f / 3f).coerceIn(0f, 1f)
+    )
 }

@@ -30,6 +30,9 @@ kotlin {
                 implementation("io.ktor:ktor-client-logging:3.0.1")
                 implementation("io.ktor:ktor-client-content-negotiation:3.0.1")
                 implementation("io.ktor:ktor-serialization-kotlinx-json:3.0.1")
+                implementation("io.ktor:ktor-client-websockets:3.0.1")
+                implementation("io.ktor:ktor-client-cio:3.0.1")
+                implementation("io.ktor:ktor-client-okhttp:3.0.1")
 
                 implementation("com.mikepenz:aboutlibraries-core:11.2.3")
 

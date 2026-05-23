@@ -5,6 +5,7 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
@@ -20,10 +21,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ui.data.MockData
@@ -33,19 +36,22 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 
 import ui.theme.LocalIsLiteMode
+import ui.theme.rememberCosmicTokens
 
 // ─── Cosmic Design Tokens ───────────────────────────────────────
-private val Chat_Bg: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFFEAE6DF) else Color(0xFF141720)
-private val Header_Bg: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFFF0F2F5) else Color(0xFF111318)
-private val Input_Bg: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFFFFFFFF) else Color(0xFF1C1F2B)
-private val Members_Bg: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFFF0F2F5) else Color(0xFF0F1117)
-private val Accent: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFF075E54) else Color(0xFF7C6AF0)
-private val AccentLight: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFF128C7E) else Color(0xFFA78BFA)
-private val AccentGhost: Color @Composable get() = if (LocalIsLiteMode.current) Color(0x1A075E54) else Color(0x1A7C6AF0)
-private val Text_White: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFF111B21) else Color(0xFFEAECF5)
-private val Text_Secondary: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFF54656F) else Color(0xFFB4B8D0)
-private val Text_Muted: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFF667781) else Color(0xFF6B7094)
-private val Separator: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFFD1D7DB) else Color(0xFF1C1F2B)
+private val Chat_Bg: Color @Composable get() = rememberCosmicTokens().Bg
+private val Accent: Color @Composable get() = rememberCosmicTokens().Accent
+private val AccentLight: Color @Composable get() = rememberCosmicTokens().AccentLight
+private val AccentGhost: Color @Composable get() = rememberCosmicTokens().AccentGhost
+private val Text_White: Color @Composable get() = rememberCosmicTokens().Text_White
+private val Text_Secondary: Color @Composable get() = rememberCosmicTokens().Text_Secondary
+private val Text_Muted: Color @Composable get() = rememberCosmicTokens().Text_Muted
+private val Separator: Color @Composable get() = rememberCosmicTokens().Separator
+private val Header_Bg: Color @Composable get() = rememberCosmicTokens().Header_Bg
+private val Input_Bg: Color @Composable get() = rememberCosmicTokens().Input_Bg
+private val Members_Bg: Color @Composable get() = rememberCosmicTokens().Members_Bg
+private val MessageHover_Bg: Color @Composable get() = rememberCosmicTokens().MessageHover_Bg
+private val CardBg: Color @Composable get() = rememberCosmicTokens().CardBg
 
 // ─── ChatScreen ──────────────────────────────────────────────────
 
@@ -64,11 +70,7 @@ fun ChatScreen(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             ChatHeader(channel)
-            // Gradient divider below header
-            Box(
-                modifier = Modifier.fillMaxWidth().height(1.dp)
-                    .background(Brush.horizontalGradient(listOf(Color.Transparent, Accent.copy(alpha = 0.3f), Color.Transparent)))
-            )
+            HorizontalDivider(color = Separator.copy(alpha = 0.2f), thickness = 1.dp)
             MessageList(messages = messages, modifier = Modifier.weight(1f))
             MessageInputBar(placeholder = "Message #${channel.name}", onSend = onSend)
         }
@@ -76,7 +78,7 @@ fun ChatScreen(
     }
 }
 
-// ─── ChatHeader ──────────────────────────────────────────────────
+// ─── ChatHeader — Discord/Revolt style ───────────────────────────
 
 @Composable
 private fun ChatHeader(channel: OrbitChannel) {
@@ -84,17 +86,16 @@ private fun ChatHeader(channel: OrbitChannel) {
         modifier = Modifier
             .fillMaxWidth()
             .background(Header_Bg)
-            .height(52.dp)
-            .padding(horizontal = 18.dp),
+            .height(48.dp)
+            .padding(horizontal = 16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            // Channel type badge or WhatsApp Avatar
             val isLiteMode = ui.theme.LocalIsLiteMode.current
             if (isLiteMode) {
                 Box(
-                    modifier = Modifier.size(36.dp).clip(CircleShape).background(Color(0xFFCFD9DF)),
+                    modifier = Modifier.size(36.dp).clip(CircleShape).background(AccentGhost),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -103,38 +104,29 @@ private fun ChatHeader(channel: OrbitChannel) {
                     )
                 }
             } else {
-                Box(
-                    modifier = Modifier
-                        .size(28.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(AccentGhost),
-                    contentAlignment = Alignment.Center
-                ) {
-                    when (channel.type) {
-                        ChannelType.TEXT -> Text(
-                            text = "#",
-                            style = MaterialTheme.typography.labelMedium.copy(
-                                fontWeight = FontWeight.ExtraBold,
-                                color = Accent
-                            )
-                        )
-                        ChannelType.VOICE -> Icon(
-                            imageVector = Icons.Default.Mic,
-                            contentDescription = null,
-                            tint = Accent,
-                            modifier = Modifier.size(15.dp)
-                        )
-                    }
+                // Channel icon — Discord uses grey hash, Revolt uses coloured
+                when (channel.type) {
+                    ChannelType.TEXT -> Icon(
+                        imageVector = Icons.Default.Tag,
+                        contentDescription = null,
+                        tint = Text_Muted,
+                        modifier = Modifier.size(20.dp).alpha(0.7f)
+                    )
+                    ChannelType.VOICE -> Icon(
+                        imageVector = Icons.Default.VolumeUp,
+                        contentDescription = null,
+                        tint = Text_Muted,
+                        modifier = Modifier.size(20.dp).alpha(0.7f)
+                    )
                 }
             }
 
-            Spacer(Modifier.width(10.dp))
+            Spacer(Modifier.width(8.dp))
             Text(
                 text = channel.name,
-                style = MaterialTheme.typography.titleMedium.copy(
+                style = MaterialTheme.typography.titleSmall.copy(
                     fontWeight = FontWeight.Bold,
-                    color = Text_White,
-                    fontSize = 15.sp
+                    color = Text_White
                 ),
                 maxLines = 1
             )
@@ -145,7 +137,7 @@ private fun ChatHeader(channel: OrbitChannel) {
                         .padding(horizontal = 12.dp)
                         .width(1.dp)
                         .height(16.dp)
-                        .background(Text_Muted.copy(alpha = 0.4f))
+                        .background(Text_Muted.copy(alpha = 0.3f))
                 )
                 Text(
                     text = channel.topic,
@@ -153,14 +145,16 @@ private fun ChatHeader(channel: OrbitChannel) {
                         color = Text_Muted,
                         fontSize = 12.sp
                     ),
-                    maxLines = 1
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
             HeaderIconBtn(Icons.Default.Search, "Search")
             HeaderIconBtn(Icons.Default.Notifications, "Notifications")
+            HeaderIconBtn(Icons.Default.PushPin, "Pins")
             HeaderIconBtn(Icons.Default.People, "Members")
         }
     }
@@ -174,12 +168,12 @@ private fun HeaderIconBtn(
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
     val tint by animateColorAsState(
-        targetValue = if (isHovered) Accent else Text_Muted,
+        targetValue = if (isHovered) Text_White else Text_Muted,
         label = "headerIconTint"
     )
     IconButton(
         onClick = {},
-        modifier = Modifier.size(30.dp),
+        modifier = Modifier.size(32.dp),
         interactionSource = interactionSource
     ) {
         Icon(icon, desc, tint = tint, modifier = Modifier.size(18.dp))
@@ -196,8 +190,8 @@ private fun MessageList(messages: List<OrbitMessage>, modifier: Modifier = Modif
     LazyColumn(
         state = listState,
         modifier = modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp)
+        contentPadding = PaddingValues(vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(0.dp)
     ) {
         items(grouped, key = { it.key }) { group ->
             when (group) {
@@ -252,7 +246,7 @@ private fun groupMessages(messages: List<OrbitMessage>): List<MessageGroup> {
     return result
 }
 
-// ─── MessageBubbleFull ───────────────────────────────────────────
+// ─── MessageBubbleFull — Discord/Revolt style ────────────────────
 
 @Composable
 private fun MessageBubbleFull(message: OrbitMessage) {
@@ -265,65 +259,156 @@ private fun MessageBubbleFull(message: OrbitMessage) {
 
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
-    val bgColor by animateColorAsState(
-        targetValue = if (isHovered) Color(0x0AFFFFFF) else Color.Transparent,
-        label = "msgHover"
-    )
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(bgColor)
-            .clickable(interactionSource = interactionSource, indication = null, onClick = {})
-            .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.Top
+    Box(
+        modifier = Modifier.fillMaxWidth()
     ) {
-        MessageAvatar(message)
-        Spacer(Modifier.width(12.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .hoverable(interactionSource)
+                .background(if (isHovered) MessageHover_Bg else Color.Transparent)
+                .padding(horizontal = 16.dp, vertical = 2.dp)
+                .padding(top = 4.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            // Avatar — 40dp circle like Discord/Revolt
+            MessageAvatar(message)
+            Spacer(Modifier.width(16.dp))
 
-        Column(modifier = Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = message.username,
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = resolveUsernameColor(message),
-                        fontSize = 14.sp
-                    )
-                )
-
-                if (message.username.contains("bot", ignoreCase = true) ||
-                    message.username.contains("Bot", ignoreCase = true)) {
-                    Spacer(Modifier.width(5.dp))
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(Brush.horizontalGradient(listOf(Accent, AccentLight)))
-                            .padding(horizontal = 5.dp, vertical = 1.dp)
-                    ) {
-                        Text(
-                            text = "APP",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 9.sp
-                            )
+            Column(modifier = Modifier.weight(1f)) {
+                // Username + timestamp row — Discord style
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = message.username,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            color = resolveUsernameColor(message),
+                            fontSize = 14.sp
                         )
+                    )
+
+                    // Bot badge — like Discord/Revolt verified badge
+                    if (message.username.contains("bot", ignoreCase = true) ||
+                        message.username.contains("Bot", ignoreCase = true)) {
+                        Spacer(Modifier.width(4.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(Accent)
+                                .padding(horizontal = 4.dp, vertical = 1.dp)
+                        ) {
+                            Text(
+                                text = "BOT",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 8.sp,
+                                    letterSpacing = 0.5.sp
+                                )
+                            )
+                        }
                     }
+
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = formatTimestamp(message.timestamp),
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            color = Text_Muted,
+                            fontSize = 10.sp
+                        )
+                    )
                 }
 
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.height(2.dp))
+
+                // Message body
                 Text(
-                    text = formatTimestamp(message.timestamp),
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        color = Text_Muted,
-                        fontSize = 10.sp
+                    text = message.body,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        color = Text_Secondary,
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp
                     )
                 )
             }
+        }
 
-            Spacer(Modifier.height(3.dp))
+        // Floating action toolbar on hover — Discord style
+        if (isHovered) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(y = (-8).dp, x = (-16).dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .border(
+                        1.dp,
+                        Separator.copy(alpha = 0.3f),
+                        RoundedCornerShape(4.dp)
+                    )
+                    .padding(horizontal = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(0.dp)
+            ) {
+                MessageActionBtn(Icons.Default.EmojiEmotions, "React")
+                MessageActionBtn(Icons.Default.Reply, "Reply")
+                MessageActionBtn(Icons.Default.Edit, "Edit")
+                MessageActionBtn(Icons.Default.MoreHoriz, "More")
+            }
+        }
+    }
+}
+
+@Composable
+private fun MessageActionBtn(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    desc: String
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isHovered by interactionSource.collectIsHoveredAsState()
+    IconButton(
+        onClick = {},
+        modifier = Modifier.size(28.dp).hoverable(interactionSource),
+        interactionSource = interactionSource
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = desc,
+            tint = if (isHovered) Text_White else Text_Muted,
+            modifier = Modifier.size(16.dp)
+        )
+    }
+}
+
+// ─── DenseMessageBody — compact follow-up (no avatar) ────────────
+
+@Composable
+private fun DenseMessageBody(message: OrbitMessage) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isHovered by interactionSource.collectIsHoveredAsState()
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .hoverable(interactionSource)
+                .background(if (isHovered) MessageHover_Bg else Color.Transparent)
+                .padding(start = 72.dp, end = 16.dp, top = 1.dp, bottom = 1.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            // Show timestamp on hover, like Discord
+            if (isHovered) {
+                Text(
+                    text = formatTimestamp(message.timestamp).replace("Today at ", ""),
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        color = Text_Muted,
+                        fontSize = 9.sp
+                    ),
+                    modifier = Modifier
+                        .width(48.dp)
+                        .offset(x = (-56).dp)
+                )
+            }
             Text(
                 text = message.body,
                 style = MaterialTheme.typography.bodyMedium.copy(
@@ -333,36 +418,28 @@ private fun MessageBubbleFull(message: OrbitMessage) {
                 )
             )
         }
-    }
-}
 
-// ─── DenseMessageBody ────────────────────────────────────────────
-
-@Composable
-private fun DenseMessageBody(message: OrbitMessage) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val isHovered by interactionSource.collectIsHoveredAsState()
-    val bgColor by animateColorAsState(
-        targetValue = if (isHovered) Color(0x0AFFFFFF) else Color.Transparent,
-        label = "denseMsgHover"
-    )
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(bgColor)
-            .clickable(interactionSource = interactionSource, indication = null, onClick = {})
-            .padding(start = 50.dp, end = 0.dp, top = 1.dp, bottom = 1.dp)
-    ) {
-        Text(
-            text = message.body,
-            style = MaterialTheme.typography.bodyMedium.copy(
-                color = Text_Secondary,
-                fontSize = 14.sp,
-                lineHeight = 20.sp
-            )
-        )
+        // Floating action toolbar on hover
+        if (isHovered) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(y = (-4).dp, x = (-16).dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .border(
+                        1.dp,
+                        Separator.copy(alpha = 0.3f),
+                        RoundedCornerShape(4.dp)
+                    )
+                    .padding(horizontal = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(0.dp)
+            ) {
+                MessageActionBtn(Icons.Default.EmojiEmotions, "React")
+                MessageActionBtn(Icons.Default.Reply, "Reply")
+                MessageActionBtn(Icons.Default.MoreHoriz, "More")
+            }
+        }
     }
 }
 
@@ -392,7 +469,7 @@ private fun MessageAvatar(message: OrbitMessage) {
     }
 }
 
-// ─── MessageInputBar ─────────────────────────────────────────────
+// ─── MessageInputBar — Discord/Revolt style ──────────────────────
 
 @Composable
 private fun MessageInputBar(placeholder: String, onSend: (String) -> Unit) {
@@ -407,25 +484,25 @@ private fun MessageInputBar(placeholder: String, onSend: (String) -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .padding(horizontal = 16.dp, vertical = 16.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
+                .clip(RoundedCornerShape(8.dp))
                 .background(Input_Bg)
-                .border(
-                    width = 1.dp,
-                    brush = Brush.horizontalGradient(listOf(Accent.copy(alpha = 0.3f), AccentLight.copy(alpha = 0.2f))),
-                    shape = RoundedCornerShape(14.dp)
-                )
-                .padding(horizontal = 12.dp, vertical = 6.dp),
+                .padding(horizontal = 4.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Attach button
-            InputIconBtn(icon = Icons.Default.AddCircle, desc = "Attach") {}
-
-            Spacer(Modifier.width(8.dp))
+            // Attach button — Discord style "+"
+            IconButton(onClick = {}, modifier = Modifier.size(36.dp)) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = "Attach",
+                    tint = Text_Muted,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
 
             BasicTextField_Compat(
                 value = text,
@@ -434,40 +511,34 @@ private fun MessageInputBar(placeholder: String, onSend: (String) -> Unit) {
                 modifier = Modifier.weight(1f)
             )
 
-            Spacer(Modifier.width(8.dp))
-
-            // Trailing buttons
-            if (text.isBlank()) {
+            // Right-side icons
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(0.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 InputIconBtn(icon = Icons.Default.EmojiEmotions, desc = "Emoji") {}
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    text = "GIF",
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        color = Text_Muted,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 11.sp
-                    ),
-                    modifier = Modifier.clickable {}
-                )
-            } else {
-                // Send button — accent pill
-                Box(
-                    modifier = Modifier
-                        .size(30.dp)
-                        .clip(CircleShape)
-                        .background(Brush.linearGradient(listOf(Accent, AccentLight)))
-                        .clickable {
+                InputIconBtn(icon = Icons.Default.Gif, desc = "GIF") {}
+
+                // Send button — visible only when text is non-blank
+                AnimatedVisibility(
+                    visible = text.isNotBlank(),
+                    enter = fadeIn() + expandHorizontally(),
+                    exit = fadeOut() + shrinkHorizontally()
+                ) {
+                    IconButton(
+                        onClick = {
                             onSend(text)
                             text = ""
                         },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Send,
-                        contentDescription = "Send",
-                        tint = Color.White,
-                        modifier = Modifier.size(16.dp)
-                    )
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Send,
+                            contentDescription = "Send",
+                            tint = Accent,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
             }
         }
@@ -483,17 +554,21 @@ private fun InputIconBtn(
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
     val tint by animateColorAsState(
-        targetValue = if (isHovered) Accent else Text_Muted,
+        targetValue = if (isHovered) Text_White else Text_Muted,
         label = "inputIconTint"
     )
-    Icon(
-        imageVector = icon,
-        contentDescription = desc,
-        tint = tint,
-        modifier = Modifier
-            .size(22.dp)
-            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
-    )
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier.size(36.dp).hoverable(interactionSource),
+        interactionSource = interactionSource
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = desc,
+            tint = tint,
+            modifier = Modifier.size(20.dp)
+        )
+    }
 }
 
 // Thin wrapper so we can keep using OutlinedTextField inside input area without outline
@@ -533,7 +608,7 @@ private fun BasicTextField_Compat(
     )
 }
 
-// ─── MemberListPanel ─────────────────────────────────────────────
+// ─── MemberListPanel — Discord/Revolt style ──────────────────────
 
 @Composable
 private fun MemberListPanel() {
@@ -545,43 +620,13 @@ private fun MemberListPanel() {
 
     Column(
         modifier = Modifier
-            .width(200.dp)
+            .width(240.dp)
             .fillMaxHeight()
             .background(Members_Bg)
     ) {
-        // Header
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = Icons.Default.People,
-                contentDescription = null,
-                tint = Text_Muted,
-                modifier = Modifier.size(14.dp)
-            )
-            Spacer(Modifier.width(6.dp))
-            Text(
-                text = "MEMBERS — ${allUsers.size}",
-                style = MaterialTheme.typography.labelSmall.copy(
-                    fontWeight = FontWeight.Bold,
-                    color = Text_Muted,
-                    letterSpacing = 0.8.sp,
-                    fontSize = 10.sp
-                )
-            )
-        }
-
-        Box(
-            modifier = Modifier.fillMaxWidth().height(1.dp)
-                .background(Brush.horizontalGradient(listOf(Color.Transparent, Separator, Color.Transparent)))
-        )
-
         LazyColumn(
             modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(vertical = 6.dp),
+            contentPadding = PaddingValues(top = 16.dp, bottom = 8.dp),
             verticalArrangement = Arrangement.spacedBy(1.dp)
         ) {
             if (online.isNotEmpty()) {
@@ -609,12 +654,12 @@ private fun MemberSectionLabel(label: String) {
     Text(
         text = label,
         style = MaterialTheme.typography.labelSmall.copy(
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.SemiBold,
             color = Text_Muted,
-            fontSize = 10.sp,
-            letterSpacing = 0.6.sp
+            fontSize = 11.sp,
+            letterSpacing = 0.5.sp
         ),
-        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+        modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)
     )
 }
 
@@ -623,21 +668,22 @@ private fun MemberItem(user: OrbitUser) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
     val bgColor by animateColorAsState(
-        targetValue = if (isHovered) Color(0x0EFFFFFF) else Color.Transparent,
+        targetValue = if (isHovered) MessageHover_Bg else Color.Transparent,
         label = "memberHover"
     )
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
+            .clip(RoundedCornerShape(4.dp))
             .background(bgColor)
+            .hoverable(interactionSource)
             .clickable(interactionSource = interactionSource, indication = null, onClick = {})
-            .padding(horizontal = 10.dp, vertical = 4.dp),
+            .padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Mini avatar + status dot
-        Box(modifier = Modifier.size(28.dp)) {
+        // Avatar + status dot
+        Box(modifier = Modifier.size(32.dp)) {
             val hue   = remember(user.id) { Math.abs(user.id.hashCode()) % 360 }
             val color = remember(hue) { hslToColor(hue.toFloat()) }
             Box(
@@ -652,32 +698,36 @@ private fun MemberItem(user: OrbitUser) {
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontWeight = FontWeight.Bold,
                         color = Color.White,
-                        fontSize = 10.sp
+                        fontSize = 11.sp
                     )
                 )
             }
             val dotColor = memberStatusColor(user.status)
             Box(
                 modifier = Modifier
-                    .size(9.dp)
+                    .size(10.dp)
                     .align(Alignment.BottomEnd)
-                    .border(1.5.dp, Members_Bg, CircleShape)
-                    .padding(1.5.dp)
+                    .border(2.dp, Members_Bg, CircleShape)
+                    .padding(2.dp)
                     .clip(CircleShape)
                     .background(dotColor)
             )
         }
 
         Spacer(Modifier.width(8.dp))
-        Text(
-            text = user.displayName,
-            style = MaterialTheme.typography.bodySmall.copy(
-                color = if (user.status == UserStatus.OFFLINE) Text_Muted else Text_Secondary,
-                fontSize = 13.sp,
-                fontWeight = if (isHovered) FontWeight.Medium else FontWeight.Normal
-            ),
-            maxLines = 1
-        )
+        Column {
+            Text(
+                text = user.displayName,
+                style = MaterialTheme.typography.bodySmall.copy(
+                    color = if (user.status == UserStatus.OFFLINE)
+                        Text_Muted.copy(alpha = 0.6f) else Text_Secondary,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Normal
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
 
@@ -704,7 +754,7 @@ fun ChatEmptyState(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Giant glowing # icon
+            // Giant hash icon — Discord welcome style
             Box(
                 modifier = Modifier
                     .size(80.dp)
@@ -712,13 +762,11 @@ fun ChatEmptyState(
                     .background(Brush.radialGradient(listOf(Accent.copy(alpha = 0.3f), Color.Transparent))),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = "#",
-                    style = MaterialTheme.typography.headlineLarge.copy(
-                        fontWeight = FontWeight.ExtraBold,
-                        brush = Brush.verticalGradient(listOf(Accent, AccentLight)),
-                        fontSize = 40.sp
-                    )
+                Icon(
+                    imageVector = Icons.Default.Tag,
+                    contentDescription = null,
+                    tint = Accent,
+                    modifier = Modifier.size(40.dp)
                 )
             }
 
@@ -726,52 +774,57 @@ fun ChatEmptyState(
                 text = "Welcome to $serverName",
                 style = MaterialTheme.typography.headlineMedium.copy(
                     fontWeight = FontWeight.ExtraBold,
-                    brush = Brush.horizontalGradient(listOf(Text_White, AccentLight))
+                    color = Text_White
                 )
             )
 
             Text(
-                text = "Pick a channel below to start the conversation ✨",
+                text = "Pick a channel to start chatting",
                 style = MaterialTheme.typography.bodyMedium.copy(color = Text_Muted)
             )
 
             Spacer(Modifier.height(4.dp))
 
-            // Channel list cards
+            // Channel cards
             val textChannels = channels.filter { it.type == ChannelType.TEXT }
             Column(
                 modifier = Modifier.width(360.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 textChannels.take(6).forEach { ch ->
+                    val interactionSource = remember { MutableInteractionSource() }
+                    val isHovered by interactionSource.collectIsHoveredAsState()
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Color(0xFF1C1F2B))
-                            .border(1.dp, Color(0xFF252838), RoundedCornerShape(10.dp))
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(
+                                if (isHovered) MaterialTheme.colorScheme.surfaceContainerHigh
+                                else MaterialTheme.colorScheme.surfaceContainer
+                            )
+                            .hoverable(interactionSource)
                             .clickable { onChannelClick(ch.id) }
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "# ",
-                            style = MaterialTheme.typography.bodyMedium.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = Accent
-                            )
+                        Icon(
+                            imageVector = Icons.Default.Tag,
+                            contentDescription = null,
+                            tint = Text_Muted,
+                            modifier = Modifier.size(18.dp)
                         )
+                        Spacer(Modifier.width(8.dp))
                         Text(
                             text = ch.name,
                             style = MaterialTheme.typography.bodyMedium.copy(
-                                color = Text_Secondary,
+                                color = if (isHovered) Text_White else Text_Secondary,
                                 fontWeight = FontWeight.Medium
                             )
                         )
                         if (ch.topic.isNotBlank()) {
                             Spacer(Modifier.width(8.dp))
                             Text(
-                                text = "— ${ch.topic}",
+                                text = ch.topic,
                                 style = MaterialTheme.typography.bodySmall.copy(color = Text_Muted),
                                 maxLines = 1,
                                 modifier = Modifier.weight(1f)
@@ -856,8 +909,8 @@ fun VoiceChannelPlaceholder(channel: OrbitChannel) {
 
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Brush.horizontalGradient(listOf(Accent, AccentLight)))
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Accent)
                     .clickable {}
                     .padding(horizontal = 24.dp, vertical = 10.dp)
             ) {
@@ -916,7 +969,7 @@ private fun hueToRgb(p: Float, q: Float, t: Float): Float {
 
 @Composable
 private fun WhatsAppMessageBubble(message: OrbitMessage, isCurrentUser: Boolean) {
-    val bubbleColor = if (isCurrentUser) Color(0xFFD9FDD3) else Color(0xFFFFFFFF)
+    val bubbleColor = if (isCurrentUser) Accent.copy(alpha = 0.15f) else CardBg
     val alignment = if (isCurrentUser) Alignment.End else Alignment.Start
 
     Column(
@@ -938,7 +991,7 @@ private fun WhatsAppMessageBubble(message: OrbitMessage, isCurrentUser: Boolean)
                 Text(
                     text = message.body,
                     style = MaterialTheme.typography.bodyMedium.copy(
-                        color = Color(0xFF111B21),
+                        color = Text_White,
                         fontSize = 15.sp,
                         lineHeight = 20.sp
                     ),
@@ -947,7 +1000,7 @@ private fun WhatsAppMessageBubble(message: OrbitMessage, isCurrentUser: Boolean)
                 Text(
                     text = formatTimestamp(message.timestamp).replace("Today at ", ""),
                     style = MaterialTheme.typography.labelSmall.copy(
-                        color = Color(0xFF667781),
+                        color = Text_Muted,
                         fontSize = 10.sp
                     ),
                     modifier = Modifier.padding(bottom = 2.dp)
@@ -968,7 +1021,7 @@ private fun WhatsAppInputBar(placeholder: String, onSend: (String) -> Unit) {
             modifier = Modifier
                 .weight(1f)
                 .clip(RoundedCornerShape(24.dp))
-                .background(Color.White)
+                .background(CardBg)
                 .padding(horizontal = 12.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -988,7 +1041,7 @@ private fun WhatsAppInputBar(placeholder: String, onSend: (String) -> Unit) {
             modifier = Modifier
                 .size(48.dp)
                 .clip(CircleShape)
-                .background(Color(0xFF00A884))
+                .background(Accent)
                 .clickable {
                     if (text.isNotBlank()) {
                         onSend(text)

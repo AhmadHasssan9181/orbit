@@ -21,4 +21,3 @@ val GoogleTypography = Typography()
 
 enum class UserInterfaceFont { Default, GoogleSansFlex }
 fun getDefaultFont(): UserInterfaceFont = UserInterfaceFont.Default
-
