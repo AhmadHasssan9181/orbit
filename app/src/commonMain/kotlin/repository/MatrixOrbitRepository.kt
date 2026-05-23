@@ -1,15 +1,16 @@
 package repository
 
-import de.connect2x.trixnity.client.*
-import de.connect2x.trixnity.client.room.message.text
-import de.connect2x.trixnity.client.store.repository.room.room as createRoomRepositoriesModule
-import de.connect2x.trixnity.client.store.TimelineEvent
-import de.connect2x.trixnity.client.store.roomId
+import de.connect2x.trixnity.client.CryptoDriverModule
+import de.connect2x.trixnity.client.MatrixClient
+import de.connect2x.trixnity.client.MediaStoreModule
+import de.connect2x.trixnity.client.RepositoriesModule
+import de.connect2x.trixnity.client.create
 import de.connect2x.trixnity.client.cryptodriver.vodozemac.vodozemac
+import de.connect2x.trixnity.client.flattenValues
 import de.connect2x.trixnity.client.media.okio.okio
-import okio.Path.Companion.toPath
-import de.connect2x.trixnity.client.store.repository.room.room
-
+import de.connect2x.trixnity.client.room
+import de.connect2x.trixnity.client.room.message.text
+import de.connect2x.trixnity.client.store.roomId
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
@@ -28,13 +29,10 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.firstOrNull
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.Instant
@@ -54,7 +52,9 @@ import ui.model.OrbitMessage
 import ui.model.OrbitServer
 import ui.model.OrbitUser
 import ui.model.UserStatus
+import util.getMediaStorePath
 import util.openUrlInBrowser
+import de.connect2x.trixnity.client.store.repository.room.room as createRoomRepositoriesModule
 
 // ─────────────────────────────────────────────────────────────
 // Matrix API DTOs (minimal, for the endpoints we use)
@@ -309,7 +309,7 @@ class MatrixOrbitRepository(
             )
             trixnityClient = MatrixClient.create(
                 repositoriesModule = RepositoriesModule.createRoomRepositoriesModule(util.getRoomDatabaseBuilder()),
-                mediaStoreModule = MediaStoreModule.okio("orbit_media".toPath()),
+                MediaStoreModule.okio(getMediaStorePath()),
                 cryptoDriverModule = CryptoDriverModule.vodozemac(),
                 authProviderData = authProviderData
             ).getOrThrow()
@@ -1044,7 +1044,7 @@ class MatrixOrbitRepository(
                 )
                 trixnityClient = MatrixClient.create(
                     repositoriesModule = RepositoriesModule.createRoomRepositoriesModule(util.getRoomDatabaseBuilder()),
-                    mediaStoreModule = MediaStoreModule.okio("orbit_media".toPath()),
+                    MediaStoreModule.okio(getMediaStorePath()),
                     cryptoDriverModule = CryptoDriverModule.vodozemac(),
                     authProviderData = authProviderData
                 ).getOrThrow()

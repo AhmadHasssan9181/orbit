@@ -2,6 +2,7 @@ package com.noobdev.orbit
 
 import android.app.Application
 import repository.initSettings
+import util.appContext
 
 class OrbitApp : Application() {
     companion object {
@@ -11,6 +12,7 @@ class OrbitApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        appContext = this
         instance = this
         initSettings(this)
     }
