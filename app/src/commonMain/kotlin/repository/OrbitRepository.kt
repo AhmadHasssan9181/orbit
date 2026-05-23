@@ -27,6 +27,7 @@ interface OrbitRepository {
 
     // ─── Servers / Spaces ────────────────────────────────────
     suspend fun getSpaces(): List<OrbitServer>
+    suspend fun joinSpace(roomIdOrAlias: String): Result<String>
 
     suspend fun createSpace(name: String): Result<String>
 
@@ -43,6 +44,8 @@ interface OrbitRepository {
     ): Result<String> // returns channelId (room_id)
 
     suspend fun getChannelById(channelId: String): OrbitChannel?
+    
+    suspend fun getRoomMembers(roomId: String): List<OrbitUser>
 
     // ─── Messages ────────────────────────────────────────────
     suspend fun getMessagesForChannel(

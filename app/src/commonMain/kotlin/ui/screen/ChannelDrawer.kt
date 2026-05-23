@@ -28,7 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import ui.data.MockData
+// Removed MockData
 import ui.model.*
 
 import ui.theme.LocalIsLiteMode
@@ -211,7 +211,6 @@ private fun DmListContent(
     onChannelClick: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val allUsers = MockData.MockUsers
     val isLiteMode = ui.theme.LocalIsLiteMode.current
     LazyColumn(
         modifier = modifier,
@@ -232,35 +231,16 @@ private fun DmListContent(
                 )
             }
         }
-        items(allUsers, key = { it.id }) { user ->
-            val dmChannel = channels.find { it.name == user.displayName }
-            val mockLastMsg = when (user.displayName) {
-                "Nova" -> "The dense message mode is such a smart UX choice."
-                "Phoenix" -> "Let's build something cool together!"
-                "Orbit Bot" -> "That's a great idea â€” I'll throw together a prototype."
-                "Stella" -> "The Lite Mode gives serious WhatsApp vibes â€” in a good way."
-                "Raven" -> "Matrix backend here we come \uD83C\uDFAF"
-                else -> "Aoa, sir \uD83D\uDD38Subject: Update..."
-            }
-            val mockTime = when(user.displayName) {
-                "Nova" -> "2:46 PM"
-                "Phoenix" -> "2:52 PM"
-                "Orbit Bot" -> "3:10 PM"
-                "Stella" -> "3:04 PM"
-                "Raven" -> "2:58 PM"
-                else -> "2:04 PM"
-            }
-            dmChannel?.let { ch ->
-                DmItem(
-                    displayName = user.displayName,
-                    avatarColor = user.avatarColor,
-                    status = user.status,
-                    isSelected = ch.id == selectedChannelId,
-                    onClick = { onChannelClick(ch.id) },
-                    lastMessage = mockLastMsg,
-                    time = mockTime
-                )
-            }
+        items(channels, key = { it.id }) { ch ->
+            DmItem(
+                displayName = ch.name,
+                avatarColor = 0xFF7C6AF0.toInt(), // Replace with hashToColor or actual if you have it
+                status = UserStatus.ONLINE, // Placeholder
+                isSelected = ch.id == selectedChannelId,
+                onClick = { onChannelClick(ch.id) },
+                lastMessage = ch.topic.ifBlank { "Tap to chat with ${ch.name}" },
+                time = ""
+            )
         }
     }
 }

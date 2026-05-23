@@ -29,7 +29,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import ui.data.MockData
+// Remove MockData
 import ui.model.*
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
@@ -59,6 +59,8 @@ private val CardBg: Color @Composable get() = rememberCosmicTokens().CardBg
 fun ChatScreen(
     channel: OrbitChannel,
     messages: List<OrbitMessage>,
+    members: List<OrbitUser>,
+    currentUser: OrbitUser?,
     onSend: (String) -> Unit,
     showMemberList: Boolean = true,
     modifier: Modifier = Modifier
@@ -71,10 +73,10 @@ fun ChatScreen(
         Column(modifier = Modifier.weight(1f)) {
             ChatHeader(channel)
             HorizontalDivider(color = Separator.copy(alpha = 0.2f), thickness = 1.dp)
-            MessageList(messages = messages, modifier = Modifier.weight(1f))
+            MessageList(messages = messages, currentUser = currentUser, modifier = Modifier.weight(1f))
             MessageInputBar(placeholder = "Message #${channel.name}", onSend = onSend)
         }
-        if (showMemberList) MemberListPanel()
+        if (showMemberList) MemberListPanel(members = members)
     }
 }
 
@@ -183,7 +185,7 @@ private fun HeaderIconBtn(
 // ─── MessageList ─────────────────────────────────────────────────
 
 @Composable
-private fun MessageList(messages: List<OrbitMessage>, modifier: Modifier = Modifier) {
+private fun MessageList(messages: List<OrbitMessage>, currentUser: OrbitUser?, modifier: Modifier = Modifier) {
     val listState = rememberLazyListState()
     val grouped   = groupMessages(messages)
 
@@ -195,14 +197,14 @@ private fun MessageList(messages: List<OrbitMessage>, modifier: Modifier = Modif
     ) {
         items(grouped, key = { it.key }) { group ->
             when (group) {
-                is MessageGroup.Single -> MessageBubbleFull(group.message)
+                is MessageGroup.Single -> MessageBubbleFull(group.message, currentUser)
                 is MessageGroup.Dense  -> {
                     if (ui.theme.LocalIsLiteMode.current) {
                         for (msg in group.messages) {
-                            MessageBubbleFull(msg)
+                            MessageBubbleFull(msg, currentUser)
                         }
                     } else {
-                        MessageBubbleFull(group.messages[0])
+                        MessageBubbleFull(group.messages[0], currentUser)
                         for (i in 1 until group.messages.size) {
                             DenseMessageBody(group.messages[i])
                         }
@@ -249,10 +251,10 @@ private fun groupMessages(messages: List<OrbitMessage>): List<MessageGroup> {
 // ─── MessageBubbleFull — Discord/Revolt style ────────────────────
 
 @Composable
-private fun MessageBubbleFull(message: OrbitMessage) {
+private fun MessageBubbleFull(message: OrbitMessage, currentUser: OrbitUser?) {
     val isLiteMode = ui.theme.LocalIsLiteMode.current
     if (isLiteMode) {
-        val isCurrentUser = message.userId == MockData.CurrentUser.id
+        val isCurrentUser = currentUser != null && message.userId == currentUser.id
         WhatsAppMessageBubble(message, isCurrentUser)
         return
     }
@@ -611,8 +613,8 @@ private fun BasicTextField_Compat(
 // ─── MemberListPanel — Discord/Revolt style ──────────────────────
 
 @Composable
-private fun MemberListPanel() {
-    val allUsers  = MockData.MockUsers + MockData.CurrentUser
+private fun MemberListPanel(members: List<OrbitUser>) {
+    val allUsers  = members
     val online    = allUsers.filter { it.status == UserStatus.ONLINE }
     val idle      = allUsers.filter { it.status == UserStatus.IDLE }
     val dnd       = allUsers.filter { it.status == UserStatus.DO_NOT_DISTURB }
@@ -907,15 +909,18 @@ fun VoiceChannelPlaceholder(channel: OrbitChannel) {
                 style = MaterialTheme.typography.bodyMedium.copy(color = Text_Muted)
             )
 
+            val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(4.dp))
                     .background(Accent)
-                    .clickable {}
+                    .clickable {
+                        uriHandler.openUri("https://app.element.io/#/room/${channel.id}")
+                    }
                     .padding(horizontal = 24.dp, vertical = 10.dp)
             ) {
                 Text(
-                    text = "Join Voice",
+                    text = "Join Voice in Element Web",
                     style = MaterialTheme.typography.labelLarge.copy(
                         fontWeight = FontWeight.Bold,
                         color = Color.White

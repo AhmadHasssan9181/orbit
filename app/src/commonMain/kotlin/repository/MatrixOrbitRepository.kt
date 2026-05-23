@@ -16,6 +16,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -72,6 +73,11 @@ data class SendResponse(
 )
 
 @Serializable
+data class JoinResponse(
+    @SerialName("room_id") val roomId: String? = null
+)
+
+@Serializable
 data class ProfileResponse(
     val displayname: String? = null,
     @SerialName("avatar_url") val avatarUrl: String? = null
@@ -97,10 +103,23 @@ data class SpaceHierarchyResponse(
 )
 
 // ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
 // Live message observer state
 // ─────────────────────────────────────────────────────────────
 private class LiveMessageState(
     val flow: MutableSharedFlow<List<OrbitMessage>>
+)
+
+// ─────────────────────────────────────────────────────────────
+// Room cache state
+// ─────────────────────────────────────────────────────────────
+data class RoomMetadata(
+    val id: String,
+    val name: String,
+    val topic: String,
+    val isDM: Boolean,
+    val isSpace: Boolean,
+    val memberCount: Int
 )
 
 /**
@@ -122,6 +141,11 @@ class MatrixOrbitRepository(
     private var _accessToken: String? = null
     @Volatile
     private var _userId: String? = null
+
+    // Cache of room metadata extracted from sync
+    private val _roomCache = mutableMapOf<String, RoomMetadata>()
+    private val _roomListFlow = MutableSharedFlow<List<OrbitServer>>(replay = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    private val _channelListFlow = MutableSharedFlow<List<OrbitChannel>>(replay = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
     fun setAccessToken(token: String) {
         _accessToken = token
@@ -149,8 +173,9 @@ class MatrixOrbitRepository(
     // ─── Auth helpers ──────────────────────────────────────────
     private fun authHeader(): String? = _accessToken?.let { "Bearer $it" }
 
-    private fun fullUrl(path: String): String {
-        return "${homeserverUrl.trimEnd('/')}${CLIENT_PREFIX}$path"
+    private fun fullUrl(path: String, v1: Boolean = false): String {
+        val prefix = if (v1) "/_matrix/client/v1" else CLIENT_PREFIX
+        return "${homeserverUrl.trimEnd('/')}${prefix}$path"
     }
 
     private suspend inline fun <reified T : Any> matrixGet(path: String): T {
@@ -360,50 +385,57 @@ class MatrixOrbitRepository(
     // ─── Servers / Spaces ──────────────────────────────────────
     override suspend fun getSpaces(): List<OrbitServer> {
         _accessToken ?: return emptyList()
-        try {
-            val resp: JsonObject = client.get(fullUrl("/spaces")) {
+        val rooms = synchronized(_roomCache) { _roomCache.values.toList() }
+        
+        val servers = mutableListOf<OrbitServer>()
+        val dms = rooms.filter { it.isDM }
+        val spaces = rooms.filter { it.isSpace }
+        val flatRooms = rooms.filter { !it.isSpace && !it.isDM }
+        
+        if (dms.isNotEmpty()) {
+            servers.add(OrbitServer(
+                id = "dm",
+                name = "Direct Messages",
+                iconColor = 0xFF7C6AF0.toInt(),
+                description = "Your private conversations",
+                isDM = true
+            ))
+        }
+        
+        // Add spaces as servers
+        spaces.forEach { space ->
+            servers.add(OrbitServer(
+                id = space.id,
+                name = space.name,
+                iconColor = hashToColor(space.id),
+                description = space.topic,
+                isDM = false
+            ))
+        }
+        
+        // Add flat rooms as a default server if there are any
+        if (flatRooms.isNotEmpty()) {
+            servers.add(OrbitServer(
+                id = "rooms",
+                name = "Rooms",
+                iconColor = 0xFF34D399.toInt(),
+                description = "General rooms",
+                isDM = false
+            ))
+        }
+        
+        return servers
+    }
+
+    override suspend fun joinSpace(roomIdOrAlias: String): Result<String> {
+        return try {
+            val encodedId = roomIdOrAlias.replace("#", "%23")
+            val resp: JoinResponse = client.post(fullUrl("/join/$encodedId")) {
                 authHeader()?.let { header(HttpHeaders.Authorization, it) }
             }.body()
-
-            val rooms = mutableListOf<OrbitServer>()
-            val roomSummaries = (resp["rooms"] as? JsonArray)?.toList() ?: emptyList()
-
-            for (roomEl in roomSummaries) {
-                val obj = roomEl as? JsonObject ?: continue
-                val roomId = (obj["room_id"] as? JsonPrimitive)?.content ?: continue
-                val name = (obj["name"] as? JsonPrimitive)?.content ?: "Unnamed Space"
-                val topic = (obj["topic"] as? JsonPrimitive)?.content ?: ""
-
-                rooms.add(OrbitServer(
-                    id = roomId,
-                    name = name,
-                    iconColor = hashToColor(roomId),
-                    description = topic,
-                    isDM = false
-                ))
-            }
-            return rooms
+            Result.success(resp.roomId ?: roomIdOrAlias)
         } catch (e: Exception) {
-            return try {
-                val resp: JsonObject = client.get(fullUrl("/joined_rooms")) {
-                    authHeader()?.let { header(HttpHeaders.Authorization, it) }
-                }.body()
-                val roomIds = ((resp["joined_rooms"] as? JsonArray)?.map {
-                    (it as? JsonPrimitive)?.content
-                }.orEmpty().filterNotNull())
-
-                roomIds.map { roomId ->
-                    OrbitServer(
-                        id = roomId,
-                        name = "Room ${roomId.takeLast(8)}",
-                        iconColor = hashToColor(roomId),
-                        description = "",
-                        isDM = false
-                    )
-                }
-            } catch (_: Exception) {
-                emptyList()
-            }
+            Result.failure(e)
         }
     }
 
@@ -444,32 +476,75 @@ class MatrixOrbitRepository(
 
     // ─── Channels / Rooms ──────────────────────────────────────
     override suspend fun getChannelsForSpace(spaceId: String): List<OrbitChannel> {
-        return try {
-            val hierarchy: SpaceHierarchyResponse = client.get(fullUrl("/spaces/$spaceId")) {
-                authHeader()?.let { header(HttpHeaders.Authorization, it) }
-            }.body()
-
-            hierarchy.rooms.mapNotNull { room ->
-                if (room.roomId == spaceId) return@mapNotNull null
-                val roomId = room.roomId ?: return@mapNotNull null
-                val name = extractChannelName(room.name ?: room.canonicalAlias ?: roomId)
-                val topic = room.topic ?: ""
-
-                val isVoice = room.encryption != null ||
-                    (room.name?.contains("voice", ignoreCase = true) == true) ||
-                    (room.name?.contains("call", ignoreCase = true) == true)
-
-                OrbitChannel(
-                    id = roomId,
-                    name = name,
-                    type = if (isVoice) ChannelType.VOICE else ChannelType.TEXT,
-                    categoryId = spaceId,
-                    topic = topic
-                )
+        val rooms = synchronized(_roomCache) { _roomCache.values.toList() }
+        
+        val channels = mutableListOf<OrbitChannel>()
+        
+        when (spaceId) {
+            "dm" -> {
+                rooms.filter { it.isDM }.forEach { room ->
+                    channels.add(OrbitChannel(
+                        id = room.id,
+                        name = extractChannelName(room.name.ifBlank { room.id }),
+                        type = ChannelType.TEXT,
+                        categoryId = "dm",
+                        topic = room.topic
+                    ))
+                }
             }
-        } catch (e: Exception) {
-            emptyList()
+            "rooms" -> {
+                rooms.filter { !it.isDM && !it.isSpace }.forEach { room ->
+                    channels.add(OrbitChannel(
+                        id = room.id,
+                        name = extractChannelName(room.name.ifBlank { room.id }),
+                        type = ChannelType.TEXT,
+                        categoryId = "rooms",
+                        topic = room.topic
+                    ))
+                }
+            }
+            else -> {
+                // If it's a real matrix space, ideally we fetch hierarchy. 
+                // For now, if we don't have hierarchy relationships mapped properly, 
+                // we'll fetch them from the /hierarchy endpoint.
+                try {
+                    val hierarchy: SpaceHierarchyResponse = client.get(fullUrl("/hierarchy/$spaceId", v1 = true)) {
+                        authHeader()?.let { header(HttpHeaders.Authorization, it) }
+                    }.body()
+        
+                    hierarchy.rooms.forEach { room ->
+                        if (room.roomId == spaceId) return@forEach
+                        val roomId = room.roomId ?: return@forEach
+                        val name = extractChannelName(room.name ?: room.canonicalAlias ?: roomId)
+                        val topic = room.topic ?: ""
+        
+                        val isVoice = room.encryption != null ||
+                            (room.name?.contains("voice", ignoreCase = true) == true) ||
+                            (room.name?.contains("call", ignoreCase = true) == true)
+        
+                        channels.add(OrbitChannel(
+                            id = roomId,
+                            name = name,
+                            type = if (isVoice) ChannelType.VOICE else ChannelType.TEXT,
+                            categoryId = spaceId,
+                            topic = topic
+                        ))
+                    }
+                } catch (e: Exception) {
+                    // Fallback to cache if hierarchy fails
+                    rooms.filter { !it.isDM && !it.isSpace }.forEach { room ->
+                        channels.add(OrbitChannel(
+                            id = room.id,
+                            name = extractChannelName(room.name.ifBlank { room.id }),
+                            type = ChannelType.TEXT,
+                            categoryId = "rooms",
+                            topic = room.topic
+                        ))
+                    }
+                }
+            }
         }
+        return channels
     }
 
     override suspend fun createChannel(
@@ -533,6 +608,29 @@ class MatrixOrbitRepository(
         }
     }
 
+    override suspend fun getRoomMembers(roomId: String): List<OrbitUser> {
+        return try {
+            val response = matrixGet<TimelineResponse>("/rooms/$roomId/members?membership=join")
+            response.events.mapNotNull { event ->
+                if (event.type != "m.room.member") return@mapNotNull null
+                val userId = event.stateKey ?: return@mapNotNull null
+                val displayName = (event.content as? JsonObject)?.get("displayname")?.let {
+                    (it as? JsonPrimitive)?.content
+                } ?: userId
+
+                OrbitUser(
+                    id = userId,
+                    username = userId,
+                    displayName = displayName,
+                    avatarColor = hashToColor(userId),
+                    status = UserStatus.ONLINE // Fallback status
+                )
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
     // ─── Messages ──────────────────────────────────────────────
     override suspend fun getMessagesForChannel(
         channelId: String,
@@ -579,6 +677,7 @@ class MatrixOrbitRepository(
             val resp: SendResponse = client.post(
                 fullUrl("/rooms/$channelId/send/m.room.message/$txnId")
             ) {
+                authHeader()?.let { header(HttpHeaders.Authorization, it) }
                 contentType(ContentType.Application.Json)
                 setBody(buildJsonObject {
                     put("msgtype", "m.text")
@@ -596,6 +695,7 @@ class MatrixOrbitRepository(
             val txnId = "orbit-edit-${System.currentTimeMillis()}"
             val roomId = extractRoomFromEventId(eventId)
             client.put(fullUrl("/rooms/$roomId/send/m.room.message/$txnId")) {
+                authHeader()?.let { header(HttpHeaders.Authorization, it) }
                 contentType(ContentType.Application.Json)
                 setBody(buildJsonObject {
                     put("msgtype", "m.text")
@@ -715,13 +815,11 @@ class MatrixOrbitRepository(
     }
 
     override fun observeChannelList(spaceId: String): Flow<List<OrbitChannel>> {
-        val _flow = MutableSharedFlow<List<OrbitChannel>>(replay = 0, extraBufferCapacity = 1)
-        GlobalScope.launch {
-            try {
-                _flow.emit(getChannelsForSpace(spaceId))
-            } catch (_: Exception) {}
-        }
-        return _flow.asSharedFlow()
+        return _channelListFlow.asSharedFlow()
+    }
+    
+    fun observeSpaces(): Flow<List<OrbitServer>> {
+        return _roomListFlow.asSharedFlow()
     }
 
     /**
@@ -752,21 +850,50 @@ class MatrixOrbitRepository(
         }
     }
 
-    private fun processSyncEvents(events: JsonElement?) {
-        val roomsObj = events?.let { it as? JsonObject }
-            ?.get("rooms") as? JsonObject ?: return
+    private fun processSyncEvents(roomsObj: JsonElement?) {
+        if (roomsObj !is JsonObject) return
 
-        val joinRooms = roomsObj.get("join") as? JsonArray ?: return
+        val joinRooms = roomsObj.get("join") as? JsonObject ?: return
+        
+        var roomsUpdated = false
 
-        for (roomEl in joinRooms) {
-            val roomData = (roomEl as? JsonObject)?.get("state") as? JsonObject ?: continue
-            val roomId = (roomData["room_id"]?.let { (it as JsonPrimitive).content }) ?: continue
+        for ((roomId, roomDataEl) in joinRooms) {
+            val roomData = roomDataEl as? JsonObject ?: continue
+            val state = (roomData["state"] as? JsonObject)?.get("events") as? JsonArray
+            val timelineObj = roomData["timeline"] as? JsonObject
+            val timelineEvents = timelineObj?.get("events") as? JsonArray
 
-            val timeline = (roomData.get("timeline") as? JsonObject)
-                ?.get("events") as? JsonArray ?: continue
+            // Process State to update Cache
+            var name = _roomCache[roomId]?.name ?: roomId.takeLast(8)
+            var topic = _roomCache[roomId]?.topic ?: ""
+            var isSpace = _roomCache[roomId]?.isSpace ?: false
+            val isDM = _roomCache[roomId]?.isDM ?: false
 
+            val allStateEvents = mutableListOf<JsonObject>()
+            state?.forEach { if (it is JsonObject) allStateEvents.add(it) }
+            timelineEvents?.forEach { if (it is JsonObject && it["state_key"] != null) allStateEvents.add(it) }
+
+            for (event in allStateEvents) {
+                val type = (event["type"] as? JsonPrimitive)?.content ?: continue
+                val content = event["content"] as? JsonObject
+                when (type) {
+                    "m.room.name" -> name = (content?.get("name") as? JsonPrimitive)?.content ?: name
+                    "m.room.topic" -> topic = (content?.get("topic") as? JsonPrimitive)?.content ?: topic
+                    "m.room.create" -> isSpace = (content?.get("type") as? JsonPrimitive)?.content == "m.space"
+                }
+            }
+            
+            // Check DM via m.direct (For now, simplified, but we keep the current isDM flag)
+            
+            val updatedMetadata = RoomMetadata(roomId, name, topic, isDM, isSpace, 0)
+            if (_roomCache[roomId] != updatedMetadata) {
+                synchronized(_roomCache) { _roomCache[roomId] = updatedMetadata }
+                roomsUpdated = true
+            }
+
+            if (timelineEvents == null) continue
             val messages = mutableListOf<OrbitMessage>()
-            for (eventEl in timeline) {
+            for (eventEl in timelineEvents) {
                 val event = eventEl as? JsonObject ?: continue
                 val type = (event["type"]?.let { (it as JsonPrimitive).content }) ?: continue
                 if (type != "m.room.message") continue
@@ -791,6 +918,12 @@ class MatrixOrbitRepository(
 
             synchronized(liveMessageStates) {
                 liveMessageStates[roomId]?.flow?.tryEmit(messages)
+            }
+        }
+        
+        if (roomsUpdated) {
+            GlobalScope.launch {
+                _roomListFlow.emit(getSpaces())
             }
         }
     }
