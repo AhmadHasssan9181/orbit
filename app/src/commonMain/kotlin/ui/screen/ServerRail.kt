@@ -4,6 +4,9 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -11,7 +14,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -27,20 +32,16 @@ import androidx.compose.ui.unit.sp
 import ui.model.OrbitServer
 
 import ui.theme.LocalIsLiteMode
+import ui.theme.rememberCosmicTokens
 
 // ─── Cosmic Design Tokens ──────────────────────────────────────
-private val Rail_Bg: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFFEAE6DF) else Color(0xFF080A0F)
-private val Rail_Active: Color @Composable get() = if (LocalIsLiteMode.current) Color(0x2A075E54) else Color(0x2A7C6AF0)
-private val Accent: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFF075E54) else Color(0xFF7C6AF0)
-private val AccentLight: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFF128C7E) else Color(0xFFA78BFA)
-private val Pill_Color: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFF111B21) else Color(0xFFEAECF5)
-private val Text_White: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFF111B21) else Color(0xFFEAECF5)
-
-private const val RAIL_WIDTH     = 72f
-private const val ICON_SIZE      = 46f
-private const val PILL_W         = 4f
-private const val CORNER_SEL     = 18f
-private const val CORNER_UNSEL   = 14f
+private val Rail_Bg: Color @Composable get() = rememberCosmicTokens().Rail_Bg
+private val Accent: Color @Composable get() = rememberCosmicTokens().Accent
+private val AccentLight: Color @Composable get() = rememberCosmicTokens().AccentLight
+private val Pill_Color: Color @Composable get() = rememberCosmicTokens().Pill_Color
+private val Text_White: Color @Composable get() = rememberCosmicTokens().Text_White
+private val Text_Muted: Color @Composable get() = rememberCosmicTokens().Text_Muted
+private val Separator: Color @Composable get() = rememberCosmicTokens().Separator
 
 @Composable
 fun ServerRail(
@@ -61,167 +62,242 @@ fun ServerRail(
     LazyColumn(
         modifier = modifier
             .fillMaxHeight()
-            .width(RAIL_WIDTH.dp)
+            .width(72.dp)
             .background(Rail_Bg),
         contentPadding = PaddingValues(vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.Top)
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.Top)
     ) {
-        // DM / Home button
-        item {
-            ServerIconSlot(isSelected = false, onClick = onAddServerClick) {
+        // DM / Home icon — always first, like Discord
+        item(key = "home") {
+            val isSelected = selectedServerId == servers.firstOrNull { it.isDM }?.id
+            ServerRailItem(
+                isSelected = isSelected,
+                isHovered = false,
+                onClick = { servers.firstOrNull { it.isDM }?.let { onServerClick(it.id) } }
+            ) {
                 Box(
                     modifier = Modifier
-                        .size(ICON_SIZE.dp)
-                        .clip(CircleShape)
+                        .size(48.dp)
+                        .clip(
+                            RoundedCornerShape(
+                                animateDpAsState(
+                                    if (isSelected) 16.dp else 24.dp,
+                                    spring(stiffness = Spring.StiffnessMedium),
+                                    label = "homeCorner"
+                                ).value
+                            )
+                        )
                         .background(
-                            Brush.linearGradient(listOf(Accent, AccentLight))
+                            if (isSelected) Brush.linearGradient(listOf(Accent, AccentLight))
+                            else Brush.linearGradient(
+                                listOf(
+                                    MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    MaterialTheme.colorScheme.surfaceContainerHigh
+                                )
+                            )
                         ),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = "+",
-                        color = Text_White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 22.sp
+                    Icon(
+                        imageVector = Icons.Default.Chat,
+                        contentDescription = "Home",
+                        tint = if (isSelected) Color.White else Text_Muted,
+                        modifier = Modifier.size(22.dp)
                     )
                 }
             }
         }
 
-        // Fancy divider
-        item {
-            Box(
+        // Divider like Discord/Revolt
+        item(key = "divider") {
+            HorizontalDivider(
                 modifier = Modifier
-                    .padding(horizontal = 16.dp)
-                    .fillMaxWidth()
-                    .height(1.dp)
-                    .background(
-                        Brush.horizontalGradient(
-                            listOf(Color.Transparent, Color(0xFF252838), Color.Transparent)
-                        )
-                    )
+                    .width(32.dp)
+                    .padding(vertical = 2.dp),
+                color = Separator,
+                thickness = 2.dp
             )
         }
 
-        items(servers, key = { it.id }) { server ->
+        // Server icons
+        items(servers.filter { !it.isDM }, key = { it.id }) { server ->
             val isSelected = server.id == selectedServerId
-            ServerIconSlot(
+            val interactionSource = remember { MutableInteractionSource() }
+            val isHovered by interactionSource.collectIsHoveredAsState()
+
+            ServerRailItem(
                 isSelected = isSelected,
+                isHovered = isHovered,
                 onClick = { onServerClick(server.id) }
             ) {
-                ServerIcon(
-                    colorStart  = Color(server.iconColor),
-                    colorEnd    = Color(server.iconColor).copy(alpha = 0.7f),
-                    initials    = getInitials(server.name),
-                    size        = ICON_SIZE.dp,
-                    isSelected  = isSelected
-                )
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .hoverable(interactionSource)
+                        .clip(
+                            RoundedCornerShape(
+                                animateDpAsState(
+                                    if (isSelected || isHovered) 16.dp else 24.dp,
+                                    spring(stiffness = Spring.StiffnessMedium),
+                                    label = "srvCorner"
+                                ).value
+                            )
+                        )
+                        .background(
+                            Brush.linearGradient(
+                                listOf(
+                                    Color(server.iconColor),
+                                    Color(server.iconColor).copy(alpha = 0.7f)
+                                )
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    val initials = getInitials(server.name)
+                    val fontSize: TextUnit = if (initials.length > 2) 11.sp else 15.sp
+                    Text(
+                        text = initials,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = fontSize,
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+
+        // Add Server button
+        item(key = "add") {
+            ServerRailItem(
+                isSelected = false,
+                isHovered = false,
+                onClick = onAddServerClick
+            ) {
+                val interactionSource = remember { MutableInteractionSource() }
+                val isHovered by interactionSource.collectIsHoveredAsState()
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .hoverable(interactionSource)
+                        .clip(
+                            RoundedCornerShape(
+                                animateDpAsState(
+                                    if (isHovered) 16.dp else 24.dp,
+                                    spring(stiffness = Spring.StiffnessMedium),
+                                    label = "addCorner"
+                                ).value
+                            )
+                        )
+                        .background(
+                            if (isHovered) Accent.copy(alpha = 0.2f)
+                            else MaterialTheme.colorScheme.surfaceContainerHigh
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Add Server",
+                        tint = if (isHovered) Accent else Text_Muted,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
+        }
+
+        // Discover button
+        item(key = "discover") {
+            ServerRailItem(
+                isSelected = false,
+                isHovered = false,
+                onClick = {}
+            ) {
+                val interactionSource = remember { MutableInteractionSource() }
+                val isHovered by interactionSource.collectIsHoveredAsState()
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .hoverable(interactionSource)
+                        .clip(
+                            RoundedCornerShape(
+                                animateDpAsState(
+                                    if (isHovered) 16.dp else 24.dp,
+                                    spring(stiffness = Spring.StiffnessMedium),
+                                    label = "discoverCorner"
+                                ).value
+                            )
+                        )
+                        .background(
+                            if (isHovered) Accent.copy(alpha = 0.2f)
+                            else MaterialTheme.colorScheme.surfaceContainerHigh
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Explore,
+                        contentDescription = "Discover",
+                        tint = if (isHovered) Accent else Text_Muted,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
             }
         }
     }
 }
 
-// ─── ServerIconSlot — pill + animated bg ─────────────────────
+// ─── ServerRailItem — Discord-style pill + squircle ──────────
 
 @Composable
-private fun ServerIconSlot(
+private fun ServerRailItem(
     isSelected: Boolean,
+    isHovered: Boolean,
     onClick: () -> Unit,
     content: @Composable () -> Unit
 ) {
-    val cornerRadius by animateDpAsState(
-        targetValue = if (isSelected) CORNER_SEL.dp else CORNER_UNSEL.dp,
-        animationSpec = spring(stiffness = Spring.StiffnessMedium),
-        label = "cornerAnim"
-    )
-    val bgColor by animateColorAsState(
-        targetValue = if (isSelected) Rail_Active else Color.Transparent,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "bgAnim"
-    )
-    val pillH by animateFloatAsState(
-        targetValue = if (isSelected) 36f else 10f,
-        animationSpec = spring(stiffness = Spring.StiffnessMedium),
+    // Left pill indicator — exactly like Discord/Revolt
+    val pillHeight by animateDpAsState(
+        targetValue = when {
+            isSelected -> 36.dp
+            isHovered -> 20.dp
+            else -> 0.dp
+        },
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessLow
+        ),
         label = "pillH"
+    )
+    val pillColor by animateColorAsState(
+        targetValue = when {
+            isSelected -> Accent
+            isHovered -> Text_White
+            else -> Color.Transparent
+        },
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessLow
+        ),
+        label = "pillColor"
     )
 
     Box(
         modifier = Modifier
-            .padding(horizontal = 8.dp)
-            .clip(RoundedCornerShape(cornerRadius))
-            .background(bgColor)
+            .fillMaxWidth()
+            .height(52.dp)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        // Pill indicator on left edge
+        // Left pill
         Box(
             modifier = Modifier
                 .align(Alignment.CenterStart)
-                .width(PILL_W.dp)
-                .height(pillH.dp)
-                .background(
-                    Pill_Color,
-                    RoundedCornerShape(topEnd = 3.dp, bottomEnd = 3.dp)
-                )
+                .offset(x = (-2).dp)
+                .width(4.dp)
+                .height(pillHeight)
+                .clip(RoundedCornerShape(topEnd = 4.dp, bottomEnd = 4.dp))
+                .background(pillColor)
         )
         content()
-    }
-}
-
-// ─── ServerIcon — squircle gradient + KMP-safe radial glow ──
-
-@Composable
-private fun ServerIcon(
-    colorStart: Color,
-    colorEnd: Color,
-    initials: String,
-    size: Dp,
-    isSelected: Boolean
-) {
-    val glowAlpha by animateFloatAsState(
-        targetValue    = if (isSelected) 0.45f else 0f,
-        animationSpec  = tween(300),
-        label          = "glowAlpha"
-    )
-    val cornerRadius by animateDpAsState(
-        targetValue   = if (isSelected) 18.dp else 14.dp,
-        animationSpec = spring(stiffness = Spring.StiffnessMedium),
-        label         = "iconCorner"
-    )
-
-    Box(contentAlignment = Alignment.Center) {
-        // KMP-safe glow: radial gradient halo behind icon
-        if (glowAlpha > 0.01f) {
-            Box(
-                modifier = Modifier
-                    .size(size + 20.dp)
-                    .background(
-                        Brush.radialGradient(
-                            listOf(
-                                colorStart.copy(alpha = glowAlpha),
-                                Color.Transparent
-                            )
-                        ),
-                        shape = CircleShape
-                    )
-            )
-        }
-        Box(
-            modifier = Modifier
-                .size(size)
-                .clip(RoundedCornerShape(cornerRadius))
-                .background(Brush.linearGradient(listOf(colorStart, colorEnd))),
-            contentAlignment = Alignment.Center
-        ) {
-            val fontSize: TextUnit = if (initials.length > 2) 12.sp else 16.sp
-            Text(
-                text       = initials,
-                color      = Text_White,
-                fontWeight = FontWeight.ExtraBold,
-                fontSize   = fontSize,
-                maxLines   = 1
-            )
-        }
     }
 }
 
@@ -236,7 +312,7 @@ private fun getInitials(name: String): String = when {
         .joinToString("") { it.first().uppercase() }
 }
 
-// ─── WhatsApp Style Rail ─────────────────────────────────────────
+// ─── Lite Mode Messenger Rail ────────────────────────────────────
 
 @Composable
 private fun WhatsAppRail(selectedTab: String, onTabClick: (String) -> Unit, modifier: Modifier = Modifier) {
@@ -244,35 +320,35 @@ private fun WhatsAppRail(selectedTab: String, onTabClick: (String) -> Unit, modi
         modifier = modifier
             .fillMaxHeight()
             .width(60.dp)
-            .background(Color(0xFFF0F2F5)) // light gray background for whatsapp rail
+            .background(Rail_Bg)
             .padding(vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        // Top section
+        // Top nav items
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            WhatsAppRailIcon(Icons.Default.Chat, isSelected = selectedTab == "Chats", onClick = { onTabClick("Chats") })
-            WhatsAppRailIcon(Icons.Default.Call, isSelected = selectedTab == "Calls", onClick = { onTabClick("Calls") })
-            WhatsAppRailIcon(Icons.Default.DonutLarge, isSelected = selectedTab == "Status", onClick = { onTabClick("Status") }) // Status
-            WhatsAppRailIcon(Icons.Default.Groups, isSelected = selectedTab == "Communities", onClick = { onTabClick("Communities") })
+            LiteRailItem(Icons.Default.Chat, "Chats", isSelected = selectedTab == "Chats", onClick = { onTabClick("Chats") })
+            LiteRailItem(Icons.Default.Call, "Calls", isSelected = selectedTab == "Calls", onClick = { onTabClick("Calls") })
+            LiteRailItem(Icons.Default.DonutLarge, "Status", isSelected = selectedTab == "Status", onClick = { onTabClick("Status") })
+            LiteRailItem(Icons.Default.Groups, "Groups", isSelected = selectedTab == "Communities", onClick = { onTabClick("Communities") })
         }
 
         // Bottom section
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            WhatsAppRailIcon(Icons.Default.Archive, isSelected = false, onClick = {})
-            WhatsAppRailIcon(Icons.Default.Settings, isSelected = false, onClick = {})
-            // Profile mock
+            LiteRailItem(Icons.Default.Archive, "Archive", isSelected = false, onClick = {})
+            LiteRailItem(Icons.Default.Settings, "Settings", isSelected = false, onClick = {})
+            // Profile avatar
             Box(
                 modifier = Modifier
-                    .size(28.dp)
+                    .size(32.dp)
                     .clip(CircleShape)
-                    .background(Color(0xFF7C6AF0)),
+                    .background(Brush.linearGradient(listOf(Accent, AccentLight))),
                 contentAlignment = Alignment.Center
             ) {
                 Text("YO", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
@@ -282,17 +358,52 @@ private fun WhatsAppRail(selectedTab: String, onTabClick: (String) -> Unit, modi
 }
 
 @Composable
-private fun WhatsAppRailIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, isSelected: Boolean, onClick: () -> Unit) {
-    val color = if (isSelected) Color(0xFF111B21) else Color(0xFF54656F)
-    val bgColor = if (isSelected) Color(0xFFD1D7DB) else Color.Transparent
-    Box(
+private fun LiteRailItem(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isHovered by interactionSource.collectIsHoveredAsState()
+
+    val bgColor by animateColorAsState(
+        targetValue = when {
+            isSelected -> rememberCosmicTokens().ChannelSelected_Bg
+            isHovered -> rememberCosmicTokens().ChannelHover_Bg
+            else -> Color.Transparent
+        },
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "liteRailBg"
+    )
+    val iconTint by animateColorAsState(
+        targetValue = when {
+            isSelected -> Accent
+            isHovered -> Text_White
+            else -> Text_Muted
+        },
+        label = "liteRailTint"
+    )
+
+    Column(
         modifier = Modifier
-            .size(40.dp)
-            .clip(RoundedCornerShape(20.dp))
+            .size(52.dp)
+            .clip(RoundedCornerShape(12.dp))
             .background(bgColor)
-            .clickable { onClick() },
-        contentAlignment = Alignment.Center
+            .hoverable(interactionSource)
+            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
     ) {
-        Icon(imageVector = icon, contentDescription = null, tint = color, modifier = Modifier.size(22.dp))
+        Icon(imageVector = icon, contentDescription = label, tint = iconTint, modifier = Modifier.size(20.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall.copy(
+                color = iconTint,
+                fontSize = 8.sp,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+            ),
+            maxLines = 1
+        )
     }
 }

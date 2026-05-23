@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.foundation.lazy.items
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -24,21 +25,23 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.model.OrbitUser
 
 
 import ui.theme.LocalIsLiteMode
 import ui.theme.LocalOnLiteModeChange
+import ui.theme.rememberCosmicTokens
 
 // ─── Cosmic Design Tokens ───────────────────────────────────────
-private val Bg: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFFF0F2F5) else Color(0xFF141720)
-private val CardBg: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFFFFFFFF) else Color(0xFF1C1F2B)
-private val CardBgHover: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFFF5F6F6) else Color(0xFF22263A)
-private val Accent: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFF075E54) else Color(0xFF7C6AF0)
-private val AccentLight: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFF128C7E) else Color(0xFFA78BFA)
-private val AccentGhost: Color @Composable get() = if (LocalIsLiteMode.current) Color(0x1A075E54) else Color(0x1A7C6AF0)
-private val Text_White: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFF111B21) else Color(0xFFEAECF5)
-private val Text_Secondary: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFF54656F) else Color(0xFFB4B8D0)
-private val Text_Muted: Color @Composable get() = if (LocalIsLiteMode.current) Color(0xFF667781) else Color(0xFF6B7094)
+private val Bg: Color @Composable get() = rememberCosmicTokens().Bg
+private val CardBg: Color @Composable get() = rememberCosmicTokens().CardBg
+private val CardBgHover: Color @Composable get() = rememberCosmicTokens().CardBgHover
+private val Accent: Color @Composable get() = rememberCosmicTokens().Accent
+private val AccentLight: Color @Composable get() = rememberCosmicTokens().AccentLight
+private val AccentGhost: Color @Composable get() = rememberCosmicTokens().AccentGhost
+private val Text_White: Color @Composable get() = rememberCosmicTokens().Text_White
+private val Text_Secondary: Color @Composable get() = rememberCosmicTokens().Text_Secondary
+private val Text_Muted: Color @Composable get() = rememberCosmicTokens().Text_Muted
 
 // ─── SettingsScreen ──────────────────────────────────────────────
 
@@ -421,12 +424,28 @@ private fun PrefCard(
 }
 
 @Composable private fun ThemeSelectorCard() {
-    var selected by remember { mutableStateOf("Cosmic Dark") }
+    val activeTheme = ui.theme.LocalActiveTheme.current
+    val onThemeChange = ui.theme.LocalOnThemeChange.current
+    
+    val themeMap = mapOf(
+        "Default" to ui.theme.Theme.Default,
+        "Light" to ui.theme.Theme.Light,
+        "Amoled" to ui.theme.Theme.Amoled,
+        "Ocean" to ui.theme.Theme.Ocean,
+        "Forest" to ui.theme.Theme.Forest,
+        "Sunset" to ui.theme.Theme.Sunset,
+        "Cyberpunk" to ui.theme.Theme.Cyberpunk
+    )
+    
+    val selectedLabel = themeMap.entries.find { it.value == activeTheme }?.key ?: "Default"
+
     PrefCard("App Theme", "Choose your visual theme") {
         ChipGroup(
-            options = listOf("Cosmic Dark", "Light"),
-            selected = selected,
-            onSelect = { selected = it }
+            options = themeMap.keys.toList(),
+            selected = selectedLabel,
+            onSelect = { label ->
+                themeMap[label]?.let { onThemeChange(it) }
+            }
         )
     }
 }
@@ -434,11 +453,10 @@ private fun PrefCard(
 @Composable private fun LiteModeCard() {
     val isLite = LocalIsLiteMode.current
     val onLiteChange = LocalOnLiteModeChange.current
-    PrefCard("Lite Mode", "Switch to a simplified, WhatsApp-inspired interface") {
+    PrefCard("Lite Mode", "Switch to a clean messenger-style interface") {
         CosmicSwitch(
             checked = isLite,
-            onCheckedChange = onLiteChange,
-            activeColor = Color(0xFF10B981)
+            onCheckedChange = onLiteChange
         )
     }
 }
@@ -447,11 +465,14 @@ private fun PrefCard(
 
 @Composable
 private fun ChipGroup(options: List<String>, selected: String, onSelect: (String) -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-        options.forEach { opt ->
+    androidx.compose.foundation.lazy.LazyRow(
+        modifier = Modifier.widthIn(max = 250.dp), // Prevent infinite width crash in row
+        horizontalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+        items(options) { opt ->
             val isSelected = selected == opt
             val bgColor by animateColorAsState(
-                targetValue = if (isSelected) Accent else Color(0xFF252838),
+                targetValue = if (isSelected) Accent else CardBg,
                 label = "chipBg"
             )
             Box(
@@ -487,7 +508,7 @@ private fun CosmicSwitch(
             checkedThumbColor   = Color.White,
             checkedTrackColor   = activeColor,
             uncheckedThumbColor = Text_Muted,
-            uncheckedTrackColor = Color(0xFF252838)
+            uncheckedTrackColor = CardBg
         )
     )
 }
