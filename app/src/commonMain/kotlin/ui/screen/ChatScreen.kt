@@ -695,14 +695,23 @@ private fun MemberItem(user: OrbitUser) {
                     .background(Brush.linearGradient(listOf(color, color.copy(alpha = 0.7f)))),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = user.displayName.take(1).uppercase(),
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                        fontSize = 11.sp
+                if (user.avatarUrl != null) {
+                    coil3.compose.AsyncImage(
+                        model = user.avatarUrl,
+                        contentDescription = user.displayName,
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
                     )
-                )
+                } else {
+                    Text(
+                        text = user.displayName.take(1).uppercase(),
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            fontSize = 11.sp
+                        )
+                    )
+                }
             }
             val dotColor = memberStatusColor(user.status)
             Box(

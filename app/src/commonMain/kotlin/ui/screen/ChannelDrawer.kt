@@ -591,7 +591,7 @@ private fun BarIconBtn(
 // â”€â”€â”€ UserAvatar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @Composable
-private fun UserAvatar(displayName: String, avatarColor: Int, status: UserStatus) {
+private fun UserAvatar(displayName: String, avatarColor: Int, status: UserStatus, avatarUrl: String? = null) {
     Box(modifier = Modifier.size(32.dp)) {
         val base = Color(avatarColor)
         Box(
@@ -601,14 +601,23 @@ private fun UserAvatar(displayName: String, avatarColor: Int, status: UserStatus
                 .background(Brush.linearGradient(listOf(base, base.copy(alpha = 0.7f)))),
             contentAlignment = Alignment.Center
         ) {
-            Text(
-                text = displayName.take(2).uppercase(),
-                style = MaterialTheme.typography.labelSmall.copy(
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                    fontSize = 10.sp
+            if (avatarUrl != null) {
+                coil3.compose.AsyncImage(
+                    model = avatarUrl,
+                    contentDescription = displayName,
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
                 )
-            )
+            } else {
+                Text(
+                    text = displayName.take(2).uppercase(),
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        fontSize = 10.sp
+                    )
+                )
+            }
         }
         val dotColor = statusColor(status)
         Box(

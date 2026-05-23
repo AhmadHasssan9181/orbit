@@ -154,15 +154,24 @@ fun ServerRail(
                         ),
                     contentAlignment = Alignment.Center
                 ) {
-                    val initials = getInitials(server.name)
-                    val fontSize: TextUnit = if (initials.length > 2) 11.sp else 15.sp
-                    Text(
-                        text = initials,
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = fontSize,
-                        maxLines = 1
-                    )
+                    if (server.avatarUrl != null) {
+                        coil3.compose.AsyncImage(
+                            model = server.avatarUrl,
+                            contentDescription = server.name,
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        val initials = getInitials(server.name)
+                        val fontSize: TextUnit = if (initials.length > 2) 11.sp else 15.sp
+                        Text(
+                            text = initials,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = fontSize,
+                            maxLines = 1
+                        )
+                    }
                 }
             }
         }
