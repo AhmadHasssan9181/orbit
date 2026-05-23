@@ -144,6 +144,8 @@ class MatrixOrbitRepository(
     private var _accessToken: String? = null
     @Volatile
     private var _userId: String? = null
+    @Volatile
+    private var _globalNextBatch: String? = null
 
     // Cache of room metadata extracted from sync
     private val _roomCache = mutableMapOf<String, RoomMetadata>()
@@ -668,6 +670,9 @@ class MatrixOrbitRepository(
                     }
                 }
                 actualFromToken = synchronized(_roomCache) { _roomCache[channelId]?.prevBatch }
+                if (actualFromToken == null) {
+                    actualFromToken = _globalNextBatch
+                }
             }
 
             val urlPath = buildString {
@@ -704,7 +709,7 @@ class MatrixOrbitRepository(
     override suspend fun sendMessage(channelId: String, body: String): Result<String> {
         return try {
             val txnId = "orbit-${channelId}-${System.currentTimeMillis()}"
-            val resp: SendResponse = client.post(
+            val resp: SendResponse = client.put(
                 fullUrl("/rooms/$channelId/send/m.room.message/$txnId")
             ) {
                 authHeader()?.let { header(HttpHeaders.Authorization, it) }
@@ -870,6 +875,7 @@ class MatrixOrbitRepository(
                         authHeader()?.let { header(HttpHeaders.Authorization, it) }
                     }.body()
                     since = resp.nextBatch
+                    _globalNextBatch = since
 
                     processSyncEvents(resp.rooms)
 
