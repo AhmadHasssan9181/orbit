@@ -1054,6 +1054,7 @@ class MatrixOrbitRepository(
             // 1. Maintain Room Cache from Trixnity
             launch {
                 val trixnity = trixnityClient ?: return@launch
+                println("ROOM METHODS: " + trixnity.room::class.java.methods.joinToString { it.name })
                 trixnity.room.getAll().flattenValues().collect { rooms ->
                     var updated = false
                     for (room in rooms) {
@@ -1114,7 +1115,7 @@ class MatrixOrbitRepository(
         }
     }
 
-    private fun processSyncEvents(roomsObj: JsonElement?) {
+    private suspend fun processSyncEvents(roomsObj: JsonElement?) {
         if (roomsObj !is JsonObject) return
 
         val joinRooms = roomsObj.get("join") as? JsonObject ?: return
@@ -1218,7 +1219,7 @@ class MatrixOrbitRepository(
      * Convert a raw Matrix event to an OrbitMessage, handling all msgtype variants
      * plus reactions, redactions, and edits.
      */
-    private fun matrixEventToOrbitMessage(event: MatrixEvent, channelId: String): OrbitMessage? {
+    private suspend fun matrixEventToOrbitMessage(event: MatrixEvent, channelId: String): OrbitMessage? {
         val sender = event.sender ?: return null
         val ts = Instant.fromEpochMilliseconds(event.originServerTs ?: 0L)
         val eventId = event.eventId ?: return null

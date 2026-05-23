@@ -171,6 +171,8 @@ private fun ChatHeader(channel: OrbitChannel, onBack: (() -> Unit)? = null) {
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            HeaderIconBtn(Icons.Default.Call, "Voice Call", onClick = { println("Voice Call feature is under construction") })
+            HeaderIconBtn(Icons.Default.Videocam, "Video Call", onClick = { println("Video Call feature is under construction") })
             HeaderIconBtn(Icons.Default.Search, "Search")
             HeaderIconBtn(Icons.Default.Notifications, "Notifications")
             HeaderIconBtn(Icons.Default.PushPin, "Pins")
@@ -182,7 +184,8 @@ private fun ChatHeader(channel: OrbitChannel, onBack: (() -> Unit)? = null) {
 @Composable
 private fun HeaderIconBtn(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
-    desc: String
+    desc: String,
+    onClick: () -> Unit = {}
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
@@ -191,7 +194,7 @@ private fun HeaderIconBtn(
         label = "headerIconTint"
     )
     IconButton(
-        onClick = {},
+        onClick = onClick,
         modifier = Modifier.size(32.dp),
         interactionSource = interactionSource
     ) {
