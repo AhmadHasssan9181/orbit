@@ -1,14 +1,12 @@
 package util
 
 import com.noobdev.orbit.OrbitApp
-import de.connect2x.trixnity.client.media.MediaStore
-import de.connect2x.trixnity.client.media.okio.OkioMediaStore
-import okio.FileSystem
-import ui.screen.OrbitApp
+import okio.Path
+import okio.Path.Companion.toPath
 import java.io.File
 
-actual fun createMediaStore(): MediaStore {
+actual fun getMediaStorePath(): Path {
     val mediaDir = File(OrbitApp.instance.filesDir, "orbit_media")
     mediaDir.mkdirs()
-    return OkioMediaStore(FileSystem.SYSTEM, mediaDir.absolutePath)
+    return mediaDir.absolutePath.toPath()
 }
