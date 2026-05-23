@@ -210,7 +210,7 @@ fun ServerRail(
             ServerRailItem(
                 isSelected = false,
                 isHovered = false,
-                onClick = {}
+                onClick = onAddServerClick
             ) {
                 val interactionSource = remember { MutableInteractionSource() }
                 val isHovered by interactionSource.collectIsHoveredAsState()

@@ -81,6 +81,7 @@ private fun MainAppContent(
     var selectedServerId by remember { mutableStateOf("") }
     var selectedChannelId by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(false) }
+    var showJoinServer by remember { mutableStateOf(false) }
 
     // ─── State: channels for selected server ───────────────────
     var channels by remember { mutableStateOf<List<OrbitChannel>>(emptyList()) }
@@ -88,18 +89,25 @@ private fun MainAppContent(
 
     // ─── State: current user ───────────────────────────────────
     var currentUser by remember {
-        mutableStateOf(
-            OrbitUser(
+        mutableStateOf<OrbitUser?>(null)
+    }
+
+    LaunchedEffect(Unit) {
+        val user = repository.getCurrentUser()
+        if (user != null) {
+            currentUser = user
+        } else {
+            currentUser = OrbitUser(
                 id = "me",
                 username = "me",
                 displayName = "Me",
                 avatarColor = 0xFF7C6AF0.toInt(),
                 status = UserStatus.ONLINE
             )
-        )
+        }
     }
 
-    // ─── Load servers on first composition ─────────────────────
+    // ─── Load servers on first composition & listen ─────────────
     LaunchedEffect(Unit) {
         try {
             val loaded = repository.getSpaces()
@@ -136,6 +144,13 @@ private fun MainAppContent(
         isLoadingServers = false
     }
 
+    // Listen to live spaces changes
+    LaunchedEffect(Unit) {
+        (repository as? MatrixOrbitRepository)?.observeSpaces()?.collect { newServers ->
+            servers = newServers
+        }
+    }
+
     // ─── Load channels when selected server changes ────────────
     LaunchedEffect(selectedServerId) {
         if (selectedServerId.isBlank()) return@LaunchedEffect
@@ -153,6 +168,14 @@ private fun MainAppContent(
             channels = emptyList()
         }
         isLoadingChannels = false
+    }
+
+    // Listen to live channel changes
+    LaunchedEffect(selectedServerId) {
+        if (selectedServerId.isBlank()) return@LaunchedEffect
+        repository.observeChannelList(selectedServerId).collect { newChannels ->
+            channels = newChannels
+        }
     }
 
     // ─── Loading state ─────────────────────────────────────────
@@ -208,6 +231,7 @@ private fun MainAppContent(
             servers = servers,
             selectedServerId = selectedServerId,
             onServerClick = { id -> selectedServerId = id },
+            onAddServerClick = { showJoinServer = true },
             selectedWhatsAppTab = selectedWhatsAppTab,
             onWhatsAppTabClick = { selectedWhatsAppTab = it }
         )
@@ -218,7 +242,13 @@ private fun MainAppContent(
                 categories = categories,
                 channels = channels,
                 selectedChannelId = selectedChannelId,
-                currentUser = currentUser,
+                currentUser = currentUser ?: OrbitUser(
+                    id = "me",
+                    username = "me",
+                    displayName = "Me",
+                    avatarColor = 0xFF7C6AF0.toInt(),
+                    status = UserStatus.ONLINE
+                ),
                 onChannelClick = { id -> selectedChannelId = id },
                 onOpenSettings = { showSettings = true },
                 selectedWhatsAppTab = selectedWhatsAppTab
@@ -257,12 +287,19 @@ private fun MainAppContent(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    "Select a server to get started",
-                    color = Color.White.copy(alpha = 0.5f),
-                    style = MaterialTheme.typography.bodyMedium
+                    text = "No Server Selected",
+                    color = Color.White.copy(alpha = 0.6f),
+                    style = MaterialTheme.typography.bodyLarge
                 )
             }
         }
+    }
+
+    if (showJoinServer) {
+        JoinServerScreen(
+            repository = repository,
+            onClose = { showJoinServer = false }
+        )
     }
 }
 
@@ -281,14 +318,23 @@ private fun ChatScreenWithRepo(
     var messages by remember(channel.id) { mutableStateOf<List<OrbitMessage>>(emptyList()) }
     var isLoading by remember(channel.id) { mutableStateOf(true) }
 
-    // Load initial messages
+    var members by remember(channel.id) { mutableStateOf<List<OrbitUser>>(emptyList()) }
+    var currentUser by remember { mutableStateOf<OrbitUser?>(null) }
+
+    // Load initial messages and members
     LaunchedEffect(channel.id) {
         isLoading = true
         try {
+            currentUser = repository.getCurrentUser()
             val loaded = repository.getMessagesForChannel(channel.id, limit = 50)
             messages = loaded
+            
+            if (showMemberList) {
+                members = repository.getRoomMembers(channel.id)
+            }
         } catch (e: Exception) {
             messages = emptyList()
+            members = emptyList()
         }
         isLoading = false
     }
@@ -305,6 +351,8 @@ private fun ChatScreenWithRepo(
     ChatScreen(
         channel = channel,
         messages = messages,
+        members = members,
+        currentUser = currentUser,
         onSend = { body ->
             scope.launch {
                 try {
