@@ -90,10 +90,13 @@ fun ChannelDrawer(
             HorizontalDivider(color = Separator.copy(alpha = 0.3f), thickness = 1.dp)
 
             if (server.isDM) {
+                val callManager = webrtc.LocalCallManager.current
                 DmListContent(
                     channels = channels,
                     selectedChannelId = selectedChannelId,
                     onChannelClick = onChannelClick,
+                    onVoiceCall = { callManager?.startCall(it, false) },
+                    onVideoCall = { callManager?.startCall(it, true) },
                     modifier = Modifier.weight(1f)
                 )
             } else {
@@ -219,6 +222,8 @@ private fun DmListContent(
     channels: List<OrbitChannel>,
     selectedChannelId: String?,
     onChannelClick: (String) -> Unit,
+    onVoiceCall: ((String) -> Unit)? = null,
+    onVideoCall: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val isLiteMode = ui.theme.LocalIsLiteMode.current
@@ -248,6 +253,8 @@ private fun DmListContent(
                 status = UserStatus.ONLINE, // Placeholder
                 isSelected = ch.id == selectedChannelId,
                 onClick = { onChannelClick(ch.id) },
+                onVoiceCall = { onVoiceCall?.invoke(ch.id) },
+                onVideoCall = { onVideoCall?.invoke(ch.id) },
                 lastMessage = ch.topic.ifBlank { "Tap to chat with ${ch.name}" },
                 time = ""
             )
@@ -264,6 +271,8 @@ private fun DmItem(
     status: UserStatus,
     isSelected: Boolean,
     onClick: () -> Unit,
+    onVoiceCall: (() -> Unit)? = null,
+    onVideoCall: (() -> Unit)? = null,
     lastMessage: String = "Tap to chat with $displayName",
     time: String = "12:00 PM"
 ) {
@@ -352,14 +361,32 @@ private fun DmItem(
                 maxLines = 1,
                 modifier = Modifier.weight(1f)
             )
-            // Close icon on hover like Discord
+            // Action icons on hover like Discord
             if (isHovered) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = null,
-                    tint = Text_Muted,
-                    modifier = Modifier.size(14.dp).alpha(0.6f)
-                )
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    IconButton(onClick = { onVoiceCall?.invoke() }, modifier = Modifier.size(20.dp)) {
+                        Icon(
+                            imageVector = Icons.Default.Call,
+                            contentDescription = "Voice Call",
+                            tint = Text_White,
+                            modifier = Modifier.size(16.dp).alpha(0.8f)
+                        )
+                    }
+                    IconButton(onClick = { onVideoCall?.invoke() }, modifier = Modifier.size(20.dp)) {
+                        Icon(
+                            imageVector = Icons.Default.Videocam,
+                            contentDescription = "Video Call",
+                            tint = Text_White,
+                            modifier = Modifier.size(16.dp).alpha(0.8f)
+                        )
+                    }
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Close",
+                        tint = Text_Muted,
+                        modifier = Modifier.size(14.dp).alpha(0.6f)
+                    )
+                }
             }
         }
     }

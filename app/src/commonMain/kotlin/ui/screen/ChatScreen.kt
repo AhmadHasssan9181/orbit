@@ -74,7 +74,8 @@ fun ChatScreen(
     members: List<OrbitUser>,
     currentUser: OrbitUser?,
     typingUsers: List<String> = emptyList(),
-    activeCall: repository.CallEvent.Invite? = null,
+    activeCall: repository.CallEvent? = null,
+    activeGroupCallUrl: String? = null,
     onSend: (String) -> Unit,
     onSendAttachment: ((ByteArray, String, String) -> Unit)? = null,
     onTyping: (Boolean) -> Unit = {},
@@ -101,7 +102,7 @@ fun ChatScreen(
             HorizontalDivider(color = Separator.copy(alpha = 0.2f), thickness = 1.dp)
             
             // Active Call Banner
-            if (activeCall != null) {
+            (activeCall as? repository.CallEvent.Invite)?.let {
                 Surface(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                     color = Accent.copy(alpha = 0.1f),
@@ -131,7 +132,15 @@ fun ChatScreen(
                 }
             }
             
-            Box(modifier = Modifier.weight(1f)) {
+            // Group Call Banner
+            if (activeGroupCallUrl != null) {
+                GroupCallBanner(
+                    url = activeGroupCallUrl,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+            }
+
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 MessageList(
                     messages = messages,
                     currentUser = currentUser,
@@ -1877,6 +1886,21 @@ fun GifPicker(onGifSelected: (ByteArray) -> Unit) {
                     }
                 }
             }
+        }
+    }
+}
+@Composable
+fun GroupCallBanner(url: String, modifier: Modifier = Modifier) {
+    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+    Row(modifier = modifier.background(Accent.copy(alpha = 0.1f), RoundedCornerShape(12.dp)).border(1.dp, Accent.copy(alpha=0.3f), RoundedCornerShape(12.dp)).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("Active Group Call", color = Accent, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Text("Click to join the ongoing group call.", color = Text_Muted, fontSize = 13.sp)
+        }
+        Button(onClick = { uriHandler.openUri(url) }, colors = ButtonDefaults.buttonColors(containerColor = Accent)) {
+            Icon(Icons.Filled.Call, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Join Call")
         }
     }
 }

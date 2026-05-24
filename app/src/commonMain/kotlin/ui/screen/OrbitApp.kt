@@ -128,7 +128,7 @@ private fun MainAppContent(
     modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
-    
+
     val verificationState by (repository.activeDeviceVerification?.collectAsState(null) ?: remember { mutableStateOf(null) })
     VerificationOverlay(verificationState as? de.connect2x.trixnity.client.verification.ActiveDeviceVerification)
 
@@ -708,7 +708,7 @@ private fun CompactServerChip(server: OrbitServer, isSelected: Boolean, onClick:
                 color = if (isSelected) tokens.Accent else tokens.Text_Muted,
                 fontSize = 9.sp,
                 fontWeight = if (isSelected) androidx.compose.ui.text.font.FontWeight.Bold
-                    else androidx.compose.ui.text.font.FontWeight.Normal
+                else androidx.compose.ui.text.font.FontWeight.Normal
             ),
             maxLines = 1,
             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
@@ -1118,11 +1118,17 @@ fun ChatScreenWithRepo(
 
     LaunchedEffect(channel.id) {
         repository.observeMessages(channel.id).collect { newMessages ->
+            println("DEBUG: [UI] Received ${newMessages.size} new messages for ${channel.id}")
+            newMessages.forEach { msg ->
+                println("DEBUG: [UI]   - Msg: ${msg.id} from ${msg.userId} | Body: ${msg.body.take(15)}...")
+            }
             if (newMessages.isNotEmpty()) {
+                val oldSize = messages.size
                 messages = (messages + newMessages)
                     .groupBy { it.transactionId ?: it.id }
                     .map { it.value.last() }
                     .sortedBy { it.timestamp }
+                println("DEBUG: [UI] Updated messages list size: $oldSize -> ${messages.size}")
             }
         }
     }

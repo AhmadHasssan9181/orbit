@@ -71,15 +71,7 @@ interface OrbitRepository {
         key: String
     ): Result<String>
 
-    /**
-     * Upload raw bytes to the Matrix media repository.
-     * Returns an mxc:// URI that can be referenced in message events.
-     */
-    suspend fun uploadMedia(
-        bytes: ByteArray,
-        mimeType: String,
-        filename: String
-    ): Result<String> // returns mxc:// URI
+    suspend fun uploadMedia(bytes: ByteArray, mimeType: String, filename: String): Result<String>
 
     suspend fun sendImageMessage(
         channelId: String,
@@ -139,6 +131,7 @@ interface OrbitRepository {
     fun observeChannelList(spaceId: String): Flow<List<OrbitChannel>>
     fun observeCallEvents(): Flow<CallEvent>
     fun observeActiveCall(channelId: String): Flow<CallEvent.Invite?>
+    fun observeActiveGroupCall(channelId: String): Flow<String?>
 
     // Session Management ──────────────────────────────────
     val authStatus: Flow<AuthStatus>
@@ -151,12 +144,14 @@ sealed class AuthStatus {
     data class Error(val message: String) : AuthStatus()
 }
 
-    sealed class CallEvent {
-    data class Invite(val roomId: String, val callId: String, val sdp: String) : CallEvent()
-    data class Answer(val roomId: String, val callId: String, val sdp: String) : CallEvent()
-    data class Candidate(val roomId: String, val callId: String, val sdp: String, val sdpMid: String, val sdpMLineIndex: Int) : CallEvent()
-    data class Hangup(val roomId: String, val callId: String) : CallEvent()
-    }
+sealed class CallEvent {
+    abstract val roomId: String
+    abstract val callId: String
+    data class Invite(override val roomId: String, override val callId: String, val sdp: String) : CallEvent()
+    data class Answer(override val roomId: String, override val callId: String, val sdp: String) : CallEvent()
+    data class Candidate(override val roomId: String, override val callId: String, val sdp: String, val sdpMid: String, val sdpMLineIndex: Int) : CallEvent()
+    data class Hangup(override val roomId: String, override val callId: String) : CallEvent()
+}
 
 /**
  * Result of a successful login.
