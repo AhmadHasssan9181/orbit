@@ -2,13 +2,54 @@ package ui.screen
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ChatBubbleOutline
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Tag
+import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.rememberDrawerState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -16,25 +57,30 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import repository.AuthResult
 import repository.AuthStatus
+import repository.CredentialManager
 import repository.MatrixOrbitRepository
 import repository.OrbitRepository
 import ui.layout.LocalWindowSizeClass
 import ui.layout.WindowSizeClass
 import ui.layout.windowSizeClassFor
-import ui.model.*
-import webrtc.LocalCallManager
-import webrtc.CallManager
-import webrtc.createWebRtcClient
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.buildJsonArray
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.put
+import ui.model.ChannelCategory
+import ui.model.ChannelType
+import ui.model.OrbitChannel
+import ui.model.OrbitMessage
+import ui.model.OrbitServer
+import ui.model.OrbitUser
+import ui.model.UserStatus
 import ui.theme.LocalIsLiteMode
 import ui.theme.LocalOnLiteModeChange
 import ui.theme.rememberCosmicTokens
-import repository.CredentialManager
+import webrtc.CallManager
+import webrtc.LocalCallManager
+import webrtc.createWebRtcClient
 
 // ─── Cosmic Design Tokens ──────────────────────────────────────
 private val App_Bg: Color @Composable get() = rememberCosmicTokens().Bg
@@ -157,7 +203,7 @@ private fun MainAppContent(
             repository.observeCallEvents().collect { event ->
                 val user = repository.getCurrentUser()
                 if (user != null && event.senderId == user.id) return@collect
-                
+
                 when (event) {
                     is repository.CallEvent.Invite -> callManager.handleCallInvite(event.roomId, event.callId, event.sdp)
                     is repository.CallEvent.Answer -> callManager.handleCallAnswer(event.sdp)
@@ -181,11 +227,12 @@ private fun MainAppContent(
                         put("type", "offer")
                         put("sdp", sdp)
                     })
-                    put("version", 0)
+                    put("version", "0")
                     put("lifetime", 30000)
                 })
             }
         }
+
         callManager.sendAnswer = { roomId, callId, sdp ->
             scope.launch {
                 repository.sendCallEvent(roomId, "m.call.answer", buildJsonObject {
@@ -194,31 +241,50 @@ private fun MainAppContent(
                         put("type", "answer")
                         put("sdp", sdp)
                     })
-                    put("version", 0)
+                    put("version", "0")
                 })
             }
         }
+
         callManager.sendHangup = { roomId, callId ->
             scope.launch {
                 repository.sendCallEvent(roomId, "m.call.hangup", buildJsonObject {
                     put("call_id", callId)
-                    put("version", 0)
+                    put("version", "0")
                 })
             }
         }
+
+        // --- ICE Candidate Batching Logic ---
+        val candidateBatch = mutableListOf<webrtc.IceCandidateModel>()
+        var batchJob: kotlinx.coroutines.Job? = null
+
         callManager.sendCandidate = { roomId, callId, candidate ->
-            scope.launch {
-                repository.sendCallEvent(roomId, "m.call.candidates", buildJsonObject {
-                    put("call_id", callId)
-                    put("candidates", buildJsonArray {
-                        add(buildJsonObject {
-                            put("candidate", candidate.sdp)
-                            put("sdpMid", candidate.sdpMid)
-                            put("sdpMLineIndex", candidate.sdpMLineIndex)
+            candidateBatch.add(candidate)
+
+            if (batchJob?.isActive != true) {
+                batchJob = launch {
+                    kotlinx.coroutines.delay(500) // Debounce window to catch burst
+
+                    val toSend = candidateBatch.toList()
+                    candidateBatch.clear()
+
+                    if (toSend.isNotEmpty()) {
+                        repository.sendCallEvent(roomId, "m.call.candidates", buildJsonObject {
+                            put("call_id", callId)
+                            put("version", "0")
+                            put("candidates", buildJsonArray {
+                                toSend.forEach { cand ->
+                                    add(buildJsonObject {
+                                        put("candidate", cand.sdp)
+                                        put("sdpMid", cand.sdpMid)
+                                        put("sdpMLineIndex", cand.sdpMLineIndex)
+                                    })
+                                }
+                            })
                         })
-                    })
-                    put("version", 0)
-                })
+                    }
+                }
             }
         }
     }
@@ -1139,16 +1205,11 @@ fun ChatScreenWithRepo(
     LaunchedEffect(channel.id) {
         repository.observeMessages(channel.id).collect { newMessages ->
             println("DEBUG: [UI] Received ${newMessages.size} new messages for ${channel.id}")
-            newMessages.forEach { msg ->
-                println("DEBUG: [UI]   - Msg: ${msg.id} from ${msg.userId} | Body: ${msg.body.take(15)}...")
-            }
             if (newMessages.isNotEmpty()) {
-                val oldSize = messages.size
                 messages = (messages + newMessages)
                     .groupBy { it.transactionId ?: it.id }
                     .map { it.value.last() }
                     .sortedBy { it.timestamp }
-                println("DEBUG: [UI] Updated messages list size: $oldSize -> ${messages.size}")
             }
         }
     }
