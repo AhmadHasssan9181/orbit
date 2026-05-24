@@ -48,7 +48,9 @@ private val Text_Muted: Color @Composable get() = rememberCosmicTokens().Text_Mu
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
+    repository: repository.OrbitRepository,
     onBack: () -> Unit,
+    onLogout: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -114,6 +116,12 @@ fun SettingsScreen(
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            // ── Section: Account ────────────────────────────────
+            item { SectionHeader(icon = Icons.Default.AccountCircle, title = "Account") }
+            item { LogoutCard(onLogout) }
+
+            item { Spacer(Modifier.height(4.dp)) }
+
             // ── Section: Streaming ──────────────────────────────
             item { SectionHeader(icon = Icons.Default.Videocam, title = "Streaming & Screen Share") }
             item { VideoQualityCard() }
@@ -458,6 +466,26 @@ private fun PrefCard(
             checked = isLite,
             onCheckedChange = onLiteChange
         )
+    }
+}
+
+@Composable private fun LogoutCard(onLogout: () -> Unit) {
+    PrefCard("Logout", "Sign out of your account") {
+        Button(
+            onClick = onLogout,
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+            shape = RoundedCornerShape(8.dp),
+            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 7.dp),
+            modifier = Modifier.height(34.dp)
+        ) {
+            Text(
+                text = "Logout",
+                style = MaterialTheme.typography.labelMedium.copy(
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold
+                )
+            )
+        }
     }
 }
 
