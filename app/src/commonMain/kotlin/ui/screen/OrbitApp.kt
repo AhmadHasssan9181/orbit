@@ -17,6 +17,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import repository.AuthResult
+import repository.AuthStatus
 import repository.MatrixOrbitRepository
 import repository.OrbitRepository
 import ui.layout.LocalWindowSizeClass
@@ -50,6 +51,7 @@ fun OrbitApp(modifier: Modifier = Modifier) {
     var authResult by remember { mutableStateOf<AuthResult?>(null) }
     var isLiteMode by remember { mutableStateOf(false) }
     var activeTheme by remember { mutableStateOf(ui.theme.Theme.Default) }
+    val scope = rememberCoroutineScope()
 
     CompositionLocalProvider(
         LocalIsLiteMode provides isLiteMode,
@@ -66,6 +68,8 @@ fun OrbitApp(modifier: Modifier = Modifier) {
                 val windowSize = windowSizeClassFor(maxWidth)
 
                 CompositionLocalProvider(LocalWindowSizeClass provides windowSize) {
+                    val authStatus by (repository?.authStatus?.collectAsState(AuthStatus.Authenticated) ?: remember { mutableStateOf(AuthStatus.Authenticated) })
+
                     LaunchedEffect(Unit) {
                         val token = CredentialManager.accessToken
                         val hs = CredentialManager.homeserverUrl
@@ -79,7 +83,7 @@ fun OrbitApp(modifier: Modifier = Modifier) {
                         }
                     }
 
-                    if (repository == null) {
+                    if (repository == null || authStatus is AuthStatus.Unauthenticated) {
                         LoginScreen(
                             onLoginSuccess = { repo ->
                                 repository = repo
@@ -88,6 +92,19 @@ fun OrbitApp(modifier: Modifier = Modifier) {
                                 }
                             },
                             modifier = Modifier.fillMaxSize()
+                        )
+                    } else if (authStatus is AuthStatus.Error) {
+                        SessionErrorScreen(
+                            error = (authStatus as AuthStatus.Error).message,
+                            onRetry = {
+                                (repository as? MatrixOrbitRepository)?.startSync()
+                            },
+                            onLogout = {
+                                scope.launch {
+                                    repository?.logout()
+                                    repository = null
+                                }
+                            }
                         )
                     } else {
                         MainAppContent(
@@ -111,6 +128,9 @@ private fun MainAppContent(
     modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
+    
+    val verificationState by (repository.activeDeviceVerification?.collectAsState(null) ?: remember { mutableStateOf(null) })
+    VerificationOverlay(verificationState as? de.connect2x.trixnity.client.verification.ActiveDeviceVerification)
 
     // ─── WebRTC Call Manager ────────────────────────────────────
     val webRtcClient = remember { createWebRtcClient() }
@@ -1098,7 +1118,10 @@ fun ChatScreenWithRepo(
     LaunchedEffect(channel.id) {
         repository.observeMessages(channel.id).collect { newMessages ->
             if (newMessages.isNotEmpty()) {
-                messages = (messages + newMessages).distinctBy { it.id }.sortedBy { it.timestamp }
+                messages = (messages + newMessages)
+                    .groupBy { it.transactionId ?: it.id }
+                    .map { it.value.last() }
+                    .sortedBy { it.timestamp }
             }
         }
     }

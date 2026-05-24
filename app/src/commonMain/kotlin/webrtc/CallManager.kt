@@ -26,6 +26,8 @@ class CallManager(
         private set
     var callId: String? = null
         private set
+        
+    var isMinimized = MutableStateFlow(false)
 
     // Callbacks to send Matrix events
     var sendInvite: ((roomId: String, callId: String, sdp: String) -> Unit)? = null

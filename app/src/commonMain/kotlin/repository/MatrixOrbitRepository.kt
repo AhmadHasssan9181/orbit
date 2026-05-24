@@ -9,7 +9,9 @@ import de.connect2x.trixnity.client.cryptodriver.vodozemac.vodozemac
 import de.connect2x.trixnity.client.media.okio.okio
 import de.connect2x.trixnity.client.room
 import de.connect2x.trixnity.client.room.message.text
+import de.connect2x.trixnity.client.room.message.roomMessageBuilder
 import de.connect2x.trixnity.client.store.Room
+import de.connect2x.trixnity.client.store.RoomOutboxMessage
 import de.connect2x.trixnity.client.store.TimelineEvent
 import de.connect2x.trixnity.client.store.eventId
 import de.connect2x.trixnity.client.store.repository.room.room
@@ -59,9 +61,18 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.SupervisorJob
+import de.connect2x.trixnity.client.verification
+import de.connect2x.trixnity.client.verification.ActiveDeviceVerification
+import de.connect2x.trixnity.client.room
+import de.connect2x.trixnity.client.user
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
@@ -70,6 +81,7 @@ import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -85,6 +97,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import ui.model.ChannelType
 import ui.model.MessageContent
+import ui.model.displayText
 import ui.model.OrbitChannel
 import ui.model.OrbitMessage
 import ui.model.OrbitServer
@@ -128,6 +141,19 @@ class MatrixOrbitRepository(
 
     private val _roomListFlow = MutableSharedFlow<List<OrbitServer>>(replay = 1)
     private val _callEvents = MutableSharedFlow<CallEvent>(extraBufferCapacity = 10)
+
+    private val _authStatus = MutableStateFlow<AuthStatus>(AuthStatus.Authenticated)
+    override val authStatus: Flow<AuthStatus> = _authStatus.asStateFlow()
+
+    override suspend fun logout() {
+        trixnityClient?.stopSync()
+        trixnityClient = null
+        CredentialManager.clear()
+        _authStatus.value = AuthStatus.Unauthenticated
+    }
+
+    override val activeDeviceVerification: Flow<de.connect2x.trixnity.client.verification.ActiveDeviceVerification?>
+        get() = trixnityClient?.verification?.activeDeviceVerification ?: kotlinx.coroutines.flow.flowOf(null)
 
     fun setAccessToken(token: String) {
         _accessToken = token
@@ -509,13 +535,46 @@ class MatrixOrbitRepository(
                 direction = Direction.BACKWARDS
             )
 
-            return eventsFlow.take(limit).toList().mapNotNull { eventFlow ->
+            val timelineMessages = eventsFlow.take(limit).toList().mapNotNull { eventFlow ->
                 val timelineEvent = eventFlow.first()
                 timelineEventToOrbitMessage(timelineEvent)
             }.reversed()
+
+            val outboxList = trixnity.room.getOutbox(roomIdObj).first()
+            val outboxMessages = outboxList.mapNotNull { it.first() }
+                .map { outboxMessageToOrbitMessage(it) }
+
+            return (timelineMessages + outboxMessages)
+                .distinctBy { it.transactionId ?: it.id }
+                .sortedBy { it.timestamp }
         } catch (e: Exception) {
             return emptyList()
         }
+    }
+
+    private fun outboxMessageToOrbitMessage(outboxMessage: RoomOutboxMessage<*>): OrbitMessage {
+        val content = outboxMessage.content
+        val txnId = outboxMessage.transactionId
+        val roomId = outboxMessage.roomId.full
+        val sender = _userId ?: "me"
+        val ts = Instant.fromEpochMilliseconds(outboxMessage.createdAt.toEpochMilliseconds())
+
+        val orbitContent: MessageContent = if (content is RoomMessageEventContent) {
+            parseTrixnityMessageContent(content)
+        } else {
+            MessageContent.Text("Sending message...")
+        }
+
+        return OrbitMessage(
+            id = txnId,
+            userId = sender,
+            username = sender,
+            body = orbitContent.displayText,
+            timestamp = ts,
+            channelId = roomId,
+            content = orbitContent,
+            transactionId = txnId
+        )
     }
 
     override suspend fun sendMessage(channelId: String, body: String): Result<String> {
@@ -524,6 +583,24 @@ class MatrixOrbitRepository(
             val txnId = trixnity.room.sendMessage(RoomId(channelId)) {
                 text(body)
             }
+
+            // Manually emit a local echo
+            val orbitMessage = OrbitMessage(
+                id = txnId,
+                userId = _userId ?: "me",
+                username = _userId ?: "me",
+                body = body,
+                timestamp = Instant.fromEpochMilliseconds(1716500000000L),
+                channelId = channelId,
+                content = MessageContent.Text(body),
+                transactionId = txnId
+            )
+            synchronized(liveMessageStates) {
+                val state = liveMessageStates.getOrPut(channelId) { LiveMessageState(MutableSharedFlow(replay = 0)) }
+                state.messages.add(orbitMessage)
+                state.flow.tryEmit(listOf(orbitMessage))
+            }
+
             Result.success(txnId)
         } catch (e: Exception) {
             Result.failure(e)
@@ -559,7 +636,7 @@ class MatrixOrbitRepository(
             )
             val response = trixnity.api.room.sendMessageEvent(
                 RoomId(channelId),
-                unknownContent
+                unknownContent as de.connect2x.trixnity.core.model.events.MessageEventContent
             ).getOrThrow()
             Result.success(response.full)
         } catch (e: Exception) {
@@ -589,20 +666,46 @@ class MatrixOrbitRepository(
     ): Result<String> {
         return try {
             val trixnity = trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
-            val response = trixnity.api.room.sendMessageEvent(
-                RoomId(channelId),
-                FileBased.Image(
-                    body = filename,
-                    url = mxcUrl,
-                    info = ImageInfo(
-                        mimeType = mimeType,
-                        width = width,
-                        height = height,
-                        size = size
+            val txnId = trixnity.room.sendMessage(RoomId(channelId)) {
+                roomMessageBuilder(filename, null, null) {
+                    FileBased.Image(
+                        body = filename,
+                        url = mxcUrl,
+                        info = ImageInfo(
+                            mimeType = mimeType,
+                            width = width,
+                            height = height,
+                            size = size
+                        )
                     )
-                )
-            ).getOrThrow()
-            Result.success(response.full)
+                }
+            }
+
+            // Manually emit a local echo
+            val orbitMessage = OrbitMessage(
+                id = txnId,
+                userId = _userId ?: "me",
+                username = _userId ?: "me",
+                body = filename,
+                timestamp = Instant.fromEpochMilliseconds(1716500000000L),
+                channelId = channelId,
+                content = MessageContent.Image(
+                    url = convertMxcUrl(mxcUrl),
+                    body = filename,
+                    mimeType = mimeType,
+                    size = size,
+                    width = width,
+                    height = height
+                ),
+                transactionId = txnId
+            )
+            synchronized(liveMessageStates) {
+                val state = liveMessageStates.getOrPut(channelId) { LiveMessageState(MutableSharedFlow(replay = 0)) }
+                state.messages.add(orbitMessage)
+                state.flow.tryEmit(listOf(orbitMessage))
+            }
+
+            Result.success(txnId)
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -613,18 +716,42 @@ class MatrixOrbitRepository(
     ): Result<String> {
         return try {
             val trixnity = trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
-            val response = trixnity.api.room.sendMessageEvent(
-                RoomId(channelId),
-                FileBased.File(
-                    body = filename,
-                    url = mxcUrl,
-                    info = FileInfo(
-                        mimeType = mimeType,
-                        size = size
+            val txnId = trixnity.room.sendMessage(RoomId(channelId)) {
+                roomMessageBuilder(filename, null, null) {
+                    FileBased.File(
+                        body = filename,
+                        url = mxcUrl,
+                        info = FileInfo(
+                            mimeType = mimeType,
+                            size = size
+                        )
                     )
-                )
-            ).getOrThrow()
-            Result.success(response.full)
+                }
+            }
+
+            // Manually emit a local echo
+            val orbitMessage = OrbitMessage(
+                id = txnId,
+                userId = _userId ?: "me",
+                username = _userId ?: "me",
+                body = filename,
+                timestamp = Instant.fromEpochMilliseconds(1716500000000L),
+                channelId = channelId,
+                content = MessageContent.File(
+                    url = convertMxcUrl(mxcUrl),
+                    filename = filename,
+                    mimeType = mimeType,
+                    size = size
+                ),
+                transactionId = txnId
+            )
+            synchronized(liveMessageStates) {
+                val state = liveMessageStates.getOrPut(channelId) { LiveMessageState(MutableSharedFlow(replay = 0)) }
+                state.messages.add(orbitMessage)
+                state.flow.tryEmit(listOf(orbitMessage))
+            }
+
+            Result.success(txnId)
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -636,19 +763,44 @@ class MatrixOrbitRepository(
     ): Result<String> {
         return try {
             val trixnity = trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
-            val response = trixnity.api.room.sendMessageEvent(
-                RoomId(channelId),
-                FileBased.Audio(
-                    body = filename,
-                    url = mxcUrl,
-                    info = AudioInfo(
-                        mimeType = mimeType,
-                        duration = durationMs?.toLong(),
-                        size = size
+            val txnId = trixnity.room.sendMessage(RoomId(channelId)) {
+                roomMessageBuilder(filename, null, null) {
+                    FileBased.Audio(
+                        body = filename,
+                        url = mxcUrl,
+                        info = AudioInfo(
+                            mimeType = mimeType,
+                            duration = durationMs?.toLong(),
+                            size = size
+                        )
                     )
-                )
-            ).getOrThrow()
-            Result.success(response.full)
+                }
+            }
+
+            // Manually emit a local echo
+            val orbitMessage = OrbitMessage(
+                id = txnId,
+                userId = _userId ?: "me",
+                username = _userId ?: "me",
+                body = filename,
+                timestamp = Instant.fromEpochMilliseconds(1716500000000L),
+                channelId = channelId,
+                content = MessageContent.Audio(
+                    url = convertMxcUrl(mxcUrl),
+                    body = filename,
+                    mimeType = mimeType,
+                    size = size,
+                    durationMs = durationMs
+                ),
+                transactionId = txnId
+            )
+            synchronized(liveMessageStates) {
+                val state = liveMessageStates.getOrPut(channelId) { LiveMessageState(MutableSharedFlow(replay = 0)) }
+                state.messages.add(orbitMessage)
+                state.flow.tryEmit(listOf(orbitMessage))
+            }
+
+            Result.success(txnId)
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -827,21 +979,57 @@ class MatrixOrbitRepository(
     fun startSync() {
         GlobalScope.launch {
             if (trixnityClient == null && _accessToken != null && _userId != null) {
-                val authProviderData = de.connect2x.trixnity.clientserverapi.client.ClassicMatrixClientAuthProviderData(
-                    baseUrl = Url(homeserverUrl),
-                    accessToken = _accessToken!!,
-                    accessTokenExpiresInMs = null,
-                    refreshToken = null
-                )
-                trixnityClient = MatrixClient.create(
-                    repositoriesModule = RepositoriesModule.room(getRoomDatabaseBuilder()),
-                    mediaStoreModule = MediaStoreModule.okio(getMediaStorePath()),
-                    cryptoDriverModule = CryptoDriverModule.vodozemac(),
-                    authProviderData = authProviderData
-                ).getOrThrow()
+                try {
+                    trixnityClient = MatrixClient.create(
+                        repositoriesModule = RepositoriesModule.room(getRoomDatabaseBuilder()),
+                        mediaStoreModule = MediaStoreModule.okio(getMediaStorePath()),
+                        cryptoDriverModule = CryptoDriverModule.vodozemac(),
+                        authProviderData = null // Trixnity will load from local store
+                    ).getOrThrow()
+                } catch (e: Exception) {
+                    println("Failed to restore Trixnity client from store: ${e.message}")
+                    // Fallback to providing auth data explicitly if local store is empty or corrupted
+                    val authProviderData = de.connect2x.trixnity.clientserverapi.client.ClassicMatrixClientAuthProviderData(
+                        baseUrl = Url(homeserverUrl),
+                        accessToken = _accessToken!!,
+                        accessTokenExpiresInMs = null,
+                        refreshToken = null
+                    )
+                    trixnityClient = MatrixClient.create(
+                        repositoriesModule = RepositoriesModule.room(getRoomDatabaseBuilder()),
+                        mediaStoreModule = MediaStoreModule.okio(getMediaStorePath()),
+                        cryptoDriverModule = CryptoDriverModule.vodozemac(),
+                        authProviderData = authProviderData
+                    ).getOrNull()
+                }
             }
 
-            val trixnity = trixnityClient ?: return@launch
+            val trixnity = trixnityClient ?: run {
+                _authStatus.value = AuthStatus.Error("Failed to initialize Matrix client.")
+                return@launch
+            }
+
+            // Verify session validity
+            try {
+                trixnity.api.authentication.whoAmI().getOrThrow()
+                _authStatus.value = AuthStatus.Authenticated
+            } catch (e: Exception) {
+                println("Session invalid: ${e.message}")
+                _authStatus.value = AuthStatus.Error("Previous session is invalid. Please login again.")
+                return@launch
+            }
+
+            // Sync presence explicitly if needed, Trixnity handles syncing loop automatically when startSync is called
+            launch { 
+                try {
+                    trixnity.startSync() 
+                } catch (e: Exception) {
+                    println("Sync loop failed: ${e.message}")
+                    if (e is de.connect2x.trixnity.core.MatrixServerException && e.statusCode == io.ktor.http.HttpStatusCode.Unauthorized) {
+                        _authStatus.value = AuthStatus.Error("Session expired. Please login again.")
+                    }
+                }
+            }
 
             launch {
                 trixnity.room.getAll().collectLatest { allRoomsMap ->
@@ -939,6 +1127,7 @@ class MatrixOrbitRepository(
         val eventId = timelineEvent.eventId.full
         val roomId = timelineEvent.roomId.full
         val sender = timelineEvent.sender.full
+        val txnId = (event as? RoomEvent.MessageEvent<*>)?.unsigned?.transactionId
         val ts = Instant.fromEpochMilliseconds(event.originTimestamp)
 
         if (contentResult?.isFailure == true) {
@@ -949,7 +1138,8 @@ class MatrixOrbitRepository(
                 body = "🔒 Waiting for keys to decrypt this message...",
                 timestamp = ts,
                 channelId = roomId,
-                content = MessageContent.Text("🔒 Waiting for keys to decrypt this message...")
+                content = MessageContent.Text("🔒 Waiting for keys to decrypt this message..."),
+                transactionId = txnId
             )
         }
 
@@ -988,7 +1178,8 @@ class MatrixOrbitRepository(
                 body = body,
                 timestamp = ts,
                 channelId = roomId,
-                content = orbitContent
+                content = orbitContent,
+                transactionId = txnId
             )
         }
 
@@ -1002,7 +1193,8 @@ class MatrixOrbitRepository(
                 body = key,
                 timestamp = ts,
                 channelId = roomId,
-                content = MessageContent.Reaction(reactsToEventId = eventIdRel, key = key)
+                content = MessageContent.Reaction(reactsToEventId = eventIdRel, key = key),
+                transactionId = txnId
             )
         }
 
