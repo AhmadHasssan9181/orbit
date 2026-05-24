@@ -31,6 +31,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 // Remove MockData
 import ui.model.*
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isShiftPressed
+import kotlinx.coroutines.launch
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
@@ -63,23 +70,65 @@ fun ChatScreen(
     messages: List<OrbitMessage>,
     members: List<OrbitUser>,
     currentUser: OrbitUser?,
+    typingUsers: List<String> = emptyList(),
     onSend: (String) -> Unit,
     onSendAttachment: ((ByteArray, String, String) -> Unit)? = null,
+    onTyping: (Boolean) -> Unit = {},
+    onSeen: (String) -> Unit = {},
     showMemberList: Boolean = true,
     onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val windowSize = LocalWindowSizeClass.current
+    val callManager = webrtc.LocalCallManager.current
+
     Row(
         modifier = modifier
             .fillMaxSize()
             .background(Chat_Bg)
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            ChatHeader(channel, onBack = onBack)
+            ChatHeader(
+                channel = channel,
+                onBack = onBack,
+                onVideoCall = { callManager?.startCall(channel.id, true) },
+                onVoiceCall = { callManager?.startCall(channel.id, false) }
+            )
             HorizontalDivider(color = Separator.copy(alpha = 0.2f), thickness = 1.dp)
-            MessageList(messages = messages, currentUser = currentUser, modifier = Modifier.weight(1f))
-            MessageInputBar(placeholder = "Message #${channel.name}", onSend = onSend, onSendAttachment = onSendAttachment)
+            Box(modifier = Modifier.weight(1f)) {
+                MessageList(
+                    messages = messages,
+                    currentUser = currentUser,
+                    modifier = Modifier.fillMaxSize(),
+                    onSeen = onSeen
+                )
+                
+                // Typing Indicator Overlay
+                if (typingUsers.isNotEmpty()) {
+                    val typingText = when {
+                        typingUsers.size == 1 -> "${typingUsers[0]} is typing..."
+                        typingUsers.size == 2 -> "${typingUsers[0]} and ${typingUsers[1]} are typing..."
+                        else -> "Several people are typing..."
+                    }
+                    Surface(
+                        modifier = Modifier.align(Alignment.BottomStart).padding(bottom = 8.dp, start = 16.dp),
+                        color = Chat_Bg.copy(alpha = 0.8f),
+                        shape = RoundedCornerShape(4.dp)
+                    ) {
+                        Text(
+                            text = typingText,
+                            style = MaterialTheme.typography.bodySmall.copy(color = Text_Muted, fontSize = 11.sp),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+            }
+            MessageInputBar(
+                placeholder = "Message #${channel.name}",
+                onSend = onSend,
+                onSendAttachment = onSendAttachment,
+                onTyping = onTyping
+            )
         }
         if (showMemberList && windowSize.isExpanded) MemberListPanel(members = members)
     }
@@ -88,7 +137,12 @@ fun ChatScreen(
 // ─── ChatHeader — Discord/Revolt style ───────────────────────────
 
 @Composable
-private fun ChatHeader(channel: OrbitChannel, onBack: (() -> Unit)? = null) {
+private fun ChatHeader(
+    channel: OrbitChannel,
+    onBack: (() -> Unit)? = null,
+    onVideoCall: (() -> Unit)? = null,
+    onVoiceCall: (() -> Unit)? = null
+) {
     val windowSize = LocalWindowSizeClass.current
     Row(
         modifier = Modifier
@@ -171,8 +225,8 @@ private fun ChatHeader(channel: OrbitChannel, onBack: (() -> Unit)? = null) {
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            HeaderIconBtn(Icons.Default.Call, "Voice Call", onClick = { println("Voice Call feature is under construction") })
-            HeaderIconBtn(Icons.Default.Videocam, "Video Call", onClick = { println("Video Call feature is under construction") })
+            HeaderIconBtn(Icons.Default.Call, "Voice Call", onClick = { onVoiceCall?.invoke() })
+            HeaderIconBtn(Icons.Default.Videocam, "Video Call", onClick = { onVideoCall?.invoke() })
             HeaderIconBtn(Icons.Default.Search, "Search")
             HeaderIconBtn(Icons.Default.Notifications, "Notifications")
             HeaderIconBtn(Icons.Default.PushPin, "Pins")
@@ -205,31 +259,82 @@ private fun HeaderIconBtn(
 // ─── MessageList ─────────────────────────────────────────────────
 
 @Composable
-private fun MessageList(messages: List<OrbitMessage>, currentUser: OrbitUser?, modifier: Modifier = Modifier) {
+private fun MessageList(
+    messages: List<OrbitMessage>,
+    currentUser: OrbitUser?,
+    modifier: Modifier = Modifier,
+    onSeen: (String) -> Unit = {}
+) {
     val listState = rememberLazyListState()
     val grouped   = groupMessages(messages)
+    val coroutineScope = rememberCoroutineScope()
 
-    LazyColumn(
-        state = listState,
-        modifier = modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(0.dp)
-    ) {
-        items(grouped, key = { it.key }) { group ->
-            when (group) {
-                is MessageGroup.Single -> MessageBubbleFull(group.message, currentUser)
-                is MessageGroup.Dense  -> {
-                    if (ui.theme.LocalIsLiteMode.current) {
-                        for (msg in group.messages) {
-                            MessageBubbleFull(msg, currentUser)
-                        }
-                    } else {
-                        MessageBubbleFull(group.messages[0], currentUser)
-                        for (i in 1 until group.messages.size) {
-                            DenseMessageBody(group.messages[i])
+    LaunchedEffect(messages.size) {
+        if (grouped.isNotEmpty()) {
+            listState.animateScrollToItem(grouped.size - 1)
+        }
+    }
+    
+    // Read Receipt Logic
+    LaunchedEffect(listState.firstVisibleItemIndex, messages.size) {
+        if (messages.isNotEmpty() && grouped.isNotEmpty()) {
+            val lastVisibleItemIndex = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            if (lastVisibleItemIndex >= grouped.size - 1) {
+                onSeen(messages.last().id)
+            }
+        }
+    }
+
+    Box(modifier = modifier.fillMaxWidth()) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(0.dp)
+        ) {
+            items(grouped, key = { it.key }) { group ->
+                when (group) {
+                    is MessageGroup.Single -> MessageBubbleFull(group.message, currentUser)
+                    is MessageGroup.Dense  -> {
+                        if (ui.theme.LocalIsLiteMode.current) {
+                            for (msg in group.messages) {
+                                MessageBubbleFull(msg, currentUser)
+                            }
+                        } else {
+                            MessageBubbleFull(group.messages[0], currentUser)
+                            for (i in 1 until group.messages.size) {
+                                DenseMessageBody(group.messages[i])
+                            }
                         }
                     }
                 }
+            }
+        }
+
+        val showScrollToBottom by remember {
+            derivedStateOf { listState.canScrollForward }
+        }
+
+        androidx.compose.animation.AnimatedVisibility(
+            visible = showScrollToBottom,
+            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+            enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.scaleIn(),
+            exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.scaleOut()
+        ) {
+            FloatingActionButton(
+                onClick = {
+                    coroutineScope.launch {
+                        if (grouped.isNotEmpty()) {
+                            listState.animateScrollToItem(grouped.size - 1)
+                        }
+                    }
+                },
+                containerColor = Accent,
+                contentColor = Color.White,
+                shape = CircleShape,
+                modifier = Modifier.size(48.dp)
+            ) {
+                Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Scroll to bottom", modifier = Modifier.size(24.dp))
             }
         }
     }
@@ -939,15 +1044,26 @@ private fun MessageAvatar(message: OrbitMessage) {
 private fun MessageInputBar(
     placeholder: String,
     onSend: (String) -> Unit,
-    onSendAttachment: ((ByteArray, String, String) -> Unit)? = null
+    onSendAttachment: ((ByteArray, String, String) -> Unit)? = null,
+    onTyping: (Boolean) -> Unit = {}
 ) {
     val isLiteMode = ui.theme.LocalIsLiteMode.current
     if (isLiteMode) {
-        WhatsAppInputBar(placeholder, onSend)
+        WhatsAppInputBar(placeholder, onSend, onTyping)
         return
     }
 
     var text by remember { mutableStateOf("") }
+    
+    LaunchedEffect(text) {
+        if (text.isNotBlank()) {
+            onTyping(true)
+            kotlinx.coroutines.delay(5000)
+            onTyping(false)
+        } else {
+            onTyping(false)
+        }
+    }
     
     val launchPicker = util.rememberFilePickerLauncher { bytes, name, mime ->
         onSendAttachment?.invoke(bytes, name, mime)
@@ -980,7 +1096,13 @@ private fun MessageInputBar(
                 value = text,
                 onValueChange = { text = it },
                 placeholder = placeholder,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f),
+                onSend = {
+                    if (text.isNotBlank()) {
+                        onSend(text)
+                        text = ""
+                    }
+                }
             )
 
             // Right-side icons
@@ -1049,12 +1171,24 @@ private fun BasicTextField_Compat(
     value: String,
     onValueChange: (String) -> Unit,
     placeholder: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onSend: (() -> Unit)? = null
 ) {
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
-        modifier = modifier.heightIn(min = 36.dp),
+        modifier = modifier.heightIn(min = 36.dp).onKeyEvent { event ->
+            if (event.key == Key.Enter && event.type == KeyEventType.KeyDown && !event.isShiftPressed) {
+                onSend?.invoke()
+                true
+            } else false
+        },
+        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+            imeAction = androidx.compose.ui.text.input.ImeAction.Send
+        ),
+        keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+            onSend = { onSend?.invoke() }
+        ),
         placeholder = {
             Text(
                 text = placeholder,
@@ -1322,6 +1456,7 @@ fun ChatEmptyState(
 
 @Composable
 fun VoiceChannelPlaceholder(channel: OrbitChannel) {
+    val callManager = webrtc.LocalCallManager.current
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val pulseScale by infiniteTransition.animateFloat(
         initialValue = 1f,
@@ -1384,27 +1519,30 @@ fun VoiceChannelPlaceholder(channel: OrbitChannel) {
             )
 
             Text(
-                text = "Voice Channel — nobody here yet 👀",
+                text = "Voice Channel — connected via Orbit WebRTC ⚡",
                 style = MaterialTheme.typography.bodyMedium.copy(color = Text_Muted)
             )
 
-            val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(Accent)
-                    .clickable {
-                        uriHandler.openUri("https://app.element.io/#/room/${channel.id}")
-                    }
-                    .padding(horizontal = 24.dp, vertical = 10.dp)
-            ) {
-                Text(
-                    text = "Join Voice in Element Web",
-                    style = MaterialTheme.typography.labelLarge.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-                )
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(
+                    onClick = { callManager.startCall(channel.id, isVideo = false) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                    shape = RoundedCornerShape(24.dp)
+                ) {
+                    Icon(Icons.Default.Phone, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Join Voice")
+                }
+                
+                Button(
+                    onClick = { callManager.startCall(channel.id, isVideo = true) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                    shape = RoundedCornerShape(24.dp)
+                ) {
+                    Icon(Icons.Default.Videocam, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Video Call")
+                }
             }
         }
     }
@@ -1495,8 +1633,18 @@ private fun WhatsAppMessageBubble(message: OrbitMessage, isCurrentUser: Boolean)
 }
 
 @Composable
-private fun WhatsAppInputBar(placeholder: String, onSend: (String) -> Unit) {
+private fun WhatsAppInputBar(placeholder: String, onSend: (String) -> Unit, onTyping: (Boolean) -> Unit = {}) {
     var text by remember { mutableStateOf("") }
+    
+    LaunchedEffect(text) {
+        if (text.isNotBlank()) {
+            onTyping(true)
+            kotlinx.coroutines.delay(5000)
+            onTyping(false)
+        } else {
+            onTyping(false)
+        }
+    }
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
         verticalAlignment = Alignment.Bottom
@@ -1515,7 +1663,13 @@ private fun WhatsAppInputBar(placeholder: String, onSend: (String) -> Unit) {
                 value = text,
                 onValueChange = { text = it },
                 placeholder = "Message",
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f),
+                onSend = {
+                    if (text.isNotBlank()) {
+                        onSend(text)
+                        text = ""
+                    }
+                }
             )
             Spacer(Modifier.width(8.dp))
             InputIconBtn(Icons.Default.AddCircle, "Attach") {}

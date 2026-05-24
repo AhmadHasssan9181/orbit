@@ -6,6 +6,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.KeyEventType
 import kotlinx.coroutines.launch
 import repository.AuthFlow
 import repository.MatrixOrbitRepository
@@ -30,6 +35,50 @@ fun LoginScreen(
     var loadingLabel by remember { mutableStateOf("") }
 
     val scope = rememberCoroutineScope()
+
+    val performLogin: () -> Unit = {
+        isLoading = true
+        loadingLabel = ""
+        errorMessage = null
+        val repo = MatrixOrbitRepository(homeserverUrl.trimEnd('/'))
+
+        if (isRegistering) {
+            val username = identifier.removePrefix("@").split(":").first()
+            scope.launch {
+                try {
+                    val regResult = repo.register(username, password)
+                    if (regResult.authFlow is AuthFlow.Password) {
+                        repo.login(
+                            identifier = username,
+                            password = password,
+                            deviceName = "Orbit"
+                        )
+                        onLoginSuccess(repo)
+                    } else {
+                        errorMessage = "Registration requires additional flow"
+                        isLoading = false
+                    }
+                } catch (e: Exception) {
+                    errorMessage = "Register failed: ${e.message}"
+                    isLoading = false
+                }
+            }
+        } else {
+            scope.launch {
+                try {
+                    repo.login(
+                        identifier = identifier,
+                        password = password,
+                        deviceName = "Orbit"
+                    )
+                    onLoginSuccess(repo)
+                } catch (e: Exception) {
+                    errorMessage = "Login failed: ${e.message}"
+                    isLoading = false
+                }
+            }
+        }
+    }
 
     Surface(
         modifier = modifier.fillMaxSize(),
@@ -63,7 +112,10 @@ fun LoginScreen(
                 onValueChange = { homeserverUrl = it },
                 label = { Text("Homeserver URL") },
                 modifier = Modifier.fillMaxWidth(),
-                singleLine = true
+                singleLine = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    imeAction = androidx.compose.ui.text.input.ImeAction.Next
+                )
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -73,7 +125,10 @@ fun LoginScreen(
                 onValueChange = { identifier = it },
                 label = { Text("Username or Matrix ID") },
                 modifier = Modifier.fillMaxWidth(),
-                singleLine = true
+                singleLine = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    imeAction = androidx.compose.ui.text.input.ImeAction.Next
+                )
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -82,9 +137,26 @@ fun LoginScreen(
                 value = password,
                 onValueChange = { password = it },
                 label = { Text("Password") },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().onKeyEvent { event ->
+                    if (event.key == Key.Enter && event.type == KeyEventType.KeyDown) {
+                        if (identifier.isNotBlank() && password.isNotBlank()) {
+                            performLogin()
+                        }
+                        true
+                    } else false
+                },
                 visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                singleLine = true
+                singleLine = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    imeAction = androidx.compose.ui.text.input.ImeAction.Done
+                ),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                    onDone = {
+                        if (identifier.isNotBlank() && password.isNotBlank()) {
+                            performLogin()
+                        }
+                    }
+                )
             )
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -118,49 +190,7 @@ fun LoginScreen(
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Button(
-                            onClick = {
-                                isLoading = true
-                                loadingLabel = ""
-                                errorMessage = null
-                                val repo = MatrixOrbitRepository(homeserverUrl.trimEnd('/'))
-
-                                if (isRegistering) {
-                                    val username = identifier.removePrefix("@").split(":").first()
-                                    scope.launch {
-                                        try {
-                                            val regResult = repo.register(username, password)
-                                            if (regResult.authFlow is AuthFlow.Password) {
-                                                repo.login(
-                                                    identifier = username,
-                                                    password = password,
-                                                    deviceName = "Orbit"
-                                                )
-                                                onLoginSuccess(repo)
-                                            } else {
-                                                errorMessage = "Registration requires additional flow"
-                                                isLoading = false
-                                            }
-                                        } catch (e: Exception) {
-                                            errorMessage = "Register failed: ${e.message}"
-                                            isLoading = false
-                                        }
-                                    }
-                                } else {
-                                    scope.launch {
-                                        try {
-                                            repo.login(
-                                                identifier = identifier,
-                                                password = password,
-                                                deviceName = "Orbit"
-                                            )
-                                            onLoginSuccess(repo)
-                                        } catch (e: Exception) {
-                                            errorMessage = "Login failed: ${e.message}"
-                                            isLoading = false
-                                        }
-                                    }
-                                }
-                            },
+                            onClick = performLogin,
                             enabled = identifier.isNotBlank() && password.isNotBlank()
                         ) {
                             Text(if (isRegistering) "Register" else "Login")
@@ -190,6 +220,7 @@ fun LoginScreen(
                                     isLoading = false
                                 }
                             }
+                            Unit
                         }
                     ) {
                         Text("\uD83C\uDF10  Login with Browser (SSO)")

@@ -137,7 +137,8 @@ data class OrbitMessage(
     val isEdited: Boolean = false,
     // Aggregated reactions: emoji key -> list of sender userIds
     val reactions: Map<String, List<String>> = emptyMap(),
-    val replyToEventId: String? = null
+    val replyToEventId: String? = null,
+    val readReceipts: List<String> = emptyList()
 ) {
     fun formatTime(): String {
         val dt = timestamp.toLocalDateTime(TimeZone.currentSystemDefault())

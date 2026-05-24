@@ -23,6 +23,13 @@ import ui.layout.LocalWindowSizeClass
 import ui.layout.WindowSizeClass
 import ui.layout.windowSizeClassFor
 import ui.model.*
+import webrtc.LocalCallManager
+import webrtc.CallManager
+import webrtc.createWebRtcClient
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.put
 import ui.theme.LocalIsLiteMode
 import ui.theme.LocalOnLiteModeChange
 import ui.theme.rememberCosmicTokens
@@ -104,6 +111,86 @@ private fun MainAppContent(
     modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
+
+    // ─── WebRTC Call Manager ────────────────────────────────────
+    val webRtcClient = remember { createWebRtcClient() }
+    val callManager = remember { CallManager(webRtcClient, scope) }
+
+    LaunchedEffect(callManager, repository) {
+        // Fetch TURN servers
+        scope.launch {
+            repository.getTurnServers().onSuccess { servers ->
+                callManager.iceServers = servers
+            }
+        }
+
+        // Listen for signaling events
+        scope.launch {
+            repository.observeCallEvents().collect { event ->
+                when (event) {
+                    is repository.CallEvent.Invite -> callManager.handleCallInvite(event.roomId, event.callId, event.sdp)
+                    is repository.CallEvent.Answer -> callManager.handleCallAnswer(event.sdp)
+                    is repository.CallEvent.Candidate -> callManager.handleIceCandidate(
+                        webrtc.IceCandidateModel(event.sdp, event.sdpMid, event.sdpMLineIndex)
+                    )
+                    is repository.CallEvent.Hangup -> {
+                        if (callManager.callId == event.callId) {
+                            callManager.endCall()
+                        }
+                    }
+                }
+            }
+        }
+
+        callManager.sendInvite = { roomId, callId, sdp ->
+            scope.launch {
+                repository.sendCallEvent(roomId, "m.call.invite", buildJsonObject {
+                    put("call_id", callId)
+                    put("offer", buildJsonObject {
+                        put("type", "offer")
+                        put("sdp", sdp)
+                    })
+                    put("version", 0)
+                    put("lifetime", 30000)
+                })
+            }
+        }
+        callManager.sendAnswer = { roomId, callId, sdp ->
+            scope.launch {
+                repository.sendCallEvent(roomId, "m.call.answer", buildJsonObject {
+                    put("call_id", callId)
+                    put("answer", buildJsonObject {
+                        put("type", "answer")
+                        put("sdp", sdp)
+                    })
+                    put("version", 0)
+                })
+            }
+        }
+        callManager.sendHangup = { roomId, callId ->
+            scope.launch {
+                repository.sendCallEvent(roomId, "m.call.hangup", buildJsonObject {
+                    put("call_id", callId)
+                    put("version", 0)
+                })
+            }
+        }
+        callManager.sendCandidate = { roomId, callId, candidate ->
+            scope.launch {
+                repository.sendCallEvent(roomId, "m.call.candidates", buildJsonObject {
+                    put("call_id", callId)
+                    put("candidates", buildJsonArray {
+                        add(buildJsonObject {
+                            put("candidate", candidate.sdp)
+                            put("sdpMid", candidate.sdpMid)
+                            put("sdpMLineIndex", candidate.sdpMLineIndex)
+                        })
+                    })
+                    put("version", 0)
+                })
+            }
+        }
+    }
 
     // ─── Shared state ──────────────────────────────────────────
     var servers by remember { mutableStateOf<List<OrbitServer>>(emptyList()) }
@@ -213,68 +300,74 @@ private fun MainAppContent(
     }
 
     // ─── Route to appropriate layout ────────────────────────────
-    when (windowSize) {
-        WindowSizeClass.Compact -> CompactLayout(
-            servers = servers,
-            channels = channels,
-            selectedServerId = selectedServerId,
-            selectedChannelId = selectedChannelId,
-            currentUser = currentUser,
-            isLoadingChannels = isLoadingChannels,
-            selectedBottomTab = selectedBottomTab,
-            compactOpenChannelId = compactOpenChannelId,
-            repository = repository,
-            onServerSelect = { id ->
-                selectedServerId = id
-                selectedBottomTab = BottomNavTab.DMs
-            },
-            onChannelClick = { id ->
-                selectedChannelId = id
-                compactOpenChannelId = id
-            },
-            onBackFromChat = { compactOpenChannelId = null },
-            onBottomTabSelect = { tab -> selectedBottomTab = tab },
-            onOpenSettings = { showSettings = true },
-            onAddServer = { showJoinServer = true },
-            modifier = Modifier.fillMaxSize()
-        )
+    CompositionLocalProvider(LocalCallManager provides callManager) {
+        Box(modifier = modifier) {
+            when (windowSize) {
+                WindowSizeClass.Compact -> CompactLayout(
+                    servers = servers,
+                    channels = channels,
+                    selectedServerId = selectedServerId,
+                    selectedChannelId = selectedChannelId,
+                    currentUser = currentUser,
+                    isLoadingChannels = isLoadingChannels,
+                    selectedBottomTab = selectedBottomTab,
+                    compactOpenChannelId = compactOpenChannelId,
+                    repository = repository,
+                    onServerSelect = { id ->
+                        selectedServerId = id
+                        selectedBottomTab = BottomNavTab.DMs
+                    },
+                    onChannelClick = { id ->
+                        selectedChannelId = id
+                        compactOpenChannelId = id
+                    },
+                    onBackFromChat = { compactOpenChannelId = null },
+                    onBottomTabSelect = { tab -> selectedBottomTab = tab },
+                    onOpenSettings = { showSettings = true },
+                    onAddServer = { showJoinServer = true },
+                    modifier = Modifier.fillMaxSize()
+                )
 
-        WindowSizeClass.Medium -> MediumLayout(
-            servers = servers,
-            channels = channels,
-            selectedServerId = selectedServerId,
-            selectedChannelId = selectedChannelId,
-            currentUser = currentUser,
-            isLoadingChannels = isLoadingChannels,
-            repository = repository,
-            onServerClick = { id -> selectedServerId = id },
-            onChannelClick = { id -> selectedChannelId = id },
-            onOpenSettings = { showSettings = true },
-            onAddServer = { showJoinServer = true },
-            modifier = Modifier.fillMaxSize()
-        )
+                WindowSizeClass.Medium -> MediumLayout(
+                    servers = servers,
+                    channels = channels,
+                    selectedServerId = selectedServerId,
+                    selectedChannelId = selectedChannelId,
+                    currentUser = currentUser,
+                    isLoadingChannels = isLoadingChannels,
+                    repository = repository,
+                    onServerClick = { id -> selectedServerId = id },
+                    onChannelClick = { id -> selectedChannelId = id },
+                    onOpenSettings = { showSettings = true },
+                    onAddServer = { showJoinServer = true },
+                    modifier = Modifier.fillMaxSize()
+                )
 
-        WindowSizeClass.Expanded -> ExpandedLayout(
-            servers = servers,
-            channels = channels,
-            selectedServerId = selectedServerId,
-            selectedChannelId = selectedChannelId,
-            currentUser = currentUser,
-            isLoadingChannels = isLoadingChannels,
-            repository = repository,
-            onServerClick = { id -> selectedServerId = id },
-            onChannelClick = { id -> selectedChannelId = id },
-            onOpenSettings = { showSettings = true },
-            onAddServer = { showJoinServer = true },
-            modifier = Modifier.fillMaxSize()
-        )
-    }
+                WindowSizeClass.Expanded -> ExpandedLayout(
+                    servers = servers,
+                    channels = channels,
+                    selectedServerId = selectedServerId,
+                    selectedChannelId = selectedChannelId,
+                    currentUser = currentUser,
+                    isLoadingChannels = isLoadingChannels,
+                    repository = repository,
+                    onServerClick = { id -> selectedServerId = id },
+                    onChannelClick = { id -> selectedChannelId = id },
+                    onOpenSettings = { showSettings = true },
+                    onAddServer = { showJoinServer = true },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
 
-    if (showJoinServer) {
-        JoinServerScreen(
-            repository = repository,
-            onClose = { showJoinServer = false }
-        )
+            if (showJoinServer) {
+                JoinServerScreen(
+                    repository = repository,
+                    onClose = { showJoinServer = false }
+                )
+            }
+
+            CallScreen(callManager = callManager)
+        }
     }
 }
 
@@ -984,6 +1077,7 @@ fun ChatScreenWithRepo(
     var isLoading by remember(channel.id) { mutableStateOf(true) }
     var members by remember(channel.id) { mutableStateOf<List<OrbitUser>>(emptyList()) }
     var currentUser by remember { mutableStateOf<OrbitUser?>(null) }
+    var typingUsers by remember(channel.id) { mutableStateOf<List<String>>(emptyList()) }
 
     LaunchedEffect(channel.id) {
         isLoading = true
@@ -1009,11 +1103,16 @@ fun ChatScreenWithRepo(
         }
     }
 
+    LaunchedEffect(channel.id) {
+        repository.observeTyping(channel.id).collect { typingUsers = it }
+    }
+
     ChatScreen(
         channel = channel,
         messages = messages,
         members = members,
         currentUser = currentUser,
+        typingUsers = typingUsers,
         onSend = { body ->
             scope.launch {
                 try {
@@ -1042,6 +1141,12 @@ fun ChatScreenWithRepo(
                     messages = loaded
                 } catch (_: Exception) {}
             }
+        },
+        onTyping = { isTyping ->
+            scope.launch { repository.setTyping(channel.id, isTyping) }
+        },
+        onSeen = { eventId ->
+            scope.launch { repository.sendReadReceipt(channel.id, eventId) }
         },
         showMemberList = showMemberList,
         onBack = onBack,

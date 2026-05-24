@@ -46,6 +46,10 @@ interface OrbitRepository {
     suspend fun getChannelById(channelId: String): OrbitChannel?
     
     suspend fun getRoomMembers(roomId: String): List<OrbitUser>
+    
+    // WebRTC Signaling & Infrastructure
+    suspend fun getTurnServers(): Result<List<TurnServer>>
+    suspend fun sendCallEvent(channelId: String, eventType: String, content: kotlinx.serialization.json.JsonObject): Result<String>
 
     // ─── Messages ────────────────────────────────────────────
     suspend fun getMessagesForChannel(
@@ -111,6 +115,11 @@ interface OrbitRepository {
         eventId: String
     ): Result<Unit>
 
+    suspend fun sendReadReceipt(roomId: String, eventId: String)
+
+    // Push Notifications
+    suspend fun registerPusher(pushKey: String, appId: String, url: String)
+
     // ─── User Profile ────────────────────────────────────────
     suspend fun updateDisplayName(name: String): Result<Unit>
     suspend fun uploadAvatar(imageBytes: ByteArray): Result<String> // mxc:// URI
@@ -119,11 +128,22 @@ interface OrbitRepository {
     // ─── Presence / Status ───────────────────────────────────
     suspend fun setPresence(status: UserStatus)
     suspend fun observePresence(userId: String): Flow<UserStatus>
+    
+    suspend fun setTyping(roomId: String, isTyping: Boolean)
+    fun observeTyping(roomId: String): Flow<List<String>>
 
-    // ─── Real-time Events ────────────────────────────────────
+    // Real-time Events ────────────────────────────────────
     fun observeMessages(channelId: String): Flow<List<OrbitMessage>>
     fun observeChannelList(spaceId: String): Flow<List<OrbitChannel>>
-}
+    fun observeCallEvents(): Flow<CallEvent>
+    }
+
+    sealed class CallEvent {
+    data class Invite(val roomId: String, val callId: String, val sdp: String) : CallEvent()
+    data class Answer(val roomId: String, val callId: String, val sdp: String) : CallEvent()
+    data class Candidate(val roomId: String, val callId: String, val sdp: String, val sdpMid: String, val sdpMLineIndex: Int) : CallEvent()
+    data class Hangup(val roomId: String, val callId: String) : CallEvent()
+    }
 
 /**
  * Result of a successful login.
@@ -141,6 +161,12 @@ data class AuthResult(
 data class RegisterResult(
     val authFlow: AuthFlow,
     val nextEndpoint: String
+)
+
+data class TurnServer(
+    val uris: List<String>,
+    val username: String? = null,
+    val password: String? = null
 )
 
 sealed class AuthFlow {
