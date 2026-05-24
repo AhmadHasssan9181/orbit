@@ -155,6 +155,9 @@ private fun MainAppContent(
         // Listen for signaling events
         scope.launch {
             repository.observeCallEvents().collect { event ->
+                val user = repository.getCurrentUser()
+                if (user != null && event.senderId == user.id) return@collect
+                
                 when (event) {
                     is repository.CallEvent.Invite -> callManager.handleCallInvite(event.roomId, event.callId, event.sdp)
                     is repository.CallEvent.Answer -> callManager.handleCallAnswer(event.sdp)
@@ -1115,6 +1118,7 @@ fun ChatScreenWithRepo(
     var currentUser by remember { mutableStateOf<OrbitUser?>(null) }
     var typingUsers by remember(channel.id) { mutableStateOf<List<String>>(emptyList()) }
     var activeCall by remember(channel.id) { mutableStateOf<repository.CallEvent.Invite?>(null) }
+    var activeGroupCallUrl by remember(channel.id) { mutableStateOf<String?>(null) }
 
     LaunchedEffect(channel.id) {
         isLoading = true
@@ -1157,6 +1161,10 @@ fun ChatScreenWithRepo(
         repository.observeActiveCall(channel.id).collect { activeCall = it }
     }
 
+    LaunchedEffect(channel.id) {
+        repository.observeActiveGroupCall(channel.id).collect { activeGroupCallUrl = it }
+    }
+
     ChatScreen(
         channel = channel,
         messages = messages,
@@ -1164,6 +1172,7 @@ fun ChatScreenWithRepo(
         currentUser = currentUser,
         typingUsers = typingUsers,
         activeCall = activeCall,
+        activeGroupCallUrl = activeGroupCallUrl,
         onSend = { body ->
             scope.launch {
                 try {

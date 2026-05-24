@@ -122,11 +122,21 @@ fun ChatScreen(
                                 style = MaterialTheme.typography.titleSmall.copy(color = Text_White, fontWeight = FontWeight.Bold)
                             )
                         }
-                        Button(
-                            onClick = { callManager?.handleCallInvite(activeCall.roomId, activeCall.callId, activeCall.sdp) },
-                            colors = ButtonDefaults.buttonColors(containerColor = Accent)
-                        ) {
-                            Text("Join Call", color = Color.White)
+                        val isMyCall = currentUser?.id == activeCall.senderId
+                        if (isMyCall) {
+                            Button(
+                                onClick = { callManager?.isMinimized?.value = false },
+                                colors = ButtonDefaults.buttonColors(containerColor = Accent)
+                            ) {
+                                Text("Return to Call", color = Color.White)
+                            }
+                        } else {
+                            Button(
+                                onClick = { callManager?.handleCallInvite(activeCall.roomId, activeCall.callId, activeCall.sdp) },
+                                colors = ButtonDefaults.buttonColors(containerColor = Accent)
+                            ) {
+                                Text("Join Call", color = Color.White)
+                            }
                         }
                     }
                 }

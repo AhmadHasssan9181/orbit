@@ -35,6 +35,7 @@ fun CallScreen(
 ) {
     val callState by callManager.callState.collectAsState()
     val isMinimized by callManager.isMinimized.collectAsState()
+    val isIncomingCall by callManager.isIncomingCall.collectAsState()
     val tokens = rememberCosmicTokens()
 
     if (callState == CallState.IDLE || callState == CallState.ENDED) {
@@ -249,7 +250,7 @@ fun CallScreen(
 
         // Incoming Call UI Overlay
         AnimatedVisibility(
-            visible = callState == CallState.RINGING && callManager.callId != null,
+            visible = callState == CallState.RINGING && callManager.callId != null && isIncomingCall,
             enter = fadeIn(tween(300)),
             exit = fadeOut(tween(300)),
             modifier = Modifier.fillMaxSize()
@@ -304,7 +305,7 @@ fun CallScreen(
         }
 
         // Bottom Controls Container (Glassmorphic)
-        if (callState == CallState.CONNECTED || callState == CallState.CONNECTING) {
+        if (callState == CallState.CONNECTED || callState == CallState.CONNECTING || (callState == CallState.RINGING && !isIncomingCall)) {
             AnimatedVisibility(
                 visible = showControls,
                 enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
