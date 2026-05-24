@@ -10,10 +10,13 @@ interface WebRtcClient {
     val onIceCandidate: SharedFlow<IceCandidateModel>
     val onRemoteDescription: SharedFlow<SessionDescriptionModel>
     val onStreamAdded: SharedFlow<Boolean>
+    val isScreenSharing: SharedFlow<Boolean>
     
     fun initialize(iceServers: List<TurnServer> = emptyList())
     fun startLocalMedia(isVideoEnabled: Boolean)
     fun stopLocalMedia()
+    fun startScreenShare(data: Any? = null) // data for Android MediaProjection intent
+    fun stopScreenShare()
     fun createOffer(onSuccess: (SessionDescriptionModel) -> Unit, onError: (String) -> Unit)
     fun createAnswer(onSuccess: (SessionDescriptionModel) -> Unit, onError: (String) -> Unit)
     fun setRemoteDescription(sessionDescription: SessionDescriptionModel)

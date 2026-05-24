@@ -31,6 +31,9 @@ class CallManager(
     var isIncomingCall = MutableStateFlow(false)
         private set
 
+    private val _isScreenSharing = MutableStateFlow(false)
+    val isScreenSharing: StateFlow<Boolean> = _isScreenSharing
+
     // Callbacks to send Matrix events
     var sendInvite: ((roomId: String, callId: String, sdp: String) -> Unit)? = null
     var sendAnswer: ((roomId: String, callId: String, sdp: String) -> Unit)? = null
@@ -45,6 +48,11 @@ class CallManager(
                         sendCandidate?.invoke(room, cId, candidate)
                     }
                 }
+            }
+        }
+        scope.launch {
+            webRtcClient.isScreenSharing.collect { sharing ->
+                _isScreenSharing.value = sharing
             }
         }
     }
@@ -130,6 +138,7 @@ class CallManager(
         activeRoomId = null
         callId = null
         isIncomingCall.value = false
+        _isScreenSharing.value = false
     }
 
     fun toggleMute(isMuted: Boolean) {
@@ -142,5 +151,13 @@ class CallManager(
 
     fun switchCamera() {
         webRtcClient.switchCamera()
+    }
+
+    fun startScreenShare(data: Any? = null) {
+        webRtcClient.startScreenShare(data)
+    }
+
+    fun stopScreenShare() {
+        webRtcClient.stopScreenShare()
     }
 }

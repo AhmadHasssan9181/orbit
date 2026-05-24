@@ -1,15 +1,31 @@
 package com.noobdev.orbit
 
+import android.app.Activity
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.WindowCompat
 import android.content.Intent
+import android.media.projection.MediaProjectionManager
+import android.os.Build
 import ui.screen.OrbitApp
 import util.SsoHandler
 
 class MainActivity : ComponentActivity() {
+    private var onScreenSharePermissionGranted: ((Intent) -> Unit)? = null
+
+    private val screenCaptureLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            startScreenShareService()
+            onScreenSharePermissionGranted?.invoke(result.data!!)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         util.appContext = this.applicationContext
@@ -18,8 +34,28 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         WindowCompat.setDecorFitsSystemWindows(window, false)
         setContent {
-            OrbitApp()
+            OrbitApp(
+                onStartScreenShare = { callback ->
+                    onScreenSharePermissionGranted = callback
+                    val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                    screenCaptureLauncher.launch(projectionManager.createScreenCaptureIntent())
+                }
+            )
         }
+    }
+
+    private fun startScreenShareService() {
+        val serviceIntent = Intent(this, ScreenShareService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent)
+        } else {
+            startService(serviceIntent)
+        }
+    }
+
+    private fun stopScreenShareService() {
+        val serviceIntent = Intent(this, ScreenShareService::class.java)
+        stopService(serviceIntent)
     }
 
     override fun onNewIntent(intent: Intent) {

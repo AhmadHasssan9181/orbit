@@ -93,7 +93,10 @@ private val Accent: Color @Composable get() = rememberCosmicTokens().Accent
  */
 @Suppress("UnusedBoxWithConstraintsScope")
 @Composable
-fun OrbitApp(modifier: Modifier = Modifier) {
+fun OrbitApp(
+    onStartScreenShare: (( (onResult: (Any) -> Unit) -> Unit ))? = null,
+    modifier: Modifier = Modifier
+) {
     var repository by remember { mutableStateOf<OrbitRepository?>(null) }
     var authResult by remember { mutableStateOf<AuthResult?>(null) }
     var isLiteMode by remember { mutableStateOf(false) }
@@ -157,6 +160,7 @@ fun OrbitApp(modifier: Modifier = Modifier) {
                         MainAppContent(
                             repository = repository!!,
                             windowSize = windowSize,
+                            onStartScreenShare = onStartScreenShare,
                             onLogoutRequested = {
                                 scope.launch {
                                     repository?.logout()
@@ -178,6 +182,7 @@ fun OrbitApp(modifier: Modifier = Modifier) {
 private fun MainAppContent(
     repository: OrbitRepository,
     windowSize: WindowSizeClass,
+    onStartScreenShare: (( (onResult: (Any) -> Unit) -> Unit ))? = null,
     onLogoutRequested: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -471,7 +476,18 @@ private fun MainAppContent(
                 )
             }
 
-            CallScreen(callManager = callManager)
+            CallScreen(
+                callManager = callManager,
+                onStartScreenShare = {
+                    if (onStartScreenShare != null) {
+                        onStartScreenShare { data ->
+                            callManager.startScreenShare(data)
+                        }
+                    } else {
+                        callManager.startScreenShare()
+                    }
+                }
+            )
         }
     }
 }
