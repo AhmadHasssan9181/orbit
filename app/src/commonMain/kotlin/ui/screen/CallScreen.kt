@@ -31,11 +31,13 @@ import webrtc.CallState
 @Composable
 fun CallScreen(
     callManager: CallManager,
+    onStartScreenShare: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val callState by callManager.callState.collectAsState()
     val isMinimized by callManager.isMinimized.collectAsState()
     val isIncomingCall by callManager.isIncomingCall.collectAsState()
+    val isScreenSharing by callManager.isScreenSharing.collectAsState()
     val tokens = rememberCosmicTokens()
 
     if (callState == CallState.IDLE || callState == CallState.ENDED) {
@@ -85,7 +87,7 @@ fun CallScreen(
                 .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(20.dp))
                 .clickable { callManager.isMinimized.value = false }
         ) {
-            if (callState == CallState.CONNECTED && isVideoEnabled) {
+            if (callState == CallState.CONNECTED && (isVideoEnabled || isScreenSharing)) {
                 VideoRenderer(renderer = callManager.webRtcClient.getRemoteVideoRenderer(), modifier = Modifier.fillMaxSize())
             } else {
                 Column(
@@ -118,7 +120,7 @@ fun CallScreen(
             )
     ) {
         // Video renderers
-        if (callState == CallState.CONNECTED && isVideoEnabled) {
+        if (callState == CallState.CONNECTED && (isVideoEnabled || isScreenSharing)) {
             val localRenderer = callManager.webRtcClient.getLocalVideoRenderer()
             val remoteRenderer = callManager.webRtcClient.getRemoteVideoRenderer()
 
@@ -150,7 +152,7 @@ fun CallScreen(
                         .background(
                             Brush.radialGradient(
                                 colors = listOf(tokens.Accent.copy(alpha = 0.15f), Color.Transparent),
-                                radius = 800f
+                                center = androidx.compose.ui.geometry.Offset.Infinite
                             )
                         )
                 )
@@ -350,6 +352,23 @@ fun CallScreen(
                             onClick = {
                                 isVideoEnabled = !isVideoEnabled
                                 callManager.toggleVideo(isVideoEnabled)
+                            }
+                        )
+
+                        // Screen Share Button
+                        ControlButton(
+                            icon = Icons.Default.ScreenShare,
+                            isActive = isScreenSharing,
+                            activeColor = tokens.Accent,
+                            activeIconColor = Color.White,
+                            inactiveColor = Color.White.copy(alpha = 0.1f),
+                            inactiveIconColor = Color.White,
+                            onClick = {
+                                if (isScreenSharing) {
+                                    callManager.stopScreenShare()
+                                } else {
+                                    onStartScreenShare()
+                                }
                             }
                         )
 

@@ -76,8 +76,11 @@ import kotlinx.coroutines.withContext
 import kotlinx.datetime.Instant
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.intOrNull
@@ -1251,12 +1254,21 @@ class MatrixOrbitRepository(
                                             val sdp = realContent["answer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: ""
                                             _callEvents.emit(CallEvent.Answer(roomId, callId, sdp, sender))
                                         }
-                                        "m.call.candidates" -> {
-                                            realContent["candidates"]?.jsonArray?.forEach { cand ->
-                                                val sdp = cand.jsonObject["candidate"]?.jsonPrimitive?.content ?: ""
+                                        "m.call.candidates", "m.call.candidate" -> {
+                                            val candidates = realContent["candidates"]?.jsonArray 
+                                                ?: realContent["candidate"]?.jsonObject?.let { buildJsonArray { add(it) } }
+                                                ?: JsonArray(emptyList())
+                                                
+                                            candidates.forEach { cand ->
+                                                val sdp = cand.jsonObject["candidate"]?.jsonPrimitive?.content 
+                                                    ?: cand.jsonObject["sdp"]?.jsonPrimitive?.content 
+                                                    ?: ""
                                                 val sdpMid = cand.jsonObject["sdpMid"]?.jsonPrimitive?.content ?: ""
                                                 val sdpMLineIndex = cand.jsonObject["sdpMLineIndex"]?.jsonPrimitive?.intOrNull ?: 0
-                                                _callEvents.emit(CallEvent.Candidate(roomId, callId, sdp, sdpMid, sdpMLineIndex, sender))
+                                                
+                                                if (sdp.isNotBlank()) {
+                                                    _callEvents.emit(CallEvent.Candidate(roomId, callId, sdp, sdpMid, sdpMLineIndex, sender))
+                                                }
                                             }
                                         }
                                         "m.call.hangup" -> {
