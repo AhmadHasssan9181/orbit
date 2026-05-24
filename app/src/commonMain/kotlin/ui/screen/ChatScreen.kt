@@ -1525,7 +1525,7 @@ fun VoiceChannelPlaceholder(channel: OrbitChannel) {
 
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(
-                    onClick = { callManager.startCall(channel.id, isVideo = false) },
+                    onClick = { callManager?.startCall(channel.id, isVideo = false) },
                     colors = ButtonDefaults.buttonColors(containerColor = Accent),
                     shape = RoundedCornerShape(24.dp)
                 ) {
@@ -1535,7 +1535,7 @@ fun VoiceChannelPlaceholder(channel: OrbitChannel) {
                 }
                 
                 Button(
-                    onClick = { callManager.startCall(channel.id, isVideo = true) },
+                    onClick = { callManager?.startCall(channel.id, isVideo = true) },
                     colors = ButtonDefaults.buttonColors(containerColor = Accent),
                     shape = RoundedCornerShape(24.dp)
                 ) {

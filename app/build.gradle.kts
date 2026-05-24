@@ -79,7 +79,11 @@ kotlin {
             dependencies {
                 implementation(compose.desktop.currentOs)
                 implementation("io.ktor:ktor-client-okhttp:3.0.1")
-                implementation("dev.onvoid.webrtc:webrtc-java:0.5.0")
+                implementation("dev.onvoid.webrtc:webrtc-java:0.14.0")
+
+                // 2. Native binaries via Classifiers (Notice the extra colon format)
+                implementation("dev.onvoid.webrtc:webrtc-java:0.14.0:windows-x86_64")
+                implementation("dev.onvoid.webrtc:webrtc-java:0.14.0:linux-x86_64")
             }
         }
     }
