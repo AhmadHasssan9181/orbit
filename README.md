@@ -286,7 +286,7 @@ TURN server configuration is fetched from:
 
 | Document | Description |
 | --- | --- |
+| [`VIDEO_CALLING.md`](VIDEO_CALLING.md) | Focused documentation for the Matrix/WebRTC video calling setup |
 | [`app/src/commonMain/kotlin/repository/README.md`](app/src/commonMain/kotlin/repository/README.md) | Detailed repository, Matrix, and Trixnity documentation |
 | [`todo.md`](todo.md) | Backend roadmap |
 | [`implementation_plan.md`](implementation_plan.md) | Integration notes |
-

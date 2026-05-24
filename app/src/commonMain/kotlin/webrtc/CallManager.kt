@@ -30,23 +30,33 @@ class CallManager(
     var isMinimized = MutableStateFlow(false)
     var isIncomingCall = MutableStateFlow(false)
         private set
+    val isVideoCall = MutableStateFlow(false)
+    val isLocalVideoEnabled = MutableStateFlow(false)
 
     private val _isScreenSharing = MutableStateFlow(false)
     val isScreenSharing: StateFlow<Boolean> = _isScreenSharing
 
     // Callbacks to send Matrix events
-    var sendInvite: ((roomId: String, callId: String, sdp: String) -> Unit)? = null
-    var sendAnswer: ((roomId: String, callId: String, sdp: String) -> Unit)? = null
-    var sendCandidate: ((roomId: String, callId: String, candidate: IceCandidateModel) -> Unit)? = null
-    var sendHangup: ((roomId: String, callId: String) -> Unit)? = null
+    var refreshIceServers: (suspend () -> List<TurnServer>)? = null
+    var sendInvite: (suspend (roomId: String, callId: String, sdp: String) -> Unit)? = null
+    var sendAnswer: (suspend (roomId: String, callId: String, sdp: String) -> Unit)? = null
+    var sendCandidate: (suspend (roomId: String, callId: String, candidate: IceCandidateModel) -> Unit)? = null
+    var sendHangup: (suspend (roomId: String, callId: String) -> Unit)? = null
+
+    private val pendingLocalCandidates = mutableListOf<IceCandidateModel>()
+    private var candidatesAllowedForCallId: String? = null
 
     init {
         scope.launch {
             webRtcClient.onIceCandidate.collect { candidate ->
-                activeRoomId?.let { room ->
-                    callId?.let { cId ->
-                        sendCandidate?.invoke(room, cId, candidate)
-                    }
+                val room = activeRoomId ?: return@collect
+                val cId = callId ?: return@collect
+
+                if (candidatesAllowedForCallId == cId) {
+                    sendCandidate?.invoke(room, cId, candidate)
+                } else {
+                    pendingLocalCandidates.add(candidate)
+                    println("DEBUG: [WebRTC] Queued local ICE candidate until signaling is ready")
                 }
             }
         }
@@ -58,23 +68,38 @@ class CallManager(
     }
 
     fun startCall(roomId: String, isVideo: Boolean) {
+        val newCallId = "call_${System.currentTimeMillis()}"
         activeRoomId = roomId
-        callId = "call_${System.currentTimeMillis()}"
+        callId = newCallId
         isIncomingCall.value = false
+        isVideoCall.value = isVideo
+        isLocalVideoEnabled.value = isVideo
+        candidatesAllowedForCallId = null
+        pendingLocalCandidates.clear()
         _callState.value = CallState.CONNECTING
-        
-        webRtcClient.initialize(iceServers)
-        webRtcClient.startLocalMedia(isVideo)
-        
-        webRtcClient.createOffer(
-            onSuccess = { sessionDescription ->
-                sendInvite?.invoke(roomId, callId!!, sessionDescription.sdp)
-                _callState.value = CallState.RINGING // Waiting for answer
-            },
-            onError = {
-                endCall()
-            }
-        )
+
+        scope.launch {
+            loadIceServers()
+            if (callId != newCallId) return@launch
+
+            webRtcClient.initialize(iceServers)
+            webRtcClient.startLocalMedia(isVideo)
+
+            webRtcClient.createOffer(
+                onSuccess = { sessionDescription ->
+                    scope.launch {
+                        sendInvite?.invoke(roomId, newCallId, sessionDescription.sdp)
+                        allowLocalCandidatesAndFlush(roomId, newCallId)
+                        if (callId == newCallId) {
+                            _callState.value = CallState.RINGING // Waiting for answer
+                        }
+                    }
+                },
+                onError = {
+                    endCall()
+                }
+            )
+        }
     }
 
     fun handleCallInvite(roomId: String, incomingCallId: String, sdp: String) {
@@ -83,34 +108,62 @@ class CallManager(
         this.activeRoomId = roomId
         this.callId = incomingCallId
         isIncomingCall.value = true
+        isVideoCall.value = sdpHasVideo(sdp)
+        isLocalVideoEnabled.value = false
+        candidatesAllowedForCallId = null
+        pendingLocalCandidates.clear()
         _callState.value = CallState.RINGING
-        
-        webRtcClient.initialize(iceServers)
-        webRtcClient.setRemoteDescription(SessionDescriptionModel("offer", sdp))
-    }
 
-    fun answerCall(isVideo: Boolean, sdp: String? = null) {
-        _callState.value = CallState.CONNECTING
-        
-        if (sdp != null) {
+        scope.launch {
+            loadIceServers()
+            if (callId != incomingCallId) return@launch
+
             webRtcClient.initialize(iceServers)
             webRtcClient.setRemoteDescription(SessionDescriptionModel("offer", sdp))
         }
-        
-        webRtcClient.startLocalMedia(isVideo)
-        webRtcClient.createAnswer(
-            onSuccess = { sessionDescription ->
-                activeRoomId?.let { room ->
-                    callId?.let { cId ->
-                        sendAnswer?.invoke(room, cId, sessionDescription.sdp)
-                    }
-                }
-                _callState.value = CallState.CONNECTED
-            },
-            onError = {
-                endCall()
+    }
+
+    fun answerCall(isVideo: Boolean, sdp: String? = null) {
+        val currentRoom = activeRoomId ?: return
+        val currentCall = callId ?: return
+        isVideoCall.value = isVideo
+        isLocalVideoEnabled.value = isVideo
+        _callState.value = CallState.CONNECTING
+
+        scope.launch {
+            loadIceServers()
+            if (callId != currentCall) return@launch
+
+            if (sdp != null) {
+                webRtcClient.initialize(iceServers)
+                webRtcClient.setRemoteDescription(SessionDescriptionModel("offer", sdp))
             }
-        )
+
+            webRtcClient.startLocalMedia(isVideo)
+            webRtcClient.createAnswer(
+                onSuccess = { sessionDescription ->
+                    scope.launch {
+                        sendAnswer?.invoke(currentRoom, currentCall, sessionDescription.sdp)
+                        allowLocalCandidatesAndFlush(currentRoom, currentCall)
+                        if (callId == currentCall) {
+                            _callState.value = CallState.CONNECTED
+                        }
+                    }
+                },
+                onError = {
+                    endCall()
+                }
+            )
+        }
+    }
+
+    fun answerCallInvite(roomId: String, incomingCallId: String, sdp: String, isVideo: Boolean = sdpHasVideo(sdp)) {
+        if (_callState.value != CallState.IDLE && callId != incomingCallId) return
+
+        activeRoomId = roomId
+        callId = incomingCallId
+        isIncomingCall.value = true
+        answerCall(isVideo = isVideo, sdp = sdp)
     }
 
     fun handleCallAnswer(sdp: String) {
@@ -122,23 +175,32 @@ class CallManager(
         webRtcClient.addIceCandidate(candidate)
     }
 
-    fun endCall() {
+    fun endCall(notifyRemote: Boolean = true) {
         val currentRoom = activeRoomId
         val currentCall = callId
 
         _callState.value = CallState.ENDED
         webRtcClient.stopLocalMedia()
         webRtcClient.endCall()
-        
-        if (currentRoom != null && currentCall != null) {
-            sendHangup?.invoke(currentRoom, currentCall)
+
+        if (notifyRemote && currentRoom != null && currentCall != null) {
+            scope.launch {
+                sendHangup?.invoke(currentRoom, currentCall)
+            }
         }
-        
+
         _callState.value = CallState.IDLE
         activeRoomId = null
         callId = null
         isIncomingCall.value = false
+<<<<<<< HEAD
         _isScreenSharing.value = false
+=======
+        isVideoCall.value = false
+        isLocalVideoEnabled.value = false
+        candidatesAllowedForCallId = null
+        pendingLocalCandidates.clear()
+>>>>>>> 56b3d3662f481fe90306b4ac4d9afd5b3094a503
     }
 
     fun toggleMute(isMuted: Boolean) {
@@ -146,6 +208,8 @@ class CallManager(
     }
 
     fun toggleVideo(isVideoEnabled: Boolean) {
+        isVideoCall.value = isVideoCall.value || isVideoEnabled
+        isLocalVideoEnabled.value = isVideoEnabled
         webRtcClient.toggleVideo(isVideoEnabled)
     }
 
@@ -153,11 +217,48 @@ class CallManager(
         webRtcClient.switchCamera()
     }
 
+<<<<<<< HEAD
     fun startScreenShare(data: Any? = null) {
         webRtcClient.startScreenShare(data)
     }
 
     fun stopScreenShare() {
         webRtcClient.stopScreenShare()
+=======
+    private fun sdpHasVideo(sdp: String): Boolean {
+        return sdp.split('\n').any { line ->
+            line.startsWith("m=video") && !line.contains(" 0 ")
+        }
+    }
+
+    private suspend fun loadIceServers() {
+        val fetch = refreshIceServers ?: run {
+            println("DEBUG: [WebRTC] ICE config has ${iceServers.size} server entries")
+            return
+        }
+
+        runCatching { fetch() }
+            .onSuccess { servers ->
+                iceServers = servers
+                println("DEBUG: [WebRTC] ICE config has ${servers.size} server entries")
+            }
+            .onFailure { error ->
+                println("DEBUG: [WebRTC] Failed to refresh ICE servers: ${error.message}")
+            }
+    }
+
+    private suspend fun allowLocalCandidatesAndFlush(roomId: String, cId: String) {
+        candidatesAllowedForCallId = cId
+        val queuedCandidates = pendingLocalCandidates.toList()
+        pendingLocalCandidates.clear()
+
+        if (queuedCandidates.isNotEmpty()) {
+            println("DEBUG: [WebRTC] Flushing ${queuedCandidates.size} queued local ICE candidates")
+        }
+
+        queuedCandidates.forEach { candidate ->
+            sendCandidate?.invoke(roomId, cId, candidate)
+        }
+>>>>>>> 56b3d3662f481fe90306b4ac4d9afd5b3094a503
     }
 }

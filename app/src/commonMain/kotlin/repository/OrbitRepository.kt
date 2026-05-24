@@ -148,10 +148,11 @@ sealed class CallEvent {
     abstract val roomId: String
     abstract val callId: String
     abstract val senderId: String
-    data class Invite(override val roomId: String, override val callId: String, val sdp: String, override val senderId: String) : CallEvent()
-    data class Answer(override val roomId: String, override val callId: String, val sdp: String, override val senderId: String) : CallEvent()
-    data class Candidate(override val roomId: String, override val callId: String, val sdp: String, val sdpMid: String, val sdpMLineIndex: Int, override val senderId: String) : CallEvent()
-    data class Hangup(override val roomId: String, override val callId: String, override val senderId: String) : CallEvent()
+    abstract val partyId: String?
+    data class Invite(override val roomId: String, override val callId: String, val sdp: String, override val senderId: String, override val partyId: String? = null) : CallEvent()
+    data class Answer(override val roomId: String, override val callId: String, val sdp: String, override val senderId: String, override val partyId: String? = null) : CallEvent()
+    data class Candidate(override val roomId: String, override val callId: String, val sdp: String, val sdpMid: String, val sdpMLineIndex: Int, override val senderId: String, override val partyId: String? = null) : CallEvent()
+    data class Hangup(override val roomId: String, override val callId: String, override val senderId: String, override val partyId: String? = null) : CallEvent()
 }
 
 /**

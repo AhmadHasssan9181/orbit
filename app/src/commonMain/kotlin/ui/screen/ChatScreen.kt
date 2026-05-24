@@ -132,7 +132,7 @@ fun ChatScreen(
                             }
                         } else {
                             Button(
-                                onClick = { callManager?.handleCallInvite(activeCall.roomId, activeCall.callId, activeCall.sdp) },
+                                onClick = { callManager?.answerCallInvite(activeCall.roomId, activeCall.callId, activeCall.sdp) },
                                 colors = ButtonDefaults.buttonColors(containerColor = Accent)
                             ) {
                                 Text("Join Call", color = Color.White)
