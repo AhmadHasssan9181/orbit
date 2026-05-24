@@ -31,23 +31,39 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
     private var remoteRenderer: SurfaceViewRenderer? = null
 
     override fun initialize(iceServers: List<TurnServer>) {
-        if (peerConnectionFactory != null) return
+        if (peerConnection != null) return
 
-        rootEglBase = EglBase.create()
-        
-        val options = PeerConnectionFactory.InitializationOptions.builder(context)
-            .createInitializationOptions()
-        PeerConnectionFactory.initialize(options)
+        if (rootEglBase == null) {
+            rootEglBase = EglBase.create()
+        }
 
-        val factoryOptions = PeerConnectionFactory.Options()
-        val videoEncoderFactory = DefaultVideoEncoderFactory(rootEglBase?.eglBaseContext, true, true)
-        val videoDecoderFactory = DefaultVideoDecoderFactory(rootEglBase?.eglBaseContext)
+        if (peerConnectionFactory == null) {
+            val options = PeerConnectionFactory.InitializationOptions.builder(context)
+                .createInitializationOptions()
+            PeerConnectionFactory.initialize(options)
 
-        peerConnectionFactory = PeerConnectionFactory.builder()
-            .setOptions(factoryOptions)
-            .setVideoEncoderFactory(videoEncoderFactory)
-            .setVideoDecoderFactory(videoDecoderFactory)
-            .createPeerConnectionFactory()
+            val factoryOptions = PeerConnectionFactory.Options()
+            val videoEncoderFactory = DefaultVideoEncoderFactory(rootEglBase?.eglBaseContext, true, true)
+            val videoDecoderFactory = DefaultVideoDecoderFactory(rootEglBase?.eglBaseContext)
+
+            peerConnectionFactory = PeerConnectionFactory.builder()
+                .setOptions(factoryOptions)
+                .setVideoEncoderFactory(videoEncoderFactory)
+                .setVideoDecoderFactory(videoDecoderFactory)
+                .createPeerConnectionFactory()
+        }
+
+        if (localRenderer == null) {
+            localRenderer = SurfaceViewRenderer(context).apply {
+                init(rootEglBase?.eglBaseContext, null)
+                setMirror(true)
+            }
+        }
+        if (remoteRenderer == null) {
+            remoteRenderer = SurfaceViewRenderer(context).apply {
+                init(rootEglBase?.eglBaseContext, null)
+            }
+        }
 
         val rtcIceServers = iceServers.map { server ->
             PeerConnection.IceServer.builder(server.uris)
@@ -75,23 +91,20 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
             override fun onAddStream(stream: MediaStream) {
                 _onStreamAdded.tryEmit(true)
                 if (stream.videoTracks.isNotEmpty()) {
-                    stream.videoTracks[0].addSink(remoteRenderer)
+                    remoteRenderer?.let { stream.videoTracks[0].addSink(it) }
                 }
             }
             override fun onRemoveStream(stream: MediaStream?) {}
             override fun onDataChannel(channel: DataChannel?) {}
             override fun onRenegotiationNeeded() {}
-            override fun onAddTrack(receiver: RtpReceiver?, mediaStreams: Array<out MediaStream>?) {}
+            override fun onAddTrack(receiver: RtpReceiver?, mediaStreams: Array<out MediaStream>?) {
+                val track = receiver?.track()
+                if (track is VideoTrack) {
+                    _onStreamAdded.tryEmit(true)
+                    remoteRenderer?.let { track.addSink(it) }
+                }
+            }
         })
-
-        // Prepare renderers
-        localRenderer = SurfaceViewRenderer(context).apply {
-            init(rootEglBase?.eglBaseContext, null)
-            setMirror(true)
-        }
-        remoteRenderer = SurfaceViewRenderer(context).apply {
-            init(rootEglBase?.eglBaseContext, null)
-        }
     }
 
     override fun startLocalMedia(isVideoEnabled: Boolean) {

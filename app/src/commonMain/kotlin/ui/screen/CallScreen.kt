@@ -36,6 +36,8 @@ fun CallScreen(
     val callState by callManager.callState.collectAsState()
     val isMinimized by callManager.isMinimized.collectAsState()
     val isIncomingCall by callManager.isIncomingCall.collectAsState()
+    val isVideoCall by callManager.isVideoCall.collectAsState()
+    val isVideoEnabled by callManager.isLocalVideoEnabled.collectAsState()
     val tokens = rememberCosmicTokens()
 
     if (callState == CallState.IDLE || callState == CallState.ENDED) {
@@ -43,7 +45,6 @@ fun CallScreen(
     }
 
     var isMuted by remember { mutableStateOf(false) }
-    var isVideoEnabled by remember { mutableStateOf(true) }
     var showControls by remember { mutableStateOf(true) }
 
     // Auto-hide controls after 3 seconds of inactivity
@@ -85,8 +86,13 @@ fun CallScreen(
                 .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(20.dp))
                 .clickable { callManager.isMinimized.value = false }
         ) {
-            if (callState == CallState.CONNECTED && isVideoEnabled) {
-                VideoRenderer(renderer = callManager.webRtcClient.getRemoteVideoRenderer(), modifier = Modifier.fillMaxSize())
+            if (isVideoCall && isVideoEnabled) {
+                val renderer = if (callState == CallState.CONNECTED) {
+                    callManager.webRtcClient.getRemoteVideoRenderer()
+                } else {
+                    callManager.webRtcClient.getLocalVideoRenderer()
+                }
+                VideoRenderer(renderer = renderer, modifier = Modifier.fillMaxSize())
             } else {
                 Column(
                     modifier = Modifier.fillMaxSize(),
@@ -118,27 +124,43 @@ fun CallScreen(
             )
     ) {
         // Video renderers
-        if (callState == CallState.CONNECTED && isVideoEnabled) {
+        if (isVideoCall && (isVideoEnabled || callState == CallState.CONNECTED)) {
             val localRenderer = callManager.webRtcClient.getLocalVideoRenderer()
             val remoteRenderer = callManager.webRtcClient.getRemoteVideoRenderer()
 
-            // Render remote video (fullscreen)
+            // Render remote video when connected, otherwise show local preview while dialing.
             Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-                VideoRenderer(renderer = remoteRenderer, modifier = Modifier.fillMaxSize())
+                VideoRenderer(
+                    renderer = if (callState == CallState.CONNECTED) remoteRenderer else localRenderer,
+                    modifier = Modifier.fillMaxSize()
+                )
             }
 
-            // Render local video (PiP)
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 32.dp, end = 32.dp)
-                    .size(140.dp, 200.dp)
-                    .shadow(24.dp, RoundedCornerShape(20.dp))
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(Color(0xFF1E293B))
-                    .border(2.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(20.dp))
-            ) {
-                VideoRenderer(renderer = localRenderer, modifier = Modifier.fillMaxSize())
+            if (callState == CallState.CONNECTED && isVideoEnabled) {
+                // Render local video (PiP)
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 32.dp, end = 32.dp)
+                        .size(140.dp, 200.dp)
+                        .shadow(24.dp, RoundedCornerShape(20.dp))
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(Color(0xFF1E293B))
+                        .border(2.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(20.dp))
+                ) {
+                    VideoRenderer(renderer = localRenderer, modifier = Modifier.fillMaxSize())
+                }
+            }
+
+            if (!isVideoEnabled) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.65f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("Camera Off", color = Color.White, style = MaterialTheme.typography.headlineMedium)
+                }
             }
         } else {
             // Audio only or ringing background
@@ -263,7 +285,7 @@ fun CallScreen(
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = "Incoming Video Call",
+                        text = if (isVideoCall) "Incoming Video Call" else "Incoming Voice Call",
                         color = Color.White,
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold
@@ -288,7 +310,7 @@ fun CallScreen(
                         // Accept
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             IconButton(
-                                onClick = { callManager.answerCall(isVideo = true) },
+                                onClick = { callManager.answerCall(isVideo = isVideoCall) },
                                 modifier = Modifier
                                     .size(72.dp)
                                     .shadow(12.dp, CircleShape)
@@ -348,8 +370,7 @@ fun CallScreen(
                             inactiveColor = Color.White.copy(alpha = 0.1f),
                             inactiveIconColor = Color.White,
                             onClick = {
-                                isVideoEnabled = !isVideoEnabled
-                                callManager.toggleVideo(isVideoEnabled)
+                                callManager.toggleVideo(!isVideoEnabled)
                             }
                         )
 
