@@ -14,11 +14,15 @@ import dev.onvoid.webrtc.RTCOfferOptions
 import dev.onvoid.webrtc.RTCPeerConnection
 import dev.onvoid.webrtc.RTCPeerConnectionState
 import dev.onvoid.webrtc.RTCRtpReceiver
+import dev.onvoid.webrtc.RTCRtpSender
 import dev.onvoid.webrtc.RTCSdpType
 import dev.onvoid.webrtc.RTCSessionDescription
 import dev.onvoid.webrtc.RTCSignalingState
 import dev.onvoid.webrtc.SetSessionDescriptionObserver
 import dev.onvoid.webrtc.media.MediaStream
+import dev.onvoid.webrtc.media.audio.AudioTrack
+import dev.onvoid.webrtc.media.video.VideoDeviceSource
+import dev.onvoid.webrtc.media.video.VideoTrack
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import repository.TurnServer
@@ -36,6 +40,12 @@ class JvmWebRtcClient : WebRtcClient {
 
     private var factory: PeerConnectionFactory? = null
     private var peerConnection: RTCPeerConnection? = null
+    private var localAudioTrack: AudioTrack? = null
+    private var localAudioSender: RTCRtpSender? = null
+    private var localVideoTrack: VideoTrack? = null
+    private var localVideoSender: RTCRtpSender? = null
+    private var localVideoSource: VideoDeviceSource? = null
+    private var isVideoCaptureRunning = false
 
     private var localRenderer: Any? = null
     private var remoteRenderer: Any? = null
@@ -94,30 +104,87 @@ class JvmWebRtcClient : WebRtcClient {
             val pConn = peerConnection ?: return
             val f = factory ?: return
 
-            val audioSource = f.createAudioSource(dev.onvoid.webrtc.media.audio.AudioOptions())
-            val audioTrack = f.createAudioTrack("audioTrack", audioSource)
-            pConn.addTrack(audioTrack, listOf("mediaStream"))
+            if (localAudioTrack == null) {
+                val audioSource = f.createAudioSource(dev.onvoid.webrtc.media.audio.AudioOptions())
+                val audioTrack = f.createAudioTrack("audioTrack", audioSource)
+                localAudioTrack = audioTrack
+                localAudioSender = pConn.addTrack(audioTrack, listOf("mediaStream"))
+            }
 
             if (isVideoEnabled) {
-                val devices = dev.onvoid.webrtc.media.MediaDevices.getVideoCaptureDevices()
-                if (devices.isNotEmpty()) {
-                    val videoSource = dev.onvoid.webrtc.media.video.VideoDeviceSource()
-                    videoSource.setVideoCaptureDevice(devices[0])
-                    videoSource.start()
-                    val videoTrack = f.createVideoTrack("videoTrack", videoSource)
-                    pConn.addTrack(videoTrack, listOf("mediaStream"))
-                }
+                startVideoCapture()
             }
         } catch (e: Exception) {
             e.printStackTrace()
         }
     }
 
-    override fun stopLocalMedia() {}
+    private fun startVideoCapture() {
+        val pConn = peerConnection ?: return
+        val f = factory ?: return
 
-    override fun toggleMute(isMuted: Boolean) {}
+        if (localVideoSource == null || localVideoTrack == null) {
+            val devices = dev.onvoid.webrtc.media.MediaDevices.getVideoCaptureDevices()
+            if (devices.isEmpty()) return
 
-    override fun toggleVideo(isVideoEnabled: Boolean) {}
+            val videoSource = VideoDeviceSource().apply {
+                setVideoCaptureDevice(devices[0])
+            }
+            val videoTrack = f.createVideoTrack("videoTrack", videoSource)
+            localVideoSource = videoSource
+            localVideoTrack = videoTrack
+            localVideoSender = pConn.addTrack(videoTrack, listOf("mediaStream"))
+        }
+
+        localVideoTrack?.setEnabled(true)
+        if (!isVideoCaptureRunning) {
+            localVideoSource?.start()
+            isVideoCaptureRunning = true
+        }
+    }
+
+    private fun stopVideoCapture(disposeTrack: Boolean) {
+        localVideoTrack?.setEnabled(false)
+
+        if (isVideoCaptureRunning) {
+            runCatching { localVideoSource?.stop() }
+            isVideoCaptureRunning = false
+        }
+
+        if (disposeTrack) {
+            localVideoSender?.let { sender ->
+                runCatching { peerConnection?.removeTrack(sender) }
+            }
+            localVideoSender = null
+            runCatching { localVideoTrack?.dispose() }
+            localVideoTrack = null
+            runCatching { localVideoSource?.dispose() }
+            localVideoSource = null
+        }
+    }
+
+    override fun stopLocalMedia() {
+        stopVideoCapture(disposeTrack = true)
+
+        localAudioSender?.let { sender ->
+            runCatching { peerConnection?.removeTrack(sender) }
+        }
+        localAudioSender = null
+        runCatching { localAudioTrack?.dispose() }
+        localAudioTrack = null
+    }
+
+    override fun toggleMute(isMuted: Boolean) {
+        localAudioTrack?.setEnabled(!isMuted)
+    }
+
+    override fun toggleVideo(isVideoEnabled: Boolean) {
+        if (isVideoEnabled) {
+            startVideoCapture()
+        } else {
+            stopVideoCapture(disposeTrack = false)
+        }
+    }
 
     override fun switchCamera() {}
 
@@ -191,6 +258,7 @@ class JvmWebRtcClient : WebRtcClient {
 
     override fun endCall() {
         try {
+            stopLocalMedia()
             peerConnection?.close()
             peerConnection = null
             // Do NOT dispose factory here, as it permanently destroys the JVM WebRTC context

@@ -22,7 +22,10 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
     private var localVideoTrack: VideoTrack? = null
     private var localAudioTrack: AudioTrack? = null
     private var localStream: MediaStream? = null
+    private var localVideoSource: VideoSource? = null
     private var videoCapturer: CameraVideoCapturer? = null
+    private var surfaceTextureHelper: SurfaceTextureHelper? = null
+    private var isVideoCaptureRunning = false
 
     private var localRenderer: SurfaceViewRenderer? = null
     private var remoteRenderer: SurfaceViewRenderer? = null
@@ -105,11 +108,13 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
         // Video
         if (isVideoEnabled) {
             val videoSource = factory.createVideoSource(false)
+            localVideoSource = videoSource
             val capturer = createVideoCapturer()
             videoCapturer = capturer as? CameraVideoCapturer
-            val surfaceTextureHelper = SurfaceTextureHelper.create("CaptureThread", rootEglBase?.eglBaseContext)
+            surfaceTextureHelper = SurfaceTextureHelper.create("CaptureThread", rootEglBase?.eglBaseContext)
             capturer?.initialize(surfaceTextureHelper, context, videoSource.capturerObserver)
             capturer?.startCapture(1280, 720, 30)
+            isVideoCaptureRunning = capturer != null
 
             localVideoTrack = factory.createVideoTrack("ARDMSV0", videoSource)
             localVideoTrack?.addSink(localRenderer)
@@ -134,13 +139,30 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
         return null
     }
 
+    private fun stopVideoCapture() {
+        if (isVideoCaptureRunning) {
+            try {
+                videoCapturer?.stopCapture()
+            } catch (e: Exception) {
+                println("DEBUG: [WebRTC] stopCapture failed: ${e.message}")
+            } finally {
+                isVideoCaptureRunning = false
+            }
+        }
+    }
+
     override fun stopLocalMedia() {
-        videoCapturer?.stopCapture()
+        stopVideoCapture()
         videoCapturer?.dispose()
         videoCapturer = null
+        surfaceTextureHelper?.dispose()
+        surfaceTextureHelper = null
+        localRenderer?.let { renderer -> localVideoTrack?.removeSink(renderer) }
         localVideoTrack?.dispose()
+        localVideoSource?.dispose()
         localAudioTrack?.dispose()
         localVideoTrack = null
+        localVideoSource = null
         localAudioTrack = null
     }
 
@@ -151,13 +173,14 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
     override fun toggleVideo(isVideoEnabled: Boolean) {
         localVideoTrack?.setEnabled(isVideoEnabled)
         if (!isVideoEnabled) {
-            try {
-                videoCapturer?.stopCapture()
-            } catch (e: Exception) {}
+            stopVideoCapture()
         } else {
             try {
                 videoCapturer?.startCapture(1280, 720, 30)
-            } catch (e: Exception) {}
+                isVideoCaptureRunning = videoCapturer != null
+            } catch (e: Exception) {
+                println("DEBUG: [WebRTC] startCapture failed: ${e.message}")
+            }
         }
     }
 
@@ -206,6 +229,7 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
     }
 
     override fun endCall() {
+        stopLocalMedia()
         peerConnection?.close()
         peerConnection = null
         // Do NOT dispose peerConnectionFactory or rootEglBase here, as it destroys the WebRTC context
