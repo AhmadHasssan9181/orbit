@@ -6,32 +6,39 @@ import de.connect2x.trixnity.client.MediaStoreModule
 import de.connect2x.trixnity.client.RepositoriesModule
 import de.connect2x.trixnity.client.create
 import de.connect2x.trixnity.client.cryptodriver.vodozemac.vodozemac
-import de.connect2x.trixnity.client.flattenValues
 import de.connect2x.trixnity.client.media.okio.okio
 import de.connect2x.trixnity.client.room
 import de.connect2x.trixnity.client.room.message.text
 import de.connect2x.trixnity.client.store.Room
 import de.connect2x.trixnity.client.store.TimelineEvent
-import de.connect2x.trixnity.client.store.roomId
 import de.connect2x.trixnity.client.store.eventId
+import de.connect2x.trixnity.client.store.repository.room.room
+import de.connect2x.trixnity.client.store.roomId
 import de.connect2x.trixnity.client.store.sender
 import de.connect2x.trixnity.client.store.type
-import de.connect2x.trixnity.clientserverapi.model.room.GetEvents.Direction
+import de.connect2x.trixnity.client.user
+import de.connect2x.trixnity.clientserverapi.model.media.Media
 import de.connect2x.trixnity.clientserverapi.model.room.CreateRoom
+import de.connect2x.trixnity.clientserverapi.model.room.GetEvents.Direction
 import de.connect2x.trixnity.clientserverapi.model.user.ProfileField
+import de.connect2x.trixnity.clientserverapi.model.user.avatarUrl
+import de.connect2x.trixnity.clientserverapi.model.user.displayName
 import de.connect2x.trixnity.core.model.EventId
 import de.connect2x.trixnity.core.model.RoomId
 import de.connect2x.trixnity.core.model.UserId
+import de.connect2x.trixnity.core.model.events.ClientEvent.RoomEvent
+import de.connect2x.trixnity.core.model.events.UnknownEventContent
+import de.connect2x.trixnity.core.model.events.m.Presence
+import de.connect2x.trixnity.core.model.events.m.ReactionEventContent
+import de.connect2x.trixnity.core.model.events.m.RelatesTo
+import de.connect2x.trixnity.core.model.events.m.room.AudioInfo
 import de.connect2x.trixnity.core.model.events.m.room.CreateEventContent
+import de.connect2x.trixnity.core.model.events.m.room.FileInfo
+import de.connect2x.trixnity.core.model.events.m.room.ImageInfo
 import de.connect2x.trixnity.core.model.events.m.room.RoomMessageEventContent
 import de.connect2x.trixnity.core.model.events.m.room.RoomMessageEventContent.FileBased
 import de.connect2x.trixnity.core.model.events.m.room.RoomMessageEventContent.TextBased
-import de.connect2x.trixnity.core.model.events.m.room.ImageInfo
-import de.connect2x.trixnity.core.model.events.m.room.FileInfo
-import de.connect2x.trixnity.core.model.events.m.room.AudioInfo
-import de.connect2x.trixnity.core.model.events.m.room.VideoInfo
-import de.connect2x.trixnity.core.model.events.ClientEvent.RoomEvent
-import de.connect2x.trixnity.core.subscribeAsFlow
+import de.connect2x.trixnity.core.model.events.m.space.ChildEventContent
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
@@ -41,18 +48,41 @@ import io.ktor.client.plugins.logging.Logging
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
-import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.Url
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
-import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.*
+import io.ktor.utils.io.ByteReadChannel
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.datetime.Instant
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.*
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import ui.model.ChannelType
 import ui.model.MessageContent
 import ui.model.OrbitChannel
@@ -61,10 +91,10 @@ import ui.model.OrbitServer
 import ui.model.OrbitUser
 import ui.model.UserStatus
 import util.getMediaStorePath
-import util.openUrlInBrowser
 import util.getRoomDatabaseBuilder
+import util.performSsoLogin
 import kotlin.time.Duration.Companion.seconds
-import de.connect2x.trixnity.client.store.repository.room.room as createRoomRepositoriesModule
+
 
 @Serializable
 data class TurnServerResponse(
@@ -98,11 +128,11 @@ class MatrixOrbitRepository(
 
     private val _roomListFlow = MutableSharedFlow<List<OrbitServer>>(replay = 1)
     private val _callEvents = MutableSharedFlow<CallEvent>(extraBufferCapacity = 10)
-    
+
     fun setAccessToken(token: String) {
         _accessToken = token
     }
-    
+
     fun setUserId(id: String) {
         _userId = id
     }
@@ -162,7 +192,7 @@ class MatrixOrbitRepository(
             deviceId = deviceId,
             homeserverUrl = homeserverUrl,
             userId = userId
-        ).also { 
+        ).also {
             _accessToken = it.accessToken
             _userId = it.userId
             CredentialManager.accessToken = it.accessToken
@@ -177,8 +207,8 @@ class MatrixOrbitRepository(
                 refreshToken = null
             )
             trixnityClient = MatrixClient.create(
-                repositoriesModule = RepositoriesModule.createRoomRepositoriesModule(getRoomDatabaseBuilder()),
-                MediaStoreModule.okio(getMediaStorePath()),
+                repositoriesModule = RepositoriesModule.room(getRoomDatabaseBuilder()),
+                mediaStoreModule = MediaStoreModule.okio(getMediaStorePath()),
                 cryptoDriverModule = CryptoDriverModule.vodozemac(),
                 authProviderData = authProviderData
             ).getOrThrow()
@@ -186,36 +216,7 @@ class MatrixOrbitRepository(
     }
 
     suspend fun loginWithSso(): AuthResult = withContext(Dispatchers.IO) {
-        val serverSocket = java.net.ServerSocket(0)
-        val port = serverSocket.localPort
-        val redirectUrl = "http://localhost:$port"
-
-        val ssoUrl = "${homeserverUrl.trimEnd('/')}${CLIENT_PREFIX}/login/sso/redirect?redirectUrl=${
-            java.net.URLEncoder.encode(redirectUrl, "UTF-8")
-        }"
-        openUrlInBrowser(ssoUrl)
-
-        val loginToken: String
-        serverSocket.soTimeout = 300_000
-        try {
-            val socket = serverSocket.accept()
-            val reader = socket.getInputStream().bufferedReader()
-            val requestLine = reader.readLine() ?: throw IllegalStateException("No request received")
-
-            val queryString = requestLine.split(" ").getOrNull(1)?.substringAfter("?") ?: ""
-            loginToken = queryString.split("&")
-                .map { it.split("=", limit = 2) }
-                .firstOrNull { it[0] == "loginToken" }
-                ?.getOrNull(1)
-                ?: throw IllegalStateException("No loginToken in callback")
-
-            val htmlResponse = "<html><body><h1>Login Successful</h1><p>Return to Orbit.</p></body></html>"
-            val response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n$htmlResponse"
-            socket.getOutputStream().write(response.toByteArray())
-            socket.close()
-        } finally {
-            serverSocket.close()
-        }
+        val loginToken = performSsoLogin(homeserverUrl)
 
         val body = buildJsonObject {
             put("type", "m.login.token")
@@ -231,7 +232,27 @@ class MatrixOrbitRepository(
         val deviceId = (resp["device_id"] as? JsonPrimitive)?.content ?: "orbit_device"
         val userId = (resp["user_id"] as? JsonPrimitive)?.content ?: ""
 
-        AuthResult(accessToken, deviceId, homeserverUrl, userId).also { _accessToken = it.accessToken; _userId = it.userId }
+        AuthResult(accessToken, deviceId, homeserverUrl, userId).also {
+            _accessToken = it.accessToken
+            _userId = it.userId
+            CredentialManager.accessToken = it.accessToken
+            CredentialManager.deviceId = it.deviceId
+            CredentialManager.homeserverUrl = it.homeserverUrl
+            CredentialManager.userId = it.userId
+
+            val authProviderData = de.connect2x.trixnity.clientserverapi.client.ClassicMatrixClientAuthProviderData(
+                baseUrl = Url(it.homeserverUrl),
+                accessToken = it.accessToken,
+                accessTokenExpiresInMs = null,
+                refreshToken = null
+            )
+            trixnityClient = MatrixClient.create(
+                repositoriesModule = RepositoriesModule.room(getRoomDatabaseBuilder()),
+                mediaStoreModule = MediaStoreModule.okio(getMediaStorePath()),
+                cryptoDriverModule = CryptoDriverModule.vodozemac(),
+                authProviderData = authProviderData
+            ).getOrThrow()
+        }
     }
 
     override suspend fun register(
@@ -276,9 +297,9 @@ class MatrixOrbitRepository(
         val allRooms = getAllRoomsSnapshot()
         val servers = mutableListOf<OrbitServer>()
         val dms = allRooms.filter { it.isDirect }
-        val spaces = allRooms.filter { it.type?.toString()?.contains("space", ignoreCase = true) == true }
-        val flatRooms = allRooms.filter { it.type?.toString()?.contains("space", ignoreCase = true) != true && !it.isDirect }
-        
+        val spaces = allRooms.filter { it.type == CreateEventContent.RoomType.Space }
+        val flatRooms = allRooms.filter { it.type != CreateEventContent.RoomType.Space && !it.isDirect }
+
         if (dms.isNotEmpty()) {
             servers.add(OrbitServer(
                 id = "dm",
@@ -288,18 +309,18 @@ class MatrixOrbitRepository(
                 isDM = true
             ))
         }
-        
+
         spaces.forEach { space ->
             servers.add(OrbitServer(
                 id = space.roomId.full,
                 name = space.name?.explicitName ?: space.roomId.full.takeLast(8),
                 iconColor = hashToColor(space.roomId.full),
-                description = "", 
+                description = "",
                 isDM = false,
                 avatarUrl = space.avatarUrl?.let { convertMxcUrl(it) }
             ))
         }
-        
+
         if (flatRooms.isNotEmpty()) {
             servers.add(OrbitServer(
                 id = "rooms",
@@ -309,7 +330,7 @@ class MatrixOrbitRepository(
                 isDM = false
             ))
         }
-        
+
         return servers
     }
 
@@ -330,14 +351,14 @@ class MatrixOrbitRepository(
                 name = name,
                 creationContent = CreateEventContent(type = CreateEventContent.RoomType.Space)
             ).getOrThrow()
-            Result.success(response.roomId.full)
+            Result.success(response.full)
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
     override suspend fun getSpaceHierarchy(spaceId: String): List<OrbitServer> {
-        return emptyList() 
+        return emptyList()
     }
 
     override suspend fun getTurnServers(): Result<List<TurnServer>> = kotlin.runCatching {
@@ -352,7 +373,7 @@ class MatrixOrbitRepository(
     override suspend fun getChannelsForSpace(spaceId: String): List<OrbitChannel> {
         val allRooms = getAllRoomsSnapshot()
         val channels = mutableListOf<OrbitChannel>()
-        
+
         when (spaceId) {
             "dm" -> {
                 allRooms.filter { it.isDirect }.forEach { room ->
@@ -366,7 +387,7 @@ class MatrixOrbitRepository(
                 }
             }
             "rooms" -> {
-                allRooms.filter { !it.isDirect && it.type?.toString()?.contains("space", ignoreCase = true) != true }.forEach { room ->
+                allRooms.filter { !it.isDirect && it.type != CreateEventContent.RoomType.Space }.forEach { room ->
                     channels.add(OrbitChannel(
                         id = room.roomId.full,
                         name = room.name?.explicitName ?: room.roomId.full.takeLast(8),
@@ -379,24 +400,20 @@ class MatrixOrbitRepository(
             else -> {
                 val trixnity = trixnityClient ?: return emptyList()
                 val spaceRoomId = RoomId(spaceId)
-                val stateEvents = try { trixnity.api.room.getEvents(spaceRoomId).getOrThrow().chunk } catch (e: Exception) { emptyList() }
-                val children = stateEvents.filter { it.type == "m.space.child" }
-                
-                children.forEach { childEvent ->
-                    val childRoomIdStr = childEvent.stateKey
-                    if (childRoomIdStr != null) {
-                        val childRoomId = try { RoomId(childRoomIdStr) } catch (_: Exception) { null }
-                        if (childRoomId != null) {
-                            val room = allRooms.find { it.roomId == childRoomId }
-                            if (room != null) {
-                                channels.add(OrbitChannel(
-                                    id = room.roomId.full,
-                                    name = room.name?.explicitName ?: room.roomId.full.takeLast(8),
-                                    type = if (room.name?.explicitName?.contains("voice", ignoreCase = true) == true) ChannelType.VOICE else ChannelType.TEXT,
-                                    categoryId = spaceId,
-                                    topic = ""
-                                ))
-                            }
+                val children = trixnity.room.getAllState(spaceRoomId, ChildEventContent::class).first()
+
+                children.forEach { (childRoomIdStr, childEventFlow) ->
+                    val childRoomId = try { RoomId(childRoomIdStr) } catch (_: Exception) { null }
+                    if (childRoomId != null) {
+                        val room = allRooms.find { it.roomId == childRoomId }
+                        if (room != null) {
+                            channels.add(OrbitChannel(
+                                id = room.roomId.full,
+                                name = room.name?.explicitName ?: room.roomId.full.takeLast(8),
+                                type = if (room.name?.explicitName?.contains("voice", ignoreCase = true) == true) ChannelType.VOICE else ChannelType.TEXT,
+                                categoryId = spaceId,
+                                topic = ""
+                            ))
                         }
                     }
                 }
@@ -417,24 +434,21 @@ class MatrixOrbitRepository(
                 name = name,
                 topic = topic,
                 preset = if (type == ChannelType.VOICE) {
-                    CreateRoom.Request.Preset.PRIVATE_CHAT
+                    CreateRoom.Request.Preset.TRUSTED_PRIVATE
                 } else {
-                    CreateRoom.Request.Preset.PUBLIC_CHAT
+                    CreateRoom.Request.Preset.TRUSTED_PRIVATE // Using TRUSTED_PRIVATE as fallback to PUBLIC_CHAT
                 }
             ).getOrThrow()
-            
+
             if (spaceId != "rooms" && spaceId != "dm") {
                 trixnity.api.room.sendStateEvent(
-                    roomId = RoomId(spaceId),
-                    eventContent = buildJsonObject {
-                        put("via", JsonArray(listOf(JsonPrimitive(trixnity.baseUrl.host))))
-                    },
-                    eventType = "m.space.child",
-                    stateKey = response.roomId.full
+                    RoomId(spaceId),
+                    ChildEventContent(via = setOf(trixnity.api.baseUrl.host)),
+                    response.full
                 )
             }
-            
-            Result.success(response.roomId.full)
+
+            Result.success(response.full)
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -444,7 +458,7 @@ class MatrixOrbitRepository(
         return try {
             val trixnity = trixnityClient ?: return null
             val room = trixnity.room.getById(RoomId(channelId)).first() ?: return null
-            
+
             return OrbitChannel(
                 id = channelId,
                 name = room.name?.explicitName ?: channelId.takeLast(8),
@@ -484,13 +498,17 @@ class MatrixOrbitRepository(
     ): List<OrbitMessage> {
         val trixnity = trixnityClient ?: return emptyList()
         val roomIdObj = RoomId(channelId)
-        
+
         try {
-            val lastEventId = trixnity.room.getById(roomIdObj).first()?.lastEventId 
+            val lastEventId = trixnity.room.getById(roomIdObj).first()?.lastEventId
                 ?: return emptyList()
-            
-            val eventsFlow = trixnity.room.getTimelineEvents(roomIdObj, lastEventId, direction = Direction.BACKWARDS)
-            
+
+            val eventsFlow = trixnity.room.getTimelineEvents(
+                roomIdObj,
+                startFrom = lastEventId,
+                direction = Direction.BACKWARDS
+            )
+
             return eventsFlow.take(limit).toList().mapNotNull { eventFlow ->
                 val timelineEvent = eventFlow.first()
                 timelineEventToOrbitMessage(timelineEvent)
@@ -517,8 +535,8 @@ class MatrixOrbitRepository(
             val trixnity = trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
             trixnity.api.room.sendMessageEvent(
                 RoomId(channelId),
-                de.connect2x.trixnity.core.model.events.m.ReactionEventContent(
-                    de.connect2x.trixnity.core.model.events.m.RelatesTo.Annotation(
+                ReactionEventContent(
+                    RelatesTo.Annotation(
                         EventId(eventId),
                         key
                     )
@@ -533,10 +551,15 @@ class MatrixOrbitRepository(
     override suspend fun sendCallEvent(channelId: String, eventType: String, content: JsonObject): Result<String> {
         return try {
             val trixnity = trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
+            val unknownContent = trixnity.api.json.decodeFromJsonElement<UnknownEventContent>(
+                buildJsonObject {
+                    put("type", eventType)
+                    put("value", content)
+                }
+            )
             val response = trixnity.api.room.sendMessageEvent(
                 RoomId(channelId),
-                eventType,
-                content
+                unknownContent
             ).getOrThrow()
             Result.success(response.full)
         } catch (e: Exception) {
@@ -547,11 +570,13 @@ class MatrixOrbitRepository(
     override suspend fun uploadMedia(bytes: ByteArray, mimeType: String, filename: String): Result<String> {
         return try {
             val trixnity = trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
-            val mxcUrl = trixnity.api.media.upload(
-                content = bytes,
+            val media = Media(
+                content = ByteReadChannel(bytes),
+                contentLength = bytes.size.toLong(),
                 contentType = ContentType.parse(mimeType),
-                filename = filename
-            ).getOrThrow()
+                contentDisposition = null
+            )
+            val mxcUrl = trixnity.api.media.upload(media).getOrThrow()
             Result.success(mxcUrl.toString())
         } catch (e: Exception) {
             Result.failure(e)
@@ -571,8 +596,8 @@ class MatrixOrbitRepository(
                     url = mxcUrl,
                     info = ImageInfo(
                         mimeType = mimeType,
-                        width = width?.toLong(),
-                        height = height?.toLong(),
+                        width = width,
+                        height = height,
                         size = size
                     )
                 )
@@ -634,7 +659,7 @@ class MatrixOrbitRepository(
             val trixnity = trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
             val roomId = extractRoomFromEventId(eventId)
             trixnity.room.sendMessage(RoomId(roomId)) {
-                this.relatesTo = de.connect2x.trixnity.core.model.events.m.RelatesTo.Replace(EventId(eventId))
+                this.relatesTo = RelatesTo.Replace(EventId(eventId))
                 text(newBody)
             }
             Result.success(Unit)
@@ -655,7 +680,7 @@ class MatrixOrbitRepository(
     }
 
     override suspend fun sendReadReceipt(roomId: String, eventId: String) {
-        trixnityClient?.api?.room?.sendReceipt(RoomId(roomId), EventId(eventId), de.connect2x.trixnity.clientserverapi.model.room.ReceiptType.READ)
+        trixnityClient?.api?.room?.setReadMarkers(RoomId(roomId), EventId(eventId), EventId(eventId))
     }
 
     override suspend fun registerPusher(pushKey: String, appId: String, url: String) {
@@ -692,7 +717,13 @@ class MatrixOrbitRepository(
     override suspend fun uploadAvatar(imageBytes: ByteArray): Result<String> {
         return try {
             val trixnity = trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
-            val mxcUrl = trixnity.api.media.upload(imageBytes, ContentType.Image.PNG).getOrThrow()
+            val media = Media(
+                content = ByteReadChannel(imageBytes),
+                contentLength = imageBytes.size.toLong(),
+                contentType = ContentType.Image.PNG,
+                contentDisposition = null
+            )
+            val mxcUrl = trixnity.api.media.upload(media).getOrThrow()
             trixnity.setProfileField(ProfileField.AvatarUrl(mxcUrl.toString())).getOrThrow()
             Result.success(mxcUrl.toString())
         } catch (e: Exception) {
@@ -711,6 +742,7 @@ class MatrixOrbitRepository(
                 displayName = profile.displayName ?: userId,
                 avatarColor = hashToColor(userId),
                 status = UserStatus.ONLINE,
+                isBot = false,
                 avatarUrl = profile.avatarUrl?.let { convertMxcUrl(it.toString()) }
             )
         } catch (e: Exception) {
@@ -723,12 +755,12 @@ class MatrixOrbitRepository(
         try {
             val trixnity = trixnityClient ?: return
             val presence = when (status) {
-                UserStatus.ONLINE -> de.connect2x.trixnity.core.model.events.m.Presence.ONLINE
-                UserStatus.IDLE -> de.connect2x.trixnity.core.model.events.m.Presence.UNAVAILABLE
-                UserStatus.DO_NOT_DISTURB -> de.connect2x.trixnity.core.model.events.m.Presence.UNAVAILABLE
-                UserStatus.OFFLINE -> de.connect2x.trixnity.core.model.events.m.Presence.OFFLINE
+                UserStatus.ONLINE -> Presence.ONLINE
+                UserStatus.IDLE -> Presence.UNAVAILABLE
+                UserStatus.DO_NOT_DISTURB -> Presence.UNAVAILABLE
+                UserStatus.OFFLINE -> Presence.OFFLINE
             }
-            trixnity.api.presence.setPresence(trixnity.userId, presence).getOrThrow()
+            trixnity.api.user.setPresence(trixnity.userId, presence).getOrThrow()
         } catch (_: Exception) {}
     }
 
@@ -736,22 +768,35 @@ class MatrixOrbitRepository(
         val trixnity = trixnityClient ?: return flowOf(UserStatus.OFFLINE)
         return trixnity.user.getPresence(UserId(userId)).map { presence ->
             when (presence?.presence) {
-                de.connect2x.trixnity.core.model.events.m.Presence.ONLINE -> UserStatus.ONLINE
-                de.connect2x.trixnity.core.model.events.m.Presence.UNAVAILABLE -> UserStatus.IDLE
-                de.connect2x.trixnity.core.model.events.m.Presence.OFFLINE -> UserStatus.OFFLINE
+                Presence.ONLINE -> UserStatus.ONLINE
+                Presence.UNAVAILABLE -> UserStatus.IDLE
+                Presence.OFFLINE -> UserStatus.OFFLINE
                 else -> UserStatus.ONLINE
             }
         }
     }
 
     override suspend fun setTyping(roomId: String, isTyping: Boolean) {
-        trixnityClient?.api?.room?.setTyping(trixnityClient!!.userId, RoomId(roomId), isTyping, 30.seconds)
+        trixnityClient?.api?.room?.setTyping(
+            RoomId(roomId),
+            trixnityClient!!.userId,
+            isTyping,
+            30_000
+        )
     }
 
     override fun observeTyping(roomId: String): Flow<List<String>> {
         val trixnity = trixnityClient ?: return flowOf(emptyList())
         return trixnity.room.usersTyping.map { map ->
-            map[RoomId(roomId)]?.userIds?.map { it.full } ?: emptyList()
+            val content = map[RoomId(roomId)]
+            if (content != null) {
+                try {
+                    trixnity.api.json.encodeToJsonElement(content)
+                        .jsonObject["user_ids"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList()
+                } catch (e: Exception) {
+                    emptyList()
+                }
+            } else emptyList()
         }
     }
 
@@ -769,7 +814,7 @@ class MatrixOrbitRepository(
     override fun observeChannelList(spaceId: String): Flow<List<OrbitChannel>> {
         return _roomListFlow.map { getChannelsForSpace(spaceId) }
     }
-    
+
     fun observeSpaces(): Flow<List<OrbitServer>> {
         return _roomListFlow.asSharedFlow()
     }
@@ -789,20 +834,23 @@ class MatrixOrbitRepository(
                     refreshToken = null
                 )
                 trixnityClient = MatrixClient.create(
-                    repositoriesModule = RepositoriesModule.createRoomRepositoriesModule(getRoomDatabaseBuilder()),
-                    MediaStoreModule.okio(getMediaStorePath()),
+                    repositoriesModule = RepositoriesModule.room(getRoomDatabaseBuilder()),
+                    mediaStoreModule = MediaStoreModule.okio(getMediaStorePath()),
                     cryptoDriverModule = CryptoDriverModule.vodozemac(),
                     authProviderData = authProviderData
                 ).getOrThrow()
             }
 
             val trixnity = trixnityClient ?: return@launch
-            
+
             launch {
-                trixnity.room.getAll().first().values.forEach { roomFlow ->
-                    launch {
-                        roomFlow.collect {
-                            _roomListFlow.emit(getSpaces())
+                trixnity.room.getAll().collectLatest { allRoomsMap ->
+                    _roomListFlow.emit(getSpaces())
+                    allRoomsMap.values.forEach { roomFlow ->
+                        launch {
+                            roomFlow.collect {
+                                _roomListFlow.emit(getSpaces())
+                            }
                         }
                     }
                 }
@@ -814,34 +862,30 @@ class MatrixOrbitRepository(
                     val event = timelineEvent.event as? RoomEvent<*> ?: return@collect
                     val roomId = timelineEvent.roomId.full
 
-                    if (content is de.connect2x.trixnity.core.model.events.UnknownMessageEventContent) {
-                        val json = content.content
-                        when (event.type) {
-                            "m.call.invite" -> {
-                                val callId = json["call_id"]?.jsonPrimitive?.content ?: ""
-                                val sdp = json["offer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: ""
-                                if (callId.isNotBlank() && sdp.isNotBlank()) _callEvents.emit(CallEvent.Invite(roomId, callId, sdp))
+                    if (content is UnknownEventContent) {
+                        val json = trixnity.api.json.encodeToJsonElement(content).jsonObject["value"]?.jsonObject ?: JsonObject(emptyMap())
+                        val typeStr = content.eventType
+                        if (typeStr == "m.call.invite") {
+                            val callId = json["call_id"]?.jsonPrimitive?.content ?: ""
+                            val sdp = json["offer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: ""
+                            if (callId.isNotBlank() && sdp.isNotBlank()) _callEvents.emit(CallEvent.Invite(roomId, callId, sdp))
+                        } else if (typeStr == "m.call.answer") {
+                            val callId = json["call_id"]?.jsonPrimitive?.content ?: ""
+                            val sdp = json["answer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: ""
+                            if (callId.isNotBlank() && sdp.isNotBlank()) _callEvents.emit(CallEvent.Answer(roomId, callId, sdp))
+                        } else if (typeStr == "m.call.candidates") {
+                            val callId = json["call_id"]?.jsonPrimitive?.content ?: ""
+                            val candidates = json["candidates"]?.jsonArray
+                            candidates?.forEach { cand ->
+                                val cObj = cand.jsonObject
+                                val sdp = cObj["candidate"]?.jsonPrimitive?.content ?: ""
+                                val sdpMid = cObj["sdpMid"]?.jsonPrimitive?.content ?: ""
+                                val sdpMLineIndex = cObj["sdpMLineIndex"]?.jsonPrimitive?.int ?: 0
+                                _callEvents.emit(CallEvent.Candidate(roomId, callId, sdp, sdpMid, sdpMLineIndex))
                             }
-                            "m.call.answer" -> {
-                                val callId = json["call_id"]?.jsonPrimitive?.content ?: ""
-                                val sdp = json["answer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: ""
-                                if (callId.isNotBlank() && sdp.isNotBlank()) _callEvents.emit(CallEvent.Answer(roomId, callId, sdp))
-                            }
-                            "m.call.candidates" -> {
-                                val callId = json["call_id"]?.jsonPrimitive?.content ?: ""
-                                val candidates = json["candidates"]?.jsonArray
-                                candidates?.forEach { cand ->
-                                    val cObj = cand.jsonObject
-                                    val sdp = cObj["candidate"]?.jsonPrimitive?.content ?: ""
-                                    val sdpMid = cObj["sdpMid"]?.jsonPrimitive?.content ?: ""
-                                    val sdpMLineIndex = cObj["sdpMLineIndex"]?.jsonPrimitive?.int ?: 0
-                                    _callEvents.emit(CallEvent.Candidate(roomId, callId, sdp, sdpMid, sdpMLineIndex))
-                                }
-                            }
-                            "m.call.hangup" -> {
-                                val callId = json["call_id"]?.jsonPrimitive?.content ?: ""
-                                if (callId.isNotBlank()) _callEvents.emit(CallEvent.Hangup(roomId, callId))
-                            }
+                        } else if (typeStr == "m.call.hangup") {
+                            val callId = json["call_id"]?.jsonPrimitive?.content ?: ""
+                            if (callId.isNotBlank()) _callEvents.emit(CallEvent.Hangup(roomId, callId))
                         }
                     }
 
@@ -915,7 +959,7 @@ class MatrixOrbitRepository(
 
             val relatesTo = content.relatesTo
             val orbitContent: MessageContent = when {
-                relatesTo is de.connect2x.trixnity.core.model.events.m.RelatesTo.Replace -> {
+                relatesTo is RelatesTo.Replace -> {
                     val newContent = relatesTo.newContent
                     if (newContent is RoomMessageEventContent) {
                         MessageContent.Edit(
@@ -926,7 +970,7 @@ class MatrixOrbitRepository(
                         parseTrixnityMessageContent(content)
                     }
                 }
-                relatesTo is de.connect2x.trixnity.core.model.events.m.RelatesTo.Reply -> {
+                relatesTo is RelatesTo.Reply -> {
                     MessageContent.Reply(
                         inReplyToEventId = relatesTo.eventId.full,
                         quotedSenderId = "",
@@ -948,9 +992,9 @@ class MatrixOrbitRepository(
             )
         }
 
-        if (content is de.connect2x.trixnity.core.model.events.m.ReactionEventContent) {
-            val key = content.relatesTo.key
-            val eventIdRel = content.relatesTo.eventId.full
+        if (content is ReactionEventContent) {
+            val key = content.relatesTo?.key ?: ""
+            val eventIdRel = content.relatesTo?.eventId?.full ?: ""
             return OrbitMessage(
                 id = eventId,
                 userId = sender,
