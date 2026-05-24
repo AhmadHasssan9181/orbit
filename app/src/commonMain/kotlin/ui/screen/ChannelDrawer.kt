@@ -165,7 +165,13 @@ private fun ChannelListContent(
     onChannelClick: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val expandedCategories = remember { mutableStateOf(setOf<String>()) }
+    val expandedCategories = remember { mutableStateOf<Set<String>?>(null) }
+    LaunchedEffect(categories) {
+        if (expandedCategories.value == null && categories.isNotEmpty()) {
+            expandedCategories.value = categories.map { it.id }.toSet()
+        }
+    }
+    val currentExpanded = expandedCategories.value ?: emptySet()
 
     LazyColumn(
         modifier = modifier,
@@ -173,21 +179,25 @@ private fun ChannelListContent(
         verticalArrangement = Arrangement.spacedBy(1.dp)
     ) {
         categories.forEach { cat ->
+            val isExpanded = cat.id in currentExpanded
             item(cat.id) {
                 CategoryHeader(
                     name = cat.name,
-                    isExpanded = cat.id in expandedCategories.value,
+                    isExpanded = isExpanded,
                     onToggle = {
+                        val current = expandedCategories.value ?: emptySet()
                         expandedCategories.value =
-                            if (cat.id in expandedCategories.value)
-                                expandedCategories.value - cat.id
-                            else expandedCategories.value + cat.id
+                            if (cat.id in current)
+                                current - cat.id
+                            else current + cat.id
                     }
                 )
             }
-            val catChannels = channels.filter { it.categoryId == cat.id }
-            items(catChannels, key = { it.id }) { ch ->
-                ChannelItem(ch, ch.id == selectedChannelId) { onChannelClick(ch.id) }
+            if (isExpanded) {
+                val catChannels = channels.filter { it.categoryId == cat.id }
+                items(catChannels, key = { it.id }) { ch ->
+                    ChannelItem(ch, ch.id == selectedChannelId) { onChannelClick(ch.id) }
+                }
             }
         }
 

@@ -71,6 +71,7 @@ kotlin {
                 implementation("androidx.activity:activity-compose:1.8.2")
                 implementation("androidx.core:core-splashscreen:1.0.1")
                 implementation("com.google.android.material:material:1.11.0")
+                implementation("io.getstream:stream-webrtc-android:1.1.2")
             }
         }
 
@@ -78,6 +79,7 @@ kotlin {
             dependencies {
                 implementation(compose.desktop.currentOs)
                 implementation("io.ktor:ktor-client-okhttp:3.0.1")
+                implementation("dev.onvoid.webrtc:webrtc-java:0.5.0")
             }
         }
     }
