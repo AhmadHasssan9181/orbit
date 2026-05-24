@@ -45,6 +45,7 @@ private val Accent: Color @Composable get() = rememberCosmicTokens().Accent
  * Shows login screen if no repository is set, otherwise shows the main app layout.
  * Adapts between Compact (phone), Medium (tablet), and Expanded (desktop) layouts.
  */
+@Suppress("UnusedBoxWithConstraintsScope")
 @Composable
 fun OrbitApp(modifier: Modifier = Modifier) {
     var repository by remember { mutableStateOf<OrbitRepository?>(null) }
@@ -110,6 +111,12 @@ fun OrbitApp(modifier: Modifier = Modifier) {
                         MainAppContent(
                             repository = repository!!,
                             windowSize = windowSize,
+                            onLogoutRequested = {
+                                scope.launch {
+                                    repository?.logout()
+                                    repository = null
+                                }
+                            },
                             modifier = Modifier.fillMaxSize()
                         )
                     }
@@ -125,6 +132,7 @@ fun OrbitApp(modifier: Modifier = Modifier) {
 private fun MainAppContent(
     repository: OrbitRepository,
     windowSize: WindowSizeClass,
+    onLogoutRequested: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
@@ -315,7 +323,15 @@ private fun MainAppContent(
 
     // ─── Settings screen ────────────────────────────────────────
     if (showSettings) {
-        SettingsScreen(onBack = { showSettings = false }, modifier = Modifier.fillMaxSize())
+        SettingsScreen(
+            repository = repository,
+            onBack = { showSettings = false },
+            onLogout = {
+                onLogoutRequested()
+                showSettings = false
+            },
+            modifier = Modifier.fillMaxSize()
+        )
         return
     }
 

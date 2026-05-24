@@ -97,6 +97,7 @@ import ui.model.displayText
 import util.getMediaStorePath
 import util.getRoomDatabaseBuilder
 import util.performSsoLogin
+import kotlin.time.Clock
 import kotlin.time.Duration.Companion.seconds
 
 
@@ -574,14 +575,15 @@ class MatrixOrbitRepository(
             val txnId = trixnity.room.sendMessage(RoomId(channelId)) {
                 text(body)
             }
+            println("DEBUG: [Repo] sendMessage txnId=$txnId to $channelId")
 
             // Manually emit a local echo
             val orbitMessage = OrbitMessage(
                 id = txnId,
-                userId = _userId ?: "me",
-                username = _userId ?: "me",
+                userId = trixnity.userId.full,
+                username = trixnity.userId.full,
                 body = body,
-                timestamp = Instant.fromEpochMilliseconds(1716500000000L),
+                timestamp = Clock.System.now(),
                 channelId = channelId,
                 content = MessageContent.Text(body),
                 transactionId = txnId
@@ -594,6 +596,7 @@ class MatrixOrbitRepository(
 
             Result.success(txnId)
         } catch (e: Exception) {
+            println("DEBUG: [Repo] sendMessage failed: ${e.message}")
             Result.failure(e)
         }
     }
@@ -615,7 +618,6 @@ class MatrixOrbitRepository(
             Result.failure(e)
         }
     }
-
 
     override suspend fun sendCallEvent(channelId: String, eventType: String, content: kotlinx.serialization.json.JsonObject): Result<String> {
         return try {
@@ -676,10 +678,10 @@ class MatrixOrbitRepository(
             // Manually emit a local echo
             val orbitMessage = OrbitMessage(
                 id = txnId,
-                userId = _userId ?: "me",
-                username = _userId ?: "me",
+                userId = trixnity.userId.full,
+                username = trixnity.userId.full,
                 body = filename,
-                timestamp = Instant.fromEpochMilliseconds(1716500000000L),
+                timestamp = Clock.System.now(),
                 channelId = channelId,
                 content = MessageContent.Image(
                     url = convertMxcUrl(mxcUrl),
@@ -1010,14 +1012,14 @@ class MatrixOrbitRepository(
     }
 
     override fun observeActiveGroupCall(channelId: String): Flow<String?> {
-        TODO("Not yet implemented")
+        return flowOf(null)
     }
 
     /**
      * Start a sync listener for live events using Trixnity SDK.
      */
     fun startSync() {
-        GlobalScope.launch {
+        repositoryScope.launch {
             if (trixnityClient == null && _accessToken != null && _userId != null) {
                 try {
                     trixnityClient = MatrixClient.create(
@@ -1059,60 +1061,39 @@ class MatrixOrbitRepository(
                 return@launch
             }
 
-            // Sync presence explicitly if needed, Trixnity handles syncing loop automatically when startSync is called
-            launch {
-                try {
-                    trixnity.startSync()
-                } catch (e: Exception) {
-                    println("Sync loop failed: ${e.message}")
-                    if (e is de.connect2x.trixnity.core.MatrixServerException && e.statusCode == io.ktor.http.HttpStatusCode.Unauthorized) {
-                        _authStatus.value = AuthStatus.Error("Session expired. Please login again.")
-                    }
-                }
-            }
-
             launch {
                 trixnity.room.getAll().collectLatest { allRoomsMap ->
                     _roomListFlow.emit(getSpaces())
-                    allRoomsMap.values.forEach { roomFlow ->
-                        launch {
-                            roomFlow.collect {
-                                _roomListFlow.emit(getSpaces())
-                            }
-                        }
-                    }
                 }
             }
 
             launch {
                 trixnity.room.getTimelineEventsFromNowOn(decryptionTimeout = 5.seconds).collect { timelineEvent ->
-                    val event = timelineEvent.event as? RoomEvent<*>
                     val roomId = timelineEvent.roomId.full
                     val sender = timelineEvent.sender.full
-                    println("DEBUG: [Sync] Received event ${timelineEvent.eventId.full} in room $roomId from $sender")
-
-                    val contentResult = timelineEvent.content
-                    if (contentResult?.isFailure == true) {
-                        println("DEBUG: [Sync] Decryption failure for ${timelineEvent.eventId.full}: ${contentResult.exceptionOrNull()?.message}")
-                    }
-
+                    
                     timelineEventToOrbitMessage(timelineEvent)?.let { orbitMessage ->
-                        println("DEBUG: [Sync] Successfully mapped ${orbitMessage.id}. Body: ${orbitMessage.body.take(20)}...")
+                        println("DEBUG: [Sync] Received message ${orbitMessage.id} in $roomId from $sender")
                         synchronized(liveMessageStates) {
                             val state = liveMessageStates.getOrPut(roomId) {
-                                println("DEBUG: [Sync] Creating new LiveMessageState for room $roomId")
                                 LiveMessageState(MutableSharedFlow(replay = 1, extraBufferCapacity = 64, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST))
                             }
                             state.messages.add(orbitMessage)
-                            val emitted = state.flow.tryEmit(listOf(orbitMessage))
-                            println("DEBUG: [Sync] Emitted message to flow for $roomId. Success: $emitted. Current state list size: ${state.messages.size}")
+                            state.flow.tryEmit(listOf(orbitMessage))
                         }
-                    } ?: run {
-                        println("DEBUG: [Sync] Mapping failed for ${timelineEvent.eventId.full}. Content type: ${contentResult?.getOrNull()?.let { it::class.simpleName } ?: "null"}")
                     }
                 }
             }
-            trixnity.startSync()
+
+            try {
+                println("DEBUG: [Sync] Starting sync loop...")
+                trixnity.startSync()
+            } catch (e: Exception) {
+                println("Sync loop failed: ${e.message}")
+                if (e is de.connect2x.trixnity.core.MatrixServerException && e.statusCode == io.ktor.http.HttpStatusCode.Unauthorized) {
+                    _authStatus.value = AuthStatus.Error("Session expired. Please login again.")
+                }
+            }
         }
     }
 
