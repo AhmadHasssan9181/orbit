@@ -178,6 +178,10 @@ fun OrbitApp(
 
 // ─── Main App Content — adaptive layout ────────────────────────
 
+private fun String.redactedIceUrl(): String {
+    return substringBefore('?')
+}
+
 @Composable
 private fun MainAppContent(
     repository: OrbitRepository,
@@ -196,28 +200,51 @@ private fun MainAppContent(
     val callManager = remember { CallManager(webRtcClient, scope) }
 
     LaunchedEffect(callManager, repository) {
-        // Fetch TURN servers
+        callManager.refreshIceServers = {
+            repository.getTurnServers()
+                .onSuccess { servers ->
+                    val urls = servers.flatMap { it.uris }
+                    println("DEBUG: [WebRTC] Matrix ICE discovery returned ${urls.size} urls: ${urls.joinToString { it.redactedIceUrl() }}")
+                }
+                .onFailure { error ->
+                    println("DEBUG: [WebRTC] Matrix ICE discovery failed: ${error.message}")
+                }
+                .getOrElse { emptyList() }
+        }
+
+        // Warm the TURN/STUN config early, and CallManager refreshes it again before each call.
         scope.launch {
-            repository.getTurnServers().onSuccess { servers ->
-                callManager.iceServers = servers
-            }
+            callManager.iceServers = callManager.refreshIceServers?.invoke().orEmpty()
         }
 
         // Listen for signaling events
         scope.launch {
             repository.observeCallEvents().collect { event ->
-                val user = repository.getCurrentUser()
-                if (user != null && event.senderId == user.id) return@collect
+                val ownPartyId = CredentialManager.deviceId
+                if (ownPartyId != null && event.partyId == ownPartyId) return@collect
+                if (event.partyId == null) {
+                    val user = repository.getCurrentUser()
+                    if (user != null && event.senderId == user.id) return@collect
+                }
 
                 when (event) {
                     is repository.CallEvent.Invite -> callManager.handleCallInvite(event.roomId, event.callId, event.sdp)
-                    is repository.CallEvent.Answer -> callManager.handleCallAnswer(event.sdp)
+                    is repository.CallEvent.Answer -> {
+                        callManager.handleCallAnswer(event.sdp)
+                        event.partyId?.let { selectedPartyId ->
+                            repository.sendCallEvent(event.roomId, "m.call.select_answer", buildJsonObject {
+                                put("call_id", event.callId)
+                                put("selected_party_id", selectedPartyId)
+                                put("version", "1")
+                            })
+                        }
+                    }
                     is repository.CallEvent.Candidate -> callManager.handleIceCandidate(
                         webrtc.IceCandidateModel(event.sdp, event.sdpMid, event.sdpMLineIndex)
                     )
                     is repository.CallEvent.Hangup -> {
                         if (callManager.callId == event.callId) {
-                            callManager.endCall()
+                            callManager.endCall(notifyRemote = false)
                         }
                     }
                 }
@@ -225,38 +252,38 @@ private fun MainAppContent(
         }
 
         callManager.sendInvite = { roomId, callId, sdp ->
-            scope.launch {
-                repository.sendCallEvent(roomId, "m.call.invite", buildJsonObject {
-                    put("call_id", callId)
-                    put("offer", buildJsonObject {
-                        put("type", "offer")
-                        put("sdp", sdp)
-                    })
-                    put("version", "0")
-                    put("lifetime", 30000)
+            repository.sendCallEvent(roomId, "m.call.invite", buildJsonObject {
+                put("call_id", callId)
+                put("offer", buildJsonObject {
+                    put("type", "offer")
+                    put("sdp", sdp)
                 })
+                put("version", "1")
+                put("lifetime", 30000)
+            }).onFailure { error ->
+                println("DEBUG: [WebRTC] Failed to send call invite: ${error.message}")
             }
         }
 
         callManager.sendAnswer = { roomId, callId, sdp ->
-            scope.launch {
-                repository.sendCallEvent(roomId, "m.call.answer", buildJsonObject {
-                    put("call_id", callId)
-                    put("answer", buildJsonObject {
-                        put("type", "answer")
-                        put("sdp", sdp)
-                    })
-                    put("version", "0")
+            repository.sendCallEvent(roomId, "m.call.answer", buildJsonObject {
+                put("call_id", callId)
+                put("answer", buildJsonObject {
+                    put("type", "answer")
+                    put("sdp", sdp)
                 })
+                put("version", "1")
+            }).onFailure { error ->
+                println("DEBUG: [WebRTC] Failed to send call answer: ${error.message}")
             }
         }
 
         callManager.sendHangup = { roomId, callId ->
-            scope.launch {
-                repository.sendCallEvent(roomId, "m.call.hangup", buildJsonObject {
-                    put("call_id", callId)
-                    put("version", "0")
-                })
+            repository.sendCallEvent(roomId, "m.call.hangup", buildJsonObject {
+                put("call_id", callId)
+                put("version", "1")
+            }).onFailure { error ->
+                println("DEBUG: [WebRTC] Failed to send call hangup: ${error.message}")
             }
         }
 
@@ -268,16 +295,17 @@ private fun MainAppContent(
             candidateBatch.add(candidate)
 
             if (batchJob?.isActive != true) {
-                batchJob = launch {
+                batchJob = scope.launch {
                     kotlinx.coroutines.delay(500) // Debounce window to catch burst
 
                     val toSend = candidateBatch.toList()
                     candidateBatch.clear()
 
                     if (toSend.isNotEmpty()) {
+                        println("DEBUG: [WebRTC] Sending ${toSend.size} local ICE candidates")
                         repository.sendCallEvent(roomId, "m.call.candidates", buildJsonObject {
                             put("call_id", callId)
-                            put("version", "0")
+                            put("version", "1")
                             put("candidates", buildJsonArray {
                                 toSend.forEach { cand ->
                                     add(buildJsonObject {
@@ -287,7 +315,9 @@ private fun MainAppContent(
                                     })
                                 }
                             })
-                        })
+                        }).onFailure { error ->
+                            println("DEBUG: [WebRTC] Failed to send ICE candidates: ${error.message}")
+                        }
                     }
                 }
             }
@@ -478,6 +508,7 @@ private fun MainAppContent(
 
             CallScreen(
                 callManager = callManager,
+<<<<<<< HEAD
                 onStartScreenShare = {
                     if (onStartScreenShare != null) {
                         onStartScreenShare { data ->
@@ -487,6 +518,9 @@ private fun MainAppContent(
                         callManager.startScreenShare()
                     }
                 }
+=======
+                modifier = Modifier.fillMaxSize()
+>>>>>>> 56b3d3662f481fe90306b4ac4d9afd5b3094a503
             )
         }
     }
