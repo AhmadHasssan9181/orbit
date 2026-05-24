@@ -1,5 +1,6 @@
 package repository
 
+
 import de.connect2x.trixnity.client.CryptoDriverModule
 import de.connect2x.trixnity.client.MatrixClient
 import de.connect2x.trixnity.client.MediaStoreModule
@@ -29,7 +30,6 @@ import de.connect2x.trixnity.core.model.EventId
 import de.connect2x.trixnity.core.model.RoomId
 import de.connect2x.trixnity.core.model.UserId
 import de.connect2x.trixnity.core.model.events.ClientEvent.RoomEvent
-import de.connect2x.trixnity.core.model.events.MessageEventContent
 import de.connect2x.trixnity.core.model.events.m.ReactionEventContent
 import de.connect2x.trixnity.core.model.events.m.RelatesTo
 import de.connect2x.trixnity.core.model.events.m.room.AudioInfo
@@ -84,6 +84,7 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import ui.model.ChannelType
 import ui.model.MessageContent
@@ -623,29 +624,90 @@ class MatrixOrbitRepository(
         }
     }
 
+    //if call aint workin this lil bugger is broken and this is legacy call not jitsi
     override suspend fun sendCallEvent(channelId: String, eventType: String, content: kotlinx.serialization.json.JsonObject): Result<String> {
         return try {
             val trixnity = trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
+            val roomId = RoomId(channelId)
 
-            // Use string-based JSON decoding for UnknownEventContent
-            val jsonStr = buildJsonObject {
-                put("type", eventType)
-                put("value", content)
-            }.toString()
+            val callId = content["call_id"]?.jsonPrimitive?.content ?: return Result.failure(Exception("No call_id"))
+            val versionStr = content["version"]?.jsonPrimitive?.content ?: "0"
 
-            val unknownContent = trixnity.api.json.decodeFromString<de.connect2x.trixnity.core.model.events.UnknownEventContent>(jsonStr)
+            // Generate or fetch a unique ID so Element knows this is a separate device
+            val myPartyId = CredentialManager.deviceId ?: "orbit_device_${kotlin.random.Random.nextInt()}"
 
-            val response = trixnity.api.room.sendMessageEvent(
-                RoomId(channelId),
-                unknownContent as MessageEventContent
-            ).getOrThrow()
+            // Map raw JSON to Trixnity's native classes
+            val eventContent = when (eventType) {
+                "m.call.invite" -> {
+                    val sdp = content["offer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: ""
+                    de.connect2x.trixnity.core.model.events.m.call.CallEventContent.Invite(
+                        version = versionStr,
+                        callId = callId,
+                        lifetime = content["lifetime"]?.jsonPrimitive?.longOrNull ?: 30000L,
+                        offer = de.connect2x.trixnity.core.model.events.m.call.CallEventContent.Invite.Offer(
+                            sdp = sdp,
+                            type = de.connect2x.trixnity.core.model.events.m.call.CallEventContent.Invite.OfferType.OFFER
+                        ),
+                        partyId = myPartyId, // <--- Distinct device ID
+                        sdpStreamMetadata = null // CRITICAL: null, not emptyMap(), so Element doesn't crash
+                    )
+                }
+                "m.call.answer" -> {
+                    val sdp = content["answer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: ""
+                    de.connect2x.trixnity.core.model.events.m.call.CallEventContent.Answer(
+                        version = versionStr,
+                        callId = callId,
+                        answer = de.connect2x.trixnity.core.model.events.m.call.CallEventContent.Answer.Answer(
+                            sdp = sdp,
+                            type = de.connect2x.trixnity.core.model.events.m.call.CallEventContent.Answer.AnswerType.ANSWER
+                        ),
+                        partyId = myPartyId // <--- Distinct device ID
+                    )
+                }
+                "m.call.candidates" -> {
+                    val candidatesJson = content["candidates"]?.jsonArray ?: emptyList()
+                    val candidatesList = candidatesJson.mapNotNull {
+                        val candObj = it.jsonObject
+                        val sdp = candObj["candidate"]?.jsonPrimitive?.content ?: return@mapNotNull null
+                        val sdpMid = candObj["sdpMid"]?.jsonPrimitive?.content
+                        val sdpMLineIndex = candObj["sdpMLineIndex"]?.jsonPrimitive?.intOrNull?.toLong()
+                        de.connect2x.trixnity.core.model.events.m.call.CallEventContent.Candidates.Candidate(
+                            candidate = sdp,
+                            sdpMid = sdpMid,
+                            sdpMLineIndex = sdpMLineIndex
+                        )
+                    }
+                    de.connect2x.trixnity.core.model.events.m.call.CallEventContent.Candidates(
+                        version = versionStr,
+                        callId = callId,
+                        candidates = candidatesList,
+                        partyId = myPartyId // <--- Distinct device ID
+                    )
+                }
+                "m.call.hangup" -> {
+                    de.connect2x.trixnity.core.model.events.m.call.CallEventContent.Hangup(
+                        version = versionStr,
+                        callId = callId,
+                        reason = de.connect2x.trixnity.core.model.events.m.call.CallEventContent.Hangup.Reason.USER_HANGUP,
+                        partyId = myPartyId // <--- Distinct device ID
+                    )
+                }
+                else -> return Result.failure(Exception("Unknown call event type: $eventType"))
+            }
 
-            Result.success(response.full)
+            // Route through the high-level room service for End-to-End Encryption
+            val txnId = trixnity.room.sendMessage(roomId) {
+                content(eventContent)
+            }
+
+            Result.success(txnId)
         } catch (e: Exception) {
             println("DEBUG: [Repo] sendCallEvent failed: ${e.message}")
             Result.failure(e)
         }
     }
+
+
     override suspend fun uploadMedia(bytes: ByteArray, mimeType: String, filename: String): Result<String> {
         return try {
             val trixnity = trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
@@ -1108,7 +1170,6 @@ class MatrixOrbitRepository(
                     ).getOrThrow()
                 } catch (e: Exception) {
                     println("Failed to restore Trixnity client from store: ${e.message}")
-                    // Fallback to providing auth data explicitly if local store is empty or corrupted
                     val authProviderData = de.connect2x.trixnity.clientserverapi.client.ClassicMatrixClientAuthProviderData(
                         baseUrl = Url(homeserverUrl),
                         accessToken = _accessToken!!,
@@ -1129,7 +1190,6 @@ class MatrixOrbitRepository(
                 return@launch
             }
 
-            // Verify session validity
             try {
                 trixnity.api.authentication.whoAmI().getOrThrow()
                 _authStatus.value = AuthStatus.Authenticated
@@ -1148,74 +1208,91 @@ class MatrixOrbitRepository(
             launch {
                 trixnity.room.getTimelineEventsFromNowOn(decryptionTimeout = 5.seconds).collect { timelineEvent ->
                     val roomId = timelineEvent.roomId.full
-
-                    // Extracting sender here so all the emit calls and logs below actually work
                     val sender = timelineEvent.sender.full
-
                     val content = timelineEvent.content?.getOrNull()
-                    var typeStr = ""
-                    var realContent: kotlinx.serialization.json.JsonObject? = null
 
-                    if (content is de.connect2x.trixnity.core.model.events.UnknownEventContent) {
-                        typeStr = content.eventType
-                        // Cleaned up serialization extensions
-                        val json = content.raw.jsonObject
-                        realContent = json["value"]?.jsonObject ?: json
-                    }
+                    // --- 1. Catch Native & Unknown Events ---
+                    when (content) {
+                        is de.connect2x.trixnity.core.model.events.m.call.CallEventContent.Answer -> {
+                            println("DEBUG: [Sync] Native Call Answer received for ${content.callId}")
+                            _callEvents.emit(CallEvent.Answer(roomId, content.callId, content.answer.sdp, sender))
+                        }
+                        is de.connect2x.trixnity.core.model.events.m.call.CallEventContent.Candidates -> {
+                            println("DEBUG: [Sync] Native Call Candidates received for ${content.callId}")
+                            content.candidates.forEach { cand ->
+                                val sdpMid = cand.sdpMid ?: ""
+                                val sdpMLineIndex = cand.sdpMLineIndex?.toInt() ?: 0
+                                _callEvents.emit(CallEvent.Candidate(roomId, content.callId, cand.candidate, sdpMid, sdpMLineIndex, sender))
+                            }
+                        }
+                        is de.connect2x.trixnity.core.model.events.m.call.CallEventContent.Hangup -> {
+                            println("DEBUG: [Sync] Native Call Hangup received for ${content.callId}")
+                            _callEvents.emit(CallEvent.Hangup(roomId, content.callId, sender))
+                        }
+                        is de.connect2x.trixnity.core.model.events.m.call.CallEventContent.Invite -> {
+                            println("DEBUG: [Sync] Native Call Invite received for ${content.callId}")
+                            _callEvents.emit(CallEvent.Invite(roomId, content.callId, content.offer.sdp, sender))
+                        }
+                        is de.connect2x.trixnity.core.model.events.UnknownEventContent -> {
+                            val typeStr = content.eventType
+                            val json = content.raw.jsonObject
+                            val realContent = json["value"]?.jsonObject ?: json
 
-                    // Handle VoIP signaling
-                    if (typeStr.startsWith("m.call.")) {
-                        if (realContent != null) {
-                            val callId = realContent["call_id"]?.jsonPrimitive?.content ?: ""
-                            if (callId.isNotBlank()) {
-                                println("DEBUG: [Sync] Received call event $typeStr for $callId")
-                                when (typeStr) {
-                                    "m.call.invite" -> {
-                                        val sdp = realContent["offer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: ""
-                                        _callEvents.emit(CallEvent.Invite(roomId, callId, sdp, sender))
-                                    }
-                                    "m.call.answer" -> {
-                                        val sdp = realContent["answer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: ""
-                                        _callEvents.emit(CallEvent.Answer(roomId, callId, sdp, sender))
-                                    }
-                                    "m.call.candidates" -> {
-                                        realContent["candidates"]?.jsonArray?.forEach { cand ->
-                                            val sdp = cand.jsonObject["candidate"]?.jsonPrimitive?.content ?: ""
-                                            val sdpMid = cand.jsonObject["sdpMid"]?.jsonPrimitive?.content ?: ""
-                                            val sdpMLineIndex = cand.jsonObject["sdpMLineIndex"]?.jsonPrimitive?.intOrNull ?: 0
-                                            _callEvents.emit(CallEvent.Candidate(roomId, callId, sdp, sdpMid, sdpMLineIndex, sender))
+                            if (typeStr.startsWith("m.call.")) {
+                                val callId = realContent["call_id"]?.jsonPrimitive?.content ?: ""
+                                if (callId.isNotBlank()) {
+                                    println("DEBUG: [Sync] Fallback call event $typeStr for $callId")
+                                    when (typeStr) {
+                                        "m.call.invite" -> {
+                                            val sdp = realContent["offer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: ""
+                                            _callEvents.emit(CallEvent.Invite(roomId, callId, sdp, sender))
+                                        }
+                                        "m.call.answer" -> {
+                                            val sdp = realContent["answer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: ""
+                                            _callEvents.emit(CallEvent.Answer(roomId, callId, sdp, sender))
+                                        }
+                                        "m.call.candidates" -> {
+                                            realContent["candidates"]?.jsonArray?.forEach { cand ->
+                                                val sdp = cand.jsonObject["candidate"]?.jsonPrimitive?.content ?: ""
+                                                val sdpMid = cand.jsonObject["sdpMid"]?.jsonPrimitive?.content ?: ""
+                                                val sdpMLineIndex = cand.jsonObject["sdpMLineIndex"]?.jsonPrimitive?.intOrNull ?: 0
+                                                _callEvents.emit(CallEvent.Candidate(roomId, callId, sdp, sdpMid, sdpMLineIndex, sender))
+                                            }
+                                        }
+                                        "m.call.hangup" -> {
+                                            _callEvents.emit(CallEvent.Hangup(roomId, callId, sender))
                                         }
                                     }
-                                    "m.call.hangup" -> {
-                                        _callEvents.emit(CallEvent.Hangup(roomId, callId, sender))
+                                }
+                            }
+
+                            if (typeStr == "im.vector.modular.widgets" || typeStr == "m.widget" || typeStr == "org.matrix.msc3401.call") {
+                                if (realContent != null) {
+                                    val groupFlow = activeGroupCalls[roomId]
+                                    if (groupFlow != null) {
+                                        if (realContent.isEmpty()) {
+                                            groupFlow.value = null
+                                        } else {
+                                            var url: String? = null
+                                            if (realContent["type"]?.jsonPrimitive?.content == "jitsi" || realContent["type"]?.jsonPrimitive?.content == "m.custom") {
+                                                url = realContent["url"]?.jsonPrimitive?.content
+                                            } else if (typeStr == "org.matrix.msc3401.call") {
+                                                url = "matrix-call://$roomId"
+                                            }
+                                            if (url != null) {
+                                                groupFlow.value = url
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
-
-                    // --- Widget / Group Call Detection ---
-                    if (typeStr == "im.vector.modular.widgets" || typeStr == "m.widget" || typeStr == "org.matrix.msc3401.call") {
-                        if (realContent != null) {
-                            val groupFlow = activeGroupCalls[roomId]
-                            if (groupFlow != null) {
-                                if (realContent.isEmpty()) {
-                                    groupFlow.value = null
-                                } else {
-                                    var url: String? = null
-                                    if (realContent["type"]?.jsonPrimitive?.content == "jitsi" || realContent["type"]?.jsonPrimitive?.content == "m.custom") {
-                                        url = realContent["url"]?.jsonPrimitive?.content
-                                    } else if (typeStr == "org.matrix.msc3401.call") {
-                                        url = "matrix-call://$roomId"
-                                    }
-                                    if (url != null) {
-                                        groupFlow.value = url
-                                    }
-                                }
-                            }
+                        else -> {
+                            // Ignored: Handled by timelineEventToOrbitMessage below
                         }
                     }
 
+                    // --- 2. Standard Message Handling ---
                     timelineEventToOrbitMessage(timelineEvent)?.let { orbitMessage ->
                         println("DEBUG: [Sync] Received message ${orbitMessage.id} in $roomId from $sender")
                         synchronized(liveMessageStates) {
