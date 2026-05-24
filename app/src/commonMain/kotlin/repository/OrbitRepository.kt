@@ -36,6 +36,8 @@ interface OrbitRepository {
     // ─── Channels / Rooms ────────────────────────────────────
     suspend fun getChannelsForSpace(spaceId: String): List<OrbitChannel>
 
+    val activeDeviceVerification: Flow<Any?>? get() = null
+
     suspend fun createChannel(
         spaceId: String,
         name: String,
@@ -136,7 +138,17 @@ interface OrbitRepository {
     fun observeMessages(channelId: String): Flow<List<OrbitMessage>>
     fun observeChannelList(spaceId: String): Flow<List<OrbitChannel>>
     fun observeCallEvents(): Flow<CallEvent>
-    }
+
+    // Session Management ──────────────────────────────────
+    val authStatus: Flow<AuthStatus>
+    suspend fun logout()
+}
+
+sealed class AuthStatus {
+    object Authenticated : AuthStatus()
+    object Unauthenticated : AuthStatus()
+    data class Error(val message: String) : AuthStatus()
+}
 
     sealed class CallEvent {
     data class Invite(val roomId: String, val callId: String, val sdp: String) : CallEvent()

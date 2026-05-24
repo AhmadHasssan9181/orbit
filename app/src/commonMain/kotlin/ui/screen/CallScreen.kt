@@ -21,12 +21,16 @@ import androidx.compose.ui.unit.dp
 import webrtc.CallManager
 import webrtc.CallState
 
+import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.filled.CloseFullscreen
+
 @Composable
 fun CallScreen(
     callManager: CallManager,
     modifier: Modifier = Modifier
 ) {
     val callState by callManager.callState.collectAsState()
+    val isMinimized by callManager.isMinimized.collectAsState()
     
     if (callState == CallState.IDLE || callState == CallState.ENDED) {
         return
@@ -35,7 +39,33 @@ fun CallScreen(
     var isMuted by remember { mutableStateOf(false) }
     var isVideoEnabled by remember { mutableStateOf(true) }
 
+    if (isMinimized) {
+        Box(
+            modifier = Modifier
+                .padding(16.dp)
+                .size(100.dp, 150.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color.Black)
+                .clickable { callManager.isMinimized.value = false }
+        ) {
+            if (callState == CallState.CONNECTED && isVideoEnabled) {
+                VideoRenderer(renderer = callManager.webRtcClient.getRemoteVideoRenderer(), modifier = Modifier.fillMaxSize())
+            } else {
+                Text("In Call", color = Color.White, modifier = Modifier.align(Alignment.Center))
+            }
+        }
+        return
+    }
+
     Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
+        // Minimize Button
+        IconButton(
+            onClick = { callManager.isMinimized.value = true },
+            modifier = Modifier.align(Alignment.TopStart).padding(16.dp).size(48.dp)
+        ) {
+            Icon(Icons.Default.CloseFullscreen, contentDescription = "Minimize", tint = Color.White)
+        }
+
         // Video renderers (platform specific)
         if (callState == CallState.CONNECTED && isVideoEnabled) {
             val localRenderer = callManager.webRtcClient.getLocalVideoRenderer()
