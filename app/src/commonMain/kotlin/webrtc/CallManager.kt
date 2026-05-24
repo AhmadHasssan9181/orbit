@@ -28,6 +28,8 @@ class CallManager(
         private set
         
     var isMinimized = MutableStateFlow(false)
+    var isIncomingCall = MutableStateFlow(false)
+        private set
 
     // Callbacks to send Matrix events
     var sendInvite: ((roomId: String, callId: String, sdp: String) -> Unit)? = null
@@ -50,6 +52,7 @@ class CallManager(
     fun startCall(roomId: String, isVideo: Boolean) {
         activeRoomId = roomId
         callId = "call_${System.currentTimeMillis()}"
+        isIncomingCall.value = false
         _callState.value = CallState.CONNECTING
         
         webRtcClient.initialize(iceServers)
@@ -71,14 +74,21 @@ class CallManager(
         
         this.activeRoomId = roomId
         this.callId = incomingCallId
+        isIncomingCall.value = true
         _callState.value = CallState.RINGING
         
         webRtcClient.initialize(iceServers)
         webRtcClient.setRemoteDescription(SessionDescriptionModel("offer", sdp))
     }
 
-    fun answerCall(isVideo: Boolean) {
+    fun answerCall(isVideo: Boolean, sdp: String? = null) {
         _callState.value = CallState.CONNECTING
+        
+        if (sdp != null) {
+            webRtcClient.initialize(iceServers)
+            webRtcClient.setRemoteDescription(SessionDescriptionModel("offer", sdp))
+        }
+        
         webRtcClient.startLocalMedia(isVideo)
         webRtcClient.createAnswer(
             onSuccess = { sessionDescription ->
@@ -119,6 +129,7 @@ class CallManager(
         _callState.value = CallState.IDLE
         activeRoomId = null
         callId = null
+        isIncomingCall.value = false
     }
 
     fun toggleMute(isMuted: Boolean) {

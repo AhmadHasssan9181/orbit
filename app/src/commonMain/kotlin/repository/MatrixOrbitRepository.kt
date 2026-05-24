@@ -312,9 +312,9 @@ class MatrixOrbitRepository(
         val allRooms = getAllRoomsSnapshot()
         val servers = mutableListOf<OrbitServer>()
         val dms = allRooms.filter { it.isDirect }
-        
+
         // Manual space detection to avoid extension conflicts
-        val spaces = allRooms.filter { room -> 
+        val spaces = allRooms.filter { room ->
             room.name?.explicitName?.contains("space", ignoreCase = true) == true
         }
         val flatRooms = allRooms.filter { !it.isDirect && !spaces.contains(it) }
@@ -632,7 +632,7 @@ class MatrixOrbitRepository(
                 put("type", eventType)
                 put("value", content)
             }.toString()
-            
+
             val unknownContent = trixnity.api.json.decodeFromString<de.connect2x.trixnity.core.model.events.UnknownEventContent>(jsonStr)
 
             val response = trixnity.api.room.sendMessageEvent(
@@ -997,17 +997,19 @@ class MatrixOrbitRepository(
                         val eventJson = trixnity.api.json.encodeToJsonElement(timelineEvent.event).jsonObject
                         val typeStr = eventJson["type"]?.jsonPrimitive?.content ?: ""
                         val content = timelineEvent.content?.getOrNull() ?: return@collect
+                        val sender = timelineEvent.sender.full
                         val json = trixnity.api.json.encodeToJsonElement(content).jsonObject
-                        val callId = json["call_id"]?.jsonPrimitive?.content ?: ""
+                        val realContent = json["value"]?.jsonObject ?: json
+                        val callId = realContent["call_id"]?.jsonPrimitive?.content ?: ""
 
                         if (callId.isNotBlank()) {
                             if (typeStr == "m.call.hangup") {
                                 hungupCallIds.add(callId)
                             } else if (typeStr == "m.call.invite") {
                                 if (!hungupCallIds.contains(callId)) {
-                                    val sdp = json["offer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: ""
+                                    val sdp = realContent["offer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: ""
                                     if (sdp.isNotBlank()) {
-                                        latestInvite = CallEvent.Invite(channelId, callId, sdp)
+                                        latestInvite = CallEvent.Invite(channelId, callId, sdp, sender)
                                         throw Exception("Break")
                                     }
                                 }
@@ -1037,9 +1039,60 @@ class MatrixOrbitRepository(
         return flow.asStateFlow()
     }
 
+    private val activeGroupCalls = mutableMapOf<String, MutableStateFlow<String?>>()
+
     override fun observeActiveGroupCall(channelId: String): Flow<String?> {
-        return flowOf(null) // Temporary fallback to fix build
+        val flow = activeGroupCalls.getOrPut(channelId) { MutableStateFlow(null) }
+
+        repositoryScope.launch {
+            val trixnity = trixnityClient ?: return@launch
+            try {
+                val lastEventId = trixnity.room.getById(RoomId(channelId)).first()?.lastEventId
+                if (lastEventId != null) {
+                    val events = trixnity.room.getTimelineEvents(RoomId(channelId), startFrom = lastEventId, direction = Direction.BACKWARDS)
+                    events.take(100).collect { flowEvent ->
+                        // Added this so 'timelineEvent' is actually defined in this scope
+                        val timelineEvent = flowEvent.first()
+
+                        val content = timelineEvent.content?.getOrNull()
+                        var typeStr = ""
+                        var realContent: kotlinx.serialization.json.JsonObject? = null
+
+                        if (content is de.connect2x.trixnity.core.model.events.UnknownEventContent) {
+                            typeStr = content.eventType
+                            val json = content.raw.jsonObject
+                            // Stripped out the nasty full package path here
+                            realContent = json["value"]?.jsonObject ?: json
+                        }
+
+                        if (typeStr == "im.vector.modular.widgets" || typeStr == "m.widget" || typeStr == "org.matrix.msc3401.call") {
+                            if (realContent != null) {
+
+                                // Empty content means the widget was removed
+                                if (realContent.isEmpty()) {
+                                    // Widget was removed, let it loop
+                                } else {
+                                    var url: String? = null
+                                    if (realContent["type"]?.jsonPrimitive?.content == "jitsi" || realContent["type"]?.jsonPrimitive?.content == "m.custom") {
+                                        url = realContent["url"]?.jsonPrimitive?.content
+                                    } else if (typeStr == "org.matrix.msc3401.call") {
+                                        url = "matrix-call://$channelId"
+                                    }
+
+                                    if (url != null) {
+                                        flow.value = url
+                                        throw Exception("Break")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) { /* Ignore break */ }
+        }
+        return flow
     }
+
     /**
      * Start a sync listener for live events using Trixnity SDK.
      */
@@ -1095,42 +1148,74 @@ class MatrixOrbitRepository(
             launch {
                 trixnity.room.getTimelineEventsFromNowOn(decryptionTimeout = 5.seconds).collect { timelineEvent ->
                     val roomId = timelineEvent.roomId.full
+
+                    // Extracting sender here so all the emit calls and logs below actually work
                     val sender = timelineEvent.sender.full
-                    val eventJson = trixnity.api.json.encodeToJsonElement(timelineEvent.event).jsonObject
-                    val typeStr = eventJson["type"]?.jsonPrimitive?.content ?: ""
+
+                    val content = timelineEvent.content?.getOrNull()
+                    var typeStr = ""
+                    var realContent: kotlinx.serialization.json.JsonObject? = null
+
+                    if (content is de.connect2x.trixnity.core.model.events.UnknownEventContent) {
+                        typeStr = content.eventType
+                        // Cleaned up serialization extensions
+                        val json = content.raw.jsonObject
+                        realContent = json["value"]?.jsonObject ?: json
+                    }
 
                     // Handle VoIP signaling
                     if (typeStr.startsWith("m.call.")) {
-                        val content = timelineEvent.content?.getOrNull()
-                        if (content != null) {
-                            val json = trixnity.api.json.encodeToJsonElement(content).jsonObject
-                            val callId = json["call_id"]?.jsonPrimitive?.content ?: ""
-                            if (callId.isNotBlank() && sender != trixnity.userId.full) {
+                        if (realContent != null) {
+                            val callId = realContent["call_id"]?.jsonPrimitive?.content ?: ""
+                            if (callId.isNotBlank()) {
                                 println("DEBUG: [Sync] Received call event $typeStr for $callId")
                                 when (typeStr) {
                                     "m.call.invite" -> {
-                                        val sdp = json["offer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: ""
-                                        _callEvents.emit(CallEvent.Invite(roomId, callId, sdp))
+                                        val sdp = realContent["offer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: ""
+                                        _callEvents.emit(CallEvent.Invite(roomId, callId, sdp, sender))
                                     }
                                     "m.call.answer" -> {
-                                        val sdp = json["answer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: ""
-                                        _callEvents.emit(CallEvent.Answer(roomId, callId, sdp))
+                                        val sdp = realContent["answer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: ""
+                                        _callEvents.emit(CallEvent.Answer(roomId, callId, sdp, sender))
                                     }
                                     "m.call.candidates" -> {
-                                        json["candidates"]?.jsonArray?.forEach { cand ->
+                                        realContent["candidates"]?.jsonArray?.forEach { cand ->
                                             val sdp = cand.jsonObject["candidate"]?.jsonPrimitive?.content ?: ""
                                             val sdpMid = cand.jsonObject["sdpMid"]?.jsonPrimitive?.content ?: ""
                                             val sdpMLineIndex = cand.jsonObject["sdpMLineIndex"]?.jsonPrimitive?.intOrNull ?: 0
-                                            _callEvents.emit(CallEvent.Candidate(roomId, callId, sdp, sdpMid, sdpMLineIndex))
+                                            _callEvents.emit(CallEvent.Candidate(roomId, callId, sdp, sdpMid, sdpMLineIndex, sender))
                                         }
                                     }
                                     "m.call.hangup" -> {
-                                        _callEvents.emit(CallEvent.Hangup(roomId, callId))
+                                        _callEvents.emit(CallEvent.Hangup(roomId, callId, sender))
                                     }
                                 }
                             }
                         }
                     }
+
+                    // --- Widget / Group Call Detection ---
+                    if (typeStr == "im.vector.modular.widgets" || typeStr == "m.widget" || typeStr == "org.matrix.msc3401.call") {
+                        if (realContent != null) {
+                            val groupFlow = activeGroupCalls[roomId]
+                            if (groupFlow != null) {
+                                if (realContent.isEmpty()) {
+                                    groupFlow.value = null
+                                } else {
+                                    var url: String? = null
+                                    if (realContent["type"]?.jsonPrimitive?.content == "jitsi" || realContent["type"]?.jsonPrimitive?.content == "m.custom") {
+                                        url = realContent["url"]?.jsonPrimitive?.content
+                                    } else if (typeStr == "org.matrix.msc3401.call") {
+                                        url = "matrix-call://$roomId"
+                                    }
+                                    if (url != null) {
+                                        groupFlow.value = url
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     timelineEventToOrbitMessage(timelineEvent)?.let { orbitMessage ->
                         println("DEBUG: [Sync] Received message ${orbitMessage.id} in $roomId from $sender")
                         synchronized(liveMessageStates) {
