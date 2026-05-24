@@ -41,51 +41,76 @@ class JvmWebRtcClient : WebRtcClient {
     private var remoteRenderer: Any? = null
 
     override fun initialize(iceServers: List<TurnServer>) {
-        if (factory != null) return
+        try {
+            if (factory != null) return
 
-        factory = PeerConnectionFactory()
+            factory = PeerConnectionFactory()
 
-        val rtcIceServers = iceServers.map { server ->
-            RTCIceServer().apply {
-                urls = server.uris
-                username = server.username
-                password = server.password
+            val rtcIceServers = iceServers.map { server ->
+                RTCIceServer().apply {
+                    urls = server.uris
+                    username = server.username
+                    password = server.password
+                }
             }
+
+            val rtcConfig = RTCConfiguration()
+            rtcConfig.iceServers.addAll(if (rtcIceServers.isNotEmpty()) {
+                rtcIceServers
+            } else {
+                listOf(RTCIceServer().apply { urls = listOf("stun:stun.l.google.com:19302") })
+            })
+
+            peerConnection = factory?.createPeerConnection(rtcConfig, object : PeerConnectionObserver {
+                override fun onIceCandidate(candidate: RTCIceCandidate) {
+                    _onIceCandidate.tryEmit(
+                        IceCandidateModel(candidate.sdp, candidate.sdpMid, candidate.sdpMLineIndex)
+                    )
+                }
+
+                override fun onAddStream(stream: MediaStream) {
+                    _onStreamAdded.tryEmit(true)
+                }
+
+                override fun onSignalingChange(state: RTCSignalingState) {}
+                override fun onConnectionChange(state: RTCPeerConnectionState) {}
+                override fun onIceConnectionChange(state: RTCIceConnectionState) {}
+                override fun onIceConnectionReceivingChange(receiving: Boolean) {}
+                override fun onIceGatheringChange(state: RTCIceGatheringState) {}
+                override fun onIceCandidatesRemoved(candidates: Array<out RTCIceCandidate>) {}
+                override fun onRemoveStream(stream: MediaStream) {}
+                override fun onDataChannel(dataChannel: RTCDataChannel) {}
+                override fun onRenegotiationNeeded() {}
+                override fun onAddTrack(receiver: RTCRtpReceiver, mediaStreams: Array<out MediaStream>) {}
+            })
+        } catch (e: Exception) {
+            e.printStackTrace()
+            throw e
         }
-
-        val rtcConfig = RTCConfiguration()
-        rtcConfig.iceServers.addAll(if (rtcIceServers.isNotEmpty()) {
-            rtcIceServers
-        } else {
-            listOf(RTCIceServer().apply { urls = listOf("stun:stun.l.google.com:19302") })
-        })
-
-        peerConnection = factory?.createPeerConnection(rtcConfig, object : PeerConnectionObserver {
-            override fun onIceCandidate(candidate: RTCIceCandidate) {
-                _onIceCandidate.tryEmit(
-                    IceCandidateModel(candidate.sdp, candidate.sdpMid, candidate.sdpMLineIndex)
-                )
-            }
-
-            override fun onAddStream(stream: MediaStream) {
-                _onStreamAdded.tryEmit(true)
-            }
-
-            override fun onSignalingChange(state: RTCSignalingState) {}
-            override fun onConnectionChange(state: RTCPeerConnectionState) {}
-            override fun onIceConnectionChange(state: RTCIceConnectionState) {}
-            override fun onIceConnectionReceivingChange(receiving: Boolean) {}
-            override fun onIceGatheringChange(state: RTCIceGatheringState) {}
-            override fun onIceCandidatesRemoved(candidates: Array<out RTCIceCandidate>) {}
-            override fun onRemoveStream(stream: MediaStream) {}
-            override fun onDataChannel(dataChannel: RTCDataChannel) {}
-            override fun onRenegotiationNeeded() {}
-            override fun onAddTrack(receiver: RTCRtpReceiver, mediaStreams: Array<out MediaStream>) {}
-        })
     }
 
     override fun startLocalMedia(isVideoEnabled: Boolean) {
-        // Stub: JVM video capture requires platform-specific setup (OpenCV, VLCJ, etc.)
+        try {
+            val pConn = peerConnection ?: return
+            val f = factory ?: return
+
+            val audioSource = f.createAudioSource(dev.onvoid.webrtc.media.audio.AudioOptions())
+            val audioTrack = f.createAudioTrack("audioTrack", audioSource)
+            pConn.addTrack(audioTrack, listOf("mediaStream"))
+
+            if (isVideoEnabled) {
+                val devices = dev.onvoid.webrtc.media.MediaDevices.getVideoCaptureDevices()
+                if (devices.isNotEmpty()) {
+                    val videoSource = dev.onvoid.webrtc.media.video.VideoDeviceSource()
+                    videoSource.setVideoCaptureDevice(devices[0])
+                    videoSource.start()
+                    val videoTrack = f.createVideoTrack("videoTrack", videoSource)
+                    pConn.addTrack(videoTrack, listOf("mediaStream"))
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     override fun stopLocalMedia() {}
@@ -97,60 +122,81 @@ class JvmWebRtcClient : WebRtcClient {
     override fun switchCamera() {}
 
     override fun createOffer(onSuccess: (SessionDescriptionModel) -> Unit, onError: (String) -> Unit) {
-        peerConnection?.createOffer(RTCOfferOptions(), object : CreateSessionDescriptionObserver {
-            override fun onSuccess(description: RTCSessionDescription) {
-                peerConnection?.setLocalDescription(description, object : SetSessionDescriptionObserver {
-                    override fun onSuccess() {
-                        onSuccess(SessionDescriptionModel(description.sdpType.toString().lowercase(), description.sdp))
-                    }
-                    override fun onFailure(error: String) {
-                        onError(error)
-                    }
-                })
-            }
-            override fun onFailure(error: String) {
-                onError(error)
-            }
-        })
+        try {
+            peerConnection?.createOffer(RTCOfferOptions(), object : CreateSessionDescriptionObserver {
+                override fun onSuccess(description: RTCSessionDescription) {
+                    peerConnection?.setLocalDescription(description, object : SetSessionDescriptionObserver {
+                        override fun onSuccess() {
+                            onSuccess(SessionDescriptionModel(description.sdpType.toString().lowercase(), description.sdp))
+                        }
+                        override fun onFailure(error: String) {
+                            onError(error)
+                        }
+                    })
+                }
+                override fun onFailure(error: String) {
+                    onError(error)
+                }
+            })
+        } catch (e: Exception) {
+            e.printStackTrace()
+            onError(e.message ?: "Unknown error")
+        }
     }
 
     override fun createAnswer(onSuccess: (SessionDescriptionModel) -> Unit, onError: (String) -> Unit) {
-        peerConnection?.createAnswer(RTCAnswerOptions(), object : CreateSessionDescriptionObserver {
-            override fun onSuccess(description: RTCSessionDescription) {
-                peerConnection?.setLocalDescription(description, object : SetSessionDescriptionObserver {
-                    override fun onSuccess() {
-                        onSuccess(SessionDescriptionModel(description.sdpType.toString().lowercase(), description.sdp))
-                    }
-                    override fun onFailure(error: String) {
-                        onError(error)
-                    }
-                })
-            }
-            override fun onFailure(error: String) {
-                onError(error)
-            }
-        })
+        try {
+            peerConnection?.createAnswer(RTCAnswerOptions(), object : CreateSessionDescriptionObserver {
+                override fun onSuccess(description: RTCSessionDescription) {
+                    peerConnection?.setLocalDescription(description, object : SetSessionDescriptionObserver {
+                        override fun onSuccess() {
+                            onSuccess(SessionDescriptionModel(description.sdpType.toString().lowercase(), description.sdp))
+                        }
+                        override fun onFailure(error: String) {
+                            onError(error)
+                        }
+                    })
+                }
+                override fun onFailure(error: String) {
+                    onError(error)
+                }
+            })
+        } catch (e: Exception) {
+            e.printStackTrace()
+            onError(e.message ?: "Unknown error")
+        }
     }
 
     override fun setRemoteDescription(sessionDescription: SessionDescriptionModel) {
-        val type = RTCSdpType.valueOf(sessionDescription.type.uppercase())
-        val sdp = RTCSessionDescription(type, sessionDescription.sdp)
-        peerConnection?.setRemoteDescription(sdp, object : SetSessionDescriptionObserver {
-            override fun onSuccess() {}
-            override fun onFailure(error: String) {}
-        })
+        try {
+            val type = RTCSdpType.valueOf(sessionDescription.type.uppercase())
+            val sdp = RTCSessionDescription(type, sessionDescription.sdp)
+            peerConnection?.setRemoteDescription(sdp, object : SetSessionDescriptionObserver {
+                override fun onSuccess() {}
+                override fun onFailure(error: String) {}
+            })
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     override fun addIceCandidate(candidate: IceCandidateModel) {
-        val rtcCandidate = RTCIceCandidate(candidate.sdpMid, candidate.sdpMLineIndex, candidate.sdp)
-        peerConnection?.addIceCandidate(rtcCandidate)
+        try {
+            val rtcCandidate = RTCIceCandidate(candidate.sdpMid, candidate.sdpMLineIndex, candidate.sdp)
+            peerConnection?.addIceCandidate(rtcCandidate)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     override fun endCall() {
-        peerConnection?.close()
-        peerConnection = null
-        factory?.dispose()
-        factory = null
+        try {
+            peerConnection?.close()
+            peerConnection = null
+            // Do NOT dispose factory here, as it permanently destroys the JVM WebRTC context
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     override fun getLocalVideoRenderer(): Any? = localRenderer

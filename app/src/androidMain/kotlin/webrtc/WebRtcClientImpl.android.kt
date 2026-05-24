@@ -208,10 +208,7 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
     override fun endCall() {
         peerConnection?.close()
         peerConnection = null
-        peerConnectionFactory?.dispose()
-        peerConnectionFactory = null
-        rootEglBase?.release()
-        rootEglBase = null
+        // Do NOT dispose peerConnectionFactory or rootEglBase here, as it destroys the WebRTC context
     }
 
     override fun getLocalVideoRenderer(): Any? = localRenderer

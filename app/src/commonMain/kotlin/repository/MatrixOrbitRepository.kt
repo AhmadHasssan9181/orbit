@@ -8,8 +8,8 @@ import de.connect2x.trixnity.client.create
 import de.connect2x.trixnity.client.cryptodriver.vodozemac.vodozemac
 import de.connect2x.trixnity.client.media.okio.okio
 import de.connect2x.trixnity.client.room
-import de.connect2x.trixnity.client.room.message.text
 import de.connect2x.trixnity.client.room.message.roomMessageBuilder
+import de.connect2x.trixnity.client.room.message.text
 import de.connect2x.trixnity.client.store.Room
 import de.connect2x.trixnity.client.store.RoomOutboxMessage
 import de.connect2x.trixnity.client.store.TimelineEvent
@@ -19,6 +19,7 @@ import de.connect2x.trixnity.client.store.roomId
 import de.connect2x.trixnity.client.store.sender
 import de.connect2x.trixnity.client.store.type
 import de.connect2x.trixnity.client.user
+import de.connect2x.trixnity.client.verification
 import de.connect2x.trixnity.clientserverapi.model.media.Media
 import de.connect2x.trixnity.clientserverapi.model.room.CreateRoom
 import de.connect2x.trixnity.clientserverapi.model.room.GetEvents.Direction
@@ -29,7 +30,6 @@ import de.connect2x.trixnity.core.model.EventId
 import de.connect2x.trixnity.core.model.RoomId
 import de.connect2x.trixnity.core.model.UserId
 import de.connect2x.trixnity.core.model.events.ClientEvent.RoomEvent
-import de.connect2x.trixnity.core.model.events.UnknownEventContent
 import de.connect2x.trixnity.core.model.events.m.Presence
 import de.connect2x.trixnity.core.model.events.m.ReactionEventContent
 import de.connect2x.trixnity.core.model.events.m.RelatesTo
@@ -61,18 +61,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.SupervisorJob
-import de.connect2x.trixnity.client.verification
-import de.connect2x.trixnity.client.verification.ActiveDeviceVerification
-import de.connect2x.trixnity.client.room
-import de.connect2x.trixnity.client.user
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.serialization.json.decodeFromJsonElement
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
@@ -81,7 +74,6 @@ import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -90,19 +82,18 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
-import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import ui.model.ChannelType
 import ui.model.MessageContent
-import ui.model.displayText
 import ui.model.OrbitChannel
 import ui.model.OrbitMessage
 import ui.model.OrbitServer
 import ui.model.OrbitUser
 import ui.model.UserStatus
+import ui.model.displayText
 import util.getMediaStorePath
 import util.getRoomDatabaseBuilder
 import util.performSsoLogin
@@ -625,6 +616,7 @@ class MatrixOrbitRepository(
         }
     }
 
+
     override suspend fun sendCallEvent(channelId: String, eventType: String, content: kotlinx.serialization.json.JsonObject): Result<String> {
         return try {
             val trixnity = trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
@@ -979,16 +971,16 @@ class MatrixOrbitRepository(
         val flow = synchronized(activeCalls) {
             activeCalls.getOrPut(channelId) { MutableStateFlow(null) }
         }
-        
+
         GlobalScope.launch {
             val trixnity = trixnityClient ?: return@launch
             val hungupCallIds = mutableSetOf<String>()
             var latestInvite: CallEvent.Invite? = null
-            
+
             try {
                 val lastEventId = trixnity.room.getById(RoomId(channelId)).first()?.lastEventId ?: return@launch
                 val events = trixnity.room.getTimelineEvents(RoomId(channelId), startFrom = lastEventId, direction = Direction.BACKWARDS)
-                
+
                 events.take(50).collect { flowEvent ->
                     val event = flowEvent.first()
                     val content = event.content?.getOrNull()
@@ -1015,6 +1007,10 @@ class MatrixOrbitRepository(
             flow.value = latestInvite
         }
         return flow.asStateFlow()
+    }
+
+    override fun observeActiveGroupCall(channelId: String): Flow<String?> {
+        TODO("Not yet implemented")
     }
 
     /**
@@ -1064,9 +1060,9 @@ class MatrixOrbitRepository(
             }
 
             // Sync presence explicitly if needed, Trixnity handles syncing loop automatically when startSync is called
-            launch { 
+            launch {
                 try {
-                    trixnity.startSync() 
+                    trixnity.startSync()
                 } catch (e: Exception) {
                     println("Sync loop failed: ${e.message}")
                     if (e is de.connect2x.trixnity.core.MatrixServerException && e.statusCode == io.ktor.http.HttpStatusCode.Unauthorized) {
@@ -1090,58 +1086,29 @@ class MatrixOrbitRepository(
 
             launch {
                 trixnity.room.getTimelineEventsFromNowOn(decryptionTimeout = 5.seconds).collect { timelineEvent ->
-                    val content = timelineEvent.content?.getOrNull()
-                    val event = timelineEvent.event as? RoomEvent<*> ?: return@collect
+                    val event = timelineEvent.event as? RoomEvent<*>
                     val roomId = timelineEvent.roomId.full
+                    val sender = timelineEvent.sender.full
+                    println("DEBUG: [Sync] Received event ${timelineEvent.eventId.full} in room $roomId from $sender")
 
-                    if (content is UnknownEventContent) {
-                        val json = trixnity.api.json.encodeToJsonElement(content).jsonObject["value"]?.jsonObject ?: JsonObject(emptyMap())
-                        val typeStr = content.eventType
-                        if (typeStr == "m.call.invite") {
-                            val callId = json["call_id"]?.jsonPrimitive?.content ?: ""
-                            val sdp = json["offer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: ""
-                            if (callId.isNotBlank() && sdp.isNotBlank()) {
-                                val invite = CallEvent.Invite(roomId, callId, sdp)
-                                _callEvents.emit(invite)
-                                synchronized(activeCalls) {
-                                    activeCalls.getOrPut(roomId) { MutableStateFlow(null) }.value = invite
-                                }
-                            }
-                        } else if (typeStr == "m.call.answer") {
-                            val callId = json["call_id"]?.jsonPrimitive?.content ?: ""
-                            val sdp = json["answer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: ""
-                            if (callId.isNotBlank() && sdp.isNotBlank()) _callEvents.emit(CallEvent.Answer(roomId, callId, sdp))
-                        } else if (typeStr == "m.call.candidates") {
-                            val callId = json["call_id"]?.jsonPrimitive?.content ?: ""
-                            val candidates = json["candidates"]?.jsonArray
-                            candidates?.forEach { cand ->
-                                val cObj = cand.jsonObject
-                                val sdp = cObj["candidate"]?.jsonPrimitive?.content ?: ""
-                                val sdpMid = cObj["sdpMid"]?.jsonPrimitive?.content ?: ""
-                                val sdpMLineIndex = cObj["sdpMLineIndex"]?.jsonPrimitive?.int ?: 0
-                                _callEvents.emit(CallEvent.Candidate(roomId, callId, sdp, sdpMid, sdpMLineIndex))
-                            }
-                        } else if (typeStr == "m.call.hangup") {
-                            val callId = json["call_id"]?.jsonPrimitive?.content ?: ""
-                            if (callId.isNotBlank()) {
-                                _callEvents.emit(CallEvent.Hangup(roomId, callId))
-                                synchronized(activeCalls) {
-                                    val flow = activeCalls[roomId]
-                                    if (flow?.value?.callId == callId) {
-                                        flow.value = null
-                                    }
-                                }
-                            }
-                        }
+                    val contentResult = timelineEvent.content
+                    if (contentResult?.isFailure == true) {
+                        println("DEBUG: [Sync] Decryption failure for ${timelineEvent.eventId.full}: ${contentResult.exceptionOrNull()?.message}")
                     }
 
                     timelineEventToOrbitMessage(timelineEvent)?.let { orbitMessage ->
-                        val rId = timelineEvent.roomId.full
+                        println("DEBUG: [Sync] Successfully mapped ${orbitMessage.id}. Body: ${orbitMessage.body.take(20)}...")
                         synchronized(liveMessageStates) {
-                            val state = liveMessageStates.getOrPut(rId) { LiveMessageState(MutableSharedFlow(replay = 1, extraBufferCapacity = 64, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)) }
+                            val state = liveMessageStates.getOrPut(roomId) {
+                                println("DEBUG: [Sync] Creating new LiveMessageState for room $roomId")
+                                LiveMessageState(MutableSharedFlow(replay = 1, extraBufferCapacity = 64, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST))
+                            }
                             state.messages.add(orbitMessage)
-                            state.flow.tryEmit(listOf(orbitMessage))
+                            val emitted = state.flow.tryEmit(listOf(orbitMessage))
+                            println("DEBUG: [Sync] Emitted message to flow for $roomId. Success: $emitted. Current state list size: ${state.messages.size}")
                         }
+                    } ?: run {
+                        println("DEBUG: [Sync] Mapping failed for ${timelineEvent.eventId.full}. Content type: ${contentResult?.getOrNull()?.let { it::class.simpleName } ?: "null"}")
                     }
                 }
             }
