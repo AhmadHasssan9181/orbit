@@ -120,4 +120,16 @@ class CallManager(
         activeRoomId = null
         callId = null
     }
+
+    fun toggleMute(isMuted: Boolean) {
+        webRtcClient.toggleMute(isMuted)
+    }
+
+    fun toggleVideo(isVideoEnabled: Boolean) {
+        webRtcClient.toggleVideo(isVideoEnabled)
+    }
+
+    fun switchCamera() {
+        webRtcClient.switchCamera()
+    }
 }

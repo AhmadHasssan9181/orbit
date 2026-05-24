@@ -29,6 +29,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.ktor.client.request.get
+import io.ktor.client.statement.readBytes
+import kotlinx.coroutines.flow.collectLatest
 // Remove MockData
 import ui.model.*
 import androidx.compose.ui.input.key.onKeyEvent
@@ -71,6 +74,7 @@ fun ChatScreen(
     members: List<OrbitUser>,
     currentUser: OrbitUser?,
     typingUsers: List<String> = emptyList(),
+    activeCall: repository.CallEvent.Invite? = null,
     onSend: (String) -> Unit,
     onSendAttachment: ((ByteArray, String, String) -> Unit)? = null,
     onTyping: (Boolean) -> Unit = {},
@@ -95,6 +99,38 @@ fun ChatScreen(
                 onVoiceCall = { callManager?.startCall(channel.id, false) }
             )
             HorizontalDivider(color = Separator.copy(alpha = 0.2f), thickness = 1.dp)
+            
+            // Active Call Banner
+            if (activeCall != null) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    color = Accent.copy(alpha = 0.1f),
+                    shape = RoundedCornerShape(8.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Accent.copy(alpha = 0.3f))
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Call, contentDescription = null, tint = Accent, modifier = Modifier.size(24.dp))
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                "Ongoing Call",
+                                style = MaterialTheme.typography.titleSmall.copy(color = Text_White, fontWeight = FontWeight.Bold)
+                            )
+                        }
+                        Button(
+                            onClick = { callManager?.handleCallInvite(activeCall.roomId, activeCall.callId, activeCall.sdp) },
+                            colors = ButtonDefaults.buttonColors(containerColor = Accent)
+                        ) {
+                            Text("Join Call", color = Color.White)
+                        }
+                    }
+                }
+            }
+            
             Box(modifier = Modifier.weight(1f)) {
                 MessageList(
                     messages = messages,
@@ -1049,11 +1085,13 @@ private fun MessageInputBar(
 ) {
     val isLiteMode = ui.theme.LocalIsLiteMode.current
     if (isLiteMode) {
-        WhatsAppInputBar(placeholder, onSend, onTyping)
+        WhatsAppInputBar(placeholder, onSend, onSendAttachment, onTyping)
         return
     }
 
     var text by remember { mutableStateOf("") }
+    var showEmojiPicker by remember { mutableStateOf(false) }
+    var showGifPicker by remember { mutableStateOf(false) }
     
     LaunchedEffect(text) {
         if (text.isNotBlank()) {
@@ -1069,17 +1107,28 @@ private fun MessageInputBar(
         onSendAttachment?.invoke(bytes, name, mime)
     }
 
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 16.dp)
     ) {
+        if (showEmojiPicker) {
+            EmojiPicker(onEmojiSelected = { text += it })
+            Spacer(Modifier.height(8.dp))
+        }
+        if (showGifPicker) {
+            GifPicker(onGifSelected = { bytes ->
+                showGifPicker = false
+                onSendAttachment?.invoke(bytes, "gif.gif", "image/gif")
+            })
+            Spacer(Modifier.height(8.dp))
+        }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
+                .clip(RoundedCornerShape(16.dp))
                 .background(Input_Bg)
-                .padding(horizontal = 4.dp, vertical = 2.dp),
+                .padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Attach button — Discord style "+"
@@ -1110,8 +1159,14 @@ private fun MessageInputBar(
                 horizontalArrangement = Arrangement.spacedBy(0.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                InputIconBtn(icon = Icons.Default.EmojiEmotions, desc = "Emoji") {}
-                InputIconBtn(icon = Icons.Default.Gif, desc = "GIF") {}
+                InputIconBtn(icon = Icons.Default.EmojiEmotions, desc = "Emoji") {
+                    showEmojiPicker = !showEmojiPicker
+                    showGifPicker = false
+                }
+                InputIconBtn(icon = Icons.Default.Gif, desc = "GIF") {
+                    showGifPicker = !showGifPicker
+                    showEmojiPicker = false
+                }
 
                 // Send button — visible only when text is non-blank
                 AnimatedVisibility(
@@ -1633,8 +1688,19 @@ private fun WhatsAppMessageBubble(message: OrbitMessage, isCurrentUser: Boolean)
 }
 
 @Composable
-private fun WhatsAppInputBar(placeholder: String, onSend: (String) -> Unit, onTyping: (Boolean) -> Unit = {}) {
+private fun WhatsAppInputBar(
+    placeholder: String, 
+    onSend: (String) -> Unit, 
+    onSendAttachment: ((ByteArray, String, String) -> Unit)? = null,
+    onTyping: (Boolean) -> Unit = {}
+) {
     var text by remember { mutableStateOf("") }
+    var showEmojiPicker by remember { mutableStateOf(false) }
+    var showGifPicker by remember { mutableStateOf(false) }
+    
+    val launchPicker = util.rememberFilePickerLauncher { bytes, name, mime ->
+        onSendAttachment?.invoke(bytes, name, mime)
+    }
     
     LaunchedEffect(text) {
         if (text.isNotBlank()) {
@@ -1645,11 +1711,25 @@ private fun WhatsAppInputBar(placeholder: String, onSend: (String) -> Unit, onTy
             onTyping(false)
         }
     }
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.Bottom
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp)
     ) {
+        if (showEmojiPicker) {
+            EmojiPicker(onEmojiSelected = { text += it })
+            Spacer(Modifier.height(8.dp))
+        }
+        if (showGifPicker) {
+            GifPicker(onGifSelected = { bytes ->
+                showGifPicker = false
+                onSendAttachment?.invoke(bytes, "gif.gif", "image/gif")
+            })
+            Spacer(Modifier.height(8.dp))
+        }
         Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Bottom
+        ) {
+            Row(
             modifier = Modifier
                 .weight(1f)
                 .clip(RoundedCornerShape(24.dp))
@@ -1657,7 +1737,10 @@ private fun WhatsAppInputBar(placeholder: String, onSend: (String) -> Unit, onTy
                 .padding(horizontal = 12.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            InputIconBtn(Icons.Default.EmojiEmotions, "Emoji") {}
+            InputIconBtn(Icons.Default.EmojiEmotions, "Emoji") {
+                showEmojiPicker = !showEmojiPicker
+                showGifPicker = false
+            }
             Spacer(Modifier.width(8.dp))
             BasicTextField_Compat(
                 value = text,
@@ -1672,7 +1755,9 @@ private fun WhatsAppInputBar(placeholder: String, onSend: (String) -> Unit, onTy
                 }
             )
             Spacer(Modifier.width(8.dp))
-            InputIconBtn(Icons.Default.AddCircle, "Attach") {}
+            InputIconBtn(Icons.Default.AddCircle, "Attach") {
+                launchPicker()
+            }
         }
         Spacer(Modifier.width(8.dp))
         Box(
@@ -1694,6 +1779,104 @@ private fun WhatsAppInputBar(placeholder: String, onSend: (String) -> Unit, onTy
                 tint = Color.White,
                 modifier = Modifier.size(24.dp)
             )
+        }
+    }
+}
+}
+
+private val commonHttpClient = io.ktor.client.HttpClient()
+
+@Composable
+fun EmojiPicker(onEmojiSelected: (String) -> Unit) {
+    val emojis = listOf(
+        "😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "😊", "😇", "🙂", "🙃", "😉", "😌", "😍", "🥰", "😘", "😗", "😙", "😚",
+        "😋", "😛", "😝", "😜", "🤪", "🤨", "🧐", "🤓", "😎", "🤩", "🥳", "😏", "😒", "😞", "😔", "😟", "😕", "🙁", "☹️", "😣",
+        "😖", "😫", "😩", "🥺", "😢", "😭", "😤", "😠", "😡", "🤬", "🤯", "😳", "🥵", "🥶", "😱", "😨", "😰", "😥", "😓", "🤗",
+        "🤔", "🤭", "🤫", "🤥", "😶", "😐", "😑", "😬", "🙄", "😯", "😦", "😧", "😮", "😲", "🥱", "😴", "🤤", "😪", "😵", "🤐",
+        "🥴", "🤢", "🤮", "🤧", "😷", "🤒", "🤕", "🤑", "🤠", "😈", "👿", "👹", "👺", "🤡", "💩", "👻", "💀", "☠️", "👽", "👾"
+    )
+    
+    Surface(
+        modifier = Modifier.fillMaxWidth().height(200.dp),
+        color = Input_Bg,
+        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
+    ) {
+        androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+            columns = androidx.compose.foundation.lazy.grid.GridCells.Adaptive(40.dp),
+            modifier = Modifier.padding(8.dp)
+        ) {
+            items(emojis.size) { index ->
+                val emoji = emojis[index]
+                Box(
+                    modifier = Modifier.size(40.dp).clickable { onEmojiSelected(emoji) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(text = emoji, fontSize = 24.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun GifPicker(onGifSelected: (ByteArray) -> Unit) {
+    val gifs = listOf(
+        "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExcHI2aHJtcGpmODhmYzc3ajYzbXNxZmtkaGNxdTF4amw2YXA1ZnRneiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/3oriO0OEd9QIDdllqo/giphy.gif",
+        "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3ZlaHM2Mms0cTczZnJpeW8wMGg3Znlxb3Q4dTN4dGpxa3hxZmJxdyZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/3o7TKSjRrfIPjeiVyM/giphy.gif",
+        "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExNndpeHNoZmU1eGQyeGk2aGNnMXB4bnV1OW8zcnNqbzkwcWt4eTR3OCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/l0HlBO7eyXzSZkJri/giphy.gif",
+        "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExOGxjcTZ5OTNwZWtzaXZvcW85MGpxa3FxbzRpeXZxeDcwYW15ZXl4aSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/26FPJGjhefSJuaRhu/giphy.gif",
+        "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExeHNtcTh2NnhqdGJzOGF1aHhzbzMwNXA2NmpxanR2dTZxZnh2eHpyaSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/xT5LMFZDsj0AKUDYTS/giphy.gif",
+        "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExZnh5MXA3ZmRla2VxeHpueTZwOXJzaGNweXNxNnpveHp5bXZveXZyaCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/3o6UB5RrlQuMfZp82Y/giphy.gif"
+    )
+    val scope = rememberCoroutineScope()
+    var isLoading by remember { mutableStateOf(false) }
+    
+    Surface(
+        modifier = Modifier.fillMaxWidth().height(250.dp),
+        color = Input_Bg,
+        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
+    ) {
+        if (isLoading) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = Accent)
+            }
+        } else {
+            androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+                columns = androidx.compose.foundation.lazy.grid.GridCells.Adaptive(100.dp),
+                modifier = Modifier.padding(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                items(gifs.size) { index ->
+                    val url = gifs[index]
+                    Box(
+                        modifier = Modifier
+                            .height(100.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                scope.launch {
+                                    isLoading = true
+                                    try {
+                                        val response: io.ktor.client.statement.HttpResponse = commonHttpClient.get(url)
+                                        val bytes: ByteArray = response.readBytes()
+                                        onGifSelected(bytes)
+                                    } catch (e: Exception) {
+                                        // Ignore
+                                    } finally {
+                                        isLoading = false
+                                    }
+                                }
+                            }
+                    ) {
+                        coil3.compose.AsyncImage(
+                            model = url,
+                            contentDescription = "GIF",
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                }
+            }
         }
     }
 }
