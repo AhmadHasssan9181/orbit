@@ -596,7 +596,7 @@ class MatrixOrbitRepository(
                 transactionId = txnId
             )
             synchronized(liveMessageStates) {
-                val state = liveMessageStates.getOrPut(channelId) { LiveMessageState(MutableSharedFlow(replay = 0)) }
+                val state = liveMessageStates.getOrPut(channelId) { LiveMessageState(MutableSharedFlow(replay = 1, extraBufferCapacity = 64, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)) }
                 state.messages.add(orbitMessage)
                 state.flow.tryEmit(listOf(orbitMessage))
             }
@@ -625,17 +625,17 @@ class MatrixOrbitRepository(
         }
     }
 
-    override suspend fun sendCallEvent(channelId: String, eventType: String, content: JsonObject): Result<String> {
+    override suspend fun sendCallEvent(channelId: String, eventType: String, content: kotlinx.serialization.json.JsonObject): Result<String> {
         return try {
             val trixnity = trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
-            val unknownContent = trixnity.api.json.decodeFromJsonElement<UnknownEventContent>(
-                buildJsonObject {
+            val unknownContent = trixnity.api.json.decodeFromJsonElement<de.connect2x.trixnity.core.model.events.UnknownEventContent>(
+                kotlinx.serialization.json.buildJsonObject {
                     put("type", eventType)
                     put("value", content)
                 }
             )
             val response = trixnity.api.room.sendMessageEvent(
-                RoomId(channelId),
+                de.connect2x.trixnity.core.model.RoomId(channelId),
                 unknownContent as de.connect2x.trixnity.core.model.events.MessageEventContent
             ).getOrThrow()
             Result.success(response.full)
@@ -700,7 +700,7 @@ class MatrixOrbitRepository(
                 transactionId = txnId
             )
             synchronized(liveMessageStates) {
-                val state = liveMessageStates.getOrPut(channelId) { LiveMessageState(MutableSharedFlow(replay = 0)) }
+                val state = liveMessageStates.getOrPut(channelId) { LiveMessageState(MutableSharedFlow(replay = 1, extraBufferCapacity = 64, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)) }
                 state.messages.add(orbitMessage)
                 state.flow.tryEmit(listOf(orbitMessage))
             }
@@ -746,7 +746,7 @@ class MatrixOrbitRepository(
                 transactionId = txnId
             )
             synchronized(liveMessageStates) {
-                val state = liveMessageStates.getOrPut(channelId) { LiveMessageState(MutableSharedFlow(replay = 0)) }
+                val state = liveMessageStates.getOrPut(channelId) { LiveMessageState(MutableSharedFlow(replay = 1, extraBufferCapacity = 64, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)) }
                 state.messages.add(orbitMessage)
                 state.flow.tryEmit(listOf(orbitMessage))
             }
@@ -795,7 +795,7 @@ class MatrixOrbitRepository(
                 transactionId = txnId
             )
             synchronized(liveMessageStates) {
-                val state = liveMessageStates.getOrPut(channelId) { LiveMessageState(MutableSharedFlow(replay = 0)) }
+                val state = liveMessageStates.getOrPut(channelId) { LiveMessageState(MutableSharedFlow(replay = 1, extraBufferCapacity = 64, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)) }
                 state.messages.add(orbitMessage)
                 state.flow.tryEmit(listOf(orbitMessage))
             }
@@ -958,7 +958,7 @@ class MatrixOrbitRepository(
     override fun observeMessages(channelId: String): Flow<List<OrbitMessage>> {
         return synchronized(liveMessageStates) {
             liveMessageStates.getOrPut(channelId) {
-                LiveMessageState(MutableSharedFlow(replay = 0))
+                LiveMessageState(MutableSharedFlow(replay = 1, extraBufferCapacity = 64, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST))
             }.flow.asSharedFlow()
         }
     }
@@ -972,6 +972,50 @@ class MatrixOrbitRepository(
     }
 
     override fun observeCallEvents(): Flow<CallEvent> = _callEvents.asSharedFlow()
+
+    private val activeCalls = mutableMapOf<String, MutableStateFlow<CallEvent.Invite?>>()
+
+    override fun observeActiveCall(channelId: String): Flow<CallEvent.Invite?> {
+        val flow = synchronized(activeCalls) {
+            activeCalls.getOrPut(channelId) { MutableStateFlow(null) }
+        }
+        
+        GlobalScope.launch {
+            val trixnity = trixnityClient ?: return@launch
+            val hungupCallIds = mutableSetOf<String>()
+            var latestInvite: CallEvent.Invite? = null
+            
+            try {
+                val lastEventId = trixnity.room.getById(RoomId(channelId)).first()?.lastEventId ?: return@launch
+                val events = trixnity.room.getTimelineEvents(RoomId(channelId), startFrom = lastEventId, direction = Direction.BACKWARDS)
+                
+                events.take(50).collect { flowEvent ->
+                    val event = flowEvent.first()
+                    val content = event.content?.getOrNull()
+                    if (content is de.connect2x.trixnity.core.model.events.UnknownEventContent) {
+                        val typeStr = content.eventType
+                        val json = trixnity.api.json.encodeToJsonElement(content).jsonObject["value"]?.jsonObject ?: kotlinx.serialization.json.JsonObject(emptyMap())
+                        val callId = json["call_id"]?.jsonPrimitive?.content ?: ""
+                        if (callId.isNotBlank()) {
+                            if (typeStr == "m.call.hangup") {
+                                hungupCallIds.add(callId)
+                            } else if (typeStr == "m.call.invite") {
+                                if (!hungupCallIds.contains(callId)) {
+                                    val sdp = json["offer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: ""
+                                    latestInvite = CallEvent.Invite(channelId, callId, sdp)
+                                    throw Exception("Break")
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // Ignore, used to break out of collect
+            }
+            flow.value = latestInvite
+        }
+        return flow.asStateFlow()
+    }
 
     /**
      * Start a sync listener for live events using Trixnity SDK.
@@ -1056,7 +1100,13 @@ class MatrixOrbitRepository(
                         if (typeStr == "m.call.invite") {
                             val callId = json["call_id"]?.jsonPrimitive?.content ?: ""
                             val sdp = json["offer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: ""
-                            if (callId.isNotBlank() && sdp.isNotBlank()) _callEvents.emit(CallEvent.Invite(roomId, callId, sdp))
+                            if (callId.isNotBlank() && sdp.isNotBlank()) {
+                                val invite = CallEvent.Invite(roomId, callId, sdp)
+                                _callEvents.emit(invite)
+                                synchronized(activeCalls) {
+                                    activeCalls.getOrPut(roomId) { MutableStateFlow(null) }.value = invite
+                                }
+                            }
                         } else if (typeStr == "m.call.answer") {
                             val callId = json["call_id"]?.jsonPrimitive?.content ?: ""
                             val sdp = json["answer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: ""
@@ -1073,14 +1123,22 @@ class MatrixOrbitRepository(
                             }
                         } else if (typeStr == "m.call.hangup") {
                             val callId = json["call_id"]?.jsonPrimitive?.content ?: ""
-                            if (callId.isNotBlank()) _callEvents.emit(CallEvent.Hangup(roomId, callId))
+                            if (callId.isNotBlank()) {
+                                _callEvents.emit(CallEvent.Hangup(roomId, callId))
+                                synchronized(activeCalls) {
+                                    val flow = activeCalls[roomId]
+                                    if (flow?.value?.callId == callId) {
+                                        flow.value = null
+                                    }
+                                }
+                            }
                         }
                     }
 
                     timelineEventToOrbitMessage(timelineEvent)?.let { orbitMessage ->
                         val rId = timelineEvent.roomId.full
                         synchronized(liveMessageStates) {
-                            val state = liveMessageStates.getOrPut(rId) { LiveMessageState(MutableSharedFlow(replay = 0)) }
+                            val state = liveMessageStates.getOrPut(rId) { LiveMessageState(MutableSharedFlow(replay = 1, extraBufferCapacity = 64, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)) }
                             state.messages.add(orbitMessage)
                             state.flow.tryEmit(listOf(orbitMessage))
                         }

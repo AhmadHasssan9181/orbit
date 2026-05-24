@@ -1098,6 +1098,7 @@ fun ChatScreenWithRepo(
     var members by remember(channel.id) { mutableStateOf<List<OrbitUser>>(emptyList()) }
     var currentUser by remember { mutableStateOf<OrbitUser?>(null) }
     var typingUsers by remember(channel.id) { mutableStateOf<List<String>>(emptyList()) }
+    var activeCall by remember(channel.id) { mutableStateOf<repository.CallEvent.Invite?>(null) }
 
     LaunchedEffect(channel.id) {
         isLoading = true
@@ -1130,12 +1131,17 @@ fun ChatScreenWithRepo(
         repository.observeTyping(channel.id).collect { typingUsers = it }
     }
 
+    LaunchedEffect(channel.id) {
+        repository.observeActiveCall(channel.id).collect { activeCall = it }
+    }
+
     ChatScreen(
         channel = channel,
         messages = messages,
         members = members,
         currentUser = currentUser,
         typingUsers = typingUsers,
+        activeCall = activeCall,
         onSend = { body ->
             scope.launch {
                 try {

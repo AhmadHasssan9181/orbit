@@ -90,6 +90,12 @@ class JvmWebRtcClient : WebRtcClient {
 
     override fun stopLocalMedia() {}
 
+    override fun toggleMute(isMuted: Boolean) {}
+
+    override fun toggleVideo(isVideoEnabled: Boolean) {}
+
+    override fun switchCamera() {}
+
     override fun createOffer(onSuccess: (SessionDescriptionModel) -> Unit, onError: (String) -> Unit) {
         peerConnection?.createOffer(RTCOfferOptions(), object : CreateSessionDescriptionObserver {
             override fun onSuccess(description: RTCSessionDescription) {

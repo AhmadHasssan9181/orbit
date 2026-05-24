@@ -22,6 +22,7 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
     private var localVideoTrack: VideoTrack? = null
     private var localAudioTrack: AudioTrack? = null
     private var localStream: MediaStream? = null
+    private var videoCapturer: CameraVideoCapturer? = null
 
     private var localRenderer: SurfaceViewRenderer? = null
     private var remoteRenderer: SurfaceViewRenderer? = null
@@ -104,10 +105,11 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
         // Video
         if (isVideoEnabled) {
             val videoSource = factory.createVideoSource(false)
-            val videoCapturer = createVideoCapturer()
+            val capturer = createVideoCapturer()
+            videoCapturer = capturer as? CameraVideoCapturer
             val surfaceTextureHelper = SurfaceTextureHelper.create("CaptureThread", rootEglBase?.eglBaseContext)
-            videoCapturer?.initialize(surfaceTextureHelper, context, videoSource.capturerObserver)
-            videoCapturer?.startCapture(1280, 720, 30)
+            capturer?.initialize(surfaceTextureHelper, context, videoSource.capturerObserver)
+            capturer?.startCapture(1280, 720, 30)
 
             localVideoTrack = factory.createVideoTrack("ARDMSV0", videoSource)
             localVideoTrack?.addSink(localRenderer)
@@ -133,10 +135,34 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
     }
 
     override fun stopLocalMedia() {
+        videoCapturer?.stopCapture()
+        videoCapturer?.dispose()
+        videoCapturer = null
         localVideoTrack?.dispose()
         localAudioTrack?.dispose()
         localVideoTrack = null
         localAudioTrack = null
+    }
+
+    override fun toggleMute(isMuted: Boolean) {
+        localAudioTrack?.setEnabled(!isMuted)
+    }
+
+    override fun toggleVideo(isVideoEnabled: Boolean) {
+        localVideoTrack?.setEnabled(isVideoEnabled)
+        if (!isVideoEnabled) {
+            try {
+                videoCapturer?.stopCapture()
+            } catch (e: Exception) {}
+        } else {
+            try {
+                videoCapturer?.startCapture(1280, 720, 30)
+            } catch (e: Exception) {}
+        }
+    }
+
+    override fun switchCamera() {
+        videoCapturer?.switchCamera(null)
     }
 
     override fun createOffer(onSuccess: (SessionDescriptionModel) -> Unit, onError: (String) -> Unit) {

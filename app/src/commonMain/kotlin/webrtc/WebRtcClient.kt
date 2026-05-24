@@ -22,6 +22,10 @@ interface WebRtcClient {
     
     fun getLocalVideoRenderer(): Any?
     fun getRemoteVideoRenderer(): Any?
+    
+    fun toggleMute(isMuted: Boolean)
+    fun toggleVideo(isVideoEnabled: Boolean)
+    fun switchCamera()
 }
 
 expect fun createWebRtcClient(): WebRtcClient

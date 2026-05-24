@@ -138,6 +138,7 @@ interface OrbitRepository {
     fun observeMessages(channelId: String): Flow<List<OrbitMessage>>
     fun observeChannelList(spaceId: String): Flow<List<OrbitChannel>>
     fun observeCallEvents(): Flow<CallEvent>
+    fun observeActiveCall(channelId: String): Flow<CallEvent.Invite?>
 
     // Session Management ──────────────────────────────────
     val authStatus: Flow<AuthStatus>
