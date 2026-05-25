@@ -50,7 +50,8 @@ class DesktopVideoRenderer(
                 val uValue = uPlane.get((y / 2) * getStrideU() + (x / 2)).toInt() and 0xFF
                 val vValue = vPlane.get((y / 2) * getStrideV() + (x / 2)).toInt() and 0xFF
 
-                val c = yValue
+                // Boost brightness and slightly reduce contrast to fix the "too dark / high contrast" issue
+                val c = ((yValue * 0.85) + 35).toInt()
                 val d = uValue - 128
                 val e = vValue - 128
 
