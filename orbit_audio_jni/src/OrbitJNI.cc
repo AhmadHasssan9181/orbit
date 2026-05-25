@@ -22,12 +22,9 @@ Java_webrtc_OrbitAudioEngine_injectCustomAdm(JNIEnv* env, jobject /* this */, jo
     jfieldID handle_fid = env->GetFieldID(native_obj_class, "nativeHandle", "J");
     if (!handle_fid) return;
 
-    // 4. Read the old handle and delete it to prevent memory leak
+    // 4. Read the old handle (we DO NOT delete it here, because it was allocated by a different DLL's CRT, which causes EXCEPTION_ACCESS_VIOLATION on Windows!)
     jlong old_handle = env->GetLongField(java_adm, handle_fid);
-    if (old_handle != 0) {
-        auto* old_ptr = reinterpret_cast<webrtc::scoped_refptr<webrtc::AudioDeviceModule>*>(old_handle);
-        delete old_ptr;
-    }
+    // intentional leak of the 8-byte pointer to prevent CRT heap corruption
 
     // 5. Inject our new handle! 
     env->SetLongField(java_adm, handle_fid, reinterpret_cast<jlong>(adm_ptr));
