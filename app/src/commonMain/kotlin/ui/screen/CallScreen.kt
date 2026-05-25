@@ -351,7 +351,10 @@ fun CallScreen(
                             Spacer(Modifier.width(8.dp))
                             Switch(
                                 checked = includeStreamAudio,
-                                onCheckedChange = { includeStreamAudio = it },
+                                onCheckedChange = { 
+                                    includeStreamAudio = it
+                                    callManager.webRtcClient.setStreamAudioEnabled(it)
+                                },
                                 colors = SwitchDefaults.colors(checkedThumbColor = tokens.Accent, checkedTrackColor = tokens.Accent.copy(alpha=0.5f))
                             )
                         }

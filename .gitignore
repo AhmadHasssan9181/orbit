@@ -10,3 +10,10 @@ local.properties
 
 *.hprof
 .kotlin/errors/
+
+# Orbit Audio JNI
+orbit_audio_jni/out/
+orbit_audio_jni/build/
+orbit_audio_jni/.vs/
+orbit_audio_jni/webrtc/
+*.dll

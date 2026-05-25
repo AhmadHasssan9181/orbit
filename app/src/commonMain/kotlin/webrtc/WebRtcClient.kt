@@ -29,6 +29,7 @@ interface WebRtcClient {
     fun toggleMute(isMuted: Boolean)
     fun toggleVideo(isVideoEnabled: Boolean)
     fun switchCamera()
+    fun setStreamAudioEnabled(enabled: Boolean)
 }
 
 expect fun createWebRtcClient(): WebRtcClient
