@@ -210,6 +210,10 @@ class JvmWebRtcClient : WebRtcClient {
     private fun createFactory(): PeerConnectionFactory {
         return runCatching {
             val audioModule = AudioDeviceModule()
+            
+            // Inject our custom C++ WASAPI loopback engine
+            OrbitAudioEngine.injectInto(audioModule)
+            
             audioDeviceModule = audioModule
 
             val captureDevice = runCatching { MediaDevices.getDefaultAudioCaptureDevice() }.getOrNull()
@@ -458,6 +462,10 @@ class JvmWebRtcClient : WebRtcClient {
 
     override fun getLocalVideoRenderer(): Any? = localRenderer
     override fun getRemoteVideoRenderer(): Any? = remoteRenderer
+
+    override fun setStreamAudioEnabled(enabled: Boolean) {
+        OrbitAudioEngine.setStreamAudioEnabled(enabled)
+    }
 }
 
 actual fun createWebRtcClient(): WebRtcClient = JvmWebRtcClient()

@@ -340,6 +340,10 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
 
     override fun getLocalVideoRenderer(): Any? = localRenderer
     override fun getRemoteVideoRenderer(): Any? = remoteRenderer
+
+    override fun setStreamAudioEnabled(enabled: Boolean) {
+        // Not implemented on Android yet
+    }
 }
 
 actual fun createWebRtcClient(): WebRtcClient = AndroidWebRtcClient(util.appContext)
