@@ -1,53 +1,20 @@
 package webrtc
 
-
-import java.io.File
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
-
+/**
+ * Previously loaded vcpkg dependency DLLs before our custom webrtc-java-windows-x86_64.dll.
+ * Now that we use the official upstream webrtc-java Maven artifact (which is self-contained
+ * and statically links its dependencies), this loader is a no-op.
+ *
+ * OrbitAudioJNI.dll (for WASAPI screen-share audio) is loaded lazily by OrbitAudioEngine
+ * only when the feature is explicitly activated.
+ */
 object WebrtcNativeDepsLoader {
     private var loaded = false
 
     fun load() {
         if (loaded) return
         loaded = true
-        try {
-            val dlls = listOf(
-                "abseil_dll.dll",
-                "aom.dll",
-                "jpeg62.dll",
-                "jsoncpp.dll",
-                "legacy.dll",
-                "libcrypto-3-x64.dll",
-                "libssl-3-x64.dll",
-                "libyuv.dll",
-                "opus.dll",
-                "pkgconf-7.dll",
-                "srtp2.dll",
-                "turbojpeg.dll"
-            )
-
-            val tempDir = Files.createTempDirectory("webrtc-deps").toFile()
-            tempDir.deleteOnExit()
-
-            for (dll in dlls) {
-                val stream = WebrtcNativeDepsLoader::class.java.getResourceAsStream("/webrtc-deps/$dll")
-                if (stream != null) {
-                    val file = File(tempDir, dll)
-                    file.deleteOnExit()
-                    Files.copy(stream, file.toPath(), StandardCopyOption.REPLACE_EXISTING)
-                    
-                    try {
-                        System.load(file.absolutePath)
-                        println("DEBUG: Loaded $dll successfully")
-                    } catch (e: UnsatisfiedLinkError) {
-                        println("DEBUG: Failed to load $dll initially: ${e.message}")
-                    }
-                }
-            }
-            
-        } catch (e: Exception) {
-            println("DEBUG: Failed to extract WebRTC dependencies: ${e.message}")
-        }
+        // No-op: upstream webrtc-java DLL is self-contained.
+        println("DEBUG: [WebRTC] Using upstream self-contained webrtc-java native library.")
     }
 }
