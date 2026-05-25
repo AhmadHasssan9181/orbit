@@ -29,6 +29,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 // Removed MockData
+import ui.icons.OrbitIcons
 import ui.model.*
 
 import ui.theme.LocalIsLiteMode
@@ -366,7 +367,7 @@ private fun DmItem(
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     IconButton(onClick = { onVoiceCall?.invoke() }, modifier = Modifier.size(20.dp)) {
                         Icon(
-                            imageVector = Icons.Default.Call,
+                            imageVector = OrbitIcons.Call,
                             contentDescription = "Voice Call",
                             tint = Text_White,
                             modifier = Modifier.size(16.dp).alpha(0.8f)
@@ -374,7 +375,7 @@ private fun DmItem(
                     }
                     IconButton(onClick = { onVideoCall?.invoke() }, modifier = Modifier.size(20.dp)) {
                         Icon(
-                            imageVector = Icons.Default.Videocam,
+                            imageVector = OrbitIcons.Video,
                             contentDescription = "Video Call",
                             tint = Text_White,
                             modifier = Modifier.size(16.dp).alpha(0.8f)
@@ -513,13 +514,13 @@ private fun ChannelItem(channel: OrbitChannel, isSelected: Boolean, onClick: () 
     ) {
         when (channel.type) {
             ChannelType.TEXT -> Icon(
-                imageVector = Icons.Default.Tag,
+                imageVector = OrbitIcons.TextChannel,
                 contentDescription = null,
                 tint = iconColor,
                 modifier = Modifier.size(18.dp)
             )
             ChannelType.VOICE -> Icon(
-                imageVector = Icons.Default.VolumeUp,
+                imageVector = OrbitIcons.VoiceChannel,
                 contentDescription = null,
                 tint = iconColor,
                 modifier = Modifier.size(18.dp)
@@ -598,7 +599,7 @@ private fun UserProfileBar(
             )
         }
 
-        BarIconBtn(icon = Icons.Default.Mic, desc = "Mic", onClick = onMicToggle)
+        BarIconBtn(icon = OrbitIcons.Mic, desc = "Mic", onClick = onMicToggle)
         BarIconBtn(icon = Icons.Default.Headset, desc = "Deafen", onClick = {})
         BarIconBtn(icon = Icons.Default.Settings, desc = "Settings", onClick = onSettingsClick)
     }
@@ -778,7 +779,7 @@ private fun WhatsAppCallsDrawer() {
     Column(modifier = Modifier.fillMaxSize().background(Drawer_Bg)) {
         LiteDrawerHeader("Calls") {
             IconButton(onClick = {}, modifier = Modifier.size(32.dp)) {
-                Icon(Icons.Default.Add, contentDescription = "New Call", tint = Accent, modifier = Modifier.size(20.dp))
+                Icon(OrbitIcons.Add, contentDescription = "New Call", tint = Accent, modifier = Modifier.size(20.dp))
             }
         }
         WhatsAppSearchBar()
@@ -823,7 +824,7 @@ private fun WhatsAppCallsDrawer() {
                         }
                     }
                     IconButton(onClick = {}, modifier = Modifier.size(32.dp)) {
-                        Icon(Icons.Default.Call, contentDescription = null, tint = Accent, modifier = Modifier.size(18.dp))
+                        Icon(OrbitIcons.Call, contentDescription = null, tint = Accent, modifier = Modifier.size(18.dp))
                     }
                 }
             }
@@ -836,7 +837,7 @@ private fun WhatsAppStatusDrawer() {
     Column(modifier = Modifier.fillMaxSize().background(Drawer_Bg)) {
         LiteDrawerHeader("Status") {
             IconButton(onClick = {}, modifier = Modifier.size(32.dp)) {
-                Icon(Icons.Default.AddCircle, contentDescription = "New Status", tint = Accent, modifier = Modifier.size(20.dp))
+                Icon(OrbitIcons.Add, contentDescription = "New Status", tint = Accent, modifier = Modifier.size(20.dp))
             }
         }
 
@@ -858,7 +859,7 @@ private fun WhatsAppStatusDrawer() {
                         .background(Accent),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Default.Add, contentDescription = null, tint = Color.White, modifier = Modifier.size(10.dp))
+                    Icon(OrbitIcons.Add, contentDescription = null, tint = Color.White, modifier = Modifier.size(10.dp))
                 }
             }
             Spacer(Modifier.width(12.dp))
@@ -923,7 +924,7 @@ private fun WhatsAppCommunitiesDrawer() {
                     .background(Accent.copy(alpha = 0.15f)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Default.Groups, contentDescription = null, tint = Accent, modifier = Modifier.size(24.dp))
+                Icon(OrbitIcons.Members, contentDescription = null, tint = Accent, modifier = Modifier.size(24.dp))
             }
             Spacer(Modifier.width(12.dp))
             Text("New community", style = MaterialTheme.typography.bodyMedium.copy(color = Text_White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp))
@@ -934,7 +935,7 @@ private fun WhatsAppCommunitiesDrawer() {
         // Empty state
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Icons.Default.Forum, contentDescription = null, tint = Text_Muted.copy(alpha = 0.4f), modifier = Modifier.size(48.dp))
+                Icon(OrbitIcons.TextChannel, contentDescription = null, tint = Text_Muted.copy(alpha = 0.4f), modifier = Modifier.size(48.dp))
                 Spacer(Modifier.height(8.dp))
                 Text("No communities yet", style = MaterialTheme.typography.bodyMedium.copy(color = Text_Muted))
                 Text("Create or join a community to get started", style = MaterialTheme.typography.bodySmall.copy(color = Text_Muted.copy(alpha = 0.6f), fontSize = 12.sp))

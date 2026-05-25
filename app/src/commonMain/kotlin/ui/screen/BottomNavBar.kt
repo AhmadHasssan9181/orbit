@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.icons.OrbitIcons
 import ui.theme.rememberCosmicTokens
 
 /**
@@ -85,8 +86,8 @@ enum class BottomNavTab(
 ) {
     DMs(
         label = "Messages",
-        icon = Icons.Default.ChatBubbleOutline,
-        selectedIcon = Icons.Default.ChatBubble
+        icon = OrbitIcons.TextChannel,
+        selectedIcon = OrbitIcons.TextChannel
     ),
     Servers(
         label = "Servers",
@@ -100,8 +101,8 @@ enum class BottomNavTab(
     ),
     Profile(
         label = "Profile",
-        icon = Icons.Default.PersonOutline,
-        selectedIcon = Icons.Default.Person
+        icon = OrbitIcons.Members,
+        selectedIcon = OrbitIcons.Members
     );
 
     companion object {

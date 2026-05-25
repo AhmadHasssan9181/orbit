@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.icons.OrbitIcons
 import ui.model.OrbitServer
 
 import ui.theme.LocalIsLiteMode
@@ -100,7 +101,7 @@ fun ServerRail(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Chat,
+                        imageVector = OrbitIcons.TextChannel,
                         contentDescription = "Home",
                         tint = if (isSelected) Color.White else Text_Muted,
                         modifier = Modifier.size(22.dp)
@@ -205,7 +206,7 @@ fun ServerRail(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Add,
+                        imageVector = OrbitIcons.Add,
                         contentDescription = "Add Server",
                         tint = if (isHovered) Accent else Text_Muted,
                         modifier = Modifier.size(22.dp)
@@ -339,10 +340,10 @@ private fun WhatsAppRail(selectedTab: String, onTabClick: (String) -> Unit, modi
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            LiteRailItem(Icons.Default.Chat, "Chats", isSelected = selectedTab == "Chats", onClick = { onTabClick("Chats") })
-            LiteRailItem(Icons.Default.Call, "Calls", isSelected = selectedTab == "Calls", onClick = { onTabClick("Calls") })
+            LiteRailItem(OrbitIcons.TextChannel, "Chats", isSelected = selectedTab == "Chats", onClick = { onTabClick("Chats") })
+            LiteRailItem(OrbitIcons.Call, "Calls", isSelected = selectedTab == "Calls", onClick = { onTabClick("Calls") })
             LiteRailItem(Icons.Default.DonutLarge, "Status", isSelected = selectedTab == "Status", onClick = { onTabClick("Status") })
-            LiteRailItem(Icons.Default.Groups, "Groups", isSelected = selectedTab == "Communities", onClick = { onTabClick("Communities") })
+            LiteRailItem(OrbitIcons.Members, "Groups", isSelected = selectedTab == "Communities", onClick = { onTabClick("Communities") })
         }
 
         // Bottom section

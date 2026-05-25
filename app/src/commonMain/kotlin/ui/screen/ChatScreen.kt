@@ -45,6 +45,7 @@ import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 
+import ui.icons.OrbitIcons
 import ui.theme.LocalIsLiteMode
 import ui.theme.rememberCosmicTokens
 import ui.layout.LocalWindowSizeClass
@@ -115,7 +116,7 @@ fun ChatScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Call, contentDescription = null, tint = Accent, modifier = Modifier.size(24.dp))
+                            Icon(OrbitIcons.Call, contentDescription = null, tint = Accent, modifier = Modifier.size(24.dp))
                             Spacer(Modifier.width(12.dp))
                             Text(
                                 "Ongoing Call",
@@ -235,13 +236,13 @@ private fun ChatHeader(
                 // Channel icon — Discord uses grey hash, Revolt uses coloured
                 when (channel.type) {
                     ChannelType.TEXT -> Icon(
-                        imageVector = Icons.Default.Tag,
+                        imageVector = OrbitIcons.TextChannel,
                         contentDescription = null,
                         tint = Text_Muted,
                         modifier = Modifier.size(20.dp).alpha(0.7f)
                     )
                     ChannelType.VOICE -> Icon(
-                        imageVector = Icons.Default.VolumeUp,
+                        imageVector = OrbitIcons.VoiceChannel,
                         contentDescription = null,
                         tint = Text_Muted,
                         modifier = Modifier.size(20.dp).alpha(0.7f)
@@ -280,12 +281,12 @@ private fun ChatHeader(
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            HeaderIconBtn(Icons.Default.Call, "Voice Call", onClick = { onVoiceCall?.invoke() })
-            HeaderIconBtn(Icons.Default.Videocam, "Video Call", onClick = { onVideoCall?.invoke() })
+            HeaderIconBtn(OrbitIcons.Call, "Voice Call", onClick = { onVoiceCall?.invoke() })
+            HeaderIconBtn(OrbitIcons.Video, "Video Call", onClick = { onVideoCall?.invoke() })
             HeaderIconBtn(Icons.Default.Search, "Search")
-            HeaderIconBtn(Icons.Default.Notifications, "Notifications")
-            HeaderIconBtn(Icons.Default.PushPin, "Pins")
-            HeaderIconBtn(Icons.Default.People, "Members")
+            HeaderIconBtn(OrbitIcons.Notifications, "Notifications")
+            HeaderIconBtn(OrbitIcons.Pin, "Pins")
+            HeaderIconBtn(OrbitIcons.Members, "Members")
         }
     }
 }
@@ -543,8 +544,8 @@ private fun MessageBubbleFull(message: OrbitMessage, currentUser: OrbitUser?) {
                     .padding(horizontal = 2.dp),
                 horizontalArrangement = Arrangement.spacedBy(0.dp)
             ) {
-                MessageActionBtn(Icons.Default.EmojiEmotions, "React")
-                MessageActionBtn(Icons.Default.Reply, "Reply")
+                MessageActionBtn(OrbitIcons.Emoji, "React")
+                MessageActionBtn(OrbitIcons.Reply, "Reply")
                 MessageActionBtn(Icons.Default.Edit, "Edit")
                 MessageActionBtn(Icons.Default.MoreHoriz, "More")
             }
@@ -624,8 +625,8 @@ private fun DenseMessageBody(message: OrbitMessage) {
                     .padding(horizontal = 2.dp),
                 horizontalArrangement = Arrangement.spacedBy(0.dp)
             ) {
-                MessageActionBtn(Icons.Default.EmojiEmotions, "React")
-                MessageActionBtn(Icons.Default.Reply, "Reply")
+                MessageActionBtn(OrbitIcons.Emoji, "React")
+                MessageActionBtn(OrbitIcons.Reply, "Reply")
                 MessageActionBtn(Icons.Default.MoreHoriz, "More")
             }
         }
@@ -1153,7 +1154,7 @@ private fun MessageInputBar(
             // Attach button — Discord style "+"
             IconButton(onClick = { launchPicker() }, modifier = Modifier.size(36.dp)) {
                 Icon(
-                    imageVector = Icons.Default.Add,
+                    imageVector = OrbitIcons.Add,
                     contentDescription = "Attach",
                     tint = Text_Muted,
                     modifier = Modifier.size(20.dp)
@@ -1178,11 +1179,11 @@ private fun MessageInputBar(
                 horizontalArrangement = Arrangement.spacedBy(0.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                InputIconBtn(icon = Icons.Default.EmojiEmotions, desc = "Emoji") {
+                InputIconBtn(icon = OrbitIcons.Emoji, desc = "Emoji") {
                     showEmojiPicker = !showEmojiPicker
                     showGifPicker = false
                 }
-                InputIconBtn(icon = Icons.Default.Gif, desc = "GIF") {
+                InputIconBtn(icon = OrbitIcons.Gif, desc = "GIF") {
                     showGifPicker = !showGifPicker
                     showEmojiPicker = false
                 }
@@ -1201,7 +1202,7 @@ private fun MessageInputBar(
                         modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.AutoMirrored.Filled.Send,
+                            imageVector = OrbitIcons.Send,
                             contentDescription = "Send",
                             tint = Accent,
                             modifier = Modifier.size(20.dp)
@@ -1452,7 +1453,7 @@ fun ChatEmptyState(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Default.Tag,
+                    imageVector = OrbitIcons.TextChannel,
                     contentDescription = null,
                     tint = Accent,
                     modifier = Modifier.size(40.dp)
@@ -1497,7 +1498,7 @@ fun ChatEmptyState(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Tag,
+                            imageVector = OrbitIcons.TextChannel,
                             contentDescription = null,
                             tint = Text_Muted,
                             modifier = Modifier.size(18.dp)
@@ -1576,7 +1577,7 @@ fun VoiceChannelPlaceholder(channel: OrbitChannel) {
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Mic,
+                        imageVector = OrbitIcons.VoiceChannel,
                         contentDescription = null,
                         tint = Color.White,
                         modifier = Modifier.size(32.dp)
@@ -1603,7 +1604,7 @@ fun VoiceChannelPlaceholder(channel: OrbitChannel) {
                     colors = ButtonDefaults.buttonColors(containerColor = Accent),
                     shape = RoundedCornerShape(24.dp)
                 ) {
-                    Icon(Icons.Default.Phone, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(OrbitIcons.Call, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                     Text("Join Voice")
                 }
@@ -1613,7 +1614,7 @@ fun VoiceChannelPlaceholder(channel: OrbitChannel) {
                     colors = ButtonDefaults.buttonColors(containerColor = Accent),
                     shape = RoundedCornerShape(24.dp)
                 ) {
-                    Icon(Icons.Default.Videocam, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(OrbitIcons.Video, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                     Text("Video Call")
                 }
@@ -1756,7 +1757,7 @@ private fun WhatsAppInputBar(
                 .padding(horizontal = 12.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            InputIconBtn(Icons.Default.EmojiEmotions, "Emoji") {
+            InputIconBtn(OrbitIcons.Emoji, "Emoji") {
                 showEmojiPicker = !showEmojiPicker
                 showGifPicker = false
             }
@@ -1774,7 +1775,7 @@ private fun WhatsAppInputBar(
                 }
             )
             Spacer(Modifier.width(8.dp))
-            InputIconBtn(Icons.Default.AddCircle, "Attach") {
+            InputIconBtn(OrbitIcons.Add, "Attach") {
                 launchPicker()
             }
         }
@@ -1793,7 +1794,7 @@ private fun WhatsAppInputBar(
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = if (text.isBlank()) Icons.Default.Mic else Icons.AutoMirrored.Filled.Send,
+                imageVector = if (text.isBlank()) OrbitIcons.Mic else OrbitIcons.Send,
                 contentDescription = null,
                 tint = Color.White,
                 modifier = Modifier.size(24.dp)

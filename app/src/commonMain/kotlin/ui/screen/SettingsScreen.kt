@@ -25,6 +25,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.icons.OrbitIcons
 import ui.model.OrbitUser
 
 
@@ -123,7 +124,7 @@ fun SettingsScreen(
             item { Spacer(Modifier.height(4.dp)) }
 
             // ── Section: Streaming ──────────────────────────────
-            item { SectionHeader(icon = Icons.Default.Videocam, title = "Streaming & Screen Share") }
+            item { SectionHeader(icon = OrbitIcons.Video, title = "Streaming & Screen Share") }
             item { VideoQualityCard() }
             item { StreamCodecCard() }
             item { StreamLatencyCard() }
@@ -148,7 +149,7 @@ fun SettingsScreen(
             item { Spacer(Modifier.height(4.dp)) }
 
             // ── Section: Notifications ───────────────────────────
-            item { SectionHeader(icon = Icons.Default.Notifications, title = "Notifications") }
+            item { SectionHeader(icon = OrbitIcons.Notifications, title = "Notifications") }
             item { MentionsOnlyCard() }
             item { SoundPickerCard() }
 
