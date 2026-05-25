@@ -51,7 +51,7 @@ class JvmWebRtcClient : WebRtcClient {
     override val isScreenSharing: SharedFlow<Boolean> = _isScreenSharing
 
     private var factory: PeerConnectionFactory? = null
-    private var audioDeviceModule: AudioDeviceModule? = null
+    private var audioDeviceModule: OrbitAudioDeviceModule? = null
     private var peerConnection: RTCPeerConnection? = null
 
     private var localAudioSource: dev.onvoid.webrtc.media.audio.AudioTrackSource? = null
@@ -209,7 +209,7 @@ class JvmWebRtcClient : WebRtcClient {
 
     private fun createFactory(): PeerConnectionFactory {
         return runCatching {
-            val audioModule = AudioDeviceModule()
+            val audioModule = OrbitAudioDeviceModule()
             
             // JNI Injection hack removed because cross-ABI (vtable) mismatch causes 
             // EXCEPTION_ACCESS_VIOLATION during PeerConnectionFactory native init.
@@ -322,16 +322,9 @@ class JvmWebRtcClient : WebRtcClient {
                 localVideoTrack = screenTrack
                 _isScreenSharing.tryEmit(true)
 
-                if (includeAudio) {
-                    val loopbackDevice = audioDeviceModule?.recordingDevices?.firstOrNull { 
-                        it.name.contains("Stereo Mix", true) || 
-                        it.name.contains("Wave Out", true) || 
-                        it.name.contains("What U Hear", true) 
-                    }
-                    if (loopbackDevice != null) {
-                        runCatching { audioDeviceModule?.setRecordingDevice(loopbackDevice) }
-                    }
-                }
+                  if (includeAudio) {
+                      runCatching { audioDeviceModule?.setSystemAudioShareEnabled(true) }
+                  }
             }
             screenCapturer.dispose()
         } catch (e: Exception) {
@@ -352,13 +345,8 @@ class JvmWebRtcClient : WebRtcClient {
                 localVideoTrack = cameraVideoTrack
             }
             
-            // Restore default microphone
-            runCatching { 
-                val defaultMic = audioDeviceModule?.recordingDevices?.firstOrNull()
-                if (defaultMic != null) {
-                    audioDeviceModule?.setRecordingDevice(defaultMic)
-                }
-            }
+            // Stop sharing system audio
+            runCatching { audioDeviceModule?.setSystemAudioShareEnabled(false) }
             
             _isScreenSharing.tryEmit(false)
         } catch (e: Exception) {
