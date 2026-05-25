@@ -1,9 +1,12 @@
 <p align="center">
   <img
-    alt="Orbit"
-    src="https://capsule-render.vercel.app/api?type=rect&height=150&color=7C6AF0&text=Orbit&fontColor=FFFFFF&fontAlignY=42&desc=Kotlin%20Multiplatform%20Matrix%20Client&descAlignY=66"
+    alt="Orbit logo"
+    src="./Create_a_memorable_modern_app_202605260126.jpeg"
+    width="320"
   />
 </p>
+
+<h1 align="center">Orbit</h1>
 
 <p align="center">
   <strong>Orbit is a modern Matrix client for Android and desktop, built with Kotlin Multiplatform and Compose.</strong>
