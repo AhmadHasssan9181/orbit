@@ -26,6 +26,7 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
     private var localVideoTrack: VideoTrack? = null
     private var cameraVideoTrack: VideoTrack? = null
     private var localAudioTrack: AudioTrack? = null
+    private var remoteAudioTrack: AudioTrack? = null
     private var localStream: MediaStream? = null
     private var localVideoSource: VideoSource? = null
     private var videoCapturer: CameraVideoCapturer? = null
@@ -98,6 +99,10 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
             override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {}
             override fun onAddStream(stream: MediaStream) {
                 _onStreamAdded.tryEmit(true)
+                stream.audioTracks.firstOrNull()?.let { track ->
+                    track.setEnabled(true)
+                    remoteAudioTrack = track
+                }
                 if (stream.videoTracks.isNotEmpty()) {
                     remoteRenderer?.let { stream.videoTracks[0].addSink(it) }
                 }
@@ -107,9 +112,16 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
             override fun onRenegotiationNeeded() {}
             override fun onAddTrack(receiver: RtpReceiver?, mediaStreams: Array<out MediaStream>?) {
                 val track = receiver?.track()
-                if (track is VideoTrack) {
-                    _onStreamAdded.tryEmit(true)
-                    remoteRenderer?.let { track.addSink(it) }
+                when (track) {
+                    is AudioTrack -> {
+                        track.setEnabled(true)
+                        remoteAudioTrack = track
+                        _onStreamAdded.tryEmit(true)
+                    }
+                    is VideoTrack -> {
+                        _onStreamAdded.tryEmit(true)
+                        remoteRenderer?.let { track.addSink(it) }
+                    }
                 }
             }
         })
@@ -126,6 +138,7 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
         if (localAudioTrack == null) {
             val audioSource = factory.createAudioSource(MediaConstraints())
             localAudioTrack = factory.createAudioTrack("ARDMSA0", audioSource)
+            localAudioTrack?.setEnabled(true)
             localStream?.addTrack(localAudioTrack)
             peerConnection?.addTrack(localAudioTrack, listOf("ARDMS"))
         }
@@ -321,6 +334,7 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
         stopLocalMedia()
         peerConnection?.close()
         peerConnection = null
+        remoteAudioTrack = null
         // Do NOT dispose peerConnectionFactory or rootEglBase here, as it destroys the WebRTC context
     }
 

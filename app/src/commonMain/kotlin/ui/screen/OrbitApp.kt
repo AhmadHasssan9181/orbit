@@ -239,6 +239,9 @@ private fun MainAppContent(
                             })
                         }
                     }
+                    is repository.CallEvent.Negotiate -> {
+                        callManager.handleCallNegotiate(event.roomId, event.callId, event.type, event.sdp)
+                    }
                     is repository.CallEvent.Candidate -> callManager.handleIceCandidate(
                         webrtc.IceCandidateModel(event.sdp, event.sdpMid, event.sdpMLineIndex)
                     )
@@ -275,6 +278,20 @@ private fun MainAppContent(
                 put("version", "1")
             }).onFailure { error ->
                 println("DEBUG: [WebRTC] Failed to send call answer: ${error.message}")
+            }
+        }
+
+        callManager.sendNegotiate = { roomId, callId, type, sdp ->
+            repository.sendCallEvent(roomId, "m.call.negotiate", buildJsonObject {
+                put("call_id", callId)
+                put("description", buildJsonObject {
+                    put("type", type)
+                    put("sdp", sdp)
+                })
+                put("version", "1")
+                put("lifetime", 30000)
+            }).onFailure { error ->
+                println("DEBUG: [WebRTC] Failed to send call negotiate: ${error.message}")
             }
         }
 

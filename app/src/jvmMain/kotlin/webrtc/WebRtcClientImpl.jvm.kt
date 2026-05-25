@@ -21,7 +21,9 @@ import dev.onvoid.webrtc.RTCSessionDescription
 import dev.onvoid.webrtc.RTCSignalingState
 import dev.onvoid.webrtc.SetSessionDescriptionObserver
 import dev.onvoid.webrtc.media.MediaStream
+import dev.onvoid.webrtc.media.MediaStreamTrack
 import dev.onvoid.webrtc.media.MediaDevices
+import dev.onvoid.webrtc.media.audio.AudioDeviceModule
 import dev.onvoid.webrtc.media.audio.AudioTrack
 import dev.onvoid.webrtc.media.audio.AudioOptions
 import dev.onvoid.webrtc.media.video.VideoCaptureCapability
@@ -49,8 +51,8 @@ class JvmWebRtcClient : WebRtcClient {
     override val isScreenSharing: SharedFlow<Boolean> = _isScreenSharing
 
     private var factory: PeerConnectionFactory? = null
+    private var audioDeviceModule: AudioDeviceModule? = null
     private var peerConnection: RTCPeerConnection? = null
-    private var audioDeviceModule: dev.onvoid.webrtc.media.audio.AudioDeviceModule? = null
 
     private var localAudioSource: dev.onvoid.webrtc.media.audio.AudioTrackSource? = null
     private var localAudioTrack: AudioTrack? = null
@@ -63,6 +65,7 @@ class JvmWebRtcClient : WebRtcClient {
     private var isVideoCaptureRunning = false
 
     private var remoteVideoTrack: VideoTrack? = null
+    private var remoteAudioTrack: AudioTrack? = null
     private var screenSource: VideoDesktopSource? = null
 
     private var localRenderer: DesktopVideoRenderer? = null
@@ -73,8 +76,7 @@ class JvmWebRtcClient : WebRtcClient {
             if (peerConnection != null) return
 
             if (factory == null) {
-                audioDeviceModule = dev.onvoid.webrtc.media.audio.AudioDeviceModule(dev.onvoid.webrtc.media.audio.AudioLayer.kWindowsCoreAudio)
-                factory = PeerConnectionFactory(audioDeviceModule)
+                factory = createFactory()
             }
             if (localRenderer == null) {
                 localRenderer = DesktopVideoRenderer(mirror = true)
@@ -107,6 +109,7 @@ class JvmWebRtcClient : WebRtcClient {
 
                 override fun onAddStream(stream: MediaStream) {
                     _onStreamAdded.tryEmit(true)
+                    stream.audioTracks.firstOrNull()?.let { attachRemoteAudioTrack(it) }
                     val sink = remoteRenderer as? VideoTrackSink
                     if (sink != null) {
                         stream.videoTracks.firstOrNull()?.addSink(sink)
@@ -123,10 +126,10 @@ class JvmWebRtcClient : WebRtcClient {
                 override fun onDataChannel(dataChannel: RTCDataChannel) {}
                 override fun onRenegotiationNeeded() {}
                 override fun onAddTrack(receiver: RTCRtpReceiver, mediaStreams: Array<out MediaStream>) {
-                    attachRemoteVideoTrack(receiver.track)
+                    attachRemoteTrack(receiver.track)
                 }
                 override fun onTrack(transceiver: RTCRtpTransceiver) {
-                    attachRemoteVideoTrack(transceiver.receiver.track)
+                    attachRemoteTrack(transceiver.receiver.track)
                 }
             })
         } catch (e: Exception) {
@@ -147,6 +150,7 @@ class JvmWebRtcClient : WebRtcClient {
                 audioTrack.setEnabled(true)
                 localAudioTrack = audioTrack
                 localAudioSender = pConn.addTrack(audioTrack, listOf("mediaStream"))
+                println("DEBUG: [WebRTC] Desktop local audio track enabled=${audioTrack.isEnabled()} id=${audioTrack.getId()}")
             }
 
             if (isVideoEnabled) {
@@ -203,14 +207,45 @@ class JvmWebRtcClient : WebRtcClient {
         }
     }
 
-    private fun attachRemoteVideoTrack(track: dev.onvoid.webrtc.media.MediaStreamTrack?) {
-        if (track is VideoTrack) {
-            _onStreamAdded.tryEmit(true)
-            (remoteRenderer as? VideoTrackSink)?.let { sink ->
-                track.addSink(sink)
-            }
-            remoteVideoTrack = track
+    private fun createFactory(): PeerConnectionFactory {
+        return runCatching {
+            val audioModule = AudioDeviceModule()
+            audioDeviceModule = audioModule
+
+            val captureDevice = runCatching { MediaDevices.getDefaultAudioCaptureDevice() }.getOrNull()
+            val renderDevice = runCatching { MediaDevices.getDefaultAudioRenderDevice() }.getOrNull()
+
+            println(
+                "DEBUG: [WebRTC] Desktop audio devices capture=${captureDevice?.getName() ?: "default"} " +
+                    "render=${renderDevice?.getName() ?: "default"}"
+            )
+
+            PeerConnectionFactory(audioModule)
+        }.getOrElse { error ->
+            println("DEBUG: [WebRTC] Falling back to default desktop audio module: ${error.message}")
+            runCatching { audioDeviceModule?.dispose() }
+            audioDeviceModule = null
+            PeerConnectionFactory()
         }
+    }
+
+    private fun attachRemoteTrack(track: MediaStreamTrack?) {
+        when (track) {
+            is AudioTrack -> attachRemoteAudioTrack(track)
+            is VideoTrack -> {
+                _onStreamAdded.tryEmit(true)
+                (remoteRenderer as? VideoTrackSink)?.let { sink ->
+                    track.addSink(sink)
+                }
+                remoteVideoTrack = track
+            }
+        }
+    }
+
+    private fun attachRemoteAudioTrack(track: AudioTrack) {
+        track.setEnabled(true)
+        remoteAudioTrack = track
+        _onStreamAdded.tryEmit(true)
     }
 
     private fun chooseVideoCapability(capabilities: List<VideoCaptureCapability>): VideoCaptureCapability? {
@@ -414,6 +449,7 @@ class JvmWebRtcClient : WebRtcClient {
             localVideoTrack = null
             localAudioTrack = null
             remoteVideoTrack = null
+            remoteAudioTrack = null
             localVideoSender = null
         } catch (e: Exception) {
             e.printStackTrace()

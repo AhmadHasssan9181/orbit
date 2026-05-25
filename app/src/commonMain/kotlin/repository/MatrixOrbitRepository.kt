@@ -651,6 +651,8 @@ class MatrixOrbitRepository(
             val eventContent = when (eventType) {
                 "m.call.invite" -> {
                     val sdp = content["offer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: ""
+                    val metadata = sdpStreamMetadataFrom(sdp)
+                    logCallSdpMetadata(eventType, callId, sdp, metadata)
                     CallEventContent.Invite(
                         version = versionStr,
                         callId = callId,
@@ -661,11 +663,13 @@ class MatrixOrbitRepository(
                             type = CallEventContent.Invite.OfferType.OFFER
                         ),
                         partyId = myPartyId, // <--- Distinct device ID
-                        sdpStreamMetadata = sdpStreamMetadataFrom(sdp)
+                        sdpStreamMetadata = metadata
                     )
                 }
                 "m.call.answer" -> {
                     val sdp = content["answer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: ""
+                    val metadata = sdpStreamMetadataFrom(sdp)
+                    logCallSdpMetadata(eventType, callId, sdp, metadata)
                     CallEventContent.Answer(
                         version = versionStr,
                         callId = callId,
@@ -674,7 +678,30 @@ class MatrixOrbitRepository(
                             type = CallEventContent.Answer.AnswerType.ANSWER
                         ),
                         partyId = myPartyId, // <--- Distinct device ID
-                        sdpStreamMetadata = sdpStreamMetadataFrom(sdp)
+                        sdpStreamMetadata = metadata
+                    )
+                }
+                "m.call.negotiate" -> {
+                    val description = content["description"]?.jsonObject
+                        ?: return Result.failure(Exception("No description"))
+                    val sdp = description["sdp"]?.jsonPrimitive?.content ?: ""
+                    val metadata = sdpStreamMetadataFrom(sdp)
+                    logCallSdpMetadata(eventType, callId, sdp, metadata)
+                    val descriptionType = when (description["type"]?.jsonPrimitive?.content) {
+                        "offer" -> CallEventContent.Negotiate.DescriptionType.OFFER
+                        "answer" -> CallEventContent.Negotiate.DescriptionType.ANSWER
+                        else -> return Result.failure(Exception("Unknown negotiate description type"))
+                    }
+                    CallEventContent.Negotiate(
+                        version = versionStr,
+                        callId = callId,
+                        partyId = myPartyId,
+                        description = CallEventContent.Negotiate.Description(
+                            sdp = sdp,
+                            type = descriptionType
+                        ),
+                        lifetime = content["lifetime"]?.jsonPrimitive?.longOrNull ?: 30000L,
+                        sdpStreamMetadata = metadata
                     )
                 }
                 "m.call.candidates" -> {
@@ -753,8 +780,8 @@ class MatrixOrbitRepository(
         }
 
         val normalizedStreamIds = streamIds.ifEmpty { setOf("mediaStream") }
-        val hasAudio = sdpHasActiveMedia(sdp, "audio")
-        val hasVideo = sdpHasActiveMedia(sdp, "video")
+        val hasAudio = sdpHasSendingMedia(sdp, "audio")
+        val hasVideo = sdpHasSendingMedia(sdp, "video")
         
         // Detect if this is a screen share based on track IDs used in WebRtcClient implementations
         val isScreenShare = sdp.contains("SCREEN_TRACK_ID") || sdp.contains("screenTrack")
@@ -768,11 +795,59 @@ class MatrixOrbitRepository(
         }
     }
 
-    private fun sdpHasActiveMedia(sdp: String, media: String): Boolean {
-        return sdp.lineSequence().any { line ->
-            line.startsWith("m=$media") && !line.contains(" 0 ")
+    private fun logCallSdpMetadata(
+        eventType: String,
+        callId: String,
+        sdp: String,
+        metadata: Map<String, StreamMetadata>?
+    ) {
+        val audioDirection = sdpMediaDirection(sdp, "audio") ?: "none"
+        val videoDirection = sdpMediaDirection(sdp, "video") ?: "none"
+        val streams = metadata?.entries?.joinToString { (streamId, streamMetadata) ->
+            "$streamId(audioMuted=${streamMetadata.audioMuted}, videoMuted=${streamMetadata.videoMuted}, purpose=${streamMetadata.purpose})"
+        } ?: "none"
+
+        println("DEBUG: [WebRTC] Sending $eventType for $callId SDP audio=$audioDirection video=$videoDirection metadata=$streams")
+    }
+
+    private fun sdpHasSendingMedia(sdp: String, media: String): Boolean {
+        val section = sdpMediaSection(sdp, media) ?: return false
+        val mLine = section.firstOrNull() ?: return false
+        val port = mLine.split(' ').getOrNull(1)?.toIntOrNull() ?: return false
+        if (port == 0) return false
+
+        return when (sdpMediaDirection(sdp, media)) {
+            null, "sendrecv", "sendonly" -> true
+            "recvonly", "inactive" -> false
+            else -> true
         }
     }
+
+    private fun sdpMediaDirection(sdp: String, media: String): String? {
+        val mediaDirection = sdpMediaSection(sdp, media)
+            ?.firstOrNull { it in sdpDirectionLines }
+            ?.removePrefix("a=")
+        if (mediaDirection != null) return mediaDirection
+
+        return sdp.lineSequence()
+            .takeWhile { !it.startsWith("m=") }
+            .firstOrNull { it in sdpDirectionLines }
+            ?.removePrefix("a=")
+    }
+
+    private fun sdpMediaSection(sdp: String, media: String): List<String>? {
+        val lines = sdp.lineSequence().map { it.trim() }.toList()
+        val start = lines.indexOfFirst { it.startsWith("m=$media ") }
+        if (start == -1) return null
+        val end = lines.drop(start + 1).indexOfFirst { it.startsWith("m=") }
+        return if (end == -1) {
+            lines.drop(start)
+        } else {
+            lines.subList(start, start + 1 + end)
+        }
+    }
+
+    private val sdpDirectionLines = setOf("a=sendrecv", "a=sendonly", "a=recvonly", "a=inactive")
 
 
     override suspend fun uploadMedia(bytes: ByteArray, mimeType: String, filename: String): Result<String> {
@@ -1318,6 +1393,22 @@ class MatrixOrbitRepository(
                             println("DEBUG: [Sync] Native Call Invite received for ${content.callId}")
                             _callEvents.emit(CallEvent.Invite(roomId, content.callId, content.offer.sdp, sender, content.partyId))
                         }
+                        is CallEventContent.Negotiate -> {
+                            println("DEBUG: [Sync] Native Call Negotiate received for ${content.callId}")
+                            _callEvents.emit(
+                                CallEvent.Negotiate(
+                                    roomId = roomId,
+                                    callId = content.callId,
+                                    sdp = content.description.sdp,
+                                    type = when (content.description.type) {
+                                        CallEventContent.Negotiate.DescriptionType.OFFER -> "offer"
+                                        CallEventContent.Negotiate.DescriptionType.ANSWER -> "answer"
+                                    },
+                                    senderId = sender,
+                                    partyId = content.partyId
+                                )
+                            )
+                        }
                         is UnknownEventContent -> {
                             val typeStr = content.eventType
                             val realContent = unwrapUnknownEventContent(content)
@@ -1335,6 +1426,14 @@ class MatrixOrbitRepository(
                                         "m.call.answer" -> {
                                             val sdp = realContent["answer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: ""
                                             _callEvents.emit(CallEvent.Answer(roomId, callId, sdp, sender, partyId))
+                                        }
+                                        "m.call.negotiate" -> {
+                                            val description = realContent["description"]?.jsonObject
+                                            val sdp = description?.get("sdp")?.jsonPrimitive?.content ?: ""
+                                            val descriptionType = description?.get("type")?.jsonPrimitive?.content ?: ""
+                                            if (sdp.isNotBlank() && descriptionType in setOf("offer", "answer")) {
+                                                _callEvents.emit(CallEvent.Negotiate(roomId, callId, sdp, descriptionType, sender, partyId))
+                                            }
                                         }
                                         "m.call.candidates", "m.call.candidate" -> {
                                             val candidates = realContent["candidates"]?.jsonArray 

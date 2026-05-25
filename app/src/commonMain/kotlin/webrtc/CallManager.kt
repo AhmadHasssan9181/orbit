@@ -41,6 +41,7 @@ class CallManager(
     var refreshIceServers: (suspend () -> List<TurnServer>)? = null
     var sendInvite: (suspend (roomId: String, callId: String, sdp: String) -> Unit)? = null
     var sendAnswer: (suspend (roomId: String, callId: String, sdp: String) -> Unit)? = null
+    var sendNegotiate: (suspend (roomId: String, callId: String, type: String, sdp: String) -> Unit)? = null
     var sendCandidate: (suspend (roomId: String, callId: String, candidate: IceCandidateModel) -> Unit)? = null
     var sendHangup: (suspend (roomId: String, callId: String) -> Unit)? = null
 
@@ -106,21 +107,7 @@ class CallManager(
 
     fun handleCallInvite(roomId: String, incomingCallId: String, sdp: String) {
         if (_callState.value != CallState.IDLE && callId == incomingCallId) {
-            // This is a re-invite (e.g. upgrading to video or starting screen share)
-            println("DEBUG: [WebRTC] Handling re-invite for $incomingCallId")
-            scope.launch {
-                webRtcClient.setRemoteDescription(SessionDescriptionModel("offer", sdp))
-                webRtcClient.createAnswer(
-                    onSuccess = { sessionDescription ->
-                        scope.launch {
-                            sendAnswer?.invoke(roomId, incomingCallId, sessionDescription.sdp)
-                        }
-                    },
-                    onError = {
-                        println("ERROR: [WebRTC] Failed to create answer for re-invite: $it")
-                    }
-                )
-            }
+            println("DEBUG: [WebRTC] Ignoring duplicate invite for active call $incomingCallId")
             return
         }
         
@@ -194,6 +181,32 @@ class CallManager(
         _callState.value = CallState.CONNECTED
     }
 
+    fun handleCallNegotiate(roomId: String, incomingCallId: String, type: String, sdp: String) {
+        if (callId != incomingCallId || _callState.value == CallState.IDLE) return
+
+        when (type) {
+            "offer" -> {
+                scope.launch {
+                    webRtcClient.setRemoteDescription(SessionDescriptionModel("offer", sdp))
+                    webRtcClient.createAnswer(
+                        onSuccess = { sessionDescription ->
+                            scope.launch {
+                                sendNegotiate?.invoke(roomId, incomingCallId, "answer", sessionDescription.sdp)
+                            }
+                        },
+                        onError = {
+                            println("ERROR: [WebRTC] Failed to answer negotiate offer: $it")
+                        }
+                    )
+                }
+            }
+            "answer" -> {
+                webRtcClient.setRemoteDescription(SessionDescriptionModel("answer", sdp))
+                _callState.value = CallState.CONNECTED
+            }
+        }
+    }
+
     fun handleIceCandidate(candidate: IceCandidateModel) {
         webRtcClient.addIceCandidate(candidate)
     }
@@ -243,7 +256,7 @@ class CallManager(
                         scope.launch {
                             val room = activeRoomId ?: return@launch
                             val cId = callId ?: return@launch
-                            sendInvite?.invoke(room, cId, sessionDescription.sdp)
+                            sendRenegotiationOffer(room, cId, sessionDescription.sdp)
                         }
                     },
                     onError = {
@@ -270,7 +283,7 @@ class CallManager(
                         scope.launch {
                             val room = activeRoomId ?: return@launch
                             val cId = callId ?: return@launch
-                            sendInvite?.invoke(room, cId, sessionDescription.sdp)
+                            sendRenegotiationOffer(room, cId, sessionDescription.sdp)
                         }
                     },
                     onError = {
@@ -291,7 +304,7 @@ class CallManager(
                         scope.launch {
                             val room = activeRoomId ?: return@launch
                             val cId = callId ?: return@launch
-                            sendInvite?.invoke(room, cId, sessionDescription.sdp)
+                            sendRenegotiationOffer(room, cId, sessionDescription.sdp)
                         }
                     },
                     onError = {
@@ -335,6 +348,15 @@ class CallManager(
 
         queuedCandidates.forEach { candidate ->
             sendCandidate?.invoke(roomId, cId, candidate)
+        }
+    }
+
+    private suspend fun sendRenegotiationOffer(roomId: String, cId: String, sdp: String) {
+        val negotiate = sendNegotiate
+        if (negotiate != null) {
+            negotiate(roomId, cId, "offer", sdp)
+        } else {
+            sendInvite?.invoke(roomId, cId, sdp)
         }
     }
 }
