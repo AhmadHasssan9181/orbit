@@ -51,7 +51,7 @@ class JvmWebRtcClient : WebRtcClient {
     override val isScreenSharing: SharedFlow<Boolean> = _isScreenSharing
 
     private var factory: PeerConnectionFactory? = null
-    private var audioDeviceModule: OrbitAudioDeviceModule? = null
+    private var audioDeviceModule: OrbitAudioDeviceModule = OrbitAudioDeviceModule()
     private var peerConnection: RTCPeerConnection? = null
 
     private var localAudioSource: dev.onvoid.webrtc.media.audio.AudioTrackSource? = null
@@ -208,30 +208,21 @@ class JvmWebRtcClient : WebRtcClient {
     }
 
     private fun createFactory(): PeerConnectionFactory {
-        return runCatching {
-            WebrtcNativeDepsLoader.load()
-            val audioModule = OrbitAudioDeviceModule()
-            
-            // JNI Injection hack removed because cross-ABI (vtable) mismatch causes 
-            // EXCEPTION_ACCESS_VIOLATION during PeerConnectionFactory native init.
-            
-            audioDeviceModule = audioModule
+        WebrtcNativeDepsLoader.load()
 
-            val captureDevice = runCatching { MediaDevices.getDefaultAudioCaptureDevice() }.getOrNull()
-            val renderDevice = runCatching { MediaDevices.getDefaultAudioRenderDevice() }.getOrNull()
+        val captureDevice = runCatching { MediaDevices.getDefaultAudioCaptureDevice() }.getOrNull()
+        val renderDevice = runCatching { MediaDevices.getDefaultAudioRenderDevice() }.getOrNull()
 
-            println(
-                "DEBUG: [WebRTC] Desktop audio devices capture=${captureDevice?.getName() ?: "default"} " +
-                    "render=${renderDevice?.getName() ?: "default"}"
-            )
+        println(
+            "DEBUG: [WebRTC] Desktop audio devices capture=${captureDevice?.getName() ?: "default"} " +
+                "render=${renderDevice?.getName() ?: "default"}"
+        )
 
-            PeerConnectionFactory(audioModule)
-        }.getOrElse { error ->
-            println("DEBUG: [WebRTC] Falling back to default desktop audio module: ${error.message}")
-            runCatching { audioDeviceModule?.dispose() }
-            audioDeviceModule = null
-            PeerConnectionFactory()
-        }
+        // Always use the default PeerConnectionFactory (no custom ADM).
+        // OrbitAudioDeviceModule is used only for WASAPI loopback control during screen share,
+        // it is NOT passed to PeerConnectionFactory because OrbitAudioJNI.dll is a separate
+        // WebRTC build that conflicts with webrtc-java-windows-x86_64.dll's static state.
+        return PeerConnectionFactory()
     }
 
     private fun attachRemoteTrack(track: MediaStreamTrack?) {
@@ -324,7 +315,7 @@ class JvmWebRtcClient : WebRtcClient {
                 _isScreenSharing.tryEmit(true)
 
                   if (includeAudio) {
-                      runCatching { audioDeviceModule?.setSystemAudioShareEnabled(true) }
+                      runCatching { audioDeviceModule.setSystemAudioShareEnabled(true) }
                   }
             }
             screenCapturer.dispose()
@@ -347,7 +338,7 @@ class JvmWebRtcClient : WebRtcClient {
             }
             
             // Stop sharing system audio
-            runCatching { audioDeviceModule?.setSystemAudioShareEnabled(false) }
+            runCatching { audioDeviceModule.setSystemAudioShareEnabled(false) }
             
             _isScreenSharing.tryEmit(false)
         } catch (e: Exception) {
@@ -453,7 +444,7 @@ class JvmWebRtcClient : WebRtcClient {
     override fun getRemoteVideoRenderer(): Any? = remoteRenderer
 
     override fun setStreamAudioEnabled(enabled: Boolean) {
-        OrbitAudioEngine.setStreamAudioEnabled(enabled)
+        audioDeviceModule.setSystemAudioShareEnabled(enabled)
     }
 }
 
