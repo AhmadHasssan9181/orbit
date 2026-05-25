@@ -1,4 +1,4 @@
-﻿.gradle/
+.gradle/
 .idea/
 build/
 **/build/
@@ -17,3 +17,5 @@ orbit_audio_jni/build/
 orbit_audio_jni/.vs/
 orbit_audio_jni/webrtc/
 *.dll
+webrtc-java-fork/
+!app/src/jvmMain/resources/webrtc-java-windows-x86_64.dll
