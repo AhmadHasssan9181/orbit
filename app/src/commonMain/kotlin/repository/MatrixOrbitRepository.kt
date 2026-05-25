@@ -323,9 +323,8 @@ class MatrixOrbitRepository(
         val servers = mutableListOf<OrbitServer>()
         val dms = allRooms.filter { it.isDirect }
 
-        // Manual space detection to avoid extension conflicts
         val spaces = allRooms.filter { room ->
-            room.name?.explicitName?.contains("space", ignoreCase = true) == true
+            room.createEventContent?.type == CreateEventContent.RoomType.Space
         }
         val flatRooms = allRooms.filter { !it.isDirect && !spaces.contains(it) }
 
