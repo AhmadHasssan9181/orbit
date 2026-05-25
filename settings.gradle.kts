@@ -18,3 +18,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Onichat"
 include(":app")
+include(":webrtc-java-lib")

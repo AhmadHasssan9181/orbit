@@ -209,6 +209,7 @@ class JvmWebRtcClient : WebRtcClient {
 
     private fun createFactory(): PeerConnectionFactory {
         return runCatching {
+            WebrtcNativeDepsLoader.load()
             val audioModule = OrbitAudioDeviceModule()
             
             // JNI Injection hack removed because cross-ABI (vtable) mismatch causes 

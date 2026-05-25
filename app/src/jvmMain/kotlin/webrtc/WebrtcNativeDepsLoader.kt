@@ -1,6 +1,6 @@
 package webrtc
 
-import com.sun.jna.platform.win32.Kernel32
+
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -36,12 +36,15 @@ object WebrtcNativeDepsLoader {
                     val file = File(tempDir, dll)
                     file.deleteOnExit()
                     Files.copy(stream, file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                    
+                    try {
+                        System.load(file.absolutePath)
+                        println("DEBUG: Loaded $dll successfully")
+                    } catch (e: UnsatisfiedLinkError) {
+                        println("DEBUG: Failed to load $dll initially: ${e.message}")
+                    }
                 }
             }
-
-            // Tell Windows to look for DLL dependencies in our temp directory!
-            Kernel32.INSTANCE.SetDllDirectory(tempDir.absolutePath)
-            println("DEBUG: Set DLL directory to ${tempDir.absolutePath}")
             
         } catch (e: Exception) {
             println("DEBUG: Failed to extract WebRTC dependencies: ${e.message}")

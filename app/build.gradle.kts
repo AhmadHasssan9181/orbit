@@ -79,15 +79,15 @@ kotlin {
             dependencies {
                 implementation(compose.desktop.currentOs)
                 implementation("io.ktor:ktor-client-okhttp:3.0.1")
-                implementation("dev.onvoid.webrtc:webrtc-java:0.14.0")
+                // using project(":webrtc-java-lib")
 
                 // JNA for WASAPI Audio Loopback
+                implementation(project(":webrtc-java-lib"))
                 implementation("net.java.dev.jna:jna:5.14.0")
                 implementation("net.java.dev.jna:jna-platform:5.14.0")
-
-                // 2. Native binaries via Classifiers (Notice the extra colon format)
-                implementation("dev.onvoid.webrtc:webrtc-java:0.14.0:windows-x86_64")
-                implementation("dev.onvoid.webrtc:webrtc-java:0.14.0:linux-x86_64")
+                // Keep native dependencies if needed, or remove them if the DLL is loaded from resources
+                // implementation("dev.onvoid.webrtc:webrtc-java:0.14.0:windows-x86_64")
+                // implementation("dev.onvoid.webrtc:webrtc-java:0.14.0:linux-x86_64")
             }
         }
     }
