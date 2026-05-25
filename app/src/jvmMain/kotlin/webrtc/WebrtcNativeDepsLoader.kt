@@ -41,7 +41,10 @@ object WebrtcNativeDepsLoader {
                         System.load(file.absolutePath)
                         println("DEBUG: Loaded $dll successfully")
                     } catch (e: UnsatisfiedLinkError) {
-                        println("DEBUG: Failed to load $dll initially: ${e.message}")
+                        System.err.println("DEBUG: Failed to load $dll: ${e.message}")
+                        if (dll == "legacy.dll" || dll.contains("msvc") || dll.contains("vcruntime")) {
+                            System.err.println("DEBUG: [CRITICAL] This failure often means the Visual C++ Redistributable is missing. Please install it: https://aka.ms/vs/17/release/vc_redist.x64.exe")
+                        }
                     }
                 }
             }
