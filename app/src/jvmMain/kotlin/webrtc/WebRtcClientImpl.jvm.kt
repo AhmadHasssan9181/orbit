@@ -211,8 +211,8 @@ class JvmWebRtcClient : WebRtcClient {
         return runCatching {
             val audioModule = AudioDeviceModule()
             
-            // Inject our custom C++ WASAPI loopback engine
-            OrbitAudioEngine.injectInto(audioModule)
+            // JNI Injection hack removed because cross-ABI (vtable) mismatch causes 
+            // EXCEPTION_ACCESS_VIOLATION during PeerConnectionFactory native init.
             
             audioDeviceModule = audioModule
 
