@@ -1,31 +1,22 @@
 package com.noobdev.orbit
 
-<<<<<<< HEAD
+import android.Manifest
 import android.app.Activity
 import android.content.Context
-=======
-import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.projection.MediaProjectionManager
 import android.os.Build
->>>>>>> 56b3d3662f481fe90306b4ac4d9afd5b3094a503
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.WindowCompat
-<<<<<<< HEAD
-import android.content.Intent
-import android.media.projection.MediaProjectionManager
-import android.os.Build
-=======
->>>>>>> 56b3d3662f481fe90306b4ac4d9afd5b3094a503
 import ui.screen.OrbitApp
 import util.SsoHandler
 
 class MainActivity : ComponentActivity() {
-<<<<<<< HEAD
     private var onScreenSharePermissionGranted: ((Intent) -> Unit)? = null
 
     private val screenCaptureLauncher = registerForActivityResult(
@@ -36,12 +27,11 @@ class MainActivity : ComponentActivity() {
             onScreenSharePermissionGranted?.invoke(result.data!!)
         }
     }
-=======
+
     private val callPermissions = arrayOf(
         Manifest.permission.RECORD_AUDIO,
         Manifest.permission.CAMERA
     )
->>>>>>> 56b3d3662f481fe90306b4ac4d9afd5b3094a503
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

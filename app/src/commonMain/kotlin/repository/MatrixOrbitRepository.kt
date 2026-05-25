@@ -753,10 +753,13 @@ class MatrixOrbitRepository(
         val normalizedStreamIds = streamIds.ifEmpty { setOf("mediaStream") }
         val hasAudio = sdpHasActiveMedia(sdp, "audio")
         val hasVideo = sdpHasActiveMedia(sdp, "video")
+        
+        // Detect if this is a screen share based on track IDs used in WebRtcClient implementations
+        val isScreenShare = sdp.contains("SCREEN_TRACK_ID") || sdp.contains("screenTrack")
 
         return normalizedStreamIds.associateWith {
             StreamMetadata(
-                purpose = Purpose.USERMEDIA,
+                purpose = if (isScreenShare) Purpose.SCREENSHARE else Purpose.USERMEDIA,
                 audioMuted = !hasAudio,
                 videoMuted = !hasVideo
             )
@@ -1331,12 +1334,12 @@ class MatrixOrbitRepository(
                                             val sdp = realContent["answer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: ""
                                             _callEvents.emit(CallEvent.Answer(roomId, callId, sdp, sender, partyId))
                                         }
-<<<<<<< HEAD
                                         "m.call.candidates", "m.call.candidate" -> {
                                             val candidates = realContent["candidates"]?.jsonArray 
                                                 ?: realContent["candidate"]?.jsonObject?.let { buildJsonArray { add(it) } }
                                                 ?: JsonArray(emptyList())
-                                                
+                                            
+                                            println("DEBUG: [Sync] Fallback Call Candidates received for $callId (${candidates.size})")
                                             candidates.forEach { cand ->
                                                 val sdp = cand.jsonObject["candidate"]?.jsonPrimitive?.content 
                                                     ?: cand.jsonObject["sdp"]?.jsonPrimitive?.content 
@@ -1345,18 +1348,8 @@ class MatrixOrbitRepository(
                                                 val sdpMLineIndex = cand.jsonObject["sdpMLineIndex"]?.jsonPrimitive?.intOrNull ?: 0
                                                 
                                                 if (sdp.isNotBlank()) {
-                                                    _callEvents.emit(CallEvent.Candidate(roomId, callId, sdp, sdpMid, sdpMLineIndex, sender))
+                                                    _callEvents.emit(CallEvent.Candidate(roomId, callId, sdp, sdpMid, sdpMLineIndex, sender, partyId))
                                                 }
-=======
-                                        "m.call.candidates" -> {
-                                            val candidates = realContent["candidates"]?.jsonArray.orEmpty()
-                                            println("DEBUG: [Sync] Fallback Call Candidates received for $callId (${candidates.size})")
-                                            candidates.forEach { cand ->
-                                                val sdp = cand.jsonObject["candidate"]?.jsonPrimitive?.content ?: ""
-                                                val sdpMid = cand.jsonObject["sdpMid"]?.jsonPrimitive?.content ?: ""
-                                                val sdpMLineIndex = cand.jsonObject["sdpMLineIndex"]?.jsonPrimitive?.intOrNull ?: 0
-                                                _callEvents.emit(CallEvent.Candidate(roomId, callId, sdp, sdpMid, sdpMLineIndex, sender, partyId))
->>>>>>> 56b3d3662f481fe90306b4ac4d9afd5b3094a503
                                             }
                                         }
                                         "m.call.hangup" -> {

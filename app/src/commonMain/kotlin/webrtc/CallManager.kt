@@ -103,7 +103,26 @@ class CallManager(
     }
 
     fun handleCallInvite(roomId: String, incomingCallId: String, sdp: String) {
-        if (_callState.value != CallState.IDLE) return // Already in a call
+        if (_callState.value != CallState.IDLE && callId == incomingCallId) {
+            // This is a re-invite (e.g. upgrading to video or starting screen share)
+            println("DEBUG: [WebRTC] Handling re-invite for $incomingCallId")
+            scope.launch {
+                webRtcClient.setRemoteDescription(SessionDescriptionModel("offer", sdp))
+                webRtcClient.createAnswer(
+                    onSuccess = { sessionDescription ->
+                        scope.launch {
+                            sendAnswer?.invoke(roomId, incomingCallId, sessionDescription.sdp)
+                        }
+                    },
+                    onError = {
+                        println("ERROR: [WebRTC] Failed to create answer for re-invite: $it")
+                    }
+                )
+            }
+            return
+        }
+        
+        if (_callState.value != CallState.IDLE) return // Already in a different call
         
         this.activeRoomId = roomId
         this.callId = incomingCallId
@@ -193,14 +212,11 @@ class CallManager(
         activeRoomId = null
         callId = null
         isIncomingCall.value = false
-<<<<<<< HEAD
         _isScreenSharing.value = false
-=======
         isVideoCall.value = false
         isLocalVideoEnabled.value = false
         candidatesAllowedForCallId = null
         pendingLocalCandidates.clear()
->>>>>>> 56b3d3662f481fe90306b4ac4d9afd5b3094a503
     }
 
     fun toggleMute(isMuted: Boolean) {
@@ -208,23 +224,78 @@ class CallManager(
     }
 
     fun toggleVideo(isVideoEnabled: Boolean) {
+        val wasVideo = isVideoCall.value
         isVideoCall.value = isVideoCall.value || isVideoEnabled
         isLocalVideoEnabled.value = isVideoEnabled
-        webRtcClient.toggleVideo(isVideoEnabled)
+        
+        if (isVideoEnabled && !wasVideo && _callState.value == CallState.CONNECTED) {
+            // Transition from voice to video requires re-negotiation
+            scope.launch {
+                webRtcClient.startLocalMedia(true)
+                webRtcClient.createOffer(
+                    onSuccess = { sessionDescription ->
+                        scope.launch {
+                            val room = activeRoomId ?: return@launch
+                            val cId = callId ?: return@launch
+                            sendInvite?.invoke(room, cId, sessionDescription.sdp)
+                        }
+                    },
+                    onError = {
+                        println("ERROR: [WebRTC] Failed to create offer for video upgrade: $it")
+                    }
+                )
+            }
+        } else {
+            webRtcClient.toggleVideo(isVideoEnabled)
+        }
     }
 
     fun switchCamera() {
         webRtcClient.switchCamera()
     }
 
-<<<<<<< HEAD
     fun startScreenShare(data: Any? = null) {
         webRtcClient.startScreenShare(data)
+        // Screen sharing often changes resolution/streams, trigger re-negotiation
+        if (_callState.value == CallState.CONNECTED) {
+            scope.launch {
+                webRtcClient.createOffer(
+                    onSuccess = { sessionDescription ->
+                        scope.launch {
+                            val room = activeRoomId ?: return@launch
+                            val cId = callId ?: return@launch
+                            sendInvite?.invoke(room, cId, sessionDescription.sdp)
+                        }
+                    },
+                    onError = {
+                        println("ERROR: [WebRTC] Failed to create offer for screen share: $it")
+                    }
+                )
+            }
+        }
     }
 
     fun stopScreenShare() {
         webRtcClient.stopScreenShare()
-=======
+        // Trigger re-negotiation to go back to camera
+        if (_callState.value == CallState.CONNECTED) {
+            scope.launch {
+                webRtcClient.createOffer(
+                    onSuccess = { sessionDescription ->
+                        scope.launch {
+                            val room = activeRoomId ?: return@launch
+                            val cId = callId ?: return@launch
+                            sendInvite?.invoke(room, cId, sessionDescription.sdp)
+                        }
+                    },
+                    onError = {
+                        println("ERROR: [WebRTC] Failed to create offer after stopping screen share: $it")
+                    }
+                )
+            }
+        }
+    }
+
     private fun sdpHasVideo(sdp: String): Boolean {
         return sdp.split('\n').any { line ->
             line.startsWith("m=video") && !line.contains(" 0 ")
@@ -259,6 +330,5 @@ class CallManager(
         queuedCandidates.forEach { candidate ->
             sendCandidate?.invoke(roomId, cId, candidate)
         }
->>>>>>> 56b3d3662f481fe90306b4ac4d9afd5b3094a503
     }
 }
