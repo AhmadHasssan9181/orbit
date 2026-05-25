@@ -1,9 +1,6 @@
-import de.connect2x.trixnity.client.MatrixClient
-import de.connect2x.trixnity.core.model.RoomId
-import kotlinx.coroutines.flow.Flow
-import de.connect2x.trixnity.core.model.events.StateEvent
-import de.connect2x.trixnity.core.model.events.UnknownEventContent
+import de.connect2x.trixnity.client.room.RoomDisplayName
+import kotlin.reflect.full.memberProperties
 
-fun test(trixnity: MatrixClient, roomId: RoomId) {
-    val a: Flow<Map<String, StateEvent<UnknownEventContent>>> = trixnity.room.getAllState(roomId, UnknownEventContent::class)
+fun main() {
+    RoomDisplayName::class.memberProperties.forEach { println(it.name) }
 }

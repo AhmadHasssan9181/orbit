@@ -50,13 +50,13 @@ class DesktopVideoRenderer(
                 val uValue = uPlane.get((y / 2) * getStrideU() + (x / 2)).toInt() and 0xFF
                 val vValue = vPlane.get((y / 2) * getStrideV() + (x / 2)).toInt() and 0xFF
 
-                val c = yValue - 16
+                val c = yValue
                 val d = uValue - 128
                 val e = vValue - 128
 
-                val red = clamp((298 * c + 409 * e + 128) shr 8)
-                val green = clamp((298 * c - 100 * d - 208 * e + 128) shr 8)
-                val blue = clamp((298 * c + 516 * d + 128) shr 8)
+                val red = clamp(c + ((e * 359) shr 8))
+                val green = clamp(c - ((d * 88) shr 8) - ((e * 183) shr 8))
+                val blue = clamp(c + ((d * 454) shr 8))
 
                 image.setRGB(x, y, (red shl 16) or (green shl 8) or blue)
             }

@@ -46,8 +46,10 @@ fun CallScreen(
         return
     }
 
-    var isMuted by remember { mutableStateOf(false) }
+    val isAudioEnabled by callManager.isLocalAudioEnabled.collectAsState()
+    val isMuted = !isAudioEnabled
     var showControls by remember { mutableStateOf(true) }
+    var includeStreamAudio by remember { mutableStateOf(false) }
 
     // Auto-hide controls after 3 seconds of inactivity
     LaunchedEffect(showControls) {
@@ -334,11 +336,28 @@ fun CallScreen(
                 visible = showControls,
                 enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
                 exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
-                modifier = Modifier.align(Alignment.BottomCenter)
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 48.dp)
             ) {
-                Box(
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    if (callState == CallState.CONNECTED) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .padding(bottom = 16.dp)
+                                .background(Color(0xFF1E293B).copy(alpha = 0.85f), RoundedCornerShape(16.dp))
+                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                        ) {
+                            Text("Include Stream Audio", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                            Spacer(Modifier.width(8.dp))
+                            Switch(
+                                checked = includeStreamAudio,
+                                onCheckedChange = { includeStreamAudio = it },
+                                colors = SwitchDefaults.colors(checkedThumbColor = tokens.Accent, checkedTrackColor = tokens.Accent.copy(alpha=0.5f))
+                            )
+                        }
+                    }
+                    Box(
                     modifier = Modifier
-                        .padding(bottom = 48.dp)
                         .shadow(24.dp, RoundedCornerShape(32.dp))
                         .clip(RoundedCornerShape(32.dp))
                         .background(Color(0xFF1E293B).copy(alpha = 0.85f)) // Translucent slate
@@ -358,8 +377,7 @@ fun CallScreen(
                             inactiveColor = Color.White.copy(alpha = 0.1f),
                             inactiveIconColor = Color.White,
                             onClick = {
-                                isMuted = !isMuted
-                                callManager.toggleMute(isMuted)
+                                callManager.toggleMute(!isMuted)
                             }
                         )
 
@@ -388,7 +406,7 @@ fun CallScreen(
                                 if (isScreenSharing) {
                                     callManager.stopScreenShare()
                                 } else {
-                                    onStartScreenShare()
+                                    callManager.startScreenShare(includeStreamAudio)
                                 }
                             }
                         )
@@ -405,6 +423,7 @@ fun CallScreen(
                             iconSize = 32.dp,
                             onClick = { callManager.endCall() }
                         )
+                    }
                     }
                 }
             }
