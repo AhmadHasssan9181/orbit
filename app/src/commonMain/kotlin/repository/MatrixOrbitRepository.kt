@@ -379,6 +379,7 @@ class MatrixOrbitRepository(
                 name = name,
                 creationContent = CreateEventContent(type = CreateEventContent.RoomType.Space)
             ).getOrThrow()
+            _roomListFlow.emit(getSpaces())
             Result.success(response.full)
         } catch (e: Exception) {
             Result.failure(e)
@@ -479,6 +480,7 @@ class MatrixOrbitRepository(
                 )
             }
 
+            _roomListFlow.emit(getSpaces())
             Result.success(response.full)
         } catch (e: Exception) {
             Result.failure(e)
