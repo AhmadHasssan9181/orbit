@@ -24,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import ui.icons.OrbitIcons
 import ui.theme.rememberCosmicTokens
 import webrtc.CallManager
 import webrtc.CallState
@@ -103,7 +104,7 @@ fun CallScreen(
                     verticalArrangement = Arrangement.Center,
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Icon(Icons.Default.Call, contentDescription = null, tint = tokens.Accent, modifier = Modifier.size(32.dp))
+                    Icon(OrbitIcons.Call, contentDescription = null, tint = tokens.Accent, modifier = Modifier.size(32.dp))
                     Spacer(Modifier.height(8.dp))
                     Text(
                         text = if (callState == CallState.RINGING) "Ringing..." else "In Call",
@@ -305,7 +306,7 @@ fun CallScreen(
                                     .shadow(12.dp, CircleShape)
                                     .background(Color(0xFFEF4444), CircleShape)
                             ) {
-                                Icon(Icons.Default.CallEnd, contentDescription = "Decline", tint = Color.White, modifier = Modifier.size(32.dp))
+                                Icon(OrbitIcons.CallEnd, contentDescription = "Decline", tint = Color.White, modifier = Modifier.size(32.dp))
                             }
                             Spacer(Modifier.height(12.dp))
                             Text("Decline", color = Color.White.copy(alpha = 0.8f), fontWeight = FontWeight.Medium)
@@ -320,7 +321,7 @@ fun CallScreen(
                                     .shadow(12.dp, CircleShape)
                                     .background(Color(0xFF10B981), CircleShape)
                             ) {
-                                Icon(Icons.Default.Call, contentDescription = "Accept", tint = Color.White, modifier = Modifier.size(32.dp))
+                                Icon(OrbitIcons.Call, contentDescription = "Accept", tint = Color.White, modifier = Modifier.size(32.dp))
                             }
                             Spacer(Modifier.height(12.dp))
                             Text("Accept", color = Color.White.copy(alpha = 0.8f), fontWeight = FontWeight.Medium)
@@ -373,7 +374,7 @@ fun CallScreen(
                     ) {
                         // Mute Button
                         ControlButton(
-                            icon = if (isMuted) Icons.Default.MicOff else Icons.Default.Mic,
+                            icon = if (isMuted) OrbitIcons.MicOff else OrbitIcons.Mic,
                             isActive = isMuted,
                             activeColor = Color.White,
                             activeIconColor = Color.Black,
@@ -386,7 +387,7 @@ fun CallScreen(
 
                         // Video Button
                         ControlButton(
-                            icon = if (isVideoEnabled) Icons.Default.Videocam else Icons.Default.VideocamOff,
+                            icon = if (isVideoEnabled) OrbitIcons.Video else OrbitIcons.VideoOff,
                             isActive = !isVideoEnabled,
                             activeColor = Color.White,
                             activeIconColor = Color.Black,
@@ -399,7 +400,7 @@ fun CallScreen(
 
                         // Screen Share Button
                         ControlButton(
-                            icon = Icons.Default.ScreenShare,
+                            icon = OrbitIcons.ScreenShare,
                             isActive = isScreenSharing,
                             activeColor = tokens.Accent,
                             activeIconColor = Color.White,
@@ -416,7 +417,7 @@ fun CallScreen(
 
                         // Hangup Button
                         ControlButton(
-                            icon = Icons.Default.CallEnd,
+                            icon = OrbitIcons.CallEnd,
                             isActive = true,
                             activeColor = Color(0xFFEF4444),
                             activeIconColor = Color.White,

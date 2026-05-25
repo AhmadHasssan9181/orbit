@@ -65,6 +65,7 @@ import repository.AuthStatus
 import repository.CredentialManager
 import repository.MatrixOrbitRepository
 import repository.OrbitRepository
+import ui.icons.OrbitIcons
 import ui.layout.LocalWindowSizeClass
 import ui.layout.WindowSizeClass
 import ui.layout.windowSizeClassFor
@@ -759,7 +760,7 @@ private fun CompactServerList(
                 fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
             ))
             IconButton(onClick = onAddServer) {
-                Icon(Icons.Default.Add, contentDescription = "Add Server",
+                Icon(OrbitIcons.Add, contentDescription = "Add Server",
                     tint = tokens.Accent, modifier = Modifier.size(20.dp))
             }
         }
@@ -927,7 +928,7 @@ private fun CompactSearchPane(channels: List<OrbitChannel>, onChannelClick: (Str
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
-                        imageVector = if (ch.type == ChannelType.VOICE) Icons.Default.VolumeUp else Icons.Default.Tag,
+                        imageVector = if (ch.type == ChannelType.VOICE) OrbitIcons.VoiceChannel else OrbitIcons.TextChannel,
                         contentDescription = null,
                         tint = tokens.Text_Muted,
                         modifier = Modifier.size(18.dp)
@@ -1014,7 +1015,7 @@ private fun CompactEmptyDMs() {
     val tokens = rememberCosmicTokens()
     Box(modifier = Modifier.fillMaxSize().background(tokens.Bg), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(Icons.Default.ChatBubbleOutline, contentDescription = null,
+            Icon(OrbitIcons.TextChannel, contentDescription = null,
                 tint = tokens.Text_Muted.copy(alpha = 0.4f), modifier = Modifier.size(48.dp))
             Spacer(Modifier.height(12.dp))
             Text("No direct messages yet", color = tokens.Text_Muted)
@@ -1027,7 +1028,7 @@ private fun CompactEmptyServers(onAdd: () -> Unit) {
     val tokens = rememberCosmicTokens()
     Box(modifier = Modifier.fillMaxSize().background(tokens.Bg), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(Icons.Default.GridView, contentDescription = null,
+            Icon(OrbitIcons.Members, contentDescription = null,
                 tint = tokens.Text_Muted.copy(alpha = 0.4f), modifier = Modifier.size(48.dp))
             Spacer(Modifier.height(12.dp))
             Text("No servers joined yet", color = tokens.Text_Muted)
