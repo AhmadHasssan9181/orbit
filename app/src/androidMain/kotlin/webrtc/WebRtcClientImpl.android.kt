@@ -29,14 +29,11 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
     private var localStream: MediaStream? = null
     private var localVideoSource: VideoSource? = null
     private var videoCapturer: CameraVideoCapturer? = null
-<<<<<<< HEAD
+    private var surfaceTextureHelper: SurfaceTextureHelper? = null
+    private var isVideoCaptureRunning = false
     
     private var screenCapturer: ScreenCapturerAndroid? = null
     private var videoSender: RtpSender? = null
-=======
-    private var surfaceTextureHelper: SurfaceTextureHelper? = null
-    private var isVideoCaptureRunning = false
->>>>>>> 56b3d3662f481fe90306b4ac4d9afd5b3094a503
 
     private var localRenderer: SurfaceViewRenderer? = null
     private var remoteRenderer: SurfaceViewRenderer? = null
@@ -109,17 +106,10 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
             override fun onDataChannel(channel: DataChannel?) {}
             override fun onRenegotiationNeeded() {}
             override fun onAddTrack(receiver: RtpReceiver?, mediaStreams: Array<out MediaStream>?) {
-<<<<<<< HEAD
-                _onStreamAdded.tryEmit(true)
-                val track = receiver?.track()
-                if (track is VideoTrack) {
-                    track.addSink(remoteRenderer)
-=======
                 val track = receiver?.track()
                 if (track is VideoTrack) {
                     _onStreamAdded.tryEmit(true)
                     remoteRenderer?.let { track.addSink(it) }
->>>>>>> 56b3d3662f481fe90306b4ac4d9afd5b3094a503
                 }
             }
         })
@@ -128,16 +118,20 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
     override fun startLocalMedia(isVideoEnabled: Boolean) {
         val factory = peerConnectionFactory ?: return
         
-        localStream = factory.createLocalMediaStream("ARDMS")
+        if (localStream == null) {
+            localStream = factory.createLocalMediaStream("ARDMS")
+        }
         
         // Audio
-        val audioSource = factory.createAudioSource(MediaConstraints())
-        localAudioTrack = factory.createAudioTrack("ARDMSA0", audioSource)
-        localStream?.addTrack(localAudioTrack)
-        peerConnection?.addTrack(localAudioTrack, listOf("ARDMS"))
+        if (localAudioTrack == null) {
+            val audioSource = factory.createAudioSource(MediaConstraints())
+            localAudioTrack = factory.createAudioTrack("ARDMSA0", audioSource)
+            localStream?.addTrack(localAudioTrack)
+            peerConnection?.addTrack(localAudioTrack, listOf("ARDMS"))
+        }
 
         // Video
-        if (isVideoEnabled) {
+        if (isVideoEnabled && cameraVideoTrack == null) {
             val videoSource = factory.createVideoSource(false)
             localVideoSource = videoSource
             val capturer = createVideoCapturer()
@@ -187,20 +181,18 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
         stopVideoCapture()
         videoCapturer?.dispose()
         videoCapturer = null
-<<<<<<< HEAD
-        cameraVideoTrack?.dispose()
-        cameraVideoTrack = null
-=======
         surfaceTextureHelper?.dispose()
         surfaceTextureHelper = null
         localRenderer?.let { renderer -> localVideoTrack?.removeSink(renderer) }
+        cameraVideoTrack?.dispose()
+        cameraVideoTrack = null
         localVideoTrack?.dispose()
         localVideoSource?.dispose()
         localAudioTrack?.dispose()
->>>>>>> 56b3d3662f481fe90306b4ac4d9afd5b3094a503
         localVideoTrack = null
         localVideoSource = null
         localAudioTrack = null
+        localStream = null
     }
 
     override fun startScreenShare(data: Any?) {
@@ -208,7 +200,7 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
         val factory = peerConnectionFactory ?: return
         
         // Stop camera if running
-        videoCapturer?.stopCapture()
+        stopVideoCapture()
         
         val videoSource = factory.createVideoSource(true)
         screenCapturer = ScreenCapturerAndroid(mediaProjectionIntent, object : android.media.projection.MediaProjection.Callback() {
@@ -243,10 +235,16 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
         context.stopService(Intent(context, com.noobdev.orbit.ScreenShareService::class.java))
         
         // Resume camera
-        videoCapturer?.startCapture(1280, 720, 30)
-        if (cameraVideoTrack != null && videoSender != null) {
-            videoSender?.setTrack(cameraVideoTrack, true)
-            localVideoTrack = cameraVideoTrack
+        if (cameraVideoTrack != null) {
+            try {
+                videoCapturer?.startCapture(1280, 720, 30)
+                isVideoCaptureRunning = true
+            } catch (e: Exception) {}
+            
+            if (videoSender != null) {
+                videoSender?.setTrack(cameraVideoTrack, true)
+                localVideoTrack = cameraVideoTrack
+            }
         }
         
         _isScreenSharing.tryEmit(false)
@@ -257,6 +255,10 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
     }
 
     override fun toggleVideo(isVideoEnabled: Boolean) {
+        if (localVideoTrack == null && isVideoEnabled) {
+            startLocalMedia(true)
+            return
+        }
         localVideoTrack?.setEnabled(isVideoEnabled)
         if (!isVideoEnabled) {
             stopVideoCapture()

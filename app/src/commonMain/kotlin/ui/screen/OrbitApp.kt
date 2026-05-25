@@ -508,7 +508,6 @@ private fun MainAppContent(
 
             CallScreen(
                 callManager = callManager,
-<<<<<<< HEAD
                 onStartScreenShare = {
                     if (onStartScreenShare != null) {
                         onStartScreenShare { data ->
@@ -517,10 +516,8 @@ private fun MainAppContent(
                     } else {
                         callManager.startScreenShare()
                     }
-                }
-=======
+                },
                 modifier = Modifier.fillMaxSize()
->>>>>>> 56b3d3662f481fe90306b4ac4d9afd5b3094a503
             )
         }
     }

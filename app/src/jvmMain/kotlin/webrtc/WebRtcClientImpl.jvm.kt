@@ -15,25 +15,21 @@ import dev.onvoid.webrtc.RTCPeerConnection
 import dev.onvoid.webrtc.RTCPeerConnectionState
 import dev.onvoid.webrtc.RTCRtpReceiver
 import dev.onvoid.webrtc.RTCRtpSender
-<<<<<<< HEAD
-=======
 import dev.onvoid.webrtc.RTCRtpTransceiver
->>>>>>> 56b3d3662f481fe90306b4ac4d9afd5b3094a503
 import dev.onvoid.webrtc.RTCSdpType
 import dev.onvoid.webrtc.RTCSessionDescription
 import dev.onvoid.webrtc.RTCSignalingState
 import dev.onvoid.webrtc.SetSessionDescriptionObserver
 import dev.onvoid.webrtc.media.MediaStream
-<<<<<<< HEAD
-import dev.onvoid.webrtc.media.video.desktop.ScreenCapturer
-=======
 import dev.onvoid.webrtc.media.MediaDevices
 import dev.onvoid.webrtc.media.audio.AudioTrack
+import dev.onvoid.webrtc.media.audio.AudioOptions
 import dev.onvoid.webrtc.media.video.VideoCaptureCapability
 import dev.onvoid.webrtc.media.video.VideoDeviceSource
 import dev.onvoid.webrtc.media.video.VideoTrack
 import dev.onvoid.webrtc.media.video.VideoTrackSink
->>>>>>> 56b3d3662f481fe90306b4ac4d9afd5b3094a503
+import dev.onvoid.webrtc.media.video.desktop.ScreenCapturer
+import dev.onvoid.webrtc.media.video.VideoDesktopSource
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import repository.TurnServer
@@ -46,7 +42,6 @@ class JvmWebRtcClient : WebRtcClient {
     private val _onRemoteDescription = MutableSharedFlow<SessionDescriptionModel>(extraBufferCapacity = 10)
     override val onRemoteDescription: SharedFlow<SessionDescriptionModel> = _onRemoteDescription
 
-
     private val _onStreamAdded = MutableSharedFlow<Boolean>(extraBufferCapacity = 10)
     override val onStreamAdded: SharedFlow<Boolean> = _onStreamAdded
 
@@ -55,21 +50,21 @@ class JvmWebRtcClient : WebRtcClient {
 
     private var factory: PeerConnectionFactory? = null
     private var peerConnection: RTCPeerConnection? = null
+    
     private var localAudioTrack: AudioTrack? = null
     private var localAudioSender: RTCRtpSender? = null
+    
+    private var cameraVideoTrack: VideoTrack? = null
     private var localVideoTrack: VideoTrack? = null
     private var localVideoSender: RTCRtpSender? = null
     private var localVideoSource: VideoDeviceSource? = null
     private var isVideoCaptureRunning = false
 
-    private var localVideoTrack: dev.onvoid.webrtc.media.video.VideoTrack? = null
-    private var localAudioTrack: dev.onvoid.webrtc.media.audio.AudioTrack? = null
-    private var remoteVideoTrack: dev.onvoid.webrtc.media.video.VideoTrack? = null
-    
-    private var videoSource: dev.onvoid.webrtc.media.video.VideoDeviceSource? = null
-    private var screenSource: dev.onvoid.webrtc.media.video.VideoDesktopSource? = null
-    
-    private var videoSender: RTCRtpSender? = null
+    private var remoteVideoTrack: VideoTrack? = null
+    private var screenSource: VideoDesktopSource? = null
+
+    private var localRenderer: DesktopVideoRenderer? = null
+    private var remoteRenderer: DesktopVideoRenderer? = null
 
     override fun initialize(iceServers: List<TurnServer>) {
         try {
@@ -99,12 +94,9 @@ class JvmWebRtcClient : WebRtcClient {
             } else {
                 listOf(RTCIceServer().apply { urls = listOf("stun:stun.l.google.com:19302") })
             })
-            val configuredIceUrls = rtcConfig.iceServers.flatMap { it.urls }
-            println("DEBUG: [WebRTC] ICE servers configured: ${configuredIceUrls.size} urls: ${configuredIceUrls.joinToString { it.redactedIceUrl() }}")
 
             peerConnection = factory?.createPeerConnection(rtcConfig, object : PeerConnectionObserver {
                 override fun onIceCandidate(candidate: RTCIceCandidate) {
-                    println("DEBUG: [WebRTC] Local ICE candidate: ${candidate.sdp.iceCandidateType()} mid=${candidate.sdpMid}")
                     _onIceCandidate.tryEmit(
                         IceCandidateModel(candidate.sdp, candidate.sdpMid, candidate.sdpMLineIndex)
                     )
@@ -112,46 +104,26 @@ class JvmWebRtcClient : WebRtcClient {
 
                 override fun onAddStream(stream: MediaStream) {
                     _onStreamAdded.tryEmit(true)
-<<<<<<< HEAD
-                    val tracks = stream.videoTracks
-                    if (tracks.isNotEmpty()) {
-                        remoteVideoTrack = tracks[0]
-=======
                     val sink = remoteRenderer as? VideoTrackSink
                     if (sink != null) {
                         stream.videoTracks.firstOrNull()?.addSink(sink)
->>>>>>> 56b3d3662f481fe90306b4ac4d9afd5b3094a503
                     }
                 }
 
                 override fun onSignalingChange(state: RTCSignalingState) {}
-                override fun onConnectionChange(state: RTCPeerConnectionState) {
-                    println("DEBUG: [WebRTC] Peer connection state: $state")
-                }
-                override fun onIceConnectionChange(state: RTCIceConnectionState) {
-                    println("DEBUG: [WebRTC] ICE connection state: $state")
-                }
+                override fun onConnectionChange(state: RTCPeerConnectionState) {}
+                override fun onIceConnectionChange(state: RTCIceConnectionState) {}
                 override fun onIceConnectionReceivingChange(receiving: Boolean) {}
-                override fun onIceGatheringChange(state: RTCIceGatheringState) {
-                    println("DEBUG: [WebRTC] ICE gathering state: $state")
-                }
+                override fun onIceGatheringChange(state: RTCIceGatheringState) {}
                 override fun onIceCandidatesRemoved(candidates: Array<out RTCIceCandidate>) {}
                 override fun onRemoveStream(stream: MediaStream) {}
                 override fun onDataChannel(dataChannel: RTCDataChannel) {}
                 override fun onRenegotiationNeeded() {}
                 override fun onAddTrack(receiver: RTCRtpReceiver, mediaStreams: Array<out MediaStream>) {
-<<<<<<< HEAD
-                    _onStreamAdded.tryEmit(true)
-                    val track = receiver.track
-                    if (track is dev.onvoid.webrtc.media.video.VideoTrack) {
-                        remoteVideoTrack = track
-                    }
-=======
                     attachRemoteVideoTrack(receiver.track)
                 }
                 override fun onTrack(transceiver: RTCRtpTransceiver) {
                     attachRemoteVideoTrack(transceiver.receiver.track)
->>>>>>> 56b3d3662f481fe90306b4ac4d9afd5b3094a503
                 }
             })
         } catch (e: Exception) {
@@ -165,23 +137,8 @@ class JvmWebRtcClient : WebRtcClient {
             val pConn = peerConnection ?: return
             val f = factory ?: return
 
-<<<<<<< HEAD
-            val audioSource = f.createAudioSource(dev.onvoid.webrtc.media.audio.AudioOptions())
-            localAudioTrack = f.createAudioTrack("audioTrack", audioSource)
-            pConn.addTrack(localAudioTrack, listOf("mediaStream"))
-
-            if (isVideoEnabled) {
-                val devices = dev.onvoid.webrtc.media.MediaDevices.getVideoCaptureDevices()
-                if (devices.isNotEmpty()) {
-                    videoSource = dev.onvoid.webrtc.media.video.VideoDeviceSource()
-                    videoSource?.setVideoCaptureDevice(devices[0])
-                    videoSource?.start()
-                    localVideoTrack = f.createVideoTrack("videoTrack", videoSource)
-                    videoSender = pConn.addTrack(localVideoTrack, listOf("mediaStream"))
-                }
-=======
             if (localAudioTrack == null) {
-                val audioSource = f.createAudioSource(dev.onvoid.webrtc.media.audio.AudioOptions())
+                val audioSource = f.createAudioSource(AudioOptions())
                 val audioTrack = f.createAudioTrack("audioTrack", audioSource)
                 localAudioTrack = audioTrack
                 localAudioSender = pConn.addTrack(audioTrack, listOf("mediaStream"))
@@ -189,68 +146,23 @@ class JvmWebRtcClient : WebRtcClient {
 
             if (isVideoEnabled) {
                 startVideoCapture()
->>>>>>> 56b3d3662f481fe90306b4ac4d9afd5b3094a503
             }
         } catch (e: Exception) {
             e.printStackTrace()
         }
     }
 
-<<<<<<< HEAD
-    override fun stopLocalMedia() {
-        videoSource?.stop()
-        videoSource = null
-        localVideoTrack = null
-        localAudioTrack = null
-    }
-
-    override fun startScreenShare(data: Any?) {
-        try {
-            val pConn = peerConnection ?: return
-            val f = factory ?: return
-
-            // Stop camera if running
-            videoSource?.stop()
-            
-            val screenCapturer = ScreenCapturer()
-            val sources = screenCapturer.desktopSources
-            if (sources.isNotEmpty()) {
-                screenSource = dev.onvoid.webrtc.media.video.VideoDesktopSource()
-                // Assuming sources[0] is the primary screen. Use id and isWindow=false.
-                screenSource?.setSourceId(sources[0].id, false)
-                screenSource?.start()
-                
-                val screenTrack = f.createVideoTrack("screenTrack", screenSource)
-                
-                if (videoSender != null) {
-                    videoSender?.replaceTrack(screenTrack)
-                } else {
-                    videoSender = pConn.addTrack(screenTrack, listOf("mediaStream"))
-                }
-                
-                localVideoTrack = screenTrack
-                _isScreenSharing.tryEmit(true)
-            }
-            screenCapturer.dispose()
-        } catch (e: Exception) {
-            e.printStackTrace()
-=======
     private fun startVideoCapture() {
         val pConn = peerConnection ?: return
         val f = factory ?: return
 
-        if (localVideoSource == null || localVideoTrack == null) {
+        if (localVideoSource == null || cameraVideoTrack == null) {
             val devices = MediaDevices.getVideoCaptureDevices()
-            if (devices.isEmpty()) {
-                println("DEBUG: [WebRTC] No desktop video capture devices found")
-                return
-            }
+            if (devices.isEmpty()) return
 
             val device = devices.first()
             val capabilities = MediaDevices.getVideoCaptureCapabilities(device)
             val capability = chooseVideoCapability(capabilities)
-            println("DEBUG: [WebRTC] Using desktop camera: ${device.name}")
-            println("DEBUG: [WebRTC] Using desktop camera capability: ${capability ?: "default"}")
 
             val videoSource = VideoDeviceSource().apply {
                 setVideoCaptureDevice(device)
@@ -262,15 +174,14 @@ class JvmWebRtcClient : WebRtcClient {
             runCatching {
                 videoSource.start()
                 isVideoCaptureRunning = true
-                println("DEBUG: [WebRTC] Desktop video capture started")
-            }.onFailure { error ->
-                println("DEBUG: [WebRTC] Desktop video capture failed: ${error.message}")
+            }.onFailure {
                 runCatching { videoSource.dispose() }
                 return
             }
 
             val videoTrack = f.createVideoTrack("videoTrack", videoSource)
             localVideoSource = videoSource
+            cameraVideoTrack = videoTrack
             localVideoTrack = videoTrack
             (localRenderer as? VideoTrackSink)?.let { sink ->
                 videoTrack.addSink(sink)
@@ -283,31 +194,24 @@ class JvmWebRtcClient : WebRtcClient {
             runCatching {
                 localVideoSource?.start()
                 isVideoCaptureRunning = true
-                println("DEBUG: [WebRTC] Desktop video capture started")
-            }.onFailure { error ->
-                println("DEBUG: [WebRTC] Desktop video capture failed: ${error.message}")
             }
         }
     }
 
     private fun attachRemoteVideoTrack(track: dev.onvoid.webrtc.media.MediaStreamTrack?) {
         if (track is VideoTrack) {
-            println("DEBUG: [WebRTC] Remote video track attached: ${track.id}")
             _onStreamAdded.tryEmit(true)
             (remoteRenderer as? VideoTrackSink)?.let { sink ->
                 track.addSink(sink)
             }
+            remoteVideoTrack = track
         }
     }
 
     private fun chooseVideoCapability(capabilities: List<VideoCaptureCapability>): VideoCaptureCapability? {
         if (capabilities.isEmpty()) return null
-
         return capabilities.minByOrNull { capability ->
-            val widthScore = abs(capability.width - 640)
-            val heightScore = abs(capability.height - 480)
-            val fpsScore = abs(capability.frameRate - 30) * 20
-            widthScore + heightScore + fpsScore
+            abs(capability.width - 640) + abs(capability.height - 480) + abs(capability.frameRate - 30) * 20
         }
     }
 
@@ -327,7 +231,8 @@ class JvmWebRtcClient : WebRtcClient {
             (localRenderer as? VideoTrackSink)?.let { sink ->
                 runCatching { localVideoTrack?.removeSink(sink) }
             }
-            runCatching { localVideoTrack?.dispose() }
+            runCatching { cameraVideoTrack?.dispose() }
+            cameraVideoTrack = null
             localVideoTrack = null
             runCatching { localVideoSource?.dispose() }
             localVideoSource = null
@@ -345,16 +250,35 @@ class JvmWebRtcClient : WebRtcClient {
         localAudioTrack = null
     }
 
-    override fun toggleMute(isMuted: Boolean) {
-        localAudioTrack?.setEnabled(!isMuted)
-    }
+    override fun startScreenShare(data: Any?) {
+        try {
+            val pConn = peerConnection ?: return
+            val f = factory ?: return
 
-    override fun toggleVideo(isVideoEnabled: Boolean) {
-        if (isVideoEnabled) {
-            startVideoCapture()
-        } else {
+            // Stop camera if running
             stopVideoCapture(disposeTrack = false)
->>>>>>> 56b3d3662f481fe90306b4ac4d9afd5b3094a503
+            
+            val screenCapturer = ScreenCapturer()
+            val sources = screenCapturer.desktopSources
+            if (sources.isNotEmpty()) {
+                screenSource = VideoDesktopSource()
+                screenSource?.setSourceId(sources[0].id, false)
+                screenSource?.start()
+                
+                val screenTrack = f.createVideoTrack("screenTrack", screenSource)
+                
+                if (localVideoSender != null) {
+                    localVideoSender?.replaceTrack(screenTrack)
+                } else {
+                    localVideoSender = pConn.addTrack(screenTrack, listOf("mediaStream"))
+                }
+                
+                localVideoTrack = screenTrack
+                _isScreenSharing.tryEmit(true)
+            }
+            screenCapturer.dispose()
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
@@ -365,14 +289,10 @@ class JvmWebRtcClient : WebRtcClient {
             screenSource = null
             
             // Resume camera if it was enabled
-            val f = factory ?: return
-            val devices = dev.onvoid.webrtc.media.MediaDevices.getVideoCaptureDevices()
-            if (devices.isNotEmpty()) {
-                videoSource = dev.onvoid.webrtc.media.video.VideoDeviceSource()
-                videoSource?.setVideoCaptureDevice(devices[0])
-                videoSource?.start()
-                localVideoTrack = f.createVideoTrack("videoTrack", videoSource)
-                videoSender?.replaceTrack(localVideoTrack)
+            if (cameraVideoTrack != null) {
+                startVideoCapture()
+                localVideoSender?.replaceTrack(cameraVideoTrack)
+                localVideoTrack = cameraVideoTrack
             }
             
             _isScreenSharing.tryEmit(false)
@@ -382,66 +302,55 @@ class JvmWebRtcClient : WebRtcClient {
     }
 
     override fun toggleMute(isMuted: Boolean) {
-        localAudioTrack?.isEnabled = !isMuted
+        localAudioTrack?.setEnabled(!isMuted)
     }
 
     override fun toggleVideo(isVideoEnabled: Boolean) {
-        localVideoTrack?.isEnabled = isVideoEnabled
+        if (localVideoTrack == null && isVideoEnabled) {
+            startLocalMedia(true)
+            return
+        }
         if (isVideoEnabled) {
-            videoSource?.start()
+            startVideoCapture()
         } else {
-            videoSource?.stop()
+            stopVideoCapture(disposeTrack = false)
         }
     }
 
-    override fun switchCamera() {
-        // Implementation for switching camera
-    }
+    override fun switchCamera() {}
 
     override fun createOffer(onSuccess: (SessionDescriptionModel) -> Unit, onError: (String) -> Unit) {
         try {
-            peerConnection?.createOffer(RTCOfferOptions(), object : CreateSessionDescriptionObserver {
+            peerConnection?.createOffer(RTCOfferOptions(), object : dev.onvoid.webrtc.CreateSessionDescriptionObserver {
                 override fun onSuccess(description: RTCSessionDescription) {
                     peerConnection?.setLocalDescription(description, object : SetSessionDescriptionObserver {
                         override fun onSuccess() {
-                            println("DEBUG: [WebRTC] Offer SDP has video: ${description.sdp.hasVideoMLine()}")
                             onSuccess(SessionDescriptionModel(description.sdpType.toString().lowercase(), description.sdp))
                         }
-                        override fun onFailure(error: String) {
-                            onError(error)
-                        }
+                        override fun onFailure(error: String) { onError(error) }
                     })
                 }
-                override fun onFailure(error: String) {
-                    onError(error)
-                }
+                override fun onFailure(error: String) { onError(error) }
             })
         } catch (e: Exception) {
-            e.printStackTrace()
             onError(e.message ?: "Unknown error")
         }
     }
 
     override fun createAnswer(onSuccess: (SessionDescriptionModel) -> Unit, onError: (String) -> Unit) {
         try {
-            peerConnection?.createAnswer(RTCAnswerOptions(), object : CreateSessionDescriptionObserver {
+            peerConnection?.createAnswer(RTCAnswerOptions(), object : dev.onvoid.webrtc.CreateSessionDescriptionObserver {
                 override fun onSuccess(description: RTCSessionDescription) {
                     peerConnection?.setLocalDescription(description, object : SetSessionDescriptionObserver {
                         override fun onSuccess() {
-                            println("DEBUG: [WebRTC] Answer SDP has video: ${description.sdp.hasVideoMLine()}")
                             onSuccess(SessionDescriptionModel(description.sdpType.toString().lowercase(), description.sdp))
                         }
-                        override fun onFailure(error: String) {
-                            onError(error)
-                        }
+                        override fun onFailure(error: String) { onError(error) }
                     })
                 }
-                override fun onFailure(error: String) {
-                    onError(error)
-                }
+                override fun onFailure(error: String) { onError(error) }
             })
         } catch (e: Exception) {
-            e.printStackTrace()
             onError(e.message ?: "Unknown error")
         }
     }
@@ -451,12 +360,8 @@ class JvmWebRtcClient : WebRtcClient {
             val type = RTCSdpType.valueOf(sessionDescription.type.uppercase())
             val sdp = RTCSessionDescription(type, sessionDescription.sdp)
             peerConnection?.setRemoteDescription(sdp, object : SetSessionDescriptionObserver {
-                override fun onSuccess() {
-                    println("DEBUG: [WebRTC] Remote ${sessionDescription.type} SDP has video: ${sessionDescription.sdp.hasVideoMLine()}")
-                }
-                override fun onFailure(error: String) {
-                    println("DEBUG: [WebRTC] Failed to set remote ${sessionDescription.type}: $error")
-                }
+                override fun onSuccess() {}
+                override fun onFailure(error: String) {}
             })
         } catch (e: Exception) {
             e.printStackTrace()
@@ -466,7 +371,6 @@ class JvmWebRtcClient : WebRtcClient {
     override fun addIceCandidate(candidate: IceCandidateModel) {
         if (candidate.sdp.isBlank()) return
         try {
-            println("DEBUG: [WebRTC] Adding remote ICE candidate: ${candidate.sdp.iceCandidateType()} mid=${candidate.sdpMid}")
             val rtcCandidate = RTCIceCandidate(candidate.sdpMid, candidate.sdpMLineIndex, candidate.sdp)
             peerConnection?.addIceCandidate(rtcCandidate)
         } catch (e: Exception) {
@@ -479,38 +383,19 @@ class JvmWebRtcClient : WebRtcClient {
             stopLocalMedia()
             peerConnection?.close()
             peerConnection = null
-            videoSource?.stop()
-            videoSource = null
             screenSource?.stop()
             screenSource = null
             localVideoTrack = null
             localAudioTrack = null
             remoteVideoTrack = null
-            videoSender = null
+            localVideoSender = null
         } catch (e: Exception) {
             e.printStackTrace()
         }
     }
 
-<<<<<<< HEAD
-    override fun getLocalVideoRenderer(): Any? = localVideoTrack
-    override fun getRemoteVideoRenderer(): Any? = remoteVideoTrack
-=======
     override fun getLocalVideoRenderer(): Any? = localRenderer
     override fun getRemoteVideoRenderer(): Any? = remoteRenderer
-
-    private fun String.hasVideoMLine(): Boolean {
-        return lineSequence().any { line -> line.startsWith("m=video") && !line.contains(" 0 ") }
-    }
-
-    private fun String.iceCandidateType(): String {
-        return substringAfter(" typ ", "unknown").substringBefore(' ')
-    }
-
-    private fun String.redactedIceUrl(): String {
-        return substringBefore('?')
-    }
->>>>>>> 56b3d3662f481fe90306b4ac4d9afd5b3094a503
 }
 
 actual fun createWebRtcClient(): WebRtcClient = JvmWebRtcClient()
