@@ -126,10 +126,18 @@ class JvmWebRtcClient : WebRtcClient {
                 override fun onDataChannel(dataChannel: RTCDataChannel) {}
                 override fun onRenegotiationNeeded() {}
                 override fun onAddTrack(receiver: RTCRtpReceiver, mediaStreams: Array<out MediaStream>) {
-                    attachRemoteTrack(receiver.track)
+                    runCatching {
+                        attachRemoteTrack(receiver.track)
+                    }.onFailure { e ->
+                        println("DEBUG: [WebRTC] Failed to attach remote track via onAddTrack: ${e.message}")
+                    }
                 }
                 override fun onTrack(transceiver: RTCRtpTransceiver) {
-                    attachRemoteTrack(transceiver.receiver.track)
+                    runCatching {
+                        attachRemoteTrack(transceiver.receiver.track)
+                    }.onFailure { e ->
+                        println("DEBUG: [WebRTC] Failed to attach remote track via onTrack: ${e.message}")
+                    }
                 }
             })
         } catch (e: Exception) {
