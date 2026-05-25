@@ -24,7 +24,7 @@ fun JoinServerScreen(
 ) {
     val tokens = rememberCosmicTokens()
     var input by remember { mutableStateOf("") }
-    var isJoining by remember { mutableStateOf(false) }
+    var isWorking by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
@@ -43,7 +43,7 @@ fun JoinServerScreen(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                text = "Join a Server / Room",
+                text = "Add Server",
                 color = tokens.Text_White,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
@@ -88,7 +88,7 @@ fun JoinServerScreen(
                 Button(
                     onClick = {
                         if (input.isBlank()) return@Button
-                        isJoining = true
+                        isWorking = true
                         errorMsg = null
                         scope.launch {
                             val result = repository.joinSpace(input.trim())
@@ -96,15 +96,15 @@ fun JoinServerScreen(
                                 onClose()
                             } else {
                                 errorMsg = result.exceptionOrNull()?.message ?: "Failed to join"
-                                isJoining = false
+                                isWorking = false
                             }
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = tokens.Accent),
-                    enabled = !isJoining && input.isNotBlank(),
+                    enabled = !isWorking && input.isNotBlank(),
                     modifier = Modifier.weight(1f)
                 ) {
-                    if (isJoining) {
+                    if (isWorking) {
                         CircularProgressIndicator(
                             color = Color.White,
                             modifier = Modifier.size(20.dp),
