@@ -519,7 +519,15 @@ private fun MainAppContent(
             if (showJoinServer) {
                 JoinServerScreen(
                     repository = repository,
-                    onClose = { showJoinServer = false }
+                    onClose = { showJoinServer = false },
+                    onServerCreated = { serverId ->
+                        selectedServerId = serverId
+                        selectedBottomTab = BottomNavTab.Servers
+                    },
+                    onServerJoined = { serverId ->
+                        selectedServerId = serverId
+                        selectedBottomTab = BottomNavTab.Servers
+                    }
                 )
             }
 
