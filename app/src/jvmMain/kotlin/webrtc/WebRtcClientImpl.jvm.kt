@@ -50,7 +50,9 @@ class JvmWebRtcClient : WebRtcClient {
 
     private var factory: PeerConnectionFactory? = null
     private var peerConnection: RTCPeerConnection? = null
-    
+    private var audioDeviceModule: dev.onvoid.webrtc.media.audio.AudioDeviceModule? = null
+
+    private var localAudioSource: dev.onvoid.webrtc.media.audio.AudioTrackSource? = null
     private var localAudioTrack: AudioTrack? = null
     private var localAudioSender: RTCRtpSender? = null
     
@@ -71,7 +73,8 @@ class JvmWebRtcClient : WebRtcClient {
             if (peerConnection != null) return
 
             if (factory == null) {
-                factory = PeerConnectionFactory()
+                audioDeviceModule = dev.onvoid.webrtc.media.audio.AudioDeviceModule(dev.onvoid.webrtc.media.audio.AudioLayer.kWindowsCoreAudio)
+                factory = PeerConnectionFactory(audioDeviceModule)
             }
             if (localRenderer == null) {
                 localRenderer = DesktopVideoRenderer(mirror = true)
@@ -139,7 +142,9 @@ class JvmWebRtcClient : WebRtcClient {
 
             if (localAudioTrack == null) {
                 val audioSource = f.createAudioSource(AudioOptions())
+                localAudioSource = audioSource
                 val audioTrack = f.createAudioTrack("audioTrack", audioSource)
+                audioTrack.setEnabled(true)
                 localAudioTrack = audioTrack
                 localAudioSender = pConn.addTrack(audioTrack, listOf("mediaStream"))
             }
@@ -248,9 +253,11 @@ class JvmWebRtcClient : WebRtcClient {
         localAudioSender = null
         runCatching { localAudioTrack?.dispose() }
         localAudioTrack = null
+        localAudioSource = null
     }
 
     override fun startScreenShare(data: Any?) {
+        val includeAudio = data as? Boolean ?: false
         try {
             val pConn = peerConnection ?: return
             val f = factory ?: return
@@ -275,6 +282,17 @@ class JvmWebRtcClient : WebRtcClient {
                 
                 localVideoTrack = screenTrack
                 _isScreenSharing.tryEmit(true)
+
+                if (includeAudio) {
+                    val loopbackDevice = audioDeviceModule?.recordingDevices?.firstOrNull { 
+                        it.name.contains("Stereo Mix", true) || 
+                        it.name.contains("Wave Out", true) || 
+                        it.name.contains("What U Hear", true) 
+                    }
+                    if (loopbackDevice != null) {
+                        runCatching { audioDeviceModule?.setRecordingDevice(loopbackDevice) }
+                    }
+                }
             }
             screenCapturer.dispose()
         } catch (e: Exception) {
@@ -293,6 +311,14 @@ class JvmWebRtcClient : WebRtcClient {
                 startVideoCapture()
                 localVideoSender?.replaceTrack(cameraVideoTrack)
                 localVideoTrack = cameraVideoTrack
+            }
+            
+            // Restore default microphone
+            runCatching { 
+                val defaultMic = audioDeviceModule?.recordingDevices?.firstOrNull()
+                if (defaultMic != null) {
+                    audioDeviceModule?.setRecordingDevice(defaultMic)
+                }
             }
             
             _isScreenSharing.tryEmit(false)

@@ -193,6 +193,7 @@ class MatrixOrbitRepository(
                 put("user", identifier.removePrefix("@"))
             })
             put("password", password)
+            put("initial_device_display_name", deviceName.ifEmpty { "Orbit" })
         }
 
         val httpResp = client.post(fullUrl("/login")) {
@@ -244,6 +245,7 @@ class MatrixOrbitRepository(
         val body = buildJsonObject {
             put("type", "m.login.token")
             put("token", loginToken)
+            put("initial_device_display_name", "Orbit")
         }
         val httpResp = client.post(fullUrl("/login")) {
             contentType(ContentType.Application.Json)
@@ -409,7 +411,7 @@ class MatrixOrbitRepository(
                 allRooms.filter { it.isDirect }.forEach { room ->
                     channels.add(OrbitChannel(
                         id = room.roomId.full,
-                        name = room.name?.explicitName ?: room.roomId.full.takeLast(8),
+                        name = room.name?.explicitName ?: room.name?.heroes?.firstOrNull()?.localpart ?: room.roomId.full.takeLast(8),
                         type = ChannelType.TEXT,
                         categoryId = "dm",
                         topic = ""
@@ -420,7 +422,7 @@ class MatrixOrbitRepository(
                 allRooms.filter { !it.isDirect && it.name?.explicitName?.contains("space", ignoreCase = true) != true }.forEach { room ->
                     channels.add(OrbitChannel(
                         id = room.roomId.full,
-                        name = room.name?.explicitName ?: room.roomId.full.takeLast(8),
+                        name = room.name?.explicitName ?: room.name?.heroes?.firstOrNull()?.localpart ?: room.roomId.full.takeLast(8),
                         type = ChannelType.TEXT,
                         categoryId = "rooms",
                         topic = ""
@@ -439,7 +441,7 @@ class MatrixOrbitRepository(
                         if (room != null) {
                             channels.add(OrbitChannel(
                                 id = room.roomId.full,
-                                name = room.name?.explicitName ?: room.roomId.full.takeLast(8),
+                                name = room.name?.explicitName ?: room.name?.heroes?.firstOrNull()?.localpart ?: room.roomId.full.takeLast(8),
                                 type = if (room.name?.explicitName?.contains("voice", ignoreCase = true) == true) ChannelType.VOICE else ChannelType.TEXT,
                                 categoryId = spaceId,
                                 topic = ""
@@ -491,7 +493,7 @@ class MatrixOrbitRepository(
 
             return OrbitChannel(
                 id = channelId,
-                name = room.name?.explicitName ?: channelId.takeLast(8),
+                name = room.name?.explicitName ?: room.name?.heroes?.firstOrNull()?.localpart ?: channelId.takeLast(8),
                 type = if (room.name?.explicitName?.contains("voice", ignoreCase = true) == true) ChannelType.VOICE else ChannelType.TEXT,
                 categoryId = null,
                 topic = ""

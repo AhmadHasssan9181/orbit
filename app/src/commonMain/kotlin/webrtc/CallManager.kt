@@ -32,6 +32,7 @@ class CallManager(
         private set
     val isVideoCall = MutableStateFlow(false)
     val isLocalVideoEnabled = MutableStateFlow(false)
+    val isLocalAudioEnabled = MutableStateFlow(true)
 
     private val _isScreenSharing = MutableStateFlow(false)
     val isScreenSharing: StateFlow<Boolean> = _isScreenSharing
@@ -74,6 +75,7 @@ class CallManager(
         isIncomingCall.value = false
         isVideoCall.value = isVideo
         isLocalVideoEnabled.value = isVideo
+        isLocalAudioEnabled.value = true
         candidatesAllowedForCallId = null
         pendingLocalCandidates.clear()
         _callState.value = CallState.CONNECTING
@@ -129,6 +131,7 @@ class CallManager(
         isIncomingCall.value = true
         isVideoCall.value = sdpHasVideo(sdp)
         isLocalVideoEnabled.value = false
+        isLocalAudioEnabled.value = true
         candidatesAllowedForCallId = null
         pendingLocalCandidates.clear()
         _callState.value = CallState.RINGING
@@ -147,6 +150,7 @@ class CallManager(
         val currentCall = callId ?: return
         isVideoCall.value = isVideo
         isLocalVideoEnabled.value = isVideo
+        isLocalAudioEnabled.value = true
         _callState.value = CallState.CONNECTING
 
         scope.launch {
@@ -215,11 +219,13 @@ class CallManager(
         _isScreenSharing.value = false
         isVideoCall.value = false
         isLocalVideoEnabled.value = false
+        isLocalAudioEnabled.value = true
         candidatesAllowedForCallId = null
         pendingLocalCandidates.clear()
     }
 
     fun toggleMute(isMuted: Boolean) {
+        isLocalAudioEnabled.value = !isMuted
         webRtcClient.toggleMute(isMuted)
     }
 
