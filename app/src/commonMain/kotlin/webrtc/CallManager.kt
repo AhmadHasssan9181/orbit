@@ -47,6 +47,7 @@ class CallManager(
 
     private val pendingLocalCandidates = mutableListOf<IceCandidateModel>()
     private var candidatesAllowedForCallId: String? = null
+    private var pendingInviteSdp: String? = null  // Stores the offer SDP until the user answers
 
     init {
         scope.launch {
@@ -121,32 +122,39 @@ class CallManager(
         isLocalAudioEnabled.value = true
         candidatesAllowedForCallId = null
         pendingLocalCandidates.clear()
+        pendingInviteSdp = sdp  // Store SDP; actual init happens when user answers
         _callState.value = CallState.RINGING
+        println("DEBUG: [CallMgr] Incoming invite from $roomId callId=$incomingCallId, isVideo=${sdpHasVideo(sdp)}")
 
+        // Warm up ICE servers in background so they're ready when user answers
         scope.launch {
             loadIceServers()
-            if (callId != incomingCallId) return@launch
-
-            webRtcClient.initialize(iceServers)
-            webRtcClient.setRemoteDescription(SessionDescriptionModel("offer", sdp))
         }
     }
 
     fun answerCall(isVideo: Boolean, sdp: String? = null) {
         val currentRoom = activeRoomId ?: return
         val currentCall = callId ?: return
+        // Use explicitly passed SDP or fall back to the stored pending invite SDP
+        val offerSdp = sdp ?: pendingInviteSdp
         isVideoCall.value = isVideo
         isLocalVideoEnabled.value = isVideo
         isLocalAudioEnabled.value = true
         _callState.value = CallState.CONNECTING
+        pendingInviteSdp = null
+        println("DEBUG: [CallMgr] answerCall: callId=$currentCall isVideo=$isVideo hasOfferSdp=${offerSdp != null}")
 
         scope.launch {
             loadIceServers()
             if (callId != currentCall) return@launch
 
-            if (sdp != null) {
+            // Always initialize and set remote description here to avoid race with handleCallInvite's coroutine
+            if (offerSdp != null) {
                 webRtcClient.initialize(iceServers)
-                webRtcClient.setRemoteDescription(SessionDescriptionModel("offer", sdp))
+                webRtcClient.setRemoteDescription(SessionDescriptionModel("offer", offerSdp))
+                println("DEBUG: [CallMgr] Remote description set, creating answer...")
+            } else {
+                println("ERROR: [CallMgr] answerCall called with no offer SDP! createAnswer will fail.")
             }
 
             webRtcClient.startLocalMedia(isVideo)
@@ -160,7 +168,8 @@ class CallManager(
                         }
                     }
                 },
-                onError = {
+                onError = { err ->
+                    println("ERROR: [WebRTC] createAnswer failed: $err")
                     endCall()
                 }
             )
@@ -177,6 +186,7 @@ class CallManager(
     }
 
     fun handleCallAnswer(sdp: String) {
+        println("DEBUG: [CallMgr] Received answer, setting remote description and going CONNECTED")
         webRtcClient.setRemoteDescription(SessionDescriptionModel("answer", sdp))
         _callState.value = CallState.CONNECTED
     }
@@ -235,6 +245,7 @@ class CallManager(
         isLocalAudioEnabled.value = true
         candidatesAllowedForCallId = null
         pendingLocalCandidates.clear()
+        pendingInviteSdp = null
     }
 
     fun toggleMute(isMuted: Boolean) {
