@@ -14,19 +14,29 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import repository.OrbitRepository
+import ui.model.ChannelType
 import ui.theme.rememberCosmicTokens
+
+private enum class ServerDialogMode {
+    Join,
+    Create
+}
 
 @Composable
 fun JoinServerScreen(
     repository: OrbitRepository,
     onClose: () -> Unit,
+    onServerCreated: (String) -> Unit = {},
+    onServerJoined: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val tokens = rememberCosmicTokens()
+    var mode by remember { mutableStateOf(ServerDialogMode.Join) }
     var input by remember { mutableStateOf("") }
     var isWorking by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val isCreateMode = mode == ServerDialogMode.Create
 
     Box(
         modifier = modifier
@@ -50,10 +60,44 @@ fun JoinServerScreen(
                 modifier = Modifier.padding(bottom = 16.dp)
             )
 
+            TabRow(
+                selectedTabIndex = if (isCreateMode) 1 else 0,
+                containerColor = tokens.Bg,
+                contentColor = tokens.Accent,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+            ) {
+                Tab(
+                    selected = !isCreateMode,
+                    onClick = {
+                        mode = ServerDialogMode.Join
+                        input = ""
+                        errorMsg = null
+                    },
+                    enabled = !isWorking,
+                    text = { Text("Join") }
+                )
+                Tab(
+                    selected = isCreateMode,
+                    onClick = {
+                        mode = ServerDialogMode.Create
+                        input = ""
+                        errorMsg = null
+                    },
+                    enabled = !isWorking,
+                    text = { Text("Create") }
+                )
+            }
+
             OutlinedTextField(
                 value = input,
                 onValueChange = { input = it; errorMsg = null },
-                placeholder = { Text("Enter room ID or alias (e.g., #room:server.com)", color = tokens.Text_Muted) },
+                label = { Text(if (isCreateMode) "Server name" else "Room ID or alias") },
+                placeholder = {
+                    Text(
+                        if (isCreateMode) "My Server" else "#room:server.com",
+                        color = tokens.Text_Muted
+                    )
+                },
                 singleLine = true,
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = tokens.Accent,
@@ -91,11 +135,31 @@ fun JoinServerScreen(
                         isWorking = true
                         errorMsg = null
                         scope.launch {
-                            val result = repository.joinSpace(input.trim())
+                            val value = input.trim()
+                            val result = if (isCreateMode) {
+                                val spaceResult = repository.createSpace(value)
+                                val spaceId = spaceResult.getOrNull()
+                                if (spaceId != null) {
+                                    val channelResult = repository.createChannel(spaceId, "general", ChannelType.TEXT)
+                                    if (channelResult.isSuccess) {
+                                        onServerCreated(spaceId)
+                                        spaceResult
+                                    } else {
+                                        Result.failure(channelResult.exceptionOrNull() ?: Exception("Failed to create #general"))
+                                    }
+                                } else {
+                                    spaceResult
+                                }
+                            } else {
+                                repository.joinSpace(value).onSuccess { roomId ->
+                                    onServerJoined(roomId)
+                                }
+                            }
                             if (result.isSuccess) {
                                 onClose()
                             } else {
-                                errorMsg = result.exceptionOrNull()?.message ?: "Failed to join"
+                                errorMsg = result.exceptionOrNull()?.message
+                                    ?: if (isCreateMode) "Failed to create server" else "Failed to join"
                                 isWorking = false
                             }
                         }
@@ -111,7 +175,7 @@ fun JoinServerScreen(
                             strokeWidth = 2.dp
                         )
                     } else {
-                        Text("Join", color = Color.White)
+                        Text(if (isCreateMode) "Create" else "Join", color = Color.White)
                     }
                 }
             }
