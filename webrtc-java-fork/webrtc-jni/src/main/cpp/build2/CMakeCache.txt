@@ -112,7 +112,7 @@ CMAKE_PROJECT_DESCRIPTION:STATIC=
 CMAKE_PROJECT_HOMEPAGE_URL:STATIC=
 
 //Value Computed by CMake
-CMAKE_PROJECT_NAME:STATIC=webrtc-java
+CMAKE_PROJECT_NAME:STATIC=webrtc-java-orbit
 
 //RC compiler
 CMAKE_RC_COMPILER:FILEPATH=rc
@@ -253,6 +253,15 @@ unofficial-libvpx_DIR:PATH=D:/vcpkg/installed/x64-windows/share/unofficial-libvp
 
 //The directory containing a CMake configuration file for unofficial-webrtc.
 unofficial-webrtc_DIR:PATH=D:/vcpkg/installed/x64-windows/share/unofficial-webrtc
+
+//Value Computed by CMake
+webrtc-java-orbit_BINARY_DIR:STATIC=D:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp/build2
+
+//Value Computed by CMake
+webrtc-java-orbit_IS_TOP_LEVEL:STATIC=ON
+
+//Value Computed by CMake
+webrtc-java-orbit_SOURCE_DIR:STATIC=D:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp
 
 //Value Computed by CMake
 webrtc-java_BINARY_DIR:STATIC=D:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp/build2

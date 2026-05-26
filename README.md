@@ -29,7 +29,7 @@
 
 ## About
 
-Orbit is the Matrix-powered communication client used by the app label **Onichat**. It
+Orbit is a Matrix-powered communication client. It
 combines a Compose Multiplatform interface with a Trixnity-backed Matrix data layer,
 local Room persistence, media caching, device verification, and WebRTC call support.
 
@@ -267,7 +267,7 @@ Calls are coordinated by `CallManager` and implemented per platform through the
 > [!NOTE]
 > **Custom WebRTC Native Library & Audio Loopback (Desktop)**
 >
-> Onichat uses a heavily modified fork of `webrtc-java` on Desktop to support system audio sharing (WASAPI loopback) and fixes for WebRTC JNI track handling and RTTI crashes. 
+> Orbit uses a heavily modified fork of `webrtc-java` on Desktop to support system audio sharing (WASAPI loopback) and fixes for WebRTC JNI track handling and RTTI crashes. 
 > 
 > The project includes two custom native components:
 > 1. `webrtc-java-fork`: A customized WebRTC build fixing native track rendering, JNI bindings, and memory management.
