@@ -33,7 +33,7 @@ import dev.onvoid.webrtc.internal.NativeLoader;
  * devices through the native WebRTC implementation. It manages both recording (microphone) and
  * playback (speaker) devices, allowing for volume control, muting, and device selection.
  * <p>
- * It loads the required native library "webrtc-java" for accessing the underlying WebRTC functionality.
+ * It loads the required native library "webrtc-java-orbit" for accessing the underlying WebRTC functionality.
  * <p>
  * This class extends {@link DisposableNativeObject} to properly manage the lifecycle of native resources.
  *
@@ -43,7 +43,7 @@ public class AudioDeviceModuleBase extends DisposableNativeObject {
 
     static {
         try {
-            NativeLoader.loadLibrary("webrtc-java");
+            NativeLoader.loadLibrary("webrtc-java-orbit");
         }
         catch (Exception e) {
             throw new RuntimeException("Load library 'webrtc-java' failed", e);

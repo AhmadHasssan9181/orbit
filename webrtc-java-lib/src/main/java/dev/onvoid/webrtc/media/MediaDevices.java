@@ -27,7 +27,7 @@ public class MediaDevices {
 
 	static {
 		try {
-			NativeLoader.loadLibrary("webrtc-java");
+			NativeLoader.loadLibrary("webrtc-java-orbit");
 		}
 		catch (Exception e) {
 			throw new RuntimeException("Load library 'webrtc-java' failed", e);
