@@ -1,0 +1,508 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <PreferredToolArchitecture>x64</PreferredToolArchitecture>
+  </PropertyGroup>
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="MinSizeRel|x64">
+      <Configuration>MinSizeRel</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="RelWithDebInfo|x64">
+      <Configuration>RelWithDebInfo</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{F7CE5ADD-6012-30C6-AE08-B1A5D327B95D}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
+    <Platform>x64</Platform>
+    <ProjectName>webrtc-java</ProjectName>
+    <VCProjectUpgraderObjectName>NoUpgrade</VCProjectUpgraderObjectName>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <CharacterSet>Unicode</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <CharacterSet>Unicode</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <CharacterSet>Unicode</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <CharacterSet>Unicode</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <_ProjectFileVersion>10.0.20506.1</_ProjectFileVersion>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\Debug\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">webrtc-java.dir\Debug\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">webrtc-java-</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">.dll</TargetExt>
+    <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</LinkIncremental>
+    <GenerateManifest Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</GenerateManifest>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\Release\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">webrtc-java.dir\Release\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">webrtc-java-</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='Release|x64'">.dll</TargetExt>
+    <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</LinkIncremental>
+    <GenerateManifest Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</GenerateManifest>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\MinSizeRel\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">webrtc-java.dir\MinSizeRel\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">webrtc-java-</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">.dll</TargetExt>
+    <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">false</LinkIncremental>
+    <GenerateManifest Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">true</GenerateManifest>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\RelWithDebInfo\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">webrtc-java.dir\RelWithDebInfo\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">webrtc-java-</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">.dll</TargetExt>
+    <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">true</LinkIncremental>
+    <GenerateManifest Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">true</GenerateManifest>
+  </PropertyGroup>
+  <PropertyGroup />
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\api;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\media;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\rtc;D:\vcpkg\installed\x64-windows\include\webrtc;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\jni;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\jni\windows;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /external:I "D:/vcpkg/installed/x64-windows/include" /external:I "D:/vcpkg/installed/x64-windows/include/opus"</AdditionalOptions>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <DisableSpecificWarnings>4005;4068;4101;4267;4996</DisableSpecificWarnings>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
+      <InlineFunctionExpansion>Disabled</InlineFunctionExpansion>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <MinimalRebuild></MinimalRebuild>
+      <Optimization>Disabled</Optimization>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+      <RuntimeTypeInfo>true</RuntimeTypeInfo>
+      <SupportJustMyCode></SupportJustMyCode>
+      <UseFullPaths>false</UseFullPaths>
+      <WarningLevel>Level3</WarningLevel>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;UNICODE;_UNICODE;CHROMIUM;DYNAMIC_ANNOTATIONS_ENABLED=1;LIBYUV_DISABLE_SVE;LIBYUV_DISABLE_SME;LIBYUV_DISABLE_LSX;LIBYUV_DISABLE_LASX;PROTOBUF_ENABLE_DEBUG_LOGGING_MAY_LEAK_PII=0;RTC_DAV1D_IN_INTERNAL_DECODER_FACTORY;RTC_ENABLE_VP9;WEBRTC_DEPRECATE_PLAN_B;WEBRTC_ENCODER_PSNR_STATS;WEBRTC_HAVE_SCTP;WEBRTC_INCLUDE_INTERNAL_AUDIO_DEVICE;WEBRTC_NON_STATIC_TRACE_EVENT_HANDLERS=0;WEBRTC_STRICT_FIELD_TRIALS=0;NOMINMAX;WIN32_LEAN_AND_MEAN;WEBRTC_WIN;ABSL_CONSUME_DLL;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR="Debug";webrtc_java_EXPORTS</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_DEBUG;_WINDOWS;UNICODE;_UNICODE;CHROMIUM;DYNAMIC_ANNOTATIONS_ENABLED=1;LIBYUV_DISABLE_SVE;LIBYUV_DISABLE_SME;LIBYUV_DISABLE_LSX;LIBYUV_DISABLE_LASX;PROTOBUF_ENABLE_DEBUG_LOGGING_MAY_LEAK_PII=0;RTC_DAV1D_IN_INTERNAL_DECODER_FACTORY;RTC_ENABLE_VP9;WEBRTC_DEPRECATE_PLAN_B;WEBRTC_ENCODER_PSNR_STATS;WEBRTC_HAVE_SCTP;WEBRTC_INCLUDE_INTERNAL_AUDIO_DEVICE;WEBRTC_NON_STATIC_TRACE_EVENT_HANDLERS=0;WEBRTC_STRICT_FIELD_TRIALS=0;NOMINMAX;WIN32_LEAN_AND_MEAN;WEBRTC_WIN;ABSL_CONSUME_DLL;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR=\"Debug\";webrtc_java_EXPORTS</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\api;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\media;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\rtc;D:\vcpkg\installed\x64-windows\include\webrtc;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\jni;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\jni\windows;D:\vcpkg\installed\x64-windows\include;D:\vcpkg\installed\x64-windows\include\opus;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Midl>
+      <AdditionalIncludeDirectories>D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\api;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\media;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\rtc;D:\vcpkg\installed\x64-windows\include\webrtc;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\jni;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\jni\windows;D:\vcpkg\installed\x64-windows\include;D:\vcpkg\installed\x64-windows\include\opus;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <Link>
+      <AdditionalDependencies>dependencies\jni-voithos\Debug\jni-voithos.lib;D:\vcpkg\installed\x64-windows\debug\lib\webrtc.lib;dwmapi.lib;mf.lib;mfreadwrite.lib;mfplat.lib;mfuuid.lib;shcore.lib;strmiids.lib;d3d11.lib;dxgi.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_borrowed_fixup_buffer.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_demangle_rust.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_decode_rust_punycode.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_parse.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_usage.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_usage_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_generic_printer_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_hashtable_profiler.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_log_flags.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_marshalling.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_reflection.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_config.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_program_name.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_private_handle_accessor.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_commandlineflag.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_commandlineflag_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_log_internal_structured_proto.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_poison.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_profile_builder.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_random_internal_entropy_pool.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_tracing_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_utf8_for_code_point.lib;D:\vcpkg\installed\x64-windows\debug\lib\abseil_dll.lib;-ignore:4221;D:\vcpkg\installed\x64-windows\debug\lib\absl_borrowed_fixup_buffer.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_decode_rust_punycode.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_demangle_rust.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_commandlineflag.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_commandlineflag_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_config.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_marshalling.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_parse.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_private_handle_accessor.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_program_name.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_reflection.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_usage.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_usage_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_generic_printer_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_hashtable_profiler.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_log_flags.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_log_internal_structured_proto.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_poison.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_profile_builder.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_random_internal_entropy_pool.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_tracing_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_utf8_for_code_point.lib;D:\vcpkg\installed\x64-windows\debug\lib\aom.lib;D:\vcpkg\installed\x64-windows\debug\lib\libyuv.lib;D:\vcpkg\installed\x64-windows\debug\lib\vpx.lib;D:\vcpkg\installed\x64-windows\debug\lib\opus.lib;D:\vcpkg\installed\x64-windows\debug\lib\jsoncpp.lib;D:\vcpkg\installed\x64-windows\debug\lib\pffft.lib;D:\vcpkg\installed\x64-windows\debug\lib\srtp2.lib;D:\vcpkg\installed\x64-windows\lib\libssl.lib;D:\vcpkg\installed\x64-windows\lib\libcrypto.lib;ws2_32.lib;winmm.lib;iphlpapi.lib;msdmo.lib;dmoguids.lib;wmcodecdspuuid.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <IgnoreSpecificDefaultLibraries>%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
+      <ImportLibrary>D:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp/build2/Debug/webrtc-java-.lib</ImportLibrary>
+      <ProgramDataBaseFile>D:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp/build2/Debug/webrtc-java-.pdb</ProgramDataBaseFile>
+      <SubSystem>Console</SubSystem>
+    </Link>
+    <ProjectReference>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\api;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\media;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\rtc;D:\vcpkg\installed\x64-windows\include\webrtc;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\jni;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\jni\windows;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /external:I "D:/vcpkg/installed/x64-windows/include" /external:I "D:/vcpkg/installed/x64-windows/include/opus"</AdditionalOptions>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <DisableSpecificWarnings>4005;4068;4101;4267;4996</DisableSpecificWarnings>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
+      <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <MinimalRebuild></MinimalRebuild>
+      <Optimization>MaxSpeed</Optimization>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <RuntimeTypeInfo>true</RuntimeTypeInfo>
+      <SupportJustMyCode></SupportJustMyCode>
+      <UseFullPaths>false</UseFullPaths>
+      <WarningLevel>Level3</WarningLevel>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;UNICODE;_UNICODE;CHROMIUM;DYNAMIC_ANNOTATIONS_ENABLED=1;LIBYUV_DISABLE_SVE;LIBYUV_DISABLE_SME;LIBYUV_DISABLE_LSX;LIBYUV_DISABLE_LASX;PROTOBUF_ENABLE_DEBUG_LOGGING_MAY_LEAK_PII=0;RTC_DAV1D_IN_INTERNAL_DECODER_FACTORY;RTC_ENABLE_VP9;WEBRTC_DEPRECATE_PLAN_B;WEBRTC_ENCODER_PSNR_STATS;WEBRTC_HAVE_SCTP;WEBRTC_INCLUDE_INTERNAL_AUDIO_DEVICE;WEBRTC_NON_STATIC_TRACE_EVENT_HANDLERS=0;WEBRTC_STRICT_FIELD_TRIALS=0;NOMINMAX;WIN32_LEAN_AND_MEAN;WEBRTC_WIN;ABSL_CONSUME_DLL;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR="Release";webrtc_java_EXPORTS</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <DebugInformationFormat>
+      </DebugInformationFormat>
+      <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;UNICODE;_UNICODE;CHROMIUM;DYNAMIC_ANNOTATIONS_ENABLED=1;LIBYUV_DISABLE_SVE;LIBYUV_DISABLE_SME;LIBYUV_DISABLE_LSX;LIBYUV_DISABLE_LASX;PROTOBUF_ENABLE_DEBUG_LOGGING_MAY_LEAK_PII=0;RTC_DAV1D_IN_INTERNAL_DECODER_FACTORY;RTC_ENABLE_VP9;WEBRTC_DEPRECATE_PLAN_B;WEBRTC_ENCODER_PSNR_STATS;WEBRTC_HAVE_SCTP;WEBRTC_INCLUDE_INTERNAL_AUDIO_DEVICE;WEBRTC_NON_STATIC_TRACE_EVENT_HANDLERS=0;WEBRTC_STRICT_FIELD_TRIALS=0;NOMINMAX;WIN32_LEAN_AND_MEAN;WEBRTC_WIN;ABSL_CONSUME_DLL;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR=\"Release\";webrtc_java_EXPORTS</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\api;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\media;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\rtc;D:\vcpkg\installed\x64-windows\include\webrtc;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\jni;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\jni\windows;D:\vcpkg\installed\x64-windows\include;D:\vcpkg\installed\x64-windows\include\opus;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Midl>
+      <AdditionalIncludeDirectories>D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\api;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\media;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\rtc;D:\vcpkg\installed\x64-windows\include\webrtc;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\jni;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\jni\windows;D:\vcpkg\installed\x64-windows\include;D:\vcpkg\installed\x64-windows\include\opus;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <Link>
+      <AdditionalDependencies>dependencies\jni-voithos\Release\jni-voithos.lib;D:\vcpkg\installed\x64-windows\lib\webrtc.lib;dwmapi.lib;mf.lib;mfreadwrite.lib;mfplat.lib;mfuuid.lib;shcore.lib;strmiids.lib;d3d11.lib;dxgi.lib;D:\vcpkg\installed\x64-windows\lib\absl_borrowed_fixup_buffer.lib;D:\vcpkg\installed\x64-windows\lib\absl_demangle_rust.lib;D:\vcpkg\installed\x64-windows\lib\absl_decode_rust_punycode.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_parse.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_usage.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_usage_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_generic_printer_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_hashtable_profiler.lib;D:\vcpkg\installed\x64-windows\lib\absl_log_flags.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_marshalling.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_reflection.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_config.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_program_name.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_private_handle_accessor.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_commandlineflag.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_commandlineflag_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_log_internal_structured_proto.lib;D:\vcpkg\installed\x64-windows\lib\absl_poison.lib;D:\vcpkg\installed\x64-windows\lib\absl_profile_builder.lib;D:\vcpkg\installed\x64-windows\lib\absl_random_internal_entropy_pool.lib;D:\vcpkg\installed\x64-windows\lib\absl_tracing_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_utf8_for_code_point.lib;D:\vcpkg\installed\x64-windows\lib\abseil_dll.lib;-ignore:4221;D:\vcpkg\installed\x64-windows\lib\absl_borrowed_fixup_buffer.lib;D:\vcpkg\installed\x64-windows\lib\absl_decode_rust_punycode.lib;D:\vcpkg\installed\x64-windows\lib\absl_demangle_rust.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_commandlineflag.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_commandlineflag_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_config.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_marshalling.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_parse.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_private_handle_accessor.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_program_name.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_reflection.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_usage.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_usage_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_generic_printer_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_hashtable_profiler.lib;D:\vcpkg\installed\x64-windows\lib\absl_log_flags.lib;D:\vcpkg\installed\x64-windows\lib\absl_log_internal_structured_proto.lib;D:\vcpkg\installed\x64-windows\lib\absl_poison.lib;D:\vcpkg\installed\x64-windows\lib\absl_profile_builder.lib;D:\vcpkg\installed\x64-windows\lib\absl_random_internal_entropy_pool.lib;D:\vcpkg\installed\x64-windows\lib\absl_tracing_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_utf8_for_code_point.lib;D:\vcpkg\installed\x64-windows\lib\aom.lib;D:\vcpkg\installed\x64-windows\lib\libyuv.lib;D:\vcpkg\installed\x64-windows\lib\vpx.lib;D:\vcpkg\installed\x64-windows\lib\opus.lib;D:\vcpkg\installed\x64-windows\lib\jsoncpp.lib;D:\vcpkg\installed\x64-windows\lib\pffft.lib;D:\vcpkg\installed\x64-windows\lib\srtp2.lib;D:\vcpkg\installed\x64-windows\lib\libssl.lib;D:\vcpkg\installed\x64-windows\lib\libcrypto.lib;ws2_32.lib;winmm.lib;iphlpapi.lib;msdmo.lib;dmoguids.lib;wmcodecdspuuid.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+      <GenerateDebugInformation>false</GenerateDebugInformation>
+      <IgnoreSpecificDefaultLibraries>%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
+      <ImportLibrary>D:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp/build2/Release/webrtc-java-.lib</ImportLibrary>
+      <ProgramDataBaseFile>D:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp/build2/Release/webrtc-java-.pdb</ProgramDataBaseFile>
+      <SubSystem>Console</SubSystem>
+    </Link>
+    <ProjectReference>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\api;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\media;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\rtc;D:\vcpkg\installed\x64-windows\include\webrtc;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\jni;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\jni\windows;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /external:I "D:/vcpkg/installed/x64-windows/include" /external:I "D:/vcpkg/installed/x64-windows/include/opus"</AdditionalOptions>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <DisableSpecificWarnings>4005;4068;4101;4267;4996</DisableSpecificWarnings>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
+      <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <MinimalRebuild></MinimalRebuild>
+      <Optimization>MinSpace</Optimization>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <RuntimeTypeInfo>true</RuntimeTypeInfo>
+      <SupportJustMyCode></SupportJustMyCode>
+      <UseFullPaths>false</UseFullPaths>
+      <WarningLevel>Level3</WarningLevel>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;UNICODE;_UNICODE;CHROMIUM;DYNAMIC_ANNOTATIONS_ENABLED=1;LIBYUV_DISABLE_SVE;LIBYUV_DISABLE_SME;LIBYUV_DISABLE_LSX;LIBYUV_DISABLE_LASX;PROTOBUF_ENABLE_DEBUG_LOGGING_MAY_LEAK_PII=0;RTC_DAV1D_IN_INTERNAL_DECODER_FACTORY;RTC_ENABLE_VP9;WEBRTC_DEPRECATE_PLAN_B;WEBRTC_ENCODER_PSNR_STATS;WEBRTC_HAVE_SCTP;WEBRTC_INCLUDE_INTERNAL_AUDIO_DEVICE;WEBRTC_NON_STATIC_TRACE_EVENT_HANDLERS=0;WEBRTC_STRICT_FIELD_TRIALS=0;NOMINMAX;WIN32_LEAN_AND_MEAN;WEBRTC_WIN;ABSL_CONSUME_DLL;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR="MinSizeRel";webrtc_java_EXPORTS</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <DebugInformationFormat>
+      </DebugInformationFormat>
+      <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;UNICODE;_UNICODE;CHROMIUM;DYNAMIC_ANNOTATIONS_ENABLED=1;LIBYUV_DISABLE_SVE;LIBYUV_DISABLE_SME;LIBYUV_DISABLE_LSX;LIBYUV_DISABLE_LASX;PROTOBUF_ENABLE_DEBUG_LOGGING_MAY_LEAK_PII=0;RTC_DAV1D_IN_INTERNAL_DECODER_FACTORY;RTC_ENABLE_VP9;WEBRTC_DEPRECATE_PLAN_B;WEBRTC_ENCODER_PSNR_STATS;WEBRTC_HAVE_SCTP;WEBRTC_INCLUDE_INTERNAL_AUDIO_DEVICE;WEBRTC_NON_STATIC_TRACE_EVENT_HANDLERS=0;WEBRTC_STRICT_FIELD_TRIALS=0;NOMINMAX;WIN32_LEAN_AND_MEAN;WEBRTC_WIN;ABSL_CONSUME_DLL;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR=\"MinSizeRel\";webrtc_java_EXPORTS</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\api;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\media;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\rtc;D:\vcpkg\installed\x64-windows\include\webrtc;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\jni;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\jni\windows;D:\vcpkg\installed\x64-windows\include;D:\vcpkg\installed\x64-windows\include\opus;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Midl>
+      <AdditionalIncludeDirectories>D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\api;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\media;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\rtc;D:\vcpkg\installed\x64-windows\include\webrtc;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\jni;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\jni\windows;D:\vcpkg\installed\x64-windows\include;D:\vcpkg\installed\x64-windows\include\opus;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <Link>
+      <AdditionalDependencies>dependencies\jni-voithos\MinSizeRel\jni-voithos.lib;D:\vcpkg\installed\x64-windows\lib\webrtc.lib;dwmapi.lib;mf.lib;mfreadwrite.lib;mfplat.lib;mfuuid.lib;shcore.lib;strmiids.lib;d3d11.lib;dxgi.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_borrowed_fixup_buffer.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_demangle_rust.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_decode_rust_punycode.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_parse.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_usage.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_usage_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_generic_printer_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_hashtable_profiler.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_log_flags.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_marshalling.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_reflection.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_config.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_program_name.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_private_handle_accessor.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_commandlineflag.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_commandlineflag_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_log_internal_structured_proto.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_poison.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_profile_builder.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_random_internal_entropy_pool.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_tracing_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_utf8_for_code_point.lib;D:\vcpkg\installed\x64-windows\debug\lib\abseil_dll.lib;-ignore:4221;D:\vcpkg\installed\x64-windows\debug\lib\absl_borrowed_fixup_buffer.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_decode_rust_punycode.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_demangle_rust.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_commandlineflag.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_commandlineflag_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_config.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_marshalling.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_parse.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_private_handle_accessor.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_program_name.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_reflection.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_usage.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_usage_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_generic_printer_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_hashtable_profiler.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_log_flags.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_log_internal_structured_proto.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_poison.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_profile_builder.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_random_internal_entropy_pool.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_tracing_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_utf8_for_code_point.lib;D:\vcpkg\installed\x64-windows\debug\lib\aom.lib;D:\vcpkg\installed\x64-windows\debug\lib\libyuv.lib;D:\vcpkg\installed\x64-windows\lib\vpx.lib;D:\vcpkg\installed\x64-windows\debug\lib\opus.lib;D:\vcpkg\installed\x64-windows\debug\lib\jsoncpp.lib;D:\vcpkg\installed\x64-windows\debug\lib\pffft.lib;D:\vcpkg\installed\x64-windows\debug\lib\srtp2.lib;D:\vcpkg\installed\x64-windows\lib\libssl.lib;D:\vcpkg\installed\x64-windows\lib\libcrypto.lib;ws2_32.lib;winmm.lib;iphlpapi.lib;msdmo.lib;dmoguids.lib;wmcodecdspuuid.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+      <GenerateDebugInformation>false</GenerateDebugInformation>
+      <IgnoreSpecificDefaultLibraries>%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
+      <ImportLibrary>D:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp/build2/MinSizeRel/webrtc-java-.lib</ImportLibrary>
+      <ProgramDataBaseFile>D:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp/build2/MinSizeRel/webrtc-java-.pdb</ProgramDataBaseFile>
+      <SubSystem>Console</SubSystem>
+    </Link>
+    <ProjectReference>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\api;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\media;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\rtc;D:\vcpkg\installed\x64-windows\include\webrtc;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\jni;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\jni\windows;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /external:I "D:/vcpkg/installed/x64-windows/include" /external:I "D:/vcpkg/installed/x64-windows/include/opus"</AdditionalOptions>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <DisableSpecificWarnings>4005;4068;4101;4267;4996</DisableSpecificWarnings>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
+      <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <MinimalRebuild></MinimalRebuild>
+      <Optimization>MaxSpeed</Optimization>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <RuntimeTypeInfo>true</RuntimeTypeInfo>
+      <SupportJustMyCode></SupportJustMyCode>
+      <UseFullPaths>false</UseFullPaths>
+      <WarningLevel>Level3</WarningLevel>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;UNICODE;_UNICODE;CHROMIUM;DYNAMIC_ANNOTATIONS_ENABLED=1;LIBYUV_DISABLE_SVE;LIBYUV_DISABLE_SME;LIBYUV_DISABLE_LSX;LIBYUV_DISABLE_LASX;PROTOBUF_ENABLE_DEBUG_LOGGING_MAY_LEAK_PII=0;RTC_DAV1D_IN_INTERNAL_DECODER_FACTORY;RTC_ENABLE_VP9;WEBRTC_DEPRECATE_PLAN_B;WEBRTC_ENCODER_PSNR_STATS;WEBRTC_HAVE_SCTP;WEBRTC_INCLUDE_INTERNAL_AUDIO_DEVICE;WEBRTC_NON_STATIC_TRACE_EVENT_HANDLERS=0;WEBRTC_STRICT_FIELD_TRIALS=0;NOMINMAX;WIN32_LEAN_AND_MEAN;WEBRTC_WIN;ABSL_CONSUME_DLL;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR="RelWithDebInfo";webrtc_java_EXPORTS</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;UNICODE;_UNICODE;CHROMIUM;DYNAMIC_ANNOTATIONS_ENABLED=1;LIBYUV_DISABLE_SVE;LIBYUV_DISABLE_SME;LIBYUV_DISABLE_LSX;LIBYUV_DISABLE_LASX;PROTOBUF_ENABLE_DEBUG_LOGGING_MAY_LEAK_PII=0;RTC_DAV1D_IN_INTERNAL_DECODER_FACTORY;RTC_ENABLE_VP9;WEBRTC_DEPRECATE_PLAN_B;WEBRTC_ENCODER_PSNR_STATS;WEBRTC_HAVE_SCTP;WEBRTC_INCLUDE_INTERNAL_AUDIO_DEVICE;WEBRTC_NON_STATIC_TRACE_EVENT_HANDLERS=0;WEBRTC_STRICT_FIELD_TRIALS=0;NOMINMAX;WIN32_LEAN_AND_MEAN;WEBRTC_WIN;ABSL_CONSUME_DLL;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR=\"RelWithDebInfo\";webrtc_java_EXPORTS</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\api;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\media;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\rtc;D:\vcpkg\installed\x64-windows\include\webrtc;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\jni;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\jni\windows;D:\vcpkg\installed\x64-windows\include;D:\vcpkg\installed\x64-windows\include\opus;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Midl>
+      <AdditionalIncludeDirectories>D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\api;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\media;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\include\rtc;D:\vcpkg\installed\x64-windows\include\webrtc;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\jni;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\jni\windows;D:\vcpkg\installed\x64-windows\include;D:\vcpkg\installed\x64-windows\include\opus;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <Link>
+      <AdditionalDependencies>dependencies\jni-voithos\RelWithDebInfo\jni-voithos.lib;D:\vcpkg\installed\x64-windows\lib\webrtc.lib;dwmapi.lib;mf.lib;mfreadwrite.lib;mfplat.lib;mfuuid.lib;shcore.lib;strmiids.lib;d3d11.lib;dxgi.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_borrowed_fixup_buffer.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_demangle_rust.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_decode_rust_punycode.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_parse.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_usage.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_usage_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_generic_printer_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_hashtable_profiler.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_log_flags.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_marshalling.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_reflection.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_config.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_program_name.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_private_handle_accessor.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_commandlineflag.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_commandlineflag_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_log_internal_structured_proto.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_poison.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_profile_builder.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_random_internal_entropy_pool.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_tracing_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_utf8_for_code_point.lib;D:\vcpkg\installed\x64-windows\debug\lib\abseil_dll.lib;-ignore:4221;D:\vcpkg\installed\x64-windows\debug\lib\absl_borrowed_fixup_buffer.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_decode_rust_punycode.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_demangle_rust.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_commandlineflag.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_commandlineflag_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_config.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_marshalling.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_parse.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_private_handle_accessor.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_program_name.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_reflection.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_usage.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_flags_usage_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_generic_printer_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_hashtable_profiler.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_log_flags.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_log_internal_structured_proto.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_poison.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_profile_builder.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_random_internal_entropy_pool.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_tracing_internal.lib;D:\vcpkg\installed\x64-windows\debug\lib\absl_utf8_for_code_point.lib;D:\vcpkg\installed\x64-windows\debug\lib\aom.lib;D:\vcpkg\installed\x64-windows\debug\lib\libyuv.lib;D:\vcpkg\installed\x64-windows\lib\vpx.lib;D:\vcpkg\installed\x64-windows\debug\lib\opus.lib;D:\vcpkg\installed\x64-windows\debug\lib\jsoncpp.lib;D:\vcpkg\installed\x64-windows\debug\lib\pffft.lib;D:\vcpkg\installed\x64-windows\debug\lib\srtp2.lib;D:\vcpkg\installed\x64-windows\lib\libssl.lib;D:\vcpkg\installed\x64-windows\lib\libcrypto.lib;ws2_32.lib;winmm.lib;iphlpapi.lib;msdmo.lib;dmoguids.lib;wmcodecdspuuid.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <IgnoreSpecificDefaultLibraries>%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
+      <ImportLibrary>D:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp/build2/RelWithDebInfo/webrtc-java-.lib</ImportLibrary>
+      <ProgramDataBaseFile>D:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp/build2/RelWithDebInfo/webrtc-java-.pdb</ProgramDataBaseFile>
+      <SubSystem>Console</SubSystem>
+    </Link>
+    <ProjectReference>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <CustomBuild Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\CMakeLists.txt">
+      <UseUtf8Encoding>Always</UseUtf8Encoding>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Building Custom Rule D:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SD:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp -BD:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp/build2 --check-stamp-file D:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp/build2/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeCInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeCXXInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeCommonLanguageInclude.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeFindDependencyMacro.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeGenericSystem.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeInitializeConfigs.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeLanguageInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeRCInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeSystemSpecificInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeSystemSpecificInitialize.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CheckCSourceCompiles.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CheckIncludeFile.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CheckLibraryExists.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\CMakeCommonCompilerMacros.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\MSVC-C.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\MSVC.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindJPEG.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindOpenSSL.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindPackageHandleStandardArgs.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindPackageMessage.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindThreads.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CMakeCLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CMakeCXXLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CMakeCommonLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CheckSourceCompiles.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Linker\Windows-MSVC-C.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Linker\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Linker\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-Initialize.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-MSVC-C.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\WindowsPaths.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\SelectLibraryConfigurations.cmake;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\CMakeFiles\3.31.4\CMakeCCompiler.cmake;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\CMakeFiles\3.31.4\CMakeCXXCompiler.cmake;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\CMakeFiles\3.31.4\CMakeRCCompiler.cmake;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\CMakeFiles\3.31.4\CMakeSystem.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslConfig.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslConfigVersion.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslTargets-debug.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslTargets-release.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslTargets.cmake;D:\vcpkg\installed\x64-windows\share\aom\AOMConfig.cmake;D:\vcpkg\installed\x64-windows\share\aom\AOMConfigVersion.cmake;D:\vcpkg\installed\x64-windows\share\aom\AOMTargets-debug.cmake;D:\vcpkg\installed\x64-windows\share\aom\AOMTargets-release.cmake;D:\vcpkg\installed\x64-windows\share\aom\AOMTargets.cmake;D:\vcpkg\installed\x64-windows\share\jsoncpp\jsoncpp-namespaced-targets.cmake;D:\vcpkg\installed\x64-windows\share\jsoncpp\jsoncpp-targets-debug.cmake;D:\vcpkg\installed\x64-windows\share\jsoncpp\jsoncpp-targets-release.cmake;D:\vcpkg\installed\x64-windows\share\jsoncpp\jsoncpp-targets.cmake;D:\vcpkg\installed\x64-windows\share\jsoncpp\jsoncppConfig.cmake;D:\vcpkg\installed\x64-windows\share\jsoncpp\jsoncppConfigVersion.cmake;D:\vcpkg\installed\x64-windows\share\libsrtp\libSRTPConfig.cmake;D:\vcpkg\installed\x64-windows\share\libsrtp\libSRTPConfigVersion.cmake;D:\vcpkg\installed\x64-windows\share\libsrtp\libSRTPTargets-debug.cmake;D:\vcpkg\installed\x64-windows\share\libsrtp\libSRTPTargets-release.cmake;D:\vcpkg\installed\x64-windows\share\libsrtp\libSRTPTargets.cmake;D:\vcpkg\installed\x64-windows\share\libyuv\libyuv-config.cmake;D:\vcpkg\installed\x64-windows\share\libyuv\libyuv-targets-debug.cmake;D:\vcpkg\installed\x64-windows\share\libyuv\libyuv-targets-release.cmake;D:\vcpkg\installed\x64-windows\share\libyuv\libyuv-targets.cmake;D:\vcpkg\installed\x64-windows\share\openssl\OpenSSLConfig.cmake;D:\vcpkg\installed\x64-windows\share\openssl\OpenSSLConfigVersion.cmake;D:\vcpkg\installed\x64-windows\share\opus\OpusConfig.cmake;D:\vcpkg\installed\x64-windows\share\opus\OpusConfigVersion.cmake;D:\vcpkg\installed\x64-windows\share\opus\OpusTargets-debug.cmake;D:\vcpkg\installed\x64-windows\share\opus\OpusTargets-release.cmake;D:\vcpkg\installed\x64-windows\share\opus\OpusTargets.cmake;D:\vcpkg\installed\x64-windows\share\pffft\pffft-config-debug.cmake;D:\vcpkg\installed\x64-windows\share\pffft\pffft-config-release.cmake;D:\vcpkg\installed\x64-windows\share\pffft\pffft-config.cmake;D:\vcpkg\installed\x64-windows\share\unofficial-libvpx\unofficial-libvpx-config.cmake;D:\vcpkg\installed\x64-windows\share\unofficial-webrtc\unofficial-webrtcConfig.cmake;D:\vcpkg\installed\x64-windows\share\unofficial-webrtc\webrtc-absl-targets.cmake;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Building Custom Rule D:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SD:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp -BD:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp/build2 --check-stamp-file D:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp/build2/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeCInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeCXXInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeCommonLanguageInclude.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeFindDependencyMacro.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeGenericSystem.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeInitializeConfigs.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeLanguageInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeRCInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeSystemSpecificInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeSystemSpecificInitialize.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CheckCSourceCompiles.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CheckIncludeFile.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CheckLibraryExists.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\CMakeCommonCompilerMacros.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\MSVC-C.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\MSVC.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindJPEG.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindOpenSSL.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindPackageHandleStandardArgs.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindPackageMessage.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindThreads.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CMakeCLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CMakeCXXLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CMakeCommonLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CheckSourceCompiles.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Linker\Windows-MSVC-C.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Linker\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Linker\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-Initialize.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-MSVC-C.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\WindowsPaths.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\SelectLibraryConfigurations.cmake;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\CMakeFiles\3.31.4\CMakeCCompiler.cmake;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\CMakeFiles\3.31.4\CMakeCXXCompiler.cmake;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\CMakeFiles\3.31.4\CMakeRCCompiler.cmake;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\CMakeFiles\3.31.4\CMakeSystem.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslConfig.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslConfigVersion.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslTargets-debug.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslTargets-release.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslTargets.cmake;D:\vcpkg\installed\x64-windows\share\aom\AOMConfig.cmake;D:\vcpkg\installed\x64-windows\share\aom\AOMConfigVersion.cmake;D:\vcpkg\installed\x64-windows\share\aom\AOMTargets-debug.cmake;D:\vcpkg\installed\x64-windows\share\aom\AOMTargets-release.cmake;D:\vcpkg\installed\x64-windows\share\aom\AOMTargets.cmake;D:\vcpkg\installed\x64-windows\share\jsoncpp\jsoncpp-namespaced-targets.cmake;D:\vcpkg\installed\x64-windows\share\jsoncpp\jsoncpp-targets-debug.cmake;D:\vcpkg\installed\x64-windows\share\jsoncpp\jsoncpp-targets-release.cmake;D:\vcpkg\installed\x64-windows\share\jsoncpp\jsoncpp-targets.cmake;D:\vcpkg\installed\x64-windows\share\jsoncpp\jsoncppConfig.cmake;D:\vcpkg\installed\x64-windows\share\jsoncpp\jsoncppConfigVersion.cmake;D:\vcpkg\installed\x64-windows\share\libsrtp\libSRTPConfig.cmake;D:\vcpkg\installed\x64-windows\share\libsrtp\libSRTPConfigVersion.cmake;D:\vcpkg\installed\x64-windows\share\libsrtp\libSRTPTargets-debug.cmake;D:\vcpkg\installed\x64-windows\share\libsrtp\libSRTPTargets-release.cmake;D:\vcpkg\installed\x64-windows\share\libsrtp\libSRTPTargets.cmake;D:\vcpkg\installed\x64-windows\share\libyuv\libyuv-config.cmake;D:\vcpkg\installed\x64-windows\share\libyuv\libyuv-targets-debug.cmake;D:\vcpkg\installed\x64-windows\share\libyuv\libyuv-targets-release.cmake;D:\vcpkg\installed\x64-windows\share\libyuv\libyuv-targets.cmake;D:\vcpkg\installed\x64-windows\share\openssl\OpenSSLConfig.cmake;D:\vcpkg\installed\x64-windows\share\openssl\OpenSSLConfigVersion.cmake;D:\vcpkg\installed\x64-windows\share\opus\OpusConfig.cmake;D:\vcpkg\installed\x64-windows\share\opus\OpusConfigVersion.cmake;D:\vcpkg\installed\x64-windows\share\opus\OpusTargets-debug.cmake;D:\vcpkg\installed\x64-windows\share\opus\OpusTargets-release.cmake;D:\vcpkg\installed\x64-windows\share\opus\OpusTargets.cmake;D:\vcpkg\installed\x64-windows\share\pffft\pffft-config-debug.cmake;D:\vcpkg\installed\x64-windows\share\pffft\pffft-config-release.cmake;D:\vcpkg\installed\x64-windows\share\pffft\pffft-config.cmake;D:\vcpkg\installed\x64-windows\share\unofficial-libvpx\unofficial-libvpx-config.cmake;D:\vcpkg\installed\x64-windows\share\unofficial-webrtc\unofficial-webrtcConfig.cmake;D:\vcpkg\installed\x64-windows\share\unofficial-webrtc\webrtc-absl-targets.cmake;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">Building Custom Rule D:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SD:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp -BD:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp/build2 --check-stamp-file D:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp/build2/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeCInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeCXXInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeCommonLanguageInclude.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeFindDependencyMacro.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeGenericSystem.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeInitializeConfigs.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeLanguageInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeRCInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeSystemSpecificInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeSystemSpecificInitialize.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CheckCSourceCompiles.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CheckIncludeFile.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CheckLibraryExists.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\CMakeCommonCompilerMacros.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\MSVC-C.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\MSVC.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindJPEG.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindOpenSSL.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindPackageHandleStandardArgs.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindPackageMessage.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindThreads.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CMakeCLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CMakeCXXLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CMakeCommonLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CheckSourceCompiles.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Linker\Windows-MSVC-C.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Linker\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Linker\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-Initialize.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-MSVC-C.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\WindowsPaths.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\SelectLibraryConfigurations.cmake;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\CMakeFiles\3.31.4\CMakeCCompiler.cmake;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\CMakeFiles\3.31.4\CMakeCXXCompiler.cmake;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\CMakeFiles\3.31.4\CMakeRCCompiler.cmake;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\CMakeFiles\3.31.4\CMakeSystem.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslConfig.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslConfigVersion.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslTargets-debug.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslTargets-release.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslTargets.cmake;D:\vcpkg\installed\x64-windows\share\aom\AOMConfig.cmake;D:\vcpkg\installed\x64-windows\share\aom\AOMConfigVersion.cmake;D:\vcpkg\installed\x64-windows\share\aom\AOMTargets-debug.cmake;D:\vcpkg\installed\x64-windows\share\aom\AOMTargets-release.cmake;D:\vcpkg\installed\x64-windows\share\aom\AOMTargets.cmake;D:\vcpkg\installed\x64-windows\share\jsoncpp\jsoncpp-namespaced-targets.cmake;D:\vcpkg\installed\x64-windows\share\jsoncpp\jsoncpp-targets-debug.cmake;D:\vcpkg\installed\x64-windows\share\jsoncpp\jsoncpp-targets-release.cmake;D:\vcpkg\installed\x64-windows\share\jsoncpp\jsoncpp-targets.cmake;D:\vcpkg\installed\x64-windows\share\jsoncpp\jsoncppConfig.cmake;D:\vcpkg\installed\x64-windows\share\jsoncpp\jsoncppConfigVersion.cmake;D:\vcpkg\installed\x64-windows\share\libsrtp\libSRTPConfig.cmake;D:\vcpkg\installed\x64-windows\share\libsrtp\libSRTPConfigVersion.cmake;D:\vcpkg\installed\x64-windows\share\libsrtp\libSRTPTargets-debug.cmake;D:\vcpkg\installed\x64-windows\share\libsrtp\libSRTPTargets-release.cmake;D:\vcpkg\installed\x64-windows\share\libsrtp\libSRTPTargets.cmake;D:\vcpkg\installed\x64-windows\share\libyuv\libyuv-config.cmake;D:\vcpkg\installed\x64-windows\share\libyuv\libyuv-targets-debug.cmake;D:\vcpkg\installed\x64-windows\share\libyuv\libyuv-targets-release.cmake;D:\vcpkg\installed\x64-windows\share\libyuv\libyuv-targets.cmake;D:\vcpkg\installed\x64-windows\share\openssl\OpenSSLConfig.cmake;D:\vcpkg\installed\x64-windows\share\openssl\OpenSSLConfigVersion.cmake;D:\vcpkg\installed\x64-windows\share\opus\OpusConfig.cmake;D:\vcpkg\installed\x64-windows\share\opus\OpusConfigVersion.cmake;D:\vcpkg\installed\x64-windows\share\opus\OpusTargets-debug.cmake;D:\vcpkg\installed\x64-windows\share\opus\OpusTargets-release.cmake;D:\vcpkg\installed\x64-windows\share\opus\OpusTargets.cmake;D:\vcpkg\installed\x64-windows\share\pffft\pffft-config-debug.cmake;D:\vcpkg\installed\x64-windows\share\pffft\pffft-config-release.cmake;D:\vcpkg\installed\x64-windows\share\pffft\pffft-config.cmake;D:\vcpkg\installed\x64-windows\share\unofficial-libvpx\unofficial-libvpx-config.cmake;D:\vcpkg\installed\x64-windows\share\unofficial-webrtc\unofficial-webrtcConfig.cmake;D:\vcpkg\installed\x64-windows\share\unofficial-webrtc\webrtc-absl-targets.cmake;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">Building Custom Rule D:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SD:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp -BD:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp/build2 --check-stamp-file D:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp/build2/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeCInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeCXXInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeCommonLanguageInclude.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeFindDependencyMacro.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeGenericSystem.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeInitializeConfigs.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeLanguageInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeRCInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeSystemSpecificInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeSystemSpecificInitialize.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CheckCSourceCompiles.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CheckIncludeFile.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CheckLibraryExists.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\CMakeCommonCompilerMacros.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\MSVC-C.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\MSVC.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindJPEG.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindOpenSSL.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindPackageHandleStandardArgs.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindPackageMessage.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindThreads.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CMakeCLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CMakeCXXLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CMakeCommonLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CheckSourceCompiles.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Linker\Windows-MSVC-C.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Linker\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Linker\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-Initialize.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-MSVC-C.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\WindowsPaths.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\SelectLibraryConfigurations.cmake;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\CMakeFiles\3.31.4\CMakeCCompiler.cmake;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\CMakeFiles\3.31.4\CMakeCXXCompiler.cmake;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\CMakeFiles\3.31.4\CMakeRCCompiler.cmake;D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\CMakeFiles\3.31.4\CMakeSystem.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslConfig.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslConfigVersion.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslTargets-debug.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslTargets-release.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslTargets.cmake;D:\vcpkg\installed\x64-windows\share\aom\AOMConfig.cmake;D:\vcpkg\installed\x64-windows\share\aom\AOMConfigVersion.cmake;D:\vcpkg\installed\x64-windows\share\aom\AOMTargets-debug.cmake;D:\vcpkg\installed\x64-windows\share\aom\AOMTargets-release.cmake;D:\vcpkg\installed\x64-windows\share\aom\AOMTargets.cmake;D:\vcpkg\installed\x64-windows\share\jsoncpp\jsoncpp-namespaced-targets.cmake;D:\vcpkg\installed\x64-windows\share\jsoncpp\jsoncpp-targets-debug.cmake;D:\vcpkg\installed\x64-windows\share\jsoncpp\jsoncpp-targets-release.cmake;D:\vcpkg\installed\x64-windows\share\jsoncpp\jsoncpp-targets.cmake;D:\vcpkg\installed\x64-windows\share\jsoncpp\jsoncppConfig.cmake;D:\vcpkg\installed\x64-windows\share\jsoncpp\jsoncppConfigVersion.cmake;D:\vcpkg\installed\x64-windows\share\libsrtp\libSRTPConfig.cmake;D:\vcpkg\installed\x64-windows\share\libsrtp\libSRTPConfigVersion.cmake;D:\vcpkg\installed\x64-windows\share\libsrtp\libSRTPTargets-debug.cmake;D:\vcpkg\installed\x64-windows\share\libsrtp\libSRTPTargets-release.cmake;D:\vcpkg\installed\x64-windows\share\libsrtp\libSRTPTargets.cmake;D:\vcpkg\installed\x64-windows\share\libyuv\libyuv-config.cmake;D:\vcpkg\installed\x64-windows\share\libyuv\libyuv-targets-debug.cmake;D:\vcpkg\installed\x64-windows\share\libyuv\libyuv-targets-release.cmake;D:\vcpkg\installed\x64-windows\share\libyuv\libyuv-targets.cmake;D:\vcpkg\installed\x64-windows\share\openssl\OpenSSLConfig.cmake;D:\vcpkg\installed\x64-windows\share\openssl\OpenSSLConfigVersion.cmake;D:\vcpkg\installed\x64-windows\share\opus\OpusConfig.cmake;D:\vcpkg\installed\x64-windows\share\opus\OpusConfigVersion.cmake;D:\vcpkg\installed\x64-windows\share\opus\OpusTargets-debug.cmake;D:\vcpkg\installed\x64-windows\share\opus\OpusTargets-release.cmake;D:\vcpkg\installed\x64-windows\share\opus\OpusTargets.cmake;D:\vcpkg\installed\x64-windows\share\pffft\pffft-config-debug.cmake;D:\vcpkg\installed\x64-windows\share\pffft\pffft-config-release.cmake;D:\vcpkg\installed\x64-windows\share\pffft\pffft-config.cmake;D:\vcpkg\installed\x64-windows\share\unofficial-libvpx\unofficial-libvpx-config.cmake;D:\vcpkg\installed\x64-windows\share\unofficial-webrtc\unofficial-webrtcConfig.cmake;D:\vcpkg\installed\x64-windows\share\unofficial-webrtc\webrtc-absl-targets.cmake;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">false</LinkObjects>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_AudioDeviceModule.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_AudioDeviceModuleBase.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_AudioProcessing.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_AudioResampler.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_AudioTrack.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_CustomAudioSource.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_CustomVideoSource.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_DesktopCapturer.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_Logging.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_MediaDevices.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_MediaSource.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_MediaStream.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_MediaStreamTrack.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_NativeI420Buffer.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_PeerConnectionFactory.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_PowerManagement.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_RTCDataChannel.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_RTCDtlsTransport.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_RTCDtmfSender.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_RTCPeerConnection.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_RTCRtpReceiver.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_RTCRtpSender.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_RTCRtpTransceiver.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_RefCountedObject.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_ScreenCapturer.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_SyncClock.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_VideoBufferConverter.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_VideoCapture.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_VideoDesktopSource.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_VideoDeviceSource.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_VideoTrack.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_WebRTC.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_WindowCapturer.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\WebRTCContext.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\AudioOptions.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\AudioTrackSink.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\CreateSessionDescriptionObserver.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\DataBufferFactory.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\PeerConnectionObserver.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\PortAllocatorConfig.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCAnswerOptions.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCConfiguration.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCDataChannelInit.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCDataChannelObserver.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCDtlsTransportObserver.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCDtmfSender.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCDtmfSenderObserver.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCIceCandidate.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCIceServer.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCOfferOptions.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCPeerConnectionIceErrorEvent.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCRtcpParameters.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCRtpCapabilities.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCRtpCodecCapability.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCRtpCodecParameters.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCRtpContributingSource.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCRtpEncodingParameters.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCRtpHeaderExtension.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCRtpHeaderExtensionCapability.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCRtpParameters.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCRtpSendParameters.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCRtpSynchronizationSource.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCRtpTransceiverInit.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCSessionDescription.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCStats.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCStatsCollectorCallback.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCStatsReport.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\SetSessionDescriptionObserver.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\VideoFrame.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\VideoTrackSink.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\WebRTCUtils.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\Device.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\DeviceChangeListener.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\DeviceManager.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\MediaStreamTrackObserver.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\SyncClock.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\audio\AudioDevice.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\audio\AudioDeviceManager.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\audio\AudioProcessing.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\audio\AudioProcessingConfig.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\audio\AudioProcessingStats.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\audio\AudioProcessingStreamConfig.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\audio\AudioTransportSink.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\audio\AudioTransportSource.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\audio\CustomAudioSource.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\audio\RawAudioFileSink.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\audio\RawAudioFileSource.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\audio\windows\OrbitAudioDeviceModule.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\audio\windows\WindowsAudioDeviceManager.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\CustomVideoSource.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\RawVideoFileSink.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\VideoCapture.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\VideoCaptureBase.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\VideoCaptureCapability.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\VideoDevice.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\VideoDeviceManager.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\VideoTrackDesktopSource.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\VideoTrackDeviceSource.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\VideoTrackDeviceSourceBase.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\desktop\DesktopCaptureCallback.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\desktop\DesktopCapturer.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\desktop\DesktopFrame.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\desktop\DesktopSource.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\desktop\windows\WindowsPowerManagement.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\windows\WindowsVideoDeviceManager.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\platform\windows\ComInitializer.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\platform\windows\MFInitializer.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\platform\windows\MFUtils.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\platform\windows\WinHotplugNotifier.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\rtc\LogSink.cpp" />
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\rtc\RTCCertificatePEM.cpp" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\jni\jni.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\Exception.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaArray.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaArrayList.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaBigInteger.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaClasses.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaClass.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaClassLoader.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaClassUtils.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaContext.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaDimension.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaEnum.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaEnums.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaError.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaFactories.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaFactory.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaHashMap.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaIOException.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaIterable.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaList.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaMapIterator.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaNullPointerException.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaObject.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaPrimitive.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaRectangle.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaRef.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaRuntimeException.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaString.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaThreadEnv.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaThrowable.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaUtils.h" />
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaWrappedException.h" />
+  </ItemGroup>
+  <ItemGroup />
+  <ItemGroup>
+    <ProjectReference Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\ZERO_CHECK.vcxproj">
+      <Project>{53C33F82-52F7-3015-A65B-C77B34D77B07}</Project>
+      <Name>ZERO_CHECK</Name>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </ProjectReference>
+    <ProjectReference Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\dependencies\jni-voithos\jni-voithos.vcxproj">
+      <Project>{8800D0B4-E725-3141-8D6A-B9EEF6F0C3BF}</Project>
+      <Name>jni-voithos</Name>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

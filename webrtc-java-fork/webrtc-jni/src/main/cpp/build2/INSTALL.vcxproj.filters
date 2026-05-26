@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\CMakeFiles\d36bd7188b945cf23f7be833e9a5bf31\INSTALL_force.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{94D0C960-51B3-326A-8EA7-A429F6DB9329}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>
