@@ -48,7 +48,7 @@ JNIEXPORT jobjectArray JNICALL Java_dev_onvoid_webrtc_media_MediaStream_getAudio
 		ThrowCxxJavaException(env);
 	}
 
-	return objectArray;
+	return objectArray.release();
 }
 
 JNIEXPORT jobjectArray JNICALL Java_dev_onvoid_webrtc_media_MediaStream_getVideoTracks
@@ -66,7 +66,7 @@ JNIEXPORT jobjectArray JNICALL Java_dev_onvoid_webrtc_media_MediaStream_getVideo
 		ThrowCxxJavaException(env);
 	}
 
-	return objectArray;
+	return objectArray.release();
 }
 
 JNIEXPORT void JNICALL Java_dev_onvoid_webrtc_media_MediaStream_addTrack
@@ -78,10 +78,12 @@ JNIEXPORT void JNICALL Java_dev_onvoid_webrtc_media_MediaStream_addTrack
 	webrtc::MediaStreamTrackInterface * track = GetHandle<webrtc::MediaStreamTrackInterface>(env, jTrack);
 	CHECK_HANDLE(track);
 
-	if (webrtc::AudioTrackInterface * t = dynamic_cast<webrtc::AudioTrackInterface *>(track)) {
+	if (track->kind() == webrtc::MediaStreamTrackInterface::kAudioKind) {
+		webrtc::AudioTrackInterface * t = static_cast<webrtc::AudioTrackInterface *>(track);
 		stream->AddTrack(webrtc::scoped_refptr<webrtc::AudioTrackInterface>(t));
 	}
-	else if (webrtc::VideoTrackInterface * t = dynamic_cast<webrtc::VideoTrackInterface *>(track)) {
+	else if (track->kind() == webrtc::MediaStreamTrackInterface::kVideoKind) {
+		webrtc::VideoTrackInterface * t = static_cast<webrtc::VideoTrackInterface *>(track);
 		stream->AddTrack(webrtc::scoped_refptr<webrtc::VideoTrackInterface>(t));
 	}
 }
@@ -95,10 +97,12 @@ JNIEXPORT void JNICALL Java_dev_onvoid_webrtc_media_MediaStream_removeTrack
 	webrtc::MediaStreamTrackInterface * track = GetHandle<webrtc::MediaStreamTrackInterface>(env, jTrack);
 	CHECK_HANDLE(track);
 
-	if (webrtc::AudioTrackInterface * t = dynamic_cast<webrtc::AudioTrackInterface *>(track)) {
+	if (track->kind() == webrtc::MediaStreamTrackInterface::kAudioKind) {
+		webrtc::AudioTrackInterface * t = static_cast<webrtc::AudioTrackInterface *>(track);
 		stream->RemoveTrack(webrtc::scoped_refptr<webrtc::AudioTrackInterface>(t));
 	}
-	else if (webrtc::VideoTrackInterface * t = dynamic_cast<webrtc::VideoTrackInterface *>(track)) {
+	else if (track->kind() == webrtc::MediaStreamTrackInterface::kVideoKind) {
+		webrtc::VideoTrackInterface * t = static_cast<webrtc::VideoTrackInterface *>(track);
 		stream->RemoveTrack(webrtc::scoped_refptr<webrtc::VideoTrackInterface>(t));
 	}
 }

@@ -91,7 +91,7 @@ fun CallScreen(
                 .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(20.dp))
                 .clickable { callManager.isMinimized.value = false }
         ) {
-            if (isVideoCall && isVideoEnabled) {
+            if (isVideoCall && (isVideoEnabled || callState == CallState.CONNECTED)) {
                 val renderer = if (callState == CallState.CONNECTED) {
                     callManager.webRtcClient.getRemoteVideoRenderer()
                 } else {
@@ -157,7 +157,7 @@ fun CallScreen(
                 }
             }
 
-            if (!isVideoEnabled) {
+            if (!isVideoEnabled && callState != CallState.CONNECTED) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
