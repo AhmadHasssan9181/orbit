@@ -68,8 +68,8 @@ class JvmWebRtcClient : WebRtcClient {
     private var remoteAudioTrack: AudioTrack? = null
     private var screenSource: VideoDesktopSource? = null
 
-    private var localRenderer: DesktopVideoRenderer? = null
-    private var remoteRenderer: DesktopVideoRenderer? = null
+    private var localRenderer: DesktopVideoRenderer? = DesktopVideoRenderer(mirror = true)
+    private var remoteRenderer: DesktopVideoRenderer? = DesktopVideoRenderer()
 
     override fun initialize(iceServers: List<TurnServer>) {
         try {
@@ -77,12 +77,6 @@ class JvmWebRtcClient : WebRtcClient {
 
             if (factory == null) {
                 factory = createFactory()
-            }
-            if (localRenderer == null) {
-                localRenderer = DesktopVideoRenderer(mirror = true)
-            }
-            if (remoteRenderer == null) {
-                remoteRenderer = DesktopVideoRenderer()
             }
 
             val rtcIceServers = iceServers.map { server ->

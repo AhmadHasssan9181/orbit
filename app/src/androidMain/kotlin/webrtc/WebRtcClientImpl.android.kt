@@ -20,7 +20,7 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
     private val _isScreenSharing = MutableSharedFlow<Boolean>(extraBufferCapacity = 1)
     override val isScreenSharing: SharedFlow<Boolean> = _isScreenSharing
 
-    private var rootEglBase: EglBase? = null
+    private var rootEglBase: EglBase? = EglBase.create()
     private var peerConnectionFactory: PeerConnectionFactory? = null
     private var peerConnection: PeerConnection? = null
     private var localVideoTrack: VideoTrack? = null
@@ -36,15 +36,16 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
     private var screenCapturer: ScreenCapturerAndroid? = null
     private var videoSender: RtpSender? = null
 
-    private var localRenderer: SurfaceViewRenderer? = null
-    private var remoteRenderer: SurfaceViewRenderer? = null
+    private var localRenderer: SurfaceViewRenderer? = SurfaceViewRenderer(context).apply {
+        init(rootEglBase?.eglBaseContext, null)
+        setMirror(true)
+    }
+    private var remoteRenderer: SurfaceViewRenderer? = SurfaceViewRenderer(context).apply {
+        init(rootEglBase?.eglBaseContext, null)
+    }
 
     override fun initialize(iceServers: List<TurnServer>) {
         if (peerConnection != null) return
-
-        if (rootEglBase == null) {
-            rootEglBase = EglBase.create()
-        }
 
         if (peerConnectionFactory == null) {
             val options = PeerConnectionFactory.InitializationOptions.builder(context)
@@ -60,18 +61,6 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
                 .setVideoEncoderFactory(videoEncoderFactory)
                 .setVideoDecoderFactory(videoDecoderFactory)
                 .createPeerConnectionFactory()
-        }
-
-        if (localRenderer == null) {
-            localRenderer = SurfaceViewRenderer(context).apply {
-                init(rootEglBase?.eglBaseContext, null)
-                setMirror(true)
-            }
-        }
-        if (remoteRenderer == null) {
-            remoteRenderer = SurfaceViewRenderer(context).apply {
-                init(rootEglBase?.eglBaseContext, null)
-            }
         }
 
         val rtcIceServers = iceServers.map { server ->
