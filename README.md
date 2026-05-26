@@ -55,6 +55,7 @@ The product model is intentionally familiar:
 | Identity | Profile lookup, display-name updates, avatar uploads, presence and typing |
 | Verification | Trixnity-backed device verification with SAS emoji comparison |
 | Calls | WebRTC call manager, Matrix call signaling, TURN server discovery |
+| Screen Sharing | Desktop screen sharing with WASAPI loopback system audio (Windows) |
 | Interface | Compact, medium, and expanded layouts for phones, tablets, and desktop |
 | Appearance | Theme system with default, light, amoled, ocean, forest, sunset, and cyberpunk modes |
 
@@ -134,6 +135,9 @@ For the full repository-layer breakdown, see
 |   |   |-- androidMain         Android actual implementations
 |   |   |-- jvmMain             Desktop actual implementations
 |   |   |-- main/res            Android resources and certificates
+|-- orbit_audio_jni             Custom WASAPI loopback audio module (C++)
+|-- webrtc-java-fork            Custom fork of webrtc-java with JNI track fixes
+|-- webrtc-java-lib             JVM library wrapper for the custom WebRTC native build
 |-- trixnity-src                Local reference copy of Trixnity client sources
 |-- gradle/wrapper              Gradle wrapper
 |-- implementation_plan.md      Integration notes
@@ -261,14 +265,20 @@ Calls are coordinated by `CallManager` and implemented per platform through the
 | Desktop JVM | `JvmWebRtcClient` with `webrtc-java-lib` (custom fork of `dev.onvoid.webrtc:webrtc-java`) |
 
 > [!NOTE]
-> **Custom WebRTC Native Library (Desktop)**
+> **Custom WebRTC Native Library & Audio Loopback (Desktop)**
 >
-> Onichat uses a custom fork of `webrtc-java` on Desktop to support system audio sharing (WASAPI loopback). Because compiling WebRTC C++ code is difficult, a pre-compiled native library (`webrtc-java-orbit-windows-x86_64.dll`) is already checked into `app/src/jvmMain/resources`.
+> Onichat uses a heavily modified fork of `webrtc-java` on Desktop to support system audio sharing (WASAPI loopback) and fixes for WebRTC JNI track handling and RTTI crashes. 
+> 
+> The project includes two custom native components:
+> 1. `webrtc-java-fork`: A customized WebRTC build fixing native track rendering, JNI bindings, and memory management.
+> 2. `orbit_audio_jni`: A custom AudioDeviceModule implemented in C++ to capture system audio using Windows WASAPI.
+>
+> A pre-compiled native library (`webrtc-java-orbit-windows-x86_64.dll`) is already checked into `app/src/jvmMain/resources`.
 >
 > If you just want to run the app, **no extra setup is needed**. Simply run `.\gradlew run` and the JVM will automatically extract and load this custom DLL. 
 > 
 > If you need to modify the C++ code yourself:
-> 1. Edit the C++ code inside the `webrtc-java-fork/webrtc-jni` submodule.
+> 1. Edit the C++ code inside `webrtc-java-fork/webrtc-jni` or `orbit_audio_jni`.
 > 2. Build the project using CMake: `cd webrtc-java-fork/webrtc-jni/src/main/cpp/build2` and run `cmake --build . --config Release`.
 > 3. Copy the resulting DLL to `app/src/jvmMain/resources/webrtc-java-orbit-windows-x86_64.dll`.
 
@@ -287,9 +297,10 @@ TURN server configuration is fetched from:
 
 ## Current Implementation Notes
 
+- WebRTC video rendering is stabilized with eager instantiation to prevent Compose null-caching bugs.
 - `getSpaceHierarchy()` is currently a stub.
 - Message pagination token handling is not complete.
-- Live parsing into `observeCallEvents()` is not fully wired.
+- Live parsing into `observeCallEvents()` is now active but continues to be improved.
 - Group call observation currently returns `null`.
 - `DeviceVerificationManager` exists, but the UI primarily consumes Trixnity verification state directly.
 - Some edit/delete paths need stronger room ID handling.
