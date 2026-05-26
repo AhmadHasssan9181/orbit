@@ -258,7 +258,19 @@ Calls are coordinated by `CallManager` and implemented per platform through the
 | Platform | Implementation |
 | --- | --- |
 | Android | `AndroidWebRtcClient` with `org.webrtc` |
-| Desktop JVM | `JvmWebRtcClient` with `dev.onvoid.webrtc` |
+| Desktop JVM | `JvmWebRtcClient` with `webrtc-java-lib` (custom fork of `dev.onvoid.webrtc:webrtc-java`) |
+
+> [!NOTE]
+> **Custom WebRTC Native Library (Desktop)**
+>
+> Onichat uses a custom fork of `webrtc-java` on Desktop to support system audio sharing (WASAPI loopback). Because compiling WebRTC C++ code is difficult, a pre-compiled native library (`webrtc-java-orbit-windows-x86_64.dll`) is already checked into `app/src/jvmMain/resources`.
+>
+> If you just want to run the app, **no extra setup is needed**. Simply run `.\gradlew run` and the JVM will automatically extract and load this custom DLL. 
+> 
+> If you need to modify the C++ code yourself:
+> 1. Edit the C++ code inside the `webrtc-java-fork/webrtc-jni` submodule.
+> 2. Build the project using CMake: `cd webrtc-java-fork/webrtc-jni/src/main/cpp/build2` and run `cmake --build . --config Release`.
+> 3. Copy the resulting DLL to `app/src/jvmMain/resources/webrtc-java-orbit-windows-x86_64.dll`.
 
 Matrix call events used for signaling:
 
