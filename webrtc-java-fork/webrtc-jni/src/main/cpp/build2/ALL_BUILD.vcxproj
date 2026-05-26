@@ -178,9 +178,9 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <Project>{8800D0B4-E725-3141-8D6A-B9EEF6F0C3BF}</Project>
       <Name>jni-voithos</Name>
     </ProjectReference>
-    <ProjectReference Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\webrtc-java.vcxproj">
-      <Project>{F7CE5ADD-6012-30C6-AE08-B1A5D327B95D}</Project>
-      <Name>webrtc-java</Name>
+    <ProjectReference Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\build2\webrtc-java-orbit.vcxproj">
+      <Project>{9B9F8FAE-1D24-3BB8-8B1E-C7FC256C8F1E}</Project>
+      <Name>webrtc-java-orbit</Name>
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
