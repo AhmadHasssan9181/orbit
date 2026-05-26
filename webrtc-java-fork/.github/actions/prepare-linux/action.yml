@@ -1,0 +1,70 @@
+name: 'Prepare Linux Build'
+
+description: 'Frees up disk space and installs required packages for Linux builds.'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Disk cleanup
+      run: |
+        set -x
+        df -h
+        #sudo du -h -d1 /usr/local
+        #sudo du -h -d1 /usr/local/share
+        #sudo du -h -d1 /usr/local/lib
+        #sudo du -h -d1 /usr/share
+        RMI=`docker images -q -a`
+        if [ -n "$RMI" ]; then
+          docker rmi $RMI
+        fi
+        # 4.6G
+        sudo rm -rf /usr/local/.ghcup
+        # 1.7G
+        sudo rm -rf /usr/share/swift
+        # 1.4G
+        sudo rm -rf /usr/share/dotnet
+        # 13G
+        sudo rm -rf /usr/local/lib/android
+        df -h
+      shell: bash
+
+    - name: Install required packages
+      run: |
+        sudo apt update
+        sudo apt install -y binutils cmake git locales lsb-release ninja-build pipewire pipewire-pulse pkg-config python3 python3-setuptools rsync unzip wget xz-utils
+
+        # Chromium Clang to be used with the clang toolchain file
+        #curl -s https://raw.githubusercontent.com/chromium/chromium/main/tools/clang/scripts/update.py | python3 - --output-dir=/opt/clang
+        # Use a more stable version of Clang
+        sudo mkdir -p /opt/clang
+        wget https://commondatastorage.googleapis.com/chromium-browser-clang/Linux_x64/clang-llvmorg-20-init-9764-gb81d8e90-72.tar.xz
+        sudo tar -xvf clang-llvmorg-20-init-9764-gb81d8e90-72.tar.xz -C /opt/clang
+      shell: bash
+
+    - name: Install required packages for x86-64
+      if: matrix.platform.name == 'linux_x86-64'
+      run: |
+        sudo mkdir /opt/sysroot
+        python3 webrtc-jni/src/main/cpp/dependencies/webrtc/linux/sysroot/install-sysroot.py --arch=amd64
+        sudo mv webrtc-jni/src/main/cpp/dependencies/webrtc/linux/debian* /opt/sysroot/
+      shell: bash
+
+    - name: Install required packages for arm
+      if: matrix.platform.name == 'linux_arm'
+      run: |
+        sudo apt install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+        
+        sudo mkdir /opt/sysroot
+        python3 webrtc-jni/src/main/cpp/dependencies/webrtc/linux/sysroot/install-sysroot.py --arch=armhf
+        sudo mv webrtc-jni/src/main/cpp/dependencies/webrtc/linux/debian* /opt/sysroot/
+      shell: bash
+
+    - name: Install required packages for arm64
+      if: matrix.platform.name == 'linux_arm64'
+      run: |
+        sudo apt install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+        
+        sudo mkdir /opt/sysroot
+        python3 webrtc-jni/src/main/cpp/dependencies/webrtc/linux/sysroot/install-sysroot.py --arch=arm64
+        sudo mv webrtc-jni/src/main/cpp/dependencies/webrtc/linux/debian* /opt/sysroot/
+      shell: bash

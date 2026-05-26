@@ -1,0 +1,80 @@
+# CMake generation dependency list for this directory.
+C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeCInformation.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeCXXInformation.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeCommonLanguageInclude.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeFindDependencyMacro.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeGenericSystem.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeInitializeConfigs.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeLanguageInformation.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeRCInformation.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeSystemSpecificInformation.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeSystemSpecificInitialize.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/CheckCSourceCompiles.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/CheckIncludeFile.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/CheckLibraryExists.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/CMakeCommonCompilerMacros.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/MSVC-C.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/MSVC-CXX.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/MSVC.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/FindJPEG.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/FindOpenSSL.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/FindPackageHandleStandardArgs.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/FindPackageMessage.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/FindThreads.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/Internal/CMakeCLinkerInformation.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/Internal/CMakeCXXLinkerInformation.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/Internal/CMakeCommonLinkerInformation.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/Internal/CheckSourceCompiles.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/Platform/Linker/Windows-MSVC-C.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/Platform/Linker/Windows-MSVC-CXX.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/Platform/Linker/Windows-MSVC.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/Platform/Windows-Initialize.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/Platform/Windows-MSVC-C.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/Platform/Windows-MSVC-CXX.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/Platform/Windows-MSVC.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/Platform/Windows.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/Platform/WindowsPaths.cmake
+C:/Program Files/CMake/share/cmake-3.31/Modules/SelectLibraryConfigurations.cmake
+D:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp/CMakeLists.txt
+D:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp/build2/CMakeFiles/3.31.4/CMakeCCompiler.cmake
+D:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp/build2/CMakeFiles/3.31.4/CMakeCXXCompiler.cmake
+D:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp/build2/CMakeFiles/3.31.4/CMakeRCCompiler.cmake
+D:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp/build2/CMakeFiles/3.31.4/CMakeSystem.cmake
+D:/vcpkg/installed/x64-windows/share/absl/abslConfig.cmake
+D:/vcpkg/installed/x64-windows/share/absl/abslConfigVersion.cmake
+D:/vcpkg/installed/x64-windows/share/absl/abslTargets-debug.cmake
+D:/vcpkg/installed/x64-windows/share/absl/abslTargets-release.cmake
+D:/vcpkg/installed/x64-windows/share/absl/abslTargets.cmake
+D:/vcpkg/installed/x64-windows/share/aom/AOMConfig.cmake
+D:/vcpkg/installed/x64-windows/share/aom/AOMConfigVersion.cmake
+D:/vcpkg/installed/x64-windows/share/aom/AOMTargets-debug.cmake
+D:/vcpkg/installed/x64-windows/share/aom/AOMTargets-release.cmake
+D:/vcpkg/installed/x64-windows/share/aom/AOMTargets.cmake
+D:/vcpkg/installed/x64-windows/share/jsoncpp/jsoncpp-namespaced-targets.cmake
+D:/vcpkg/installed/x64-windows/share/jsoncpp/jsoncpp-targets-debug.cmake
+D:/vcpkg/installed/x64-windows/share/jsoncpp/jsoncpp-targets-release.cmake
+D:/vcpkg/installed/x64-windows/share/jsoncpp/jsoncpp-targets.cmake
+D:/vcpkg/installed/x64-windows/share/jsoncpp/jsoncppConfig.cmake
+D:/vcpkg/installed/x64-windows/share/jsoncpp/jsoncppConfigVersion.cmake
+D:/vcpkg/installed/x64-windows/share/libsrtp/libSRTPConfig.cmake
+D:/vcpkg/installed/x64-windows/share/libsrtp/libSRTPConfigVersion.cmake
+D:/vcpkg/installed/x64-windows/share/libsrtp/libSRTPTargets-debug.cmake
+D:/vcpkg/installed/x64-windows/share/libsrtp/libSRTPTargets-release.cmake
+D:/vcpkg/installed/x64-windows/share/libsrtp/libSRTPTargets.cmake
+D:/vcpkg/installed/x64-windows/share/libyuv/libyuv-config.cmake
+D:/vcpkg/installed/x64-windows/share/libyuv/libyuv-targets-debug.cmake
+D:/vcpkg/installed/x64-windows/share/libyuv/libyuv-targets-release.cmake
+D:/vcpkg/installed/x64-windows/share/libyuv/libyuv-targets.cmake
+D:/vcpkg/installed/x64-windows/share/openssl/OpenSSLConfig.cmake
+D:/vcpkg/installed/x64-windows/share/openssl/OpenSSLConfigVersion.cmake
+D:/vcpkg/installed/x64-windows/share/opus/OpusConfig.cmake
+D:/vcpkg/installed/x64-windows/share/opus/OpusConfigVersion.cmake
+D:/vcpkg/installed/x64-windows/share/opus/OpusTargets-debug.cmake
+D:/vcpkg/installed/x64-windows/share/opus/OpusTargets-release.cmake
+D:/vcpkg/installed/x64-windows/share/opus/OpusTargets.cmake
+D:/vcpkg/installed/x64-windows/share/pffft/pffft-config-debug.cmake
+D:/vcpkg/installed/x64-windows/share/pffft/pffft-config-release.cmake
+D:/vcpkg/installed/x64-windows/share/pffft/pffft-config.cmake
+D:/vcpkg/installed/x64-windows/share/unofficial-libvpx/unofficial-libvpx-config.cmake
+D:/vcpkg/installed/x64-windows/share/unofficial-webrtc/unofficial-webrtcConfig.cmake
+D:/vcpkg/installed/x64-windows/share/unofficial-webrtc/webrtc-absl-targets.cmake
