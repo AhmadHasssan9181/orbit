@@ -34,10 +34,12 @@ JNIEXPORT jobject JNICALL Java_dev_onvoid_webrtc_RTCRtpSender_getTrack
 
 	webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track = sender->track();
 
-	if (webrtc::AudioTrackInterface * t = dynamic_cast<webrtc::AudioTrackInterface *>(track.get())) {
+	if (track->kind() == webrtc::MediaStreamTrackInterface::kAudioKind) {
+		webrtc::AudioTrackInterface * t = static_cast<webrtc::AudioTrackInterface *>(track.get());
 		return jni::JavaFactories::create(env, t).release();
 	}
-	else if (webrtc::VideoTrackInterface * t = dynamic_cast<webrtc::VideoTrackInterface *>(track.get())) {
+	else if (track->kind() == webrtc::MediaStreamTrackInterface::kVideoKind) {
+		webrtc::VideoTrackInterface * t = static_cast<webrtc::VideoTrackInterface *>(track.get());
 		return jni::JavaFactories::create(env, t).release();
 	}
 

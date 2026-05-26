@@ -196,6 +196,9 @@ class CallManager(
 
         when (type) {
             "offer" -> {
+                if (sdpHasVideo(sdp)) {
+                    isVideoCall.value = true
+                }
                 scope.launch {
                     webRtcClient.setRemoteDescription(SessionDescriptionModel("offer", sdp))
                     webRtcClient.createAnswer(
