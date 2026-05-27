@@ -3,6 +3,7 @@
 #include <Functiondiscoverykeys_devpkey.h>
 #include <ksmedia.h>
 #include <audioclientactivationparams.h>
+#include <audiopolicy.h>
 #include <algorithm>
 
 namespace orbit {
@@ -10,6 +11,30 @@ namespace orbit {
 OrbitAudioDeviceModule::OrbitAudioDeviceModule(webrtc::scoped_refptr<webrtc::AudioDeviceModule> core_adm)
     : core_adm_(core_adm) {
     rnnoise_state_ = rnnoise_create(NULL);
+
+    // Disable Windows Communications Ducking
+    IMMDeviceEnumerator* deviceEnumerator = NULL;
+    IMMDevice* defaultDevice = NULL;
+    IAudioSessionManager2* sessionManager = NULL;
+    IAudioSessionControl* sessionControl = NULL;
+    IAudioSessionControl2* sessionControl2 = NULL;
+
+    if (SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator), NULL, CLSCTX_INPROC_SERVER, __uuidof(IMMDeviceEnumerator), (void**)&deviceEnumerator))) {
+        if (SUCCEEDED(deviceEnumerator->GetDefaultAudioEndpoint(eRender, eCommunications, &defaultDevice))) {
+            if (SUCCEEDED(defaultDevice->Activate(__uuidof(IAudioSessionManager2), CLSCTX_INPROC_SERVER, NULL, (void**)&sessionManager))) {
+                if (SUCCEEDED(sessionManager->GetAudioSessionControl(NULL, 0, &sessionControl))) {
+                    if (SUCCEEDED(sessionControl->QueryInterface(__uuidof(IAudioSessionControl2), (void**)&sessionControl2))) {
+                        sessionControl2->SetDuckingPreference(TRUE); // TRUE means opt out of ducking
+                        sessionControl2->Release();
+                    }
+                    sessionControl->Release();
+                }
+                sessionManager->Release();
+            }
+            defaultDevice->Release();
+        }
+        deviceEnumerator->Release();
+    }
 }
 
 OrbitAudioDeviceModule::~OrbitAudioDeviceModule() {
