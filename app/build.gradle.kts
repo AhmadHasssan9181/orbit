@@ -52,6 +52,7 @@ kotlin {
 
                 implementation("io.coil-kt.coil3:coil-compose:3.0.0")
                 implementation("io.coil-kt.coil3:coil-network-ktor3:3.0.0")
+                implementation("io.coil-kt.coil3:coil-gif:3.0.0")
 
                 // Room KMP
                 implementation("androidx.room:room-runtime:2.7.0-alpha11")
