@@ -30,6 +30,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 // Removed MockData
 import ui.assets.OrbitDefaultAvatar
+import ui.assets.OrbitEmptyIllustration
+import ui.assets.OrbitEmptyScene
 import ui.icons.OrbitIcons
 import ui.model.*
 
@@ -213,11 +215,12 @@ private fun DrawerActionButton(
 
 @Composable
 private fun InviteDialog(server: OrbitServer, onDismiss: () -> Unit) {
+    val tokens = rememberCosmicTokens()
     val inviteLink = "orbit://invite/${server.id}"
     
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = rememberCosmicTokens().CardBg,
+        containerColor = tokens.CardBg,
         title = {
             Text(
                 "Invite friends to ${server.name}",
@@ -226,6 +229,11 @@ private fun InviteDialog(server: OrbitServer, onDismiss: () -> Unit) {
         },
         text = {
             Column {
+                OrbitEmptyIllustration(
+                    scene = OrbitEmptyScene.Invite,
+                    modifier = Modifier.fillMaxWidth().height(126.dp)
+                )
+                Spacer(Modifier.height(10.dp))
                 Text(
                     "Share this link with others to grant them access to this server.",
                     style = MaterialTheme.typography.bodySmall.copy(color = Text_Muted, fontSize = 13.sp),
@@ -237,8 +245,8 @@ private fun InviteDialog(server: OrbitServer, onDismiss: () -> Unit) {
                     readOnly = true,
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = rememberCosmicTokens().Bg,
-                        unfocusedContainerColor = rememberCosmicTokens().Bg,
+                        focusedContainerColor = tokens.Bg,
+                        unfocusedContainerColor = tokens.Bg,
                         focusedTextColor = Text_White,
                         unfocusedTextColor = Text_White,
                         focusedBorderColor = Accent

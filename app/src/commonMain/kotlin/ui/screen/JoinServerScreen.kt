@@ -1,6 +1,7 @@
 package ui.screen
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -68,7 +69,7 @@ fun JoinServerScreen(
     ) {
         Column(
             modifier = Modifier
-                .width(400.dp)
+                .width(430.dp)
                 .clip(RoundedCornerShape(16.dp))
                 .background(tokens.Bg)
                 .padding(24.dp),
@@ -115,6 +116,9 @@ fun JoinServerScreen(
                     text = { Text("Create") }
                 )
             }
+
+            ServerFlowChoiceStrip(isCreateMode = isCreateMode)
+            Spacer(Modifier.height(16.dp))
 
             OutlinedTextField(
                 value = input,
@@ -208,6 +212,61 @@ fun JoinServerScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ServerFlowChoiceStrip(isCreateMode: Boolean) {
+    val items = if (isCreateMode) {
+        listOf(
+            OrbitEmptyScene.CreateCustom to "Custom",
+            OrbitEmptyScene.CreateTemplate to "Template"
+        )
+    } else {
+        listOf(
+            OrbitEmptyScene.JoinInvite to "Invite",
+            OrbitEmptyScene.JoinDiscover to "Discover"
+        )
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        items.forEach { (scene, label) ->
+            ServerFlowChoiceCard(
+                scene = scene,
+                label = label,
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun ServerFlowChoiceCard(
+    scene: OrbitEmptyScene,
+    label: String,
+    modifier: Modifier = Modifier
+) {
+    val tokens = rememberCosmicTokens()
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(tokens.CardBg.copy(alpha = 0.78f))
+            .border(1.dp, tokens.Separator.copy(alpha = 0.28f), RoundedCornerShape(12.dp))
+            .padding(horizontal = 8.dp, vertical = 7.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        OrbitEmptyIllustration(
+            scene = scene,
+            modifier = Modifier.width(116.dp).height(72.dp)
+        )
+        Text(
+            text = label,
+            color = tokens.Text_Secondary,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold
+        )
     }
 }
 
