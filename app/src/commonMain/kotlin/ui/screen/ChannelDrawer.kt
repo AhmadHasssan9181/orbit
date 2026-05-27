@@ -73,7 +73,7 @@ fun ChannelDrawer(
 
     Column(
         modifier = modifier
-            .width(240.dp)
+            .width(232.dp)
             .fillMaxSize()
             .background(Drawer_Bg)
     ) {
@@ -109,11 +109,21 @@ fun ChannelDrawer(
             HorizontalDivider(color = Separator.copy(alpha = 0.3f), thickness = 1.dp)
 
             if (!server.isDM) {
-                InvitePeopleButton { showInviteDialog = true }
+                DrawerActionButton(
+                    icon = Icons.Default.PersonAdd,
+                    text = "Invite People",
+                    accent = true,
+                    onClick = { showInviteDialog = true }
+                )
                 if (onOpenRolesClick != null) {
-                    RolesButton(onOpenRolesClick)
+                    DrawerActionButton(
+                        icon = Icons.Default.Security,
+                        text = "Roles",
+                        accent = false,
+                        onClick = onOpenRolesClick
+                    )
                 }
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(3.dp))
             }
 
             if (server.isDM) {
@@ -149,52 +159,26 @@ fun ChannelDrawer(
 // â”€â”€â”€ Invite Button & Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @Composable
-private fun InvitePeopleButton(onClick: () -> Unit) {
+private fun DrawerActionButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    text: String,
+    accent: Boolean,
+    onClick: () -> Unit
+) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
-    
+
     val bgColor by animateColorAsState(
-        targetValue = if (isHovered) Accent.copy(alpha = 0.15f) else Color.Transparent,
-        label = "inviteBg"
+        targetValue = if (isHovered) ChannelHover_Bg else Color.Transparent,
+        label = "drawerActionBg"
     )
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 6.dp)
-            .clip(RoundedCornerShape(4.dp))
-            .background(bgColor)
-            .hoverable(interactionSource)
-            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            imageVector = Icons.Default.PersonAdd,
-            contentDescription = "Invite People",
-            tint = AccentLight,
-            modifier = Modifier.size(18.dp)
-        )
-        Spacer(Modifier.width(10.dp))
-        Text(
-            text = "Invite People",
-            style = MaterialTheme.typography.bodySmall.copy(
-                color = AccentLight,
-                fontWeight = FontWeight.Medium,
-                fontSize = 14.sp
-            )
-        )
-    }
-}
-
-@Composable
-private fun RolesButton(onClick: () -> Unit) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val isHovered by interactionSource.collectIsHoveredAsState()
-
-    val bgColor by animateColorAsState(
-        targetValue = if (isHovered) Accent.copy(alpha = 0.12f) else Color.Transparent,
-        label = "rolesBg"
+    val contentColor by animateColorAsState(
+        targetValue = when {
+            accent -> AccentLight
+            isHovered -> Text_White
+            else -> Text_Muted
+        },
+        label = "drawerActionColor"
     )
 
     Row(
@@ -205,22 +189,22 @@ private fun RolesButton(onClick: () -> Unit) {
             .background(bgColor)
             .hoverable(interactionSource)
             .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 6.dp),
+            .padding(horizontal = 8.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
-            imageVector = Icons.Default.Security,
-            contentDescription = "Server Roles",
-            tint = Text_Muted,
-            modifier = Modifier.size(18.dp)
+            imageVector = icon,
+            contentDescription = text,
+            tint = contentColor,
+            modifier = Modifier.size(17.dp)
         )
-        Spacer(Modifier.width(10.dp))
+        Spacer(Modifier.width(9.dp))
         Text(
-            text = "Roles",
+            text = text,
             style = MaterialTheme.typography.bodySmall.copy(
-                color = Text_White,
-                fontWeight = FontWeight.Medium,
-                fontSize = 14.sp
+                color = contentColor,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 13.sp
             )
         )
     }
@@ -288,11 +272,11 @@ private fun ServerHeader(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(48.dp)
+            .height(46.dp)
             .hoverable(interactionSource)
             .clickable(interactionSource = interactionSource, indication = null, onClick = onHeaderClick)
             .background(if (isHovered) ChannelHover_Bg else Color.Transparent)
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
@@ -313,13 +297,13 @@ private fun ServerHeader(
             if (onCreateRoomClick != null) {
                 IconButton(
                     onClick = onCreateRoomClick,
-                    modifier = Modifier.size(28.dp)
+                    modifier = Modifier.size(26.dp)
                 ) {
                     Icon(
                         imageVector = OrbitIcons.Add,
                         contentDescription = "Create Room",
                         tint = Text_Muted,
-                        modifier = Modifier.size(18.dp).alpha(0.9f)
+                        modifier = Modifier.size(17.dp).alpha(0.9f)
                     )
                 }
             }
@@ -328,7 +312,7 @@ private fun ServerHeader(
                     imageVector = Icons.Default.MoreVert,
                     contentDescription = null,
                     tint = Text_Muted,
-                    modifier = Modifier.size(18.dp).alpha(0.7f)
+                    modifier = Modifier.size(17.dp).alpha(0.7f)
                 )
             }
         }
@@ -355,7 +339,7 @@ private fun ChannelListContent(
 
     LazyColumn(
         modifier = modifier,
-        contentPadding = PaddingValues(vertical = 6.dp, horizontal = 8.dp),
+        contentPadding = PaddingValues(vertical = 5.dp, horizontal = 7.dp),
         verticalArrangement = Arrangement.spacedBy(1.dp)
     ) {
         categories.forEach { cat ->
@@ -406,8 +390,8 @@ private fun DmListContent(
     val isLiteMode = ui.theme.LocalIsLiteMode.current
     LazyColumn(
         modifier = modifier,
-        contentPadding = PaddingValues(vertical = 6.dp, horizontal = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp)
+        contentPadding = PaddingValues(vertical = 5.dp, horizontal = 7.dp),
+        verticalArrangement = Arrangement.spacedBy(1.dp)
     ) {
         if (!isLiteMode) {
             item {
@@ -419,7 +403,7 @@ private fun DmListContent(
                         letterSpacing = 0.8.sp,
                         fontSize = 10.sp
                     ),
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp)
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 7.dp)
                 )
             }
         }
@@ -523,11 +507,11 @@ private fun DmItem(
                 .clip(RoundedCornerShape(4.dp))
                 .background(bgColor)
                 .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
-                .padding(horizontal = 8.dp, vertical = 6.dp),
+                .padding(horizontal = 8.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            DmAvatar(displayName, avatarColor, status, size = 32.dp)
-            Spacer(Modifier.width(10.dp))
+            DmAvatar(displayName, avatarColor, status, size = 30.dp)
+            Spacer(Modifier.width(9.dp))
             Text(
                 text = displayName,
                 style = MaterialTheme.typography.bodySmall.copy(
@@ -621,7 +605,7 @@ private fun CategoryHeader(name: String, isExpanded: Boolean, onToggle: () -> Un
             .fillMaxWidth()
             .hoverable(interactionSource)
             .clickable(onClick = onToggle)
-            .padding(horizontal = 2.dp, vertical = 6.dp),
+            .padding(horizontal = 2.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Start
     ) {
@@ -638,7 +622,7 @@ private fun CategoryHeader(name: String, isExpanded: Boolean, onToggle: () -> Un
                 fontWeight = FontWeight.SemiBold,
                 color = if (isHovered) Text_Secondary else Text_Muted,
                 letterSpacing = 0.5.sp,
-                fontSize = 11.sp
+                fontSize = 10.sp
             )
         )
     }
@@ -685,21 +669,29 @@ private fun ChannelItem(channel: OrbitChannel, isSelected: Boolean, onClick: () 
             .background(bgColor)
             .hoverable(interactionSource)
             .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 6.dp),
+            .padding(horizontal = 8.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        Box(
+            modifier = Modifier
+                .width(3.dp)
+                .height(18.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(if (isSelected) Accent else Color.Transparent)
+        )
+        Spacer(Modifier.width(5.dp))
         when (channel.type) {
             ChannelType.TEXT -> Icon(
                 imageVector = OrbitIcons.TextChannel,
                 contentDescription = null,
                 tint = iconColor,
-                modifier = Modifier.size(18.dp)
+                modifier = Modifier.size(17.dp)
             )
             ChannelType.VOICE -> Icon(
                 imageVector = OrbitIcons.VoiceChannel,
                 contentDescription = null,
                 tint = iconColor,
-                modifier = Modifier.size(18.dp)
+                modifier = Modifier.size(17.dp)
             )
         }
 
@@ -710,7 +702,7 @@ private fun ChannelItem(channel: OrbitChannel, isSelected: Boolean, onClick: () 
             style = MaterialTheme.typography.bodyMedium.copy(
                 color = textColor,
                 fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal,
-                fontSize = 14.sp
+                fontSize = 13.sp
             ),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -750,10 +742,10 @@ private fun UserProfileBar(
             .fillMaxWidth()
             .background(UserBar_Bg)
             .padding(horizontal = 8.dp, vertical = 4.dp)
-            .height(52.dp),
+            .height(48.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        UserAvatar(user.displayName, user.avatarColor, user.status)
+        UserAvatar(user.displayName, user.avatarColor, user.status, user.avatarUrl)
         Spacer(Modifier.width(8.dp))
 
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
@@ -795,10 +787,10 @@ private fun BarIconBtn(
     )
     IconButton(
         onClick = onClick,
-        modifier = Modifier.size(32.dp),
+        modifier = Modifier.size(30.dp),
         interactionSource = interactionSource
     ) {
-        Icon(imageVector = icon, contentDescription = desc, tint = tint, modifier = Modifier.size(18.dp))
+        Icon(imageVector = icon, contentDescription = desc, tint = tint, modifier = Modifier.size(17.dp))
     }
 }
 
@@ -811,6 +803,8 @@ private fun UserAvatar(displayName: String, avatarColor: Int, status: UserStatus
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .border(1.dp, Text_White.copy(alpha = 0.08f), CircleShape)
+                .padding(1.dp)
                 .clip(CircleShape)
                 .background(Brush.linearGradient(listOf(base, base.copy(alpha = 0.7f)))),
             contentAlignment = Alignment.Center
@@ -839,7 +833,6 @@ private fun UserAvatar(displayName: String, avatarColor: Int, status: UserStatus
                 .size(10.dp)
                 .align(Alignment.BottomEnd)
                 .border(2.dp, UserBar_Bg, CircleShape)
-                .padding(2.dp)
                 .clip(CircleShape)
                 .background(dotColor)
         )
