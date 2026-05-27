@@ -15,11 +15,31 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import repository.OrbitRepository
 import ui.model.ChannelType
+import ui.model.OrbitServer
 import ui.theme.rememberCosmicTokens
 
 private enum class ServerDialogMode {
     Join,
     Create
+}
+
+private val DiscordRoomNameRegex = Regex("^[a-z]+(?:-[a-z]+)*$")
+
+private fun normalizeRoomNameInput(value: String): String {
+    val lowered = value.lowercase().replace(Regex("\\s+"), "-")
+    return buildString {
+        lowered.forEach { ch ->
+            if (ch in 'a'..'z' || ch == '-') append(ch)
+        }
+    }.replace(Regex("-{2,}"), "-")
+}
+
+private fun validateRoomName(value: String): String? {
+    return when {
+        value.isBlank() -> "Room name is required"
+        !DiscordRoomNameRegex.matches(value) -> "Use letters and hyphens only, like general-chat"
+        else -> null
+    }
 }
 
 @Composable
@@ -176,6 +196,137 @@ fun JoinServerScreen(
                         )
                     } else {
                         Text(if (isCreateMode) "Create" else "Join", color = Color.White)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun CreateRoomDialog(
+    repository: OrbitRepository,
+    server: OrbitServer,
+    onClose: () -> Unit,
+    onRoomCreated: (String) -> Unit = {},
+    modifier: Modifier = Modifier
+) {
+    val tokens = rememberCosmicTokens()
+    var input by remember { mutableStateOf("") }
+    var isWorking by remember { mutableStateOf(false) }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val validationMsg = remember(input) {
+        if (input.isBlank()) null else validateRoomName(input)
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.6f)),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .width(400.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(tokens.Bg)
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "Create Room",
+                color = tokens.Text_White,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+            Text(
+                text = server.name,
+                color = tokens.Text_Muted,
+                fontSize = 13.sp,
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+
+            OutlinedTextField(
+                value = input,
+                onValueChange = {
+                    input = normalizeRoomNameInput(it)
+                    errorMsg = null
+                },
+                label = { Text("Room name") },
+                placeholder = {
+                    Text("general-chat", color = tokens.Text_Muted)
+                },
+                singleLine = true,
+                isError = validationMsg != null || errorMsg != null,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = tokens.Accent,
+                    unfocusedBorderColor = tokens.Separator,
+                    errorBorderColor = Color(0xFFF87171),
+                    focusedTextColor = tokens.Text_White,
+                    unfocusedTextColor = tokens.Text_White,
+                    cursorColor = tokens.Accent
+                ),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Text(
+                text = validationMsg ?: errorMsg ?: "Only letters and hyphens are allowed.",
+                color = if (validationMsg != null || errorMsg != null) Color(0xFFF87171) else tokens.Text_Muted,
+                fontSize = 12.sp,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 16.dp)
+            )
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                TextButton(
+                    onClick = onClose,
+                    enabled = !isWorking,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Cancel", color = tokens.Text_Muted)
+                }
+
+                Button(
+                    onClick = {
+                        val value = input.trim()
+                        val validation = validateRoomName(value)
+                        if (validation != null) {
+                            errorMsg = validation
+                            return@Button
+                        }
+
+                        isWorking = true
+                        errorMsg = null
+                        scope.launch {
+                            repository.createChannel(
+                                spaceId = server.id,
+                                name = value,
+                                type = ChannelType.TEXT
+                            ).onSuccess { channelId ->
+                                onRoomCreated(channelId)
+                                onClose()
+                            }.onFailure { error ->
+                                errorMsg = error.message ?: "Failed to create room"
+                                isWorking = false
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = tokens.Accent),
+                    enabled = !isWorking && input.isNotBlank() && validationMsg == null,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    if (isWorking) {
+                        CircularProgressIndicator(
+                            color = Color.White,
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text("Create", color = Color.White)
                     }
                 }
             }

@@ -365,6 +365,7 @@ private fun MainAppContent(
     var selectedChannelId by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(false) }
     var showJoinServer by remember { mutableStateOf(false) }
+    var showCreateRoom by remember { mutableStateOf(false) }
 
     var channels by remember { mutableStateOf<List<OrbitChannel>>(emptyList()) }
     var isLoadingChannels by remember { mutableStateOf(false) }
@@ -500,6 +501,7 @@ private fun MainAppContent(
                     onBottomTabSelect = { tab -> selectedBottomTab = tab },
                     onOpenSettings = { showSettings = true },
                     onAddServer = { showJoinServer = true },
+                    onCreateRoom = { showCreateRoom = true },
                     modifier = Modifier.fillMaxSize()
                 )
 
@@ -515,6 +517,7 @@ private fun MainAppContent(
                     onChannelClick = { id -> selectedChannelId = id },
                     onOpenSettings = { showSettings = true },
                     onAddServer = { showJoinServer = true },
+                    onCreateRoom = { showCreateRoom = true },
                     modifier = Modifier.fillMaxSize()
                 )
 
@@ -530,6 +533,7 @@ private fun MainAppContent(
                     onChannelClick = { id -> selectedChannelId = id },
                     onOpenSettings = { showSettings = true },
                     onAddServer = { showJoinServer = true },
+                    onCreateRoom = { showCreateRoom = true },
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -545,6 +549,25 @@ private fun MainAppContent(
                     onServerJoined = { serverId ->
                         selectedServerId = serverId
                         selectedBottomTab = BottomNavTab.Servers
+                    }
+                )
+            }
+
+            val createRoomServer = servers.find { it.id == selectedServerId && !it.isDM }
+            if (showCreateRoom && createRoomServer != null) {
+                CreateRoomDialog(
+                    repository = repository,
+                    server = createRoomServer,
+                    onClose = { showCreateRoom = false },
+                    onRoomCreated = { channelId ->
+                        selectedChannelId = channelId
+                        selectedBottomTab = BottomNavTab.Servers
+                        if (windowSize == WindowSizeClass.Compact) {
+                            compactOpenChannelId = channelId
+                        }
+                        scope.launch {
+                            channels = repository.getChannelsForSpace(createRoomServer.id)
+                        }
                     }
                 )
             }
@@ -588,6 +611,7 @@ private fun CompactLayout(
     onBottomTabSelect: (BottomNavTab) -> Unit,
     onOpenSettings: () -> Unit,
     onAddServer: () -> Unit,
+    onCreateRoom: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val tokens = rememberCosmicTokens()
@@ -656,7 +680,8 @@ private fun CompactLayout(
                             onServerSelect = onServerSelect,
                             onChannelClick = onChannelClick,
                             onOpenSettings = onOpenSettings,
-                            onAddServer = onAddServer
+                            onAddServer = onAddServer,
+                            onCreateRoom = onCreateRoom
                         )
                     }
                 }
@@ -756,7 +781,8 @@ private fun CompactServerList(
     onServerSelect: (String) -> Unit,
     onChannelClick: (String) -> Unit,
     onOpenSettings: () -> Unit,
-    onAddServer: () -> Unit
+    onAddServer: () -> Unit,
+    onCreateRoom: () -> Unit
 ) {
     val tokens = rememberCosmicTokens()
     val selectedServer = servers.find { it.id == selectedServerId }
@@ -825,6 +851,7 @@ private fun CompactServerList(
                 ),
                 onChannelClick = onChannelClick,
                 onOpenSettings = onOpenSettings,
+                onCreateRoomClick = onCreateRoom,
                 modifier = Modifier.weight(1f)
             )
         } else {
@@ -1075,6 +1102,7 @@ private fun MediumLayout(
     onChannelClick: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onAddServer: () -> Unit,
+    onCreateRoom: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val tokens = rememberCosmicTokens()
@@ -1111,6 +1139,7 @@ private fun MediumLayout(
                             scope.launch { drawerState.close() }
                         },
                         onOpenSettings = onOpenSettings,
+                        onCreateRoomClick = onCreateRoom,
                         selectedWhatsAppTab = if (isLiteMode) "Chats" else ""
                     )
                 }
@@ -1176,6 +1205,7 @@ private fun ExpandedLayout(
     onChannelClick: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onAddServer: () -> Unit,
+    onCreateRoom: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val tokens = rememberCosmicTokens()
@@ -1213,6 +1243,7 @@ private fun ExpandedLayout(
                 ),
                 onChannelClick = onChannelClick,
                 onOpenSettings = onOpenSettings,
+                onCreateRoomClick = onCreateRoom,
                 selectedWhatsAppTab = selectedWhatsAppTab
             )
 
