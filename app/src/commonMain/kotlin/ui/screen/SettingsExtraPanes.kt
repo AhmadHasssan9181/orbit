@@ -3,9 +3,7 @@ package ui.screen
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -14,7 +12,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import repository.SettingsManager
 import ui.theme.rememberCosmicTokens
 
 // ═══════════════════════════════════════════════════════════════════
@@ -22,45 +20,45 @@ import ui.theme.rememberCosmicTokens
 // ═══════════════════════════════════════════════════════════════════
 
 @Composable
-internal fun AppearanceExtrasPane() {
+internal fun AppearanceExtrasPane(settingsManager: SettingsManager) {
     val tokens = rememberCosmicTokens()
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SectionHeader("Chat Display")
-        var density by remember { mutableStateOf("Comfortable") }
+        val messageDensity by settingsManager.messageDensity.collectAsState("Comfortable")
         PrefCard("Message Display", "How messages are visually laid out.") {
             ChipGroup(
                 options = listOf("Compact", "Comfortable", "Cozy"),
-                selected = density,
-                onSelect = { density = it }
+                selected = messageDensity,
+                onSelect = { settingsManager.setMessageDensity(it) }
             )
         }
-        var showTimestamps by remember { mutableStateOf(true) }
+        val showTimestamps by settingsManager.showTimestamps.collectAsState(true)
         PrefCard("Show timestamps", "Display the time each message was sent.") {
-            CosmicSwitch(checked = showTimestamps, onCheckedChange = { showTimestamps = it })
+            CosmicSwitch(checked = showTimestamps, onCheckedChange = { settingsManager.setShowTimestamps(it) })
         }
-        var showRoleColors by remember { mutableStateOf(true) }
+        val showRoleColors by settingsManager.showRoleColors.collectAsState(true)
         PrefCard("Show role colors", "Color usernames based on their highest server role.") {
-            CosmicSwitch(checked = showRoleColors, onCheckedChange = { showRoleColors = it })
+            CosmicSwitch(checked = showRoleColors, onCheckedChange = { settingsManager.setShowRoleColors(it) })
         }
 
         SectionHeader("Sidebar")
-        var showMemberList by remember { mutableStateOf(true) }
+        val showMemberList by settingsManager.showMemberList.collectAsState(true)
         PrefCard("Show member list", "Display the member sidebar in channels by default.") {
-            CosmicSwitch(checked = showMemberList, onCheckedChange = { showMemberList = it })
+            CosmicSwitch(checked = showMemberList, onCheckedChange = { settingsManager.setShowMemberList(it) })
         }
-        var channelIcons by remember { mutableStateOf(true) }
+        val channelIcons by settingsManager.channelIcons.collectAsState(true)
         PrefCard("Channel icons", "Show icons next to channel names (text, voice, etc).") {
-            CosmicSwitch(checked = channelIcons, onCheckedChange = { channelIcons = it })
+            CosmicSwitch(checked = channelIcons, onCheckedChange = { settingsManager.setChannelIcons(it) })
         }
 
         SectionHeader("Animations")
-        var animatedStickers by remember { mutableStateOf(true) }
+        val animatedStickers by settingsManager.animatedStickers.collectAsState(true)
         PrefCard("Animated stickers", "Play sticker animations in chat.") {
-            CosmicSwitch(checked = animatedStickers, onCheckedChange = { animatedStickers = it })
+            CosmicSwitch(checked = animatedStickers, onCheckedChange = { settingsManager.setAnimatedStickers(it) })
         }
-        var smoothScroll by remember { mutableStateOf(true) }
+        val smoothScroll by settingsManager.smoothScroll.collectAsState(true)
         PrefCard("Smooth scrolling", "Animate scrolling when navigating channels and messages.") {
-            CosmicSwitch(checked = smoothScroll, onCheckedChange = { smoothScroll = it })
+            CosmicSwitch(checked = smoothScroll, onCheckedChange = { settingsManager.setSmoothScroll(it) })
         }
     }
 }
@@ -70,58 +68,58 @@ internal fun AppearanceExtrasPane() {
 // ═══════════════════════════════════════════════════════════════════
 
 @Composable
-internal fun AccessibilityExtrasPane() {
+internal fun AccessibilityExtrasPane(settingsManager: SettingsManager) {
     val tokens = rememberCosmicTokens()
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SectionHeader("Visual")
-        var saturation by remember { mutableStateOf(100f) }
+        val colorSaturation by settingsManager.colorSaturation.collectAsState(100f)
         PrefCard("Color saturation", "Adjust the intensity of colors throughout the app.") {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("${saturation.toInt()}%", style = MaterialTheme.typography.labelMedium.copy(color = tokens.Accent, fontWeight = FontWeight.Bold))
+                Text("${colorSaturation.toInt()}%", style = MaterialTheme.typography.labelMedium.copy(color = tokens.Accent, fontWeight = FontWeight.Bold))
                 Spacer(Modifier.width(8.dp))
                 Slider(
-                    value = saturation,
-                    onValueChange = { saturation = it },
+                    value = colorSaturation,
+                    onValueChange = { settingsManager.setColorSaturation(it) },
                     valueRange = 0f..100f,
                     colors = SliderDefaults.colors(thumbColor = tokens.Accent, activeTrackColor = tokens.Accent, inactiveTrackColor = tokens.Text_Muted.copy(alpha = 0.3f)),
                     modifier = Modifier.width(100.dp)
                 )
             }
         }
-        var highContrast by remember { mutableStateOf(false) }
+        val highContrast by settingsManager.highContrast.collectAsState(false)
         PrefCard("High contrast mode", "Increase contrast between text and backgrounds.") {
-            CosmicSwitch(checked = highContrast, onCheckedChange = { highContrast = it })
+            CosmicSwitch(checked = highContrast, onCheckedChange = { settingsManager.setHighContrast(it) })
         }
-        var colorblind by remember { mutableStateOf("None") }
+        val colorblindMode by settingsManager.colorblindMode.collectAsState("None")
         PrefCard("Colorblind mode", "Adjust colors for different types of color vision deficiency.") {
             ChipGroup(
                 options = listOf("None", "Protanopia", "Deuteranopia", "Tritanopia"),
-                selected = colorblind,
-                onSelect = { colorblind = it }
+                selected = colorblindMode,
+                onSelect = { settingsManager.setColorblindMode(it) }
             )
         }
 
         SectionHeader("Screen Reader")
-        var screenReader by remember { mutableStateOf(false) }
+        val screenReader by settingsManager.screenReader.collectAsState(false)
         PrefCard("Screen reader optimizations", "Enhance the UI for screen reader compatibility.") {
-            CosmicSwitch(checked = screenReader, onCheckedChange = { screenReader = it })
+            CosmicSwitch(checked = screenReader, onCheckedChange = { settingsManager.setScreenReader(it) })
         }
-        var focusIndicator by remember { mutableStateOf(true) }
+        val focusIndicator by settingsManager.focusIndicator.collectAsState(true)
         PrefCard("Focus indicators", "Show visible outlines around focused elements for keyboard navigation.") {
-            CosmicSwitch(checked = focusIndicator, onCheckedChange = { focusIndicator = it })
+            CosmicSwitch(checked = focusIndicator, onCheckedChange = { settingsManager.setFocusIndicator(it) })
         }
 
         SectionHeader("Audio")
-        var textToSpeech by remember { mutableStateOf(false) }
+        val textToSpeech by settingsManager.textToSpeech.collectAsState(false)
         PrefCard("Text-to-speech", "Read incoming messages aloud using your system TTS engine.") {
-            CosmicSwitch(checked = textToSpeech, onCheckedChange = { textToSpeech = it })
+            CosmicSwitch(checked = textToSpeech, onCheckedChange = { settingsManager.setTextToSpeech(it) })
         }
-        var ttsRate by remember { mutableStateOf("Normal") }
+        val ttsRate by settingsManager.ttsRate.collectAsState("Normal")
         PrefCard("TTS speed", "How fast text-to-speech reads messages.") {
             ChipGroup(
                 options = listOf("Slow", "Normal", "Fast"),
                 selected = ttsRate,
-                onSelect = { ttsRate = it }
+                onSelect = { settingsManager.setTtsRate(it) }
             )
         }
     }
@@ -132,26 +130,26 @@ internal fun AccessibilityExtrasPane() {
 // ═══════════════════════════════════════════════════════════════════
 
 @Composable
-internal fun VoiceVideoFullPane() {
+internal fun VoiceVideoFullPane(settingsManager: SettingsManager) {
     val tokens = rememberCosmicTokens()
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SectionHeader("Input Device")
-        var inputDevice by remember { mutableStateOf("Default") }
+        val inputDevice by settingsManager.inputDevice.collectAsState("Default")
         PrefCard("Microphone", "Select which microphone to use for voice chat.") {
             ChipGroup(
                 options = listOf("Default", "Headset", "Webcam"),
                 selected = inputDevice,
-                onSelect = { inputDevice = it }
+                onSelect = { settingsManager.setInputDevice(it) }
             )
         }
-        var inputVolume by remember { mutableStateOf(75f) }
+        val inputVolume by settingsManager.inputVolume.collectAsState(75f)
         PrefCard("Input Volume", "Adjust how loud your microphone is to others.") {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("${inputVolume.toInt()}%", style = MaterialTheme.typography.labelMedium.copy(color = tokens.Accent, fontWeight = FontWeight.Bold))
                 Spacer(Modifier.width(8.dp))
                 Slider(
                     value = inputVolume,
-                    onValueChange = { inputVolume = it },
+                    onValueChange = { settingsManager.setInputVolume(it) },
                     valueRange = 0f..200f,
                     colors = SliderDefaults.colors(thumbColor = tokens.Accent, activeTrackColor = tokens.Accent, inactiveTrackColor = tokens.Text_Muted.copy(alpha = 0.3f)),
                     modifier = Modifier.width(100.dp)
@@ -160,22 +158,22 @@ internal fun VoiceVideoFullPane() {
         }
 
         SectionHeader("Output Device")
-        var outputDevice by remember { mutableStateOf("Default") }
+        val outputDevice by settingsManager.outputDevice.collectAsState("Default")
         PrefCard("Speakers", "Select which output device to use for audio.") {
             ChipGroup(
                 options = listOf("Default", "Headphones", "Speakers"),
                 selected = outputDevice,
-                onSelect = { outputDevice = it }
+                onSelect = { settingsManager.setOutputDevice(it) }
             )
         }
-        var outputVolume by remember { mutableStateOf(100f) }
+        val outputVolume by settingsManager.outputVolume.collectAsState(100f)
         PrefCard("Output Volume", "Adjust the volume of other people's voices.") {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("${outputVolume.toInt()}%", style = MaterialTheme.typography.labelMedium.copy(color = tokens.Accent, fontWeight = FontWeight.Bold))
                 Spacer(Modifier.width(8.dp))
                 Slider(
                     value = outputVolume,
-                    onValueChange = { outputVolume = it },
+                    onValueChange = { settingsManager.setOutputVolume(it) },
                     valueRange = 0f..200f,
                     colors = SliderDefaults.colors(thumbColor = tokens.Accent, activeTrackColor = tokens.Accent, inactiveTrackColor = tokens.Text_Muted.copy(alpha = 0.3f)),
                     modifier = Modifier.width(100.dp)
@@ -184,47 +182,47 @@ internal fun VoiceVideoFullPane() {
         }
 
         SectionHeader("Voice Processing")
-        var inputMode by remember { mutableStateOf("Voice Activity") }
+        val inputMode by settingsManager.inputMode.collectAsState("Voice Activity")
         PrefCard("Input Mode", "How your microphone activates.") {
             ChipGroup(
                 options = listOf("Voice Activity", "Push to Talk"),
                 selected = inputMode,
-                onSelect = { inputMode = it }
+                onSelect = { settingsManager.setInputMode(it) }
             )
         }
-        var noiseSuppression by remember { mutableStateOf(true) }
+        val noiseSuppression by settingsManager.noiseSuppression.collectAsState(true)
         PrefCard("Noise Suppression", "Filter out background noise like fans, keyboards, and traffic.") {
-            CosmicSwitch(checked = noiseSuppression, onCheckedChange = { noiseSuppression = it })
+            CosmicSwitch(checked = noiseSuppression, onCheckedChange = { settingsManager.setNoiseSuppression(it) })
         }
-        var echoCancellation by remember { mutableStateOf(true) }
+        val echoCancellation by settingsManager.echoCancellation.collectAsState(true)
         PrefCard("Echo Cancellation", "Prevent your speakers from feeding back into your microphone.") {
-            CosmicSwitch(checked = echoCancellation, onCheckedChange = { echoCancellation = it })
+            CosmicSwitch(checked = echoCancellation, onCheckedChange = { settingsManager.setEchoCancellation(it) })
         }
-        var autoGainControl by remember { mutableStateOf(true) }
+        val autoGainControl by settingsManager.autoGainControl.collectAsState(true)
         PrefCard("Automatic Gain Control", "Automatically normalize your microphone volume.") {
-            CosmicSwitch(checked = autoGainControl, onCheckedChange = { autoGainControl = it })
+            CosmicSwitch(checked = autoGainControl, onCheckedChange = { settingsManager.setAutoGainControl(it) })
         }
 
         SectionHeader("Video")
-        var videoQuality by remember { mutableStateOf("1080p (60fps)") }
+        val videoQuality by settingsManager.videoQuality.collectAsState("1080p (60fps)")
         PrefCard("Video Quality", "Higher quality uses more bandwidth.") {
             ChipGroup(
                 options = listOf("720p", "1080p (60fps)", "1440p"),
                 selected = videoQuality,
-                onSelect = { videoQuality = it }
+                onSelect = { settingsManager.setVideoQuality(it) }
             )
         }
-        var camera by remember { mutableStateOf("Default") }
+        val cameraDevice by settingsManager.cameraDevice.collectAsState("Default")
         PrefCard("Camera", "Select which camera to use for video calls.") {
             ChipGroup(
                 options = listOf("Default", "Webcam", "Virtual"),
-                selected = camera,
-                onSelect = { camera = it }
+                selected = cameraDevice,
+                onSelect = { settingsManager.setCameraDevice(it) }
             )
         }
-        var mirrorVideo by remember { mutableStateOf(true) }
+        val mirrorVideo by settingsManager.mirrorVideo.collectAsState(true)
         PrefCard("Mirror my video", "Flip your camera preview horizontally.") {
-            CosmicSwitch(checked = mirrorVideo, onCheckedChange = { mirrorVideo = it })
+            CosmicSwitch(checked = mirrorVideo, onCheckedChange = { settingsManager.setMirrorVideo(it) })
         }
 
         SectionHeader("Screen Share")
@@ -239,12 +237,12 @@ internal fun VoiceVideoFullPane() {
         }
 
         SectionHeader("Audio Subsystem")
-        var audioSubsystem by remember { mutableStateOf("Standard") }
+        val audioSubsystem by settingsManager.audioSubsystem.collectAsState("Standard")
         PrefCard("Audio Subsystem", "Advanced: Change the audio processing backend.") {
             ChipGroup(
                 options = listOf("Standard", "Experimental", "Legacy"),
                 selected = audioSubsystem,
-                onSelect = { audioSubsystem = it }
+                onSelect = { settingsManager.setAudioSubsystem(it) }
             )
         }
     }
@@ -255,54 +253,54 @@ internal fun VoiceVideoFullPane() {
 // ═══════════════════════════════════════════════════════════════════
 
 @Composable
-internal fun NotificationsExtrasPane() {
+internal fun NotificationsExtrasPane(settingsManager: SettingsManager) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SectionHeader("Desktop Notifications")
-        var desktopNotifs by remember { mutableStateOf(true) }
+        val desktopNotifs by settingsManager.desktopNotifs.collectAsState(true)
         PrefCard("Enable desktop notifications", "Show system notification popups for new messages.") {
-            CosmicSwitch(checked = desktopNotifs, onCheckedChange = { desktopNotifs = it })
+            CosmicSwitch(checked = desktopNotifs, onCheckedChange = { settingsManager.setDesktopNotifs(it) })
         }
-        var desktopPreview by remember { mutableStateOf(true) }
+        val desktopPreview by settingsManager.desktopPreview.collectAsState(true)
         PrefCard("Show message preview", "Display the message content in desktop notification banners.") {
-            CosmicSwitch(checked = desktopPreview, onCheckedChange = { desktopPreview = it })
+            CosmicSwitch(checked = desktopPreview, onCheckedChange = { settingsManager.setDesktopPreview(it) })
         }
 
         SectionHeader("In-App Notifications")
-        var inAppSounds by remember { mutableStateOf(true) }
+        val inAppSounds by settingsManager.inAppSounds.collectAsState(true)
         PrefCard("In-app notification sounds", "Play sounds when receiving messages while Orbit is focused.") {
-            CosmicSwitch(checked = inAppSounds, onCheckedChange = { inAppSounds = it })
+            CosmicSwitch(checked = inAppSounds, onCheckedChange = { settingsManager.setInAppSounds(it) })
         }
-        var unreadBadge by remember { mutableStateOf(true) }
+        val unreadBadge by settingsManager.unreadBadge.collectAsState(true)
         PrefCard("Unread badge", "Show unread count badges on channels and servers.") {
-            CosmicSwitch(checked = unreadBadge, onCheckedChange = { unreadBadge = it })
+            CosmicSwitch(checked = unreadBadge, onCheckedChange = { settingsManager.setUnreadBadge(it) })
         }
 
         SectionHeader("Sounds")
-        var joinLeaveSound by remember { mutableStateOf(true) }
+        val joinLeaveSound by settingsManager.joinLeaveSound.collectAsState(true)
         PrefCard("User join/leave sounds", "Play a sound when users join or leave a voice channel.") {
-            CosmicSwitch(checked = joinLeaveSound, onCheckedChange = { joinLeaveSound = it })
+            CosmicSwitch(checked = joinLeaveSound, onCheckedChange = { settingsManager.setJoinLeaveSound(it) })
         }
-        var messageSound by remember { mutableStateOf(true) }
+        val messageSound by settingsManager.messageSound.collectAsState(true)
         PrefCard("New message sound", "Play a sound for every incoming message.") {
-            CosmicSwitch(checked = messageSound, onCheckedChange = { messageSound = it })
+            CosmicSwitch(checked = messageSound, onCheckedChange = { settingsManager.setMessageSound(it) })
         }
-        var callRingtone by remember { mutableStateOf(true) }
+        val callRingtone by settingsManager.callRingtone.collectAsState(true)
         PrefCard("Incoming call ringtone", "Play a ringtone when someone calls you.") {
-            CosmicSwitch(checked = callRingtone, onCheckedChange = { callRingtone = it })
+            CosmicSwitch(checked = callRingtone, onCheckedChange = { settingsManager.setCallRingtone(it) })
         }
-        var deafenSound by remember { mutableStateOf(true) }
+        val deafenSound by settingsManager.deafenSound.collectAsState(true)
         PrefCard("Mute/Deafen confirmation", "Play a sound when you mute or deafen yourself.") {
-            CosmicSwitch(checked = deafenSound, onCheckedChange = { deafenSound = it })
+            CosmicSwitch(checked = deafenSound, onCheckedChange = { settingsManager.setDeafenSound(it) })
         }
 
         SectionHeader("Do Not Disturb")
-        var dnd by remember { mutableStateOf(false) }
+        val doNotDisturb by settingsManager.doNotDisturb.collectAsState(false)
         PrefCard("Do Not Disturb", "Suppress all notifications. You'll still see unread indicators.") {
-            CosmicSwitch(checked = dnd, onCheckedChange = { dnd = it })
+            CosmicSwitch(checked = doNotDisturb, onCheckedChange = { settingsManager.setDoNotDisturb(it) })
         }
-        var dndSchedule by remember { mutableStateOf(false) }
+        val dndSchedule by settingsManager.dndSchedule.collectAsState(false)
         PrefCard("Scheduled DND", "Automatically enable DND during certain hours (e.g., 11 PM – 7 AM).") {
-            CosmicSwitch(checked = dndSchedule, onCheckedChange = { dndSchedule = it })
+            CosmicSwitch(checked = dndSchedule, onCheckedChange = { settingsManager.setDndSchedule(it) })
         }
     }
 }

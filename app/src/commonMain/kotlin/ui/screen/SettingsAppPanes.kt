@@ -14,6 +14,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.border
+import repository.SettingsManager
 import ui.theme.rememberCosmicTokens
 
 // ═══════════════════════════════════════════════════════════════════
@@ -21,56 +23,56 @@ import ui.theme.rememberCosmicTokens
 // ═══════════════════════════════════════════════════════════════════
 
 @Composable
-internal fun ChatSettingsPane() {
+internal fun ChatSettingsPane(settingsManager: SettingsManager) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SectionHeader("Display & Media")
-        var inlineMedia by remember { mutableStateOf(true) }
+        val inlineMedia by settingsManager.inlineMedia.collectAsState(true)
         PrefCard("Show inline media", "Automatically display images, videos, and GIFs in chat.") {
-            CosmicSwitch(checked = inlineMedia, onCheckedChange = { inlineMedia = it })
+            CosmicSwitch(checked = inlineMedia, onCheckedChange = { settingsManager.setInlineMedia(it) })
         }
-        var linkPreviews by remember { mutableStateOf(true) }
+        val linkPreviews by settingsManager.linkPreviews.collectAsState(true)
         PrefCard("Link previews", "Show embedded previews for shared URLs.") {
-            CosmicSwitch(checked = linkPreviews, onCheckedChange = { linkPreviews = it })
+            CosmicSwitch(checked = linkPreviews, onCheckedChange = { settingsManager.setLinkPreviews(it) })
         }
-        var showEmbeds by remember { mutableStateOf(true) }
+        val showEmbeds by settingsManager.showEmbeds.collectAsState(true)
         PrefCard("Show embeds", "Display rich media for YouTube, Twitter, and other embeds.") {
-            CosmicSwitch(checked = showEmbeds, onCheckedChange = { showEmbeds = it })
+            CosmicSwitch(checked = showEmbeds, onCheckedChange = { settingsManager.setShowEmbeds(it) })
         }
-        var gifAutoplay by remember { mutableStateOf(true) }
+        val gifAutoplay by settingsManager.gifAutoplay.collectAsState(true)
         PrefCard("Auto-play GIFs", "GIFs animate automatically instead of on hover.") {
-            CosmicSwitch(checked = gifAutoplay, onCheckedChange = { gifAutoplay = it })
+            CosmicSwitch(checked = gifAutoplay, onCheckedChange = { settingsManager.setGifAutoplay(it) })
         }
 
         SectionHeader("Emojis & Stickers")
-        var jumbo by remember { mutableStateOf(true) }
+        val jumboEmojis by settingsManager.jumboEmojis.collectAsState(true)
         PrefCard("Jumbo emojis", "Display larger emojis when a message contains only emojis.") {
-            CosmicSwitch(checked = jumbo, onCheckedChange = { jumbo = it })
+            CosmicSwitch(checked = jumboEmojis, onCheckedChange = { settingsManager.setJumboEmojis(it) })
         }
-        var animatedEmoji by remember { mutableStateOf(true) }
+        val animatedEmoji by settingsManager.animatedEmoji.collectAsState(true)
         PrefCard("Animated emojis", "Play animated emojis in chat.") {
-            CosmicSwitch(checked = animatedEmoji, onCheckedChange = { animatedEmoji = it })
+            CosmicSwitch(checked = animatedEmoji, onCheckedChange = { settingsManager.setAnimatedEmoji(it) })
         }
-        var stickerSuggestions by remember { mutableStateOf(true) }
+        val stickerSuggestions by settingsManager.stickerSuggestions.collectAsState(true)
         PrefCard("Sticker suggestions", "Show sticker suggestions when typing messages.") {
-            CosmicSwitch(checked = stickerSuggestions, onCheckedChange = { stickerSuggestions = it })
+            CosmicSwitch(checked = stickerSuggestions, onCheckedChange = { settingsManager.setStickerSuggestions(it) })
         }
-        var emojiSuggestions by remember { mutableStateOf(true) }
+        val emojiSuggestions by settingsManager.emojiSuggestions.collectAsState(true)
         PrefCard("Emoji suggestions", "Show emoji autocomplete while typing with a colon.") {
-            CosmicSwitch(checked = emojiSuggestions, onCheckedChange = { emojiSuggestions = it })
+            CosmicSwitch(checked = emojiSuggestions, onCheckedChange = { settingsManager.setEmojiSuggestions(it) })
         }
 
-        SectionHeader("Text & Input")
-        var compactMode by remember { mutableStateOf(false) }
-        PrefCard("Compact mode", "Reduce spacing between messages for denser chat view.") {
-            CosmicSwitch(checked = compactMode, onCheckedChange = { compactMode = it })
+        SectionHeader("Chat Behavior")
+        val compactMode by settingsManager.compactMode.collectAsState(false)
+        PrefCard("Compact mode", "Fit more messages on screen by removing avatars and padding.") {
+            CosmicSwitch(checked = compactMode, onCheckedChange = { settingsManager.setCompactMode(it) })
         }
-        var enterSend by remember { mutableStateOf(true) }
-        PrefCard("Enter to send", "Press Enter to send messages. Shift+Enter for new line.") {
-            CosmicSwitch(checked = enterSend, onCheckedChange = { enterSend = it })
+        val enterSend by settingsManager.enterSend.collectAsState(true)
+        PrefCard("Enter to send", "Pressing Enter sends the message. Use Shift+Enter for new lines.") {
+            CosmicSwitch(checked = enterSend, onCheckedChange = { settingsManager.setEnterSend(it) })
         }
-        var spellcheck by remember { mutableStateOf(true) }
-        PrefCard("Spell check", "Highlight spelling errors as you type.") {
-            CosmicSwitch(checked = spellcheck, onCheckedChange = { spellcheck = it })
+        val spellcheck by settingsManager.spellcheck.collectAsState(true)
+        PrefCard("Spellcheck", "Highlight misspelled words in the message input box.") {
+            CosmicSwitch(checked = spellcheck, onCheckedChange = { settingsManager.setSpellcheck(it) })
         }
     }
 }
@@ -81,60 +83,48 @@ internal fun ChatSettingsPane() {
 
 @Composable
 internal fun KeybindsPane() {
-    val tokens = rememberCosmicTokens()
+    val t = rememberCosmicTokens()
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SectionHeader("Voice & Video")
-        PrefCard("Mute / Unmute", "Toggle your microphone") {
-            StatusBadge("Ctrl+Shift+M", Color(0xFF6366F1))
-        }
-        PrefCard("Deafen / Undeafen", "Toggle audio output") {
-            StatusBadge("Ctrl+Shift+D", Color(0xFF6366F1))
-        }
-        PrefCard("Push to Talk", "Hold to transmit voice") {
-            StatusBadge("V", Color(0xFF6366F1))
-        }
-        PrefCard("Toggle Video", "Turn camera on/off") {
-            StatusBadge("Ctrl+Shift+V", Color(0xFF6366F1))
-        }
+        KeybindCard("Toggle Mute", "Ctrl + Shift + M")
+        KeybindCard("Toggle Deafen", "Ctrl + Shift + D")
+        KeybindCard("Push to Talk", "V (Hold)")
+        KeybindCard("Push to Mute", "None")
 
-        SectionHeader("Screen Sharing")
-        PrefCard("Toggle Screen Share", "Start or stop sharing your screen") {
-            StatusBadge("Ctrl+Shift+S", Color(0xFF6366F1))
-        }
-        PrefCard("Share Specific Window", "Pick a window to share") {
-            StatusBadge("Ctrl+Shift+W", Color(0xFF6366F1))
-        }
+        SectionHeader("Screen Share")
+        KeybindCard("Start/Stop Stream", "Ctrl + Shift + S")
+        KeybindCard("Toggle Camera", "Ctrl + Shift + V")
 
         SectionHeader("Navigation")
-        PrefCard("Quick Switcher", "Jump to any channel or DM") {
-            StatusBadge("Ctrl+K", Color(0xFF6366F1))
-        }
-        PrefCard("Search", "Search messages in current channel") {
-            StatusBadge("Ctrl+F", Color(0xFF6366F1))
-        }
-        PrefCard("Navigate Up", "Select previous channel") {
-            StatusBadge("Alt+↑", Color(0xFF6366F1))
-        }
-        PrefCard("Navigate Down", "Select next channel") {
-            StatusBadge("Alt+↓", Color(0xFF6366F1))
-        }
-        PrefCard("Mark as Read", "Mark current channel as read") {
-            StatusBadge("Escape", Color(0xFF6366F1))
-        }
+        KeybindCard("Quick Switcher", "Ctrl + K")
+        KeybindCard("Navigate Back", "Alt + Left Arrow")
+        KeybindCard("Navigate Forward", "Alt + Right Arrow")
+        KeybindCard("Return to Active Call", "Ctrl + Shift + Alt + V")
 
         SectionHeader("Messaging")
-        PrefCard("Edit Last Message", "Edit your most recent message") {
-            StatusBadge("↑", Color(0xFF6366F1))
+        KeybindCard("Mark Server Read", "Shift + Esc")
+        KeybindCard("Mark Channel Read", "Esc")
+        KeybindCard("Focus Message Box", "Tab")
+        
+        Spacer(Modifier.height(16.dp))
+        Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = t.Accent)) {
+            Text("Add a Keybind")
         }
-        PrefCard("Pin/Unpin Message", "Toggle message pin in channel") {
-            StatusBadge("Ctrl+P", Color(0xFF6366F1))
-        }
+    }
+}
 
-        Spacer(Modifier.height(8.dp))
-        Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = tokens.Accent)) {
-            Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("Add Custom Keybind")
+@Composable
+private fun KeybindCard(action: String, keys: String) {
+    val t = rememberCosmicTokens()
+    PrefCard(action, "") {
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(6.dp))
+                .background(t.Bg)
+                .border(1.dp, t.Separator, RoundedCornerShape(6.dp))
+                .padding(horizontal = 8.dp, vertical = 4.dp)
+        ) {
+            Text(keys, color = t.AccentLight, style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
         }
     }
 }
@@ -144,90 +134,92 @@ internal fun KeybindsPane() {
 // ═══════════════════════════════════════════════════════════════════
 
 @Composable
-internal fun LanguageTimePane() {
+internal fun LanguageTimePane(settingsManager: SettingsManager) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SectionHeader("Language")
-        var selectedLang by remember { mutableStateOf("English (US)") }
-        PrefCard("App Language", "The language used throughout the Orbit interface.") {
+        val appLanguage by settingsManager.appLanguage.collectAsState("English (US)")
+        PrefCard("App Language", "Change the language used throughout Orbit.") {
             ChipGroup(
                 options = listOf("English (US)", "English (UK)", "Español", "Français", "Deutsch", "日本語"),
-                selected = selectedLang,
-                onSelect = { selectedLang = it }
+                selected = appLanguage,
+                onSelect = { settingsManager.setAppLanguage(it) }
             )
         }
-        var spellcheckLang by remember { mutableStateOf("English") }
-        PrefCard("Spell Check Language", "Language used for spell checking in the message input.") {
+        val spellcheckLang by settingsManager.spellcheckLang.collectAsState("English")
+        PrefCard("Spellcheck Language", "Language used for the built-in spellchecker.") {
             ChipGroup(
-                options = listOf("English", "Spanish", "French", "German"),
+                options = listOf("System Default", "English", "Español"),
                 selected = spellcheckLang,
-                onSelect = { spellcheckLang = it }
+                onSelect = { settingsManager.setSpellcheckLang(it) }
             )
         }
 
-        SectionHeader("Date & Time")
-        var is24h by remember { mutableStateOf(false) }
-        PrefCard("24-Hour Clock", "Display times as 14:00 instead of 2:00 PM.") {
-            CosmicSwitch(checked = is24h, onCheckedChange = { is24h = it })
+        SectionHeader("Time & Date")
+        val use24HourClock by settingsManager.use24HourClock.collectAsState(false)
+        PrefCard("24-Hour Clock", "Display times like 14:30 instead of 2:30 PM.") {
+            CosmicSwitch(checked = use24HourClock, onCheckedChange = { settingsManager.setUse24HourClock(it) })
         }
-        var relativeTime by remember { mutableStateOf(true) }
-        PrefCard("Relative timestamps", "Show '2 hours ago' instead of exact timestamps.") {
-            CosmicSwitch(checked = relativeTime, onCheckedChange = { relativeTime = it })
+        val relativeTime by settingsManager.relativeTime.collectAsState(true)
+        PrefCard("Relative Timestamps", "Show 'Today at 2:30 PM' instead of full dates for recent messages.") {
+            CosmicSwitch(checked = relativeTime, onCheckedChange = { settingsManager.setRelativeTime(it) })
         }
-        var dateFormat by remember { mutableStateOf("DD/MM/YYYY") }
-        PrefCard("Date Format", "How dates are displayed in message timestamps.") {
+        val dateFormat by settingsManager.dateFormat.collectAsState("DD/MM/YYYY")
+        PrefCard("Date Format", "How full dates are displayed.") {
             ChipGroup(
-                options = listOf("DD/MM/YYYY", "MM/DD/YYYY", "YYYY-MM-DD"),
+                options = listOf("MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD"),
                 selected = dateFormat,
-                onSelect = { dateFormat = it }
+                onSelect = { settingsManager.setDateFormat(it) }
             )
         }
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  WINDOWS / DESKTOP SETTINGS
+//  WINDOWS SETTINGS
 // ═══════════════════════════════════════════════════════════════════
 
 @Composable
-internal fun WindowsSettingsPane() {
+internal fun WindowsSettingsPane(settingsManager: SettingsManager) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        SectionHeader("Startup")
-        var boot by remember { mutableStateOf(true) }
-        PrefCard("Open Orbit on startup", "Launch Orbit automatically when you turn on your computer.") {
-            CosmicSwitch(checked = boot, onCheckedChange = { boot = it })
+        SectionHeader("System Startup")
+        val openOnStartup by settingsManager.openOnStartup.collectAsState(true)
+        PrefCard("Open Orbit on startup", "Automatically launch Orbit when your computer starts.") {
+            CosmicSwitch(checked = openOnStartup, onCheckedChange = { settingsManager.setOpenOnStartup(it) })
         }
-        var startMinimized by remember { mutableStateOf(false) }
-        PrefCard("Start minimized", "Orbit starts in the background, only visible in the system tray.") {
-            CosmicSwitch(checked = startMinimized, onCheckedChange = { startMinimized = it })
+        val startMinimized by settingsManager.startMinimized.collectAsState(false)
+        PrefCard("Start minimized", "Launch Orbit silently into the system tray.") {
+            CosmicSwitch(checked = startMinimized, onCheckedChange = { settingsManager.setStartMinimized(it) })
         }
 
         SectionHeader("Window Behavior")
-        var tray by remember { mutableStateOf(true) }
-        PrefCard("Minimize to Tray", "Clicking the close button minimizes Orbit to your system tray.") {
-            CosmicSwitch(checked = tray, onCheckedChange = { tray = it })
+        val minimizeToTray by settingsManager.minimizeToTray.collectAsState(true)
+        PrefCard("Minimize to tray", "Clicking the 'X' button minimizes Orbit to the system tray instead of quitting.") {
+            CosmicSwitch(checked = minimizeToTray, onCheckedChange = { settingsManager.setMinimizeToTray(it) })
         }
-        var alwaysOnTop by remember { mutableStateOf(false) }
-        PrefCard("Always on Top", "Keep the Orbit window above all other applications.") {
-            CosmicSwitch(checked = alwaysOnTop, onCheckedChange = { alwaysOnTop = it })
+        val alwaysOnTop by settingsManager.alwaysOnTop.collectAsState(false)
+        PrefCard("Always on top", "Keep the Orbit window above all other applications.") {
+            CosmicSwitch(checked = alwaysOnTop, onCheckedChange = { settingsManager.setAlwaysOnTop(it) })
         }
 
-        SectionHeader("Taskbar")
-        var badge by remember { mutableStateOf(true) }
-        PrefCard("Taskbar badge", "Show unread message count on the taskbar icon.") {
-            CosmicSwitch(checked = badge, onCheckedChange = { badge = it })
+        SectionHeader("Taskbar Integration")
+        val taskbarBadge by settingsManager.taskbarBadge.collectAsState(true)
+        PrefCard("Unread badge", "Show a red dot on the taskbar icon when you have unread messages.") {
+            CosmicSwitch(checked = taskbarBadge, onCheckedChange = { settingsManager.setTaskbarBadge(it) })
         }
-        var flashTaskbar by remember { mutableStateOf(true) }
-        PrefCard("Flash taskbar", "Flash the Orbit icon in the taskbar when a notification arrives.") {
-            CosmicSwitch(checked = flashTaskbar, onCheckedChange = { flashTaskbar = it })
+        val flashTaskbar by settingsManager.flashTaskbar.collectAsState(true)
+        PrefCard("Flash taskbar", "Flash the taskbar icon when you receive a new direct message or mention.") {
+            CosmicSwitch(checked = flashTaskbar, onCheckedChange = { settingsManager.setFlashTaskbar(it) })
         }
 
         SectionHeader("Updates")
-        var autoUpdate by remember { mutableStateOf(true) }
-        PrefCard("Auto-update", "Automatically download and install Orbit updates.") {
-            CosmicSwitch(checked = autoUpdate, onCheckedChange = { autoUpdate = it })
+        val autoUpdate by settingsManager.autoUpdate.collectAsState(true)
+        PrefCard("Download updates automatically", "Orbit will download updates in the background and apply them on restart.") {
+            CosmicSwitch(checked = autoUpdate, onCheckedChange = { settingsManager.setAutoUpdate(it) })
         }
-        PrefCard("Current Version", "Orbit Desktop v1.0.0-beta") {
-            StatusBadge("Up to date", Color(0xFF10B981))
+        PrefCard("Current Version", "Orbit v1.0.4-beta (Build 8942)") {
+            Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = rememberCosmicTokens().Accent), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) {
+                Text("Check for Updates", fontSize = 12.sp)
+            }
         }
     }
 }
@@ -237,48 +229,49 @@ internal fun WindowsSettingsPane() {
 // ═══════════════════════════════════════════════════════════════════
 
 @Composable
-internal fun AdvancedPane() {
-    val tokens = rememberCosmicTokens()
+internal fun AdvancedPane(settingsManager: SettingsManager) {
+    val t = rememberCosmicTokens()
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        SectionHeader("Developer")
-        var devMode by remember { mutableStateOf(false) }
-        PrefCard("Developer Mode", "Show IDs and developer tools in context menus.") {
-            CosmicSwitch(checked = devMode, onCheckedChange = { devMode = it })
+        HeroCard(
+            icon = Icons.Default.Terminal,
+            iconTint = Color(0xFFEF4444),
+            title = "Advanced Options",
+            subtitle = "Here be dragons. These settings are for power users and developers. Changing them may impact app stability or performance.",
+            gradient = listOf(Color(0xFF3F3F46), Color(0xFF18181B)),
+            buttonText = ""
+        )
+
+        SectionHeader("Developer Tools")
+        val developerMode by settingsManager.developerMode.collectAsState(false)
+        PrefCard("Developer Mode", "Exposes context menu items to copy IDs for users, servers, and channels.") {
+            CosmicSwitch(checked = developerMode, onCheckedChange = { settingsManager.setDeveloperMode(it) })
         }
-        var debugLogs by remember { mutableStateOf(false) }
-        PrefCard("Debug Logging", "Write verbose debug logs to disk for troubleshooting.") {
-            CosmicSwitch(checked = debugLogs, onCheckedChange = { debugLogs = it })
+        val debugLogging by settingsManager.debugLogging.collectAsState(false)
+        PrefCard("Verbose Debug Logging", "Writes extensive diagnostic information to disk for troubleshooting.") {
+            CosmicSwitch(checked = debugLogging, onCheckedChange = { settingsManager.setDebugLogging(it) })
+        }
+        PrefCard("Clear Caches", "Deletes all cached images, avatars, and temporary files.") {
+            Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444).copy(alpha = 0.8f)), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) { Text("Clear Data", fontSize = 12.sp) }
         }
 
-        SectionHeader("Performance")
-        var hw by remember { mutableStateOf(true) }
-        PrefCard("Hardware Acceleration", "Use your GPU for smoother rendering. Disable if you see visual glitches.") {
-            CosmicSwitch(checked = hw, onCheckedChange = { hw = it })
+        SectionHeader("System Performance")
+        val hardwareAcceleration by settingsManager.hardwareAcceleration.collectAsState(true)
+        PrefCard("Hardware Acceleration", "Uses your GPU to render the UI for smoother performance. Turn off if experiencing graphical glitches.") {
+            CosmicSwitch(checked = hardwareAcceleration, onCheckedChange = { settingsManager.setHardwareAcceleration(it) })
         }
-        var reducedBandwidth by remember { mutableStateOf(false) }
-        PrefCard("Reduced Bandwidth Mode", "Lower media quality to save bandwidth on slow connections.") {
-            CosmicSwitch(checked = reducedBandwidth, onCheckedChange = { reducedBandwidth = it })
-        }
-
-        SectionHeader("Experimental")
-        var testMode by remember { mutableStateOf(false) }
-        PrefCard("Beta Test Mode", "Enable experimental features that may be unstable.") {
-            CosmicSwitch(checked = testMode, onCheckedChange = { testMode = it })
-        }
-        var newUI by remember { mutableStateOf(false) }
-        PrefCard("New Chat UI Preview", "Try the next generation chat interface before it's released.") {
-            CosmicSwitch(checked = newUI, onCheckedChange = { newUI = it })
+        val reducedBandwidth by settingsManager.reducedBandwidth.collectAsState(false)
+        PrefCard("Reduced Bandwidth Mode", "Limits background syncing and image prefetching to save data.") {
+            CosmicSwitch(checked = reducedBandwidth, onCheckedChange = { settingsManager.setReducedBandwidth(it) })
         }
 
-        SectionHeader("Data")
-        PrefCard("Clear Cache", "Free up disk space by removing cached images and media.") {
-            Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = tokens.CardBg)) { Text("Clear", color = tokens.Text_White) }
+        SectionHeader("Experimental Features")
+        val betaTestMode by settingsManager.betaTestMode.collectAsState(false)
+        PrefCard("Beta Channel", "Opt-in to receive unstable beta updates before public release.") {
+            CosmicSwitch(checked = betaTestMode, onCheckedChange = { settingsManager.setBetaTestMode(it) })
         }
-        PrefCard("Export Data", "Download a copy of all your Orbit account data.") {
-            Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = tokens.CardBg)) { Text("Export", color = tokens.Text_White) }
-        }
-        PrefCard("Delete All Messages", "Permanently delete all messages you've sent across Orbit.") {
-            Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444).copy(alpha = 0.8f))) { Text("Delete") }
+        val newUIPreview by settingsManager.newUIPreview.collectAsState(false)
+        PrefCard("New UI Preview", "Enable work-in-progress redesign elements.") {
+            CosmicSwitch(checked = newUIPreview, onCheckedChange = { settingsManager.setNewUIPreview(it) })
         }
     }
 }
@@ -288,40 +281,40 @@ internal fun AdvancedPane() {
 // ═══════════════════════════════════════════════════════════════════
 
 @Composable
-internal fun ActivityPrivacyPane() {
+internal fun ActivityPrivacyPane(settingsManager: SettingsManager) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SectionHeader("Activity Status")
-        var status by remember { mutableStateOf(true) }
-        PrefCard("Display current activity", "Show the game you're playing or music you're listening to.") {
-            CosmicSwitch(checked = status, onCheckedChange = { status = it })
+        val displayActivity by settingsManager.displayActivity.collectAsState(true)
+        PrefCard("Display current activity", "Automatically update your status when you're playing a game, listening to Spotify, or streaming.") {
+            CosmicSwitch(checked = displayActivity, onCheckedChange = { settingsManager.setDisplayActivity(it) })
         }
-        var shareDefault by remember { mutableStateOf(true) }
-        PrefCard("Share in large servers", "Show activity status in servers with 200+ members.") {
-            CosmicSwitch(checked = shareDefault, onCheckedChange = { shareDefault = it })
+        val shareActivityLargeServers by settingsManager.shareActivityLargeServers.collectAsState(true)
+        PrefCard("Share activity in large servers", "Allow your activity to be visible in servers with over 200 members.") {
+            CosmicSwitch(checked = shareActivityLargeServers, onCheckedChange = { settingsManager.setShareActivityLargeServers(it) })
+        }
+        val showOnlineStatus by settingsManager.showOnlineStatus.collectAsState(true)
+        PrefCard("Show online status", "Let people know when you're actively using Orbit.") {
+            CosmicSwitch(checked = showOnlineStatus, onCheckedChange = { settingsManager.setShowOnlineStatus(it) })
         }
 
-        SectionHeader("Online Status")
-        var showOnline by remember { mutableStateOf(true) }
-        PrefCard("Show when you're online", "Other users can see your green online indicator.") {
-            CosmicSwitch(checked = showOnline, onCheckedChange = { showOnline = it })
-        }
-        var idleTimeout by remember { mutableStateOf("5 minutes") }
-        PrefCard("Idle timeout", "How long before your status changes to 'Idle'.") {
+        SectionHeader("Presence Settings")
+        val idleTimeout by settingsManager.idleTimeout.collectAsState("5 minutes")
+        PrefCard("Idle Timeout", "How long before your status automatically changes to Idle.") {
             ChipGroup(
-                options = listOf("2 minutes", "5 minutes", "10 minutes", "Never"),
+                options = listOf("5 minutes", "10 minutes", "15 minutes", "Never"),
                 selected = idleTimeout,
-                onSelect = { idleTimeout = it }
+                onSelect = { settingsManager.setIdleTimeout(it) }
             )
         }
 
-        SectionHeader("Listening Along")
-        var listening by remember { mutableStateOf(true) }
-        PrefCard("Allow Listen Along", "Let friends listen to your Spotify along with you.") {
-            CosmicSwitch(checked = listening, onCheckedChange = { listening = it })
+        SectionHeader("Rich Presence Privacy")
+        val allowListenAlong by settingsManager.allowListenAlong.collectAsState(true)
+        PrefCard("Allow friends to Listen Along", "Let friends join your Spotify listening session.") {
+            CosmicSwitch(checked = allowListenAlong, onCheckedChange = { settingsManager.setAllowListenAlong(it) })
         }
-        var spotifyStatus by remember { mutableStateOf(true) }
-        PrefCard("Show Spotify as status", "Display the current song as your status message.") {
-            CosmicSwitch(checked = spotifyStatus, onCheckedChange = { spotifyStatus = it })
+        val showSpotifyStatus by settingsManager.showSpotifyStatus.collectAsState(true)
+        PrefCard("Show what you're listening to", "Display current Spotify track in your status.") {
+            CosmicSwitch(checked = showSpotifyStatus, onCheckedChange = { settingsManager.setShowSpotifyStatus(it) })
         }
     }
 }
@@ -331,56 +324,35 @@ internal fun ActivityPrivacyPane() {
 // ═══════════════════════════════════════════════════════════════════
 
 @Composable
-internal fun RegisteredGamesPane() {
-    val tokens = rememberCosmicTokens()
+internal fun RegisteredGamesPane(settingsManager: SettingsManager) {
+    val t = rememberCosmicTokens()
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        HeroCard(
-            icon = Icons.Default.SportsEsports,
-            iconTint = Color(0xFF60A5FA),
-            title = "Game Detection",
-            subtitle = "Orbit automatically detects running games to display as your activity status. You can also add games manually."
-        )
+        Text("Orbit automatically detects games running on your PC and adds them to this list.", color = t.Text_Muted, style = MaterialTheme.typography.bodySmall)
 
-        SectionHeader("Detected Games")
-        PrefCard("No game currently running", "Launch a game and it will appear here automatically.") {
-            Icon(Icons.Default.SearchOff, null, tint = tokens.Text_Muted)
+        SectionHeader("Game Detection")
+        val autoDetectGames by settingsManager.autoDetectGames.collectAsState(true)
+        PrefCard("Auto-detect running games", "Scan background processes to identify when you're playing a game.") {
+            CosmicSwitch(checked = autoDetectGames, onCheckedChange = { settingsManager.setAutoDetectGames(it) })
+        }
+        val statusDefault by settingsManager.statusDefault.collectAsState(true)
+        PrefCard("Show running games as status", "Set your status to 'Playing X' by default when a game is detected.") {
+            CosmicSwitch(checked = statusDefault, onCheckedChange = { settingsManager.setStatusDefault(it) })
         }
 
-        SectionHeader("Manually Added")
-        PrefCard("Cyberpunk 2077", "Last played 2 days ago") {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                var showStatus by remember { mutableStateOf(true) }
-                CosmicSwitch(checked = showStatus, onCheckedChange = { showStatus = it })
-            }
+        SectionHeader("Added Games")
+        PrefCard("Valorant", "Added today") {
+            Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = t.CardBg), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) { Text("Remove", fontSize = 12.sp) }
         }
-        PrefCard("Minecraft", "Last played yesterday") {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                var showStatus by remember { mutableStateOf(true) }
-                CosmicSwitch(checked = showStatus, onCheckedChange = { showStatus = it })
-            }
+        PrefCard("Minecraft", "Added last week") {
+            Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = t.CardBg), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) { Text("Remove", fontSize = 12.sp) }
         }
-        PrefCard("Valorant", "Last played 5 days ago") {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                var showStatus by remember { mutableStateOf(false) }
-                CosmicSwitch(checked = showStatus, onCheckedChange = { showStatus = it })
-            }
+        PrefCard("Cyberpunk 2077", "Added last month") {
+            Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = t.CardBg), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) { Text("Remove", fontSize = 12.sp) }
         }
 
         Spacer(Modifier.height(8.dp))
-        Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = tokens.Accent)) {
-            Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("Add Game Manually")
-        }
-
-        SectionHeader("Settings")
-        var autoDetect by remember { mutableStateOf(true) }
-        PrefCard("Auto-detect games", "Orbit scans running processes to find games automatically.") {
-            CosmicSwitch(checked = autoDetect, onCheckedChange = { autoDetect = it })
-        }
-        var statusDefault by remember { mutableStateOf(true) }
-        PrefCard("Show as status by default", "Newly detected games automatically display as your status.") {
-            CosmicSwitch(checked = statusDefault, onCheckedChange = { statusDefault = it })
+        PrefCard("Not seeing your game?", "You can manually add games if Orbit doesn't detect them.") {
+            Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = t.Accent), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) { Text("Add it!", fontSize = 12.sp) }
         }
     }
 }
@@ -390,60 +362,63 @@ internal fun RegisteredGamesPane() {
 // ═══════════════════════════════════════════════════════════════════
 
 @Composable
-internal fun GameOverlayPane() {
-    val tokens = rememberCosmicTokens()
+internal fun GameOverlayPane(settingsManager: SettingsManager) {
+    val t = rememberCosmicTokens()
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        SectionHeader("Overlay")
-        var overlay by remember { mutableStateOf(false) }
-        PrefCard("Enable in-game overlay", "See who's talking and text chat without Alt-Tabbing out of your game.") {
-            CosmicSwitch(checked = overlay, onCheckedChange = { overlay = it })
-        }
-        var overlayNotifications by remember { mutableStateOf(true) }
-        PrefCard("Show notifications", "Display message notifications in the overlay while gaming.") {
-            CosmicSwitch(checked = overlayNotifications, onCheckedChange = { overlayNotifications = it })
-        }
-        var overlayUsers by remember { mutableStateOf(true) }
-        PrefCard("Show user avatars", "Display small avatars of who's speaking in voice chat.") {
-            CosmicSwitch(checked = overlayUsers, onCheckedChange = { overlayUsers = it })
-        }
+        HeroCard(
+            icon = Icons.Default.Layers,
+            iconTint = Color(0xFF6366F1),
+            title = "In-Game Overlay",
+            subtitle = "Access voice chat, text channels, and notifications without Alt-Tabbing out of your game.",
+            buttonText = "Configure Hotkey"
+        )
 
-        SectionHeader("Overlay Position")
-        var position by remember { mutableStateOf("Top Right") }
-        PrefCard("Notification position", "Where overlay notifications appear on screen.") {
-            ChipGroup(
-                options = listOf("Top Left", "Top Right", "Bottom Left", "Bottom Right"),
-                selected = position,
-                onSelect = { position = it }
-            )
+        SectionHeader("Overlay Settings")
+        val enableOverlay by settingsManager.enableOverlay.collectAsState(false)
+        PrefCard("Enable In-Game Overlay", "Show the Orbit overlay over fullscreen applications.") {
+            CosmicSwitch(checked = enableOverlay, onCheckedChange = { settingsManager.setEnableOverlay(it) })
         }
-        var voicePosition by remember { mutableStateOf("Top Left") }
-        PrefCard("Voice overlay position", "Where the voice user list appears on screen.") {
+        KeybindCard("Toggle Overlay Lock", "Shift + `")
+        
+        SectionHeader("Notifications")
+        val overlayNotifications by settingsManager.overlayNotifications.collectAsState(true)
+        PrefCard("Show Text Notifications", "Pop up incoming text messages in the corner of your screen.") {
+            CosmicSwitch(checked = overlayNotifications, onCheckedChange = { settingsManager.setOverlayNotifications(it) })
+        }
+        val notificationPosition by settingsManager.notificationPosition.collectAsState("Top Right")
+        PrefCard("Notification Position", "Where text notifications appear.") {
             ChipGroup(
                 options = listOf("Top Left", "Top Right", "Bottom Left", "Bottom Right"),
-                selected = voicePosition,
-                onSelect = { voicePosition = it }
+                selected = notificationPosition,
+                onSelect = { settingsManager.setNotificationPosition(it) }
             )
         }
 
-        SectionHeader("Shortcuts")
-        PrefCard("Toggle Overlay Lock", "Lock/unlock overlay for mouse interaction") {
-            StatusBadge("Shift + ~", Color(0xFF6366F1))
+        SectionHeader("Voice Overlay")
+        val overlayUsers by settingsManager.overlayUsers.collectAsState(true)
+        PrefCard("Show Voice Users", "Display a list of users currently in your voice channel.") {
+            CosmicSwitch(checked = overlayUsers, onCheckedChange = { settingsManager.setOverlayUsers(it) })
         }
-        PrefCard("Toggle Overlay", "Show/hide the entire overlay") {
-            StatusBadge("Shift + Tab", Color(0xFF6366F1))
+        val voiceOverlayPosition by settingsManager.voiceOverlayPosition.collectAsState("Top Left")
+        PrefCard("Voice User Position", "Where the active speaker list appears.") {
+            ChipGroup(
+                options = listOf("Top Left", "Top Right", "Bottom Left", "Bottom Right"),
+                selected = voiceOverlayPosition,
+                onSelect = { settingsManager.setVoiceOverlayPosition(it) }
+            )
         }
 
-        SectionHeader("Overlay Appearance")
-        var opacity by remember { mutableStateOf(80f) }
-        PrefCard("Overlay opacity", "Transparency of the overlay elements.") {
+        SectionHeader("Appearance")
+        val overlayOpacity by settingsManager.overlayOpacity.collectAsState(80f)
+        PrefCard("Avatar Opacity", "How transparent the voice overlay avatars are.") {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("${opacity.toInt()}%", style = MaterialTheme.typography.labelMedium.copy(color = tokens.Accent, fontWeight = FontWeight.Bold))
+                Text("${overlayOpacity.toInt()}%", style = MaterialTheme.typography.labelMedium.copy(color = t.Accent, fontWeight = FontWeight.Bold))
                 Spacer(Modifier.width(8.dp))
                 Slider(
-                    value = opacity,
-                    onValueChange = { opacity = it },
-                    valueRange = 20f..100f,
-                    colors = SliderDefaults.colors(thumbColor = tokens.Accent, activeTrackColor = tokens.Accent, inactiveTrackColor = tokens.Text_Muted.copy(alpha = 0.3f)),
+                    value = overlayOpacity,
+                    onValueChange = { settingsManager.setOverlayOpacity(it) },
+                    valueRange = 0f..100f,
+                    colors = SliderDefaults.colors(thumbColor = t.Accent, activeTrackColor = t.Accent, inactiveTrackColor = t.Text_Muted.copy(alpha = 0.3f)),
                     modifier = Modifier.width(100.dp)
                 )
             }

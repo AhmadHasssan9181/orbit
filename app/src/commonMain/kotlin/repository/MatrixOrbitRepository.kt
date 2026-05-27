@@ -54,6 +54,8 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
+import io.ktor.client.request.put
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.Url
@@ -1671,6 +1673,51 @@ class MatrixOrbitRepository(
                 )
             }
             else -> MessageContent.Unsupported(type = content::class.simpleName ?: "unknown", fallbackBody = content.body)
+        }
+    }
+
+    private val accountDataCache = mutableMapOf<String, MutableStateFlow<Any?>>()
+
+    @Suppress("UNCHECKED_CAST")
+    override fun <T> observeAccountData(eventType: String, deserializer: kotlinx.serialization.KSerializer<T>): Flow<T?> {
+        val flow = accountDataCache.getOrPut(eventType) { MutableStateFlow<Any?>(null) } as MutableStateFlow<T?>
+        repositoryScope.launch {
+            try {
+                val userId = _userId ?: return@launch
+                val response = client.get(fullUrl("/user/$userId/account_data/$eventType")) {
+                    header(HttpHeaders.Authorization, "Bearer $_accessToken")
+                }
+                if (response.status.value == 200) {
+                    val rawJson = response.bodyAsText()
+                    val data = jsonConfig.decodeFromString(deserializer, rawJson)
+                    flow.value = data
+                }
+            } catch (e: Exception) {
+                println("DEBUG: Failed to fetch account data $eventType: ${e.message}")
+            }
+        }
+        return flow
+    }
+
+    override suspend fun <T> setAccountData(eventType: String, data: T, serializer: kotlinx.serialization.KSerializer<T>): Result<Unit> {
+        return try {
+            val userId = _userId ?: return Result.failure(IllegalStateException("Not logged in"))
+            val response = client.put(fullUrl("/user/$userId/account_data/$eventType")) {
+                header(HttpHeaders.Authorization, "Bearer $_accessToken")
+                contentType(ContentType.Application.Json)
+                val rawJson = jsonConfig.encodeToString(serializer, data)
+                setBody(rawJson)
+            }
+            if (response.status.value == 200 || response.status.value == 201) {
+                @Suppress("UNCHECKED_CAST")
+                val flow = accountDataCache.getOrPut(eventType) { MutableStateFlow<Any?>(null) } as MutableStateFlow<T?>
+                flow.value = data
+                Result.success(Unit)
+            } else {
+                Result.failure(Exception("Failed to set account data: ${response.status}"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 }
