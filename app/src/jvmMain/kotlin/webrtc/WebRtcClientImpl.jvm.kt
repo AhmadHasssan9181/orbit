@@ -459,6 +459,40 @@ class JvmWebRtcClient : WebRtcClient {
 
     override fun setStreamAudioEnabled(enabled: Boolean) {
         audioDeviceModule?.setSystemAudioShareEnabled(enabled)
+        
+        try {
+            val pConn = peerConnection ?: return
+            val f = factory ?: return
+            
+            // To prevent muffled desktop audio, we disable NS, AGC, and Highpass filters
+            // when streaming system audio. We re-enable them when stopping.
+            val options = AudioOptions().apply {
+                noiseSuppression = !enabled
+                autoGainControl = !enabled
+                highpassFilter = !enabled
+                echoCancellation = true // Keep AEC to cancel acoustic echo
+            }
+            
+            val newAudioSource = f.createAudioSource(options)
+            val newAudioTrack = f.createAudioTrack("audioTrack_${System.currentTimeMillis()}", newAudioSource)
+            newAudioTrack.setEnabled(true)
+            
+            if (localAudioSender != null) {
+                localAudioSender?.replaceTrack(newAudioTrack)
+            } else {
+                localAudioSender = pConn.addTrack(newAudioTrack, listOf("mediaStream"))
+            }
+            
+            // Clean up old track
+            runCatching { localAudioTrack?.dispose() }
+            
+            localAudioSource = newAudioSource
+            localAudioTrack = newAudioTrack
+            
+            println("DEBUG: [WebRTC] AudioOptions updated. NS=${!enabled}, AGC=${!enabled}")
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 }
 

@@ -2,6 +2,7 @@
 #include <comdef.h>
 #include <Functiondiscoverykeys_devpkey.h>
 #include <ksmedia.h>
+#include <audioclientactivationparams.h>
 #include <algorithm>
 
 namespace orbit {
@@ -139,7 +140,19 @@ void OrbitAudioDeviceModule::LoopbackThreadMain() {
     if (FAILED(hr)) return;
 
     IAudioClient* pAudioClient = NULL;
-    hr = pDevice->Activate(__uuidof(IAudioClient), CLSCTX_ALL, NULL, (void**)&pAudioClient);
+    
+    // Windows 10 Build 20348+ specific: Exclude current process from loopback
+    AUDIOCLIENT_ACTIVATION_PARAMS params = {};
+    params.ActivationType = AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK;
+    params.ProcessLoopbackParams.ProcessLoopbackMode = PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE;
+    params.ProcessLoopbackParams.TargetProcessId = GetCurrentProcessId();
+
+    PROPVARIANT activateParams = {};
+    activateParams.vt = VT_BLOB;
+    activateParams.blob.cbSize = sizeof(params);
+    activateParams.blob.pBlobData = (BYTE*)&params;
+
+    hr = pDevice->Activate(__uuidof(IAudioClient), CLSCTX_ALL, &activateParams, (void**)&pAudioClient);
     pDevice->Release();
     if (FAILED(hr)) return;
 

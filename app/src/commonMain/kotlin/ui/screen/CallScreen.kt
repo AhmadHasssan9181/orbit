@@ -5,6 +5,7 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -20,7 +21,9 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
@@ -28,6 +31,7 @@ import ui.icons.OrbitIcons
 import ui.theme.rememberCosmicTokens
 import webrtc.CallManager
 import webrtc.CallState
+import kotlin.math.roundToInt
 
 @Composable
 fun CallScreen(
@@ -70,10 +74,9 @@ fun CallScreen(
             repeatMode = RepeatMode.Reverse
         )
     )
-
     val pulseAlpha by infiniteTransition.animateFloat(
         initialValue = 0.8f,
-        targetValue = 0.2f,
+        targetValue = 0.1f,
         animationSpec = infiniteRepeatable(
             animation = tween(1200, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
@@ -84,11 +87,11 @@ fun CallScreen(
         Box(
             modifier = Modifier
                 .padding(16.dp)
-                .size(120.dp, 180.dp)
-                .shadow(16.dp, RoundedCornerShape(20.dp))
-                .clip(RoundedCornerShape(20.dp))
-                .background(Color(0xFF0F172A))
-                .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(20.dp))
+                .size(240.dp, 160.dp)
+                .shadow(16.dp, RoundedCornerShape(16.dp))
+                .clip(RoundedCornerShape(16.dp))
+                .background(Color(0xFF111214))
+                .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(16.dp))
                 .clickable { callManager.isMinimized.value = false }
         ) {
             if (isVideoCall && (isVideoEnabled || callState == CallState.CONNECTED)) {
@@ -97,23 +100,46 @@ fun CallScreen(
                 } else {
                     callManager.webRtcClient.getLocalVideoRenderer()
                 }
-                VideoRenderer(renderer = renderer, modifier = Modifier.fillMaxSize())
+                Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+                    VideoRenderer(renderer = renderer, modifier = Modifier.fillMaxSize())
+                }
             } else {
                 Column(
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.Center,
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Icon(OrbitIcons.Call, contentDescription = null, tint = tokens.Accent, modifier = Modifier.size(32.dp))
-                    Spacer(Modifier.height(8.dp))
+                    Surface(
+                        shape = CircleShape,
+                        color = tokens.Accent.copy(alpha = 0.2f),
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(OrbitIcons.Call, contentDescription = null, tint = tokens.Accent, modifier = Modifier.size(24.dp))
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
                     Text(
                         text = if (callState == CallState.RINGING) "Ringing..." else "In Call",
                         color = Color.White,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
             }
+            
+            // Re-expand overlay
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.0f)) // Invisible trigger
+            )
+            Icon(
+                Icons.Default.OpenInFull,
+                contentDescription = "Expand",
+                tint = Color.White.copy(alpha = 0.8f),
+                modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(20.dp)
+            )
         }
         return
     }
@@ -121,290 +147,243 @@ fun CallScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color(0xFF09090B)) // Deep dark slate
+            .background(Color(0xFF000000)) // Pure black for video background
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = { showControls = !showControls }
             )
     ) {
-        // Video renderers
-        if (isVideoCall && (isVideoEnabled || callState == CallState.CONNECTED)) {
-            val localRenderer = callManager.webRtcClient.getLocalVideoRenderer()
-            val remoteRenderer = callManager.webRtcClient.getRemoteVideoRenderer()
+        val remoteRenderer = callManager.webRtcClient.getRemoteVideoRenderer()
+        val localRenderer = callManager.webRtcClient.getLocalVideoRenderer()
 
-            // Render remote video when connected, otherwise show local preview while dialing.
-            Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-                VideoRenderer(
-                    renderer = if (callState == CallState.CONNECTED) remoteRenderer else localRenderer,
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
-
-            if (callState == CallState.CONNECTED && isVideoEnabled) {
-                // Render local video (PiP)
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = 32.dp, end = 32.dp)
-                        .size(140.dp, 200.dp)
-                        .shadow(24.dp, RoundedCornerShape(20.dp))
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(Color(0xFF1E293B))
-                        .border(2.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(20.dp))
-                ) {
-                    VideoRenderer(renderer = localRenderer, modifier = Modifier.fillMaxSize())
-                }
-            }
-
-            if (!isVideoEnabled && callState != CallState.CONNECTED) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.65f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("Camera Off", color = Color.White, style = MaterialTheme.typography.headlineMedium)
+        // ── Remote Video (Main) ──
+        if (callState == CallState.CONNECTED) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                if (remoteRenderer != null) {
+                    VideoRenderer(
+                        renderer = remoteRenderer,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    // Fallback if remote has no camera
+                    Box(modifier = Modifier.fillMaxSize().background(Color(0xFF1E1F22)), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Surface(shape = CircleShape, color = tokens.Accent, modifier = Modifier.size(120.dp)) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.Person, contentDescription = null, tint = Color.White, modifier = Modifier.size(64.dp))
+                                }
+                            }
+                            Spacer(Modifier.height(16.dp))
+                            Text("Friend's Camera is Off", color = Color.White.copy(alpha=0.6f), fontSize = 18.sp)
+                        }
+                    }
                 }
             }
         } else {
-            // Audio only or ringing background
-            Box(modifier = Modifier.fillMaxSize()) {
-                // Background ambient glow
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.radialGradient(
-                                colors = listOf(tokens.Accent.copy(alpha = 0.15f), Color.Transparent),
-                                center = androidx.compose.ui.geometry.Offset.Infinite
-                            )
-                        )
-                )
-
-                Column(
-                    modifier = Modifier.align(Alignment.Center),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    // Animated Avatar Placeholder with Rings
-                    val isPulsingState = callState == CallState.RINGING || callState == CallState.CONNECTING || callState == CallState.CONNECTED
-                    Box(contentAlignment = Alignment.Center) {
-                        if (isPulsingState) {
-                            Box(
-                                modifier = Modifier
-                                    .size(220.dp)
-                                    .scale(pulseScale * 1.1f)
-                                    .clip(CircleShape)
-                                    .background(
-                                        Brush.radialGradient(
-                                            colors = listOf(tokens.Accent.copy(alpha = pulseAlpha * 0.5f), Color.Transparent)
-                                        )
-                                    )
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .size(160.dp)
-                                    .scale(pulseScale * 0.9f)
-                                    .clip(CircleShape)
-                                    .background(tokens.Accent.copy(alpha = pulseAlpha))
-                            )
-                        }
-
-                        Surface(
-                            modifier = Modifier.size(110.dp),
-                            shape = CircleShape,
-                            color = tokens.Accent,
-                            shadowElevation = 16.dp
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.Person, contentDescription = null, tint = Color.White, modifier = Modifier.size(56.dp))
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(64.dp))
-                    
-                    // Glassmorphic User Info Card
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier
-                            .background(Color(0xFF1E293B).copy(alpha = 0.4f), RoundedCornerShape(24.dp))
-                            .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(24.dp))
-                            .padding(horizontal = 48.dp, vertical = 24.dp)
-                    ) {
-                        Text(
-                            text = "User", // Can be dynamic if we pass target user info
-                            color = Color.White,
-                            style = MaterialTheme.typography.headlineLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = when (callState) {
-                                CallState.CONNECTING -> "Connecting..."
-                                CallState.RINGING -> "Calling..."
-                                CallState.CONNECTED -> "Active Call" // Placeholder for actual timer
-                                else -> ""
-                            },
-                            color = tokens.Accent.copy(alpha = 0.9f),
-                            style = MaterialTheme.typography.titleMedium,
-                            letterSpacing = 1.5.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-                }
-            }
-        }
-
-        // Top Controls (Minimize)
-        AnimatedVisibility(
-            visible = showControls || callState != CallState.CONNECTED,
-            enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
-            exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
-            modifier = Modifier.align(Alignment.TopStart)
-        ) {
-            IconButton(
-                onClick = { callManager.isMinimized.value = true },
-                modifier = Modifier
-                    .padding(24.dp)
-                    .size(48.dp)
-                    .background(Color(0xFF1E293B).copy(alpha = 0.7f), CircleShape)
-                    .border(1.dp, Color.White.copy(alpha = 0.1f), CircleShape)
-            ) {
-                Icon(Icons.Default.CloseFullscreen, contentDescription = "Minimize", tint = Color.White)
-            }
-        }
-
-        // Incoming Call UI Overlay
-        AnimatedVisibility(
-            visible = callState == CallState.RINGING && callManager.callId != null && isIncomingCall,
-            enter = fadeIn(tween(300)),
-            exit = fadeOut(tween(300)),
-            modifier = Modifier.fillMaxSize()
-        ) {
+            // Ringing / Dialing screen (Audio only or waiting)
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xFF09090B).copy(alpha = 0.9f)),
+                    .background(Color(0xFF111214)),
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    val isPulsing = callState == CallState.RINGING || callState == CallState.CONNECTING
+                    Box(contentAlignment = Alignment.Center) {
+                        if (isPulsing) {
+                            Box(modifier = Modifier.size(180.dp).scale(pulseScale).clip(CircleShape).background(tokens.Accent.copy(alpha = pulseAlpha)))
+                        }
+                        Surface(shape = CircleShape, color = tokens.Accent, modifier = Modifier.size(120.dp), shadowElevation = 8.dp) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.Person, contentDescription = null, tint = Color.White, modifier = Modifier.size(64.dp))
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(32.dp))
+                    Text("Friend", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(8.dp))
                     Text(
-                        text = if (isVideoCall) "Incoming Video Call" else "Incoming Voice Call",
-                        color = Color.White,
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold
+                        when (callState) {
+                            CallState.RINGING -> "Calling..."
+                            CallState.CONNECTING -> "Connecting..."
+                            else -> ""
+                        },
+                        color = Color.White.copy(alpha = 0.6f),
+                        fontSize = 16.sp
                     )
-                    Spacer(Modifier.height(64.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(56.dp)) {
-                        // Decline
+                }
+            }
+        }
+
+        // ── Local Video (PiP) ──
+        if ((isVideoEnabled || isScreenSharing) && localRenderer != null) {
+            var pipOffsetX by remember { mutableStateOf(0f) }
+            var pipOffsetY by remember { mutableStateOf(0f) }
+            
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(bottom = 120.dp, end = 24.dp) // Avoid controls
+                    .offset { IntOffset(pipOffsetX.roundToInt(), pipOffsetY.roundToInt()) }
+                    .size(240.dp, 135.dp) // 16:9 ratio
+                    .shadow(16.dp, RoundedCornerShape(12.dp))
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color.Black)
+                    .border(2.dp, Color(0xFF2B2D31), RoundedCornerShape(12.dp))
+                    .pointerInput(Unit) {
+                        detectDragGestures { change, dragAmount ->
+                            change.consume()
+                            pipOffsetX += dragAmount.x
+                            pipOffsetY += dragAmount.y
+                        }
+                    }
+            ) {
+                VideoRenderer(renderer = localRenderer, modifier = Modifier.fillMaxSize())
+                
+                // Small indicator for you
+                Box(modifier = Modifier.align(Alignment.BottomStart).padding(8.dp).background(Color.Black.copy(alpha=0.6f), RoundedCornerShape(4.dp)).padding(horizontal=6.dp, vertical=2.dp)) {
+                    Text("You", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        // ── Top Controls ──
+        AnimatedVisibility(
+            visible = showControls || callState != CallState.CONNECTED,
+            enter = fadeIn() + slideInVertically { -it / 2 },
+            exit = fadeOut() + slideOutVertically { -it / 2 },
+            modifier = Modifier.align(Alignment.TopStart).padding(24.dp)
+        ) {
+            IconButton(
+                onClick = { callManager.isMinimized.value = true },
+                modifier = Modifier.size(48.dp).background(Color(0xFF1E1F22).copy(alpha = 0.8f), CircleShape)
+            ) {
+                Icon(Icons.Default.ArrowBack, contentDescription = "Minimize", tint = Color.White)
+            }
+        }
+
+        // ── Incoming Call UI Overlay ──
+        AnimatedVisibility(
+            visible = callState == CallState.RINGING && callManager.callId != null && isIncomingCall,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Box(
+                modifier = Modifier.fillMaxSize().background(Color(0xFF000000).copy(alpha = 0.85f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Surface(shape = CircleShape, color = tokens.Accent, modifier = Modifier.size(100.dp)) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.Person, contentDescription = null, tint = Color.White, modifier = Modifier.size(50.dp))
+                        }
+                    }
+                    Spacer(Modifier.height(24.dp))
+                    Text("Friend is calling you...", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(48.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(48.dp)) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             IconButton(
                                 onClick = { callManager.endCall() },
-                                modifier = Modifier
-                                    .size(72.dp)
-                                    .shadow(12.dp, CircleShape)
-                                    .background(Color(0xFFEF4444), CircleShape)
+                                modifier = Modifier.size(64.dp).background(Color(0xFFF23F42), CircleShape)
                             ) {
                                 Icon(OrbitIcons.CallEnd, contentDescription = "Decline", tint = Color.White, modifier = Modifier.size(32.dp))
                             }
-                            Spacer(Modifier.height(12.dp))
-                            Text("Decline", color = Color.White.copy(alpha = 0.8f), fontWeight = FontWeight.Medium)
+                            Spacer(Modifier.height(8.dp))
+                            Text("Decline", color = Color.White, fontWeight = FontWeight.Medium)
                         }
 
-                        // Accept
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             IconButton(
-                                onClick = { callManager.answerCall(isVideo = isVideoCall) },
-                                modifier = Modifier
-                                    .size(72.dp)
-                                    .shadow(12.dp, CircleShape)
-                                    .background(Color(0xFF10B981), CircleShape)
+                                onClick = { callManager.answerCall(isVideo = false) },
+                                modifier = Modifier.size(64.dp).background(Color(0xFF23A559), CircleShape)
                             ) {
                                 Icon(OrbitIcons.Call, contentDescription = "Accept", tint = Color.White, modifier = Modifier.size(32.dp))
                             }
-                            Spacer(Modifier.height(12.dp))
-                            Text("Accept", color = Color.White.copy(alpha = 0.8f), fontWeight = FontWeight.Medium)
+                            Spacer(Modifier.height(8.dp))
+                            Text("Accept", color = Color.White, fontWeight = FontWeight.Medium)
                         }
                     }
                 }
             }
         }
 
-        // Bottom Controls Container (Glassmorphic)
+        // ── Bottom Controls Bar (Discord style) ──
         if (callState == CallState.CONNECTED || callState == CallState.CONNECTING || (callState == CallState.RINGING && !isIncomingCall)) {
             AnimatedVisibility(
                 visible = showControls,
                 enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
                 exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
-                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 48.dp)
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 32.dp)
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    
+                    // Stream audio toggle pill
                     if (callState == CallState.CONNECTED) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .padding(bottom = 16.dp)
-                                .background(Color(0xFF1E293B).copy(alpha = 0.85f), RoundedCornerShape(16.dp))
+                                .background(Color(0xFF1E1F22).copy(alpha = 0.9f), RoundedCornerShape(16.dp))
                                 .padding(horizontal = 16.dp, vertical = 8.dp)
                         ) {
-                            Text("Include Stream Audio", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                            Icon(Icons.Default.VolumeUp, null, tint = Color.White.copy(alpha=0.8f), modifier=Modifier.size(16.dp))
                             Spacer(Modifier.width(8.dp))
+                            Text("Stream Desktop Audio", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            Spacer(Modifier.width(12.dp))
                             Switch(
                                 checked = includeStreamAudio,
                                 onCheckedChange = { 
                                     includeStreamAudio = it
                                     callManager.webRtcClient.setStreamAudioEnabled(it)
                                 },
-                                colors = SwitchDefaults.colors(checkedThumbColor = tokens.Accent, checkedTrackColor = tokens.Accent.copy(alpha=0.5f))
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.White, 
+                                    checkedTrackColor = Color(0xFF23A559),
+                                    uncheckedThumbColor = Color(0xFFB5BAC1),
+                                    uncheckedTrackColor = Color(0xFF4E5058)
+                                ),
+                                modifier = Modifier.scale(0.8f)
                             )
                         }
                     }
-                    Box(
-                    modifier = Modifier
-                        .shadow(24.dp, RoundedCornerShape(32.dp))
-                        .clip(RoundedCornerShape(32.dp))
-                        .background(Color(0xFF1E293B).copy(alpha = 0.85f)) // Translucent slate
-                        .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(32.dp))
-                        .padding(horizontal = 32.dp, vertical = 20.dp)
-                ) {
+                    
+                    // Main Control Bar
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(28.dp),
+                        modifier = Modifier
+                            .background(Color(0xFF1E1F22).copy(alpha = 0.95f), RoundedCornerShape(16.dp))
+                            .padding(horizontal = 24.dp, vertical = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(20.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Mute Button
-                        ControlButton(
-                            icon = if (isMuted) OrbitIcons.MicOff else OrbitIcons.Mic,
-                            isActive = isMuted,
-                            activeColor = Color.White,
-                            activeIconColor = Color.Black,
-                            inactiveColor = Color.White.copy(alpha = 0.1f),
-                            inactiveIconColor = Color.White,
-                            onClick = {
-                                callManager.toggleMute(!isMuted)
-                            }
-                        )
-
-                        // Video Button
                         ControlButton(
                             icon = if (isVideoEnabled) OrbitIcons.Video else OrbitIcons.VideoOff,
-                            isActive = !isVideoEnabled,
-                            activeColor = Color.White,
-                            activeIconColor = Color.Black,
-                            inactiveColor = Color.White.copy(alpha = 0.1f),
-                            inactiveIconColor = Color.White,
-                            onClick = {
-                                callManager.toggleVideo(!isVideoEnabled)
-                            }
+                            isActive = isVideoEnabled,
+                            activeColor = Color(0xFF313338), // active means unmuted (gray background)
+                            activeIconColor = Color.White,
+                            inactiveColor = Color.White, // inactive means muted (white background, dark icon)
+                            inactiveIconColor = Color(0xFF111214),
+                            onClick = { callManager.toggleVideo(!isVideoEnabled) }
                         )
 
-                        // Screen Share Button
+                        ControlButton(
+                            icon = if (!isMuted) OrbitIcons.Mic else OrbitIcons.MicOff,
+                            isActive = !isMuted,
+                            activeColor = Color(0xFF313338),
+                            activeIconColor = Color.White,
+                            inactiveColor = Color.White,
+                            inactiveIconColor = Color(0xFF111214),
+                            onClick = { callManager.toggleMute(!isMuted) }
+                        )
+
                         ControlButton(
                             icon = OrbitIcons.ScreenShare,
                             isActive = isScreenSharing,
-                            activeColor = tokens.Accent,
+                            activeColor = Color(0xFF23A559), // Green when sharing
                             activeIconColor = Color.White,
-                            inactiveColor = Color.White.copy(alpha = 0.1f),
+                            inactiveColor = Color(0xFF313338),
                             inactiveIconColor = Color.White,
                             onClick = {
                                 if (isScreenSharing) {
@@ -415,19 +394,13 @@ fun CallScreen(
                             }
                         )
 
-                        // Hangup Button
-                        ControlButton(
-                            icon = OrbitIcons.CallEnd,
-                            isActive = true,
-                            activeColor = Color(0xFFEF4444),
-                            activeIconColor = Color.White,
-                            inactiveColor = Color(0xFFEF4444),
-                            inactiveIconColor = Color.White,
-                            size = 64.dp,
-                            iconSize = 32.dp,
-                            onClick = { callManager.endCall() }
-                        )
-                    }
+                        // Red Hangup Button
+                        IconButton(
+                            onClick = { callManager.endCall() },
+                            modifier = Modifier.size(56.dp).background(Color(0xFFF23F42), RoundedCornerShape(16.dp))
+                        ) {
+                            Icon(OrbitIcons.CallEnd, contentDescription = "Hang Up", tint = Color.White, modifier = Modifier.size(28.dp))
+                        }
                     }
                 }
             }
@@ -447,17 +420,14 @@ private fun ControlButton(
     iconSize: androidx.compose.ui.unit.Dp = 24.dp,
     onClick: () -> Unit
 ) {
-    val interactionSource = remember { MutableInteractionSource() }
     val bgColor by animateColorAsState(if (isActive) activeColor else inactiveColor, label = "bgColor")
     val iconTint by animateColorAsState(if (isActive) activeIconColor else inactiveIconColor, label = "iconTint")
 
     IconButton(
         onClick = onClick,
-        interactionSource = interactionSource,
         modifier = Modifier
             .size(size)
-            .clip(CircleShape)
-            .background(bgColor)
+            .background(bgColor, RoundedCornerShape(16.dp))
     ) {
         Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(iconSize))
     }

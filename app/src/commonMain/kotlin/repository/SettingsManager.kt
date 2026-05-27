@@ -132,6 +132,15 @@ class SettingsManager {
     val inputMode = flowSettings.getStringFlow("inputMode", "Voice Activity")
     fun setInputMode(value: String) = settings.putString("inputMode", value)
     
+    val voiceSensitivity = flowSettings.getFloatFlow("voiceSensitivity", -50f)
+    fun setVoiceSensitivity(value: Float) = settings.putFloat("voiceSensitivity", value)
+    
+    val pushToTalkKeybind = flowSettings.getStringFlow("pushToTalkKeybind", "Unassigned")
+    fun setPushToTalkKeybind(value: String) = settings.putString("pushToTalkKeybind", value)
+    
+    val orbitZeroAiNoiseSuppression = flowSettings.getBooleanFlow("orbitZeroAiNoiseSuppression", true)
+    fun setOrbitZeroAiNoiseSuppression(value: Boolean) = settings.putBoolean("orbitZeroAiNoiseSuppression", value)
+    
     val noiseSuppression = flowSettings.getBooleanFlow("noiseSuppression", true)
     fun setNoiseSuppression(value: Boolean) = settings.putBoolean("noiseSuppression", value)
     
@@ -141,6 +150,9 @@ class SettingsManager {
     val autoGainControl = flowSettings.getBooleanFlow("autoGainControl", true)
     fun setAutoGainControl(value: Boolean) = settings.putBoolean("autoGainControl", value)
     
+    val attenuation = flowSettings.getFloatFlow("attenuation", 0f)
+    fun setAttenuation(value: Float) = settings.putFloat("attenuation", value)
+    
     val videoQuality = flowSettings.getStringFlow("videoQuality", "1080p (60fps)")
     fun setVideoQuality(value: String) = settings.putString("videoQuality", value)
     
@@ -149,6 +161,31 @@ class SettingsManager {
     
     val mirrorVideo = flowSettings.getBooleanFlow("mirrorVideo", true)
     fun setMirrorVideo(value: Boolean) = settings.putBoolean("mirrorVideo", value)
+    
+
+    
+    val videoBackground = flowSettings.getStringFlow("videoBackground", "None")
+    fun setVideoBackground(value: String) = settings.putString("videoBackground", value)
+    
+    // Screen Share Settings
+    val screenShareQuality = flowSettings.getStringFlow("screenShareQuality", "1080p")
+    fun setScreenShareQuality(value: String) = settings.putString("screenShareQuality", value)
+    
+    val screenShareFps = flowSettings.getIntFlow("screenShareFps", 30)
+    fun setScreenShareFps(value: Int) = settings.putInt("screenShareFps", value)
+    
+    val latestScreenCaptureTech = flowSettings.getBooleanFlow("latestScreenCaptureTech", true)
+    fun setLatestScreenCaptureTech(value: Boolean) = settings.putBoolean("latestScreenCaptureTech", value)
+    
+    val captureMouseCursor = flowSettings.getBooleanFlow("captureMouseCursor", true)
+    fun setCaptureMouseCursor(value: Boolean) = settings.putBoolean("captureMouseCursor", value)
+    
+    // QoS & Advanced Audio
+    val qosHighPacketPriority = flowSettings.getBooleanFlow("qosHighPacketPriority", false)
+    fun setQosHighPacketPriority(value: Boolean) = settings.putBoolean("qosHighPacketPriority", value)
+    
+    val audioBitrate = flowSettings.getFloatFlow("audioBitrate", 64f)
+    fun setAudioBitrate(value: Float) = settings.putFloat("audioBitrate", value)
     
     val audioSubsystem = flowSettings.getStringFlow("audioSubsystem", "Standard")
     fun setAudioSubsystem(value: String) = settings.putString("audioSubsystem", value)

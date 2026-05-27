@@ -12,6 +12,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.shape.RoundedCornerShape
 import repository.SettingsManager
 import ui.theme.rememberCosmicTokens
 
@@ -132,18 +134,19 @@ internal fun AccessibilityExtrasPane(settingsManager: SettingsManager) {
 @Composable
 internal fun VoiceVideoFullPane(settingsManager: SettingsManager) {
     val tokens = rememberCosmicTokens()
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        SectionHeader("Input Device")
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        
+        SectionHeader("Voice Settings")
         val inputDevice by settingsManager.inputDevice.collectAsState("Default")
-        PrefCard("Microphone", "Select which microphone to use for voice chat.") {
+        PrefCard("Input Device", "Select your microphone.") {
             ChipGroup(
                 options = listOf("Default", "Headset", "Webcam"),
                 selected = inputDevice,
                 onSelect = { settingsManager.setInputDevice(it) }
             )
         }
-        val inputVolume by settingsManager.inputVolume.collectAsState(75f)
-        PrefCard("Input Volume", "Adjust how loud your microphone is to others.") {
+        val inputVolume by settingsManager.inputVolume.collectAsState(100f)
+        PrefCard("Input Volume", "Adjust your microphone volume.") {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("${inputVolume.toInt()}%", style = MaterialTheme.typography.labelMedium.copy(color = tokens.Accent, fontWeight = FontWeight.Bold))
                 Spacer(Modifier.width(8.dp))
@@ -156,10 +159,9 @@ internal fun VoiceVideoFullPane(settingsManager: SettingsManager) {
                 )
             }
         }
-
-        SectionHeader("Output Device")
+        
         val outputDevice by settingsManager.outputDevice.collectAsState("Default")
-        PrefCard("Speakers", "Select which output device to use for audio.") {
+        PrefCard("Output Device", "Select your speakers or headphones.") {
             ChipGroup(
                 options = listOf("Default", "Headphones", "Speakers"),
                 selected = outputDevice,
@@ -167,7 +169,7 @@ internal fun VoiceVideoFullPane(settingsManager: SettingsManager) {
             )
         }
         val outputVolume by settingsManager.outputVolume.collectAsState(100f)
-        PrefCard("Output Volume", "Adjust the volume of other people's voices.") {
+        PrefCard("Output Volume", "Adjust how loud others are.") {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("${outputVolume.toInt()}%", style = MaterialTheme.typography.labelMedium.copy(color = tokens.Accent, fontWeight = FontWeight.Bold))
                 Spacer(Modifier.width(8.dp))
@@ -181,7 +183,9 @@ internal fun VoiceVideoFullPane(settingsManager: SettingsManager) {
             }
         }
 
-        SectionHeader("Voice Processing")
+        Divider(color = Color.White.copy(alpha = 0.05f))
+
+        SectionHeader("Input Mode")
         val inputMode by settingsManager.inputMode.collectAsState("Voice Activity")
         PrefCard("Input Mode", "How your microphone activates.") {
             ChipGroup(
@@ -190,60 +194,158 @@ internal fun VoiceVideoFullPane(settingsManager: SettingsManager) {
                 onSelect = { settingsManager.setInputMode(it) }
             )
         }
+        
+        if (inputMode == "Voice Activity") {
+            val voiceSensitivity by settingsManager.voiceSensitivity.collectAsState(-50f)
+            PrefCard("Automatically determine input sensitivity", "If off, adjust manually.") {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("${voiceSensitivity.toInt()} dB", style = MaterialTheme.typography.labelMedium.copy(color = tokens.Accent, fontWeight = FontWeight.Bold))
+                    Spacer(Modifier.width(8.dp))
+                    Slider(
+                        value = voiceSensitivity,
+                        onValueChange = { settingsManager.setVoiceSensitivity(it) },
+                        valueRange = -100f..0f,
+                        colors = SliderDefaults.colors(thumbColor = tokens.Accent, activeTrackColor = tokens.Accent, inactiveTrackColor = tokens.Text_Muted.copy(alpha = 0.3f)),
+                        modifier = Modifier.width(100.dp)
+                    )
+                }
+            }
+        } else {
+            val pushToTalkKeybind by settingsManager.pushToTalkKeybind.collectAsState("Unassigned")
+            PrefCard("Push to Talk Keybind", "The key used to activate your mic.") {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color.White.copy(alpha = 0.1f),
+                    modifier = Modifier.height(36.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 16.dp)) {
+                        Text(pushToTalkKeybind, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
+
+        Divider(color = Color.White.copy(alpha = 0.05f))
+
+        SectionHeader("Voice Processing")
+        val orbitZero by settingsManager.orbitZeroAiNoiseSuppression.collectAsState(true)
+        PrefCard("Orbit Zero™", "Our premium AI noise suppression that aggressively mutes background clatter like mechanical keyboards and dogs.") {
+            CosmicSwitch(checked = orbitZero, onCheckedChange = { settingsManager.setOrbitZeroAiNoiseSuppression(it) })
+        }
+        
         val noiseSuppression by settingsManager.noiseSuppression.collectAsState(true)
-        PrefCard("Noise Suppression", "Filter out background noise like fans, keyboards, and traffic.") {
-            CosmicSwitch(checked = noiseSuppression, onCheckedChange = { settingsManager.setNoiseSuppression(it) })
+        PrefCard("Standard Noise Reduction", "Traditional, non-AI filter for background hums. Disabled if Orbit Zero is active.") {
+            CosmicSwitch(checked = noiseSuppression && !orbitZero, onCheckedChange = { settingsManager.setNoiseSuppression(it) })
         }
         val echoCancellation by settingsManager.echoCancellation.collectAsState(true)
-        PrefCard("Echo Cancellation", "Prevent your speakers from feeding back into your microphone.") {
+        PrefCard("Echo Cancellation", "Prevents your speakers from feeding back into your mic.") {
             CosmicSwitch(checked = echoCancellation, onCheckedChange = { settingsManager.setEchoCancellation(it) })
         }
         val autoGainControl by settingsManager.autoGainControl.collectAsState(true)
-        PrefCard("Automatic Gain Control", "Automatically normalize your microphone volume.") {
+        PrefCard("Automatic Gain Control", "Automatically balances your voice volume.") {
             CosmicSwitch(checked = autoGainControl, onCheckedChange = { settingsManager.setAutoGainControl(it) })
         }
-
-        SectionHeader("Video")
-        val videoQuality by settingsManager.videoQuality.collectAsState("1080p (60fps)")
-        PrefCard("Video Quality", "Higher quality uses more bandwidth.") {
-            ChipGroup(
-                options = listOf("720p", "1080p (60fps)", "1440p"),
-                selected = videoQuality,
-                onSelect = { settingsManager.setVideoQuality(it) }
-            )
+        val attenuation by settingsManager.attenuation.collectAsState(0f)
+        PrefCard("Attenuation", "Lower the volume of other applications when someone speaks.") {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("${attenuation.toInt()}%", style = MaterialTheme.typography.labelMedium.copy(color = tokens.Accent, fontWeight = FontWeight.Bold))
+                Spacer(Modifier.width(8.dp))
+                Slider(
+                    value = attenuation,
+                    onValueChange = { settingsManager.setAttenuation(it) },
+                    valueRange = 0f..100f,
+                    colors = SliderDefaults.colors(thumbColor = tokens.Accent, activeTrackColor = tokens.Accent, inactiveTrackColor = tokens.Text_Muted.copy(alpha = 0.3f)),
+                    modifier = Modifier.width(100.dp)
+                )
+            }
         }
+
+        Divider(color = Color.White.copy(alpha = 0.05f))
+
+        SectionHeader("Video Settings")
         val cameraDevice by settingsManager.cameraDevice.collectAsState("Default")
-        PrefCard("Camera", "Select which camera to use for video calls.") {
+        PrefCard("Camera", "Select which camera to use.") {
             ChipGroup(
                 options = listOf("Default", "Webcam", "Virtual"),
                 selected = cameraDevice,
                 onSelect = { settingsManager.setCameraDevice(it) }
             )
         }
+        val videoBackground by settingsManager.videoBackground.collectAsState("None")
+        PrefCard("Video Background", "Blur your background or use a custom image.") {
+            ChipGroup(
+                options = listOf("None", "Blur", "Custom Image"),
+                selected = videoBackground,
+                onSelect = { settingsManager.setVideoBackground(it) }
+            )
+        }
+        val hardwareAcceleration by settingsManager.hardwareAcceleration.collectAsState(true)
+        PrefCard("Hardware Acceleration", "Use your GPU for video encoding to save CPU resources.") {
+            CosmicSwitch(checked = hardwareAcceleration, onCheckedChange = { settingsManager.setHardwareAcceleration(it) })
+        }
         val mirrorVideo by settingsManager.mirrorVideo.collectAsState(true)
         PrefCard("Mirror my video", "Flip your camera preview horizontally.") {
             CosmicSwitch(checked = mirrorVideo, onCheckedChange = { settingsManager.setMirrorVideo(it) })
         }
 
+        Divider(color = Color.White.copy(alpha = 0.05f))
+
         SectionHeader("Screen Share")
-        PrefCard("Stream Codec", "Encoding format for screen share") {
-            Text("H.264", style = MaterialTheme.typography.labelMedium.copy(color = tokens.Accent, fontWeight = FontWeight.Bold))
+        val screenShareQuality by settingsManager.screenShareQuality.collectAsState("1080p")
+        PrefCard("Resolution", "Quality of your screen capture. Source requires Nitro.") {
+            ChipGroup(
+                options = listOf("720p", "1080p", "1440p", "Source"),
+                selected = screenShareQuality,
+                onSelect = { settingsManager.setScreenShareQuality(it) }
+            )
         }
-        PrefCard("Network Latency", "Real-time connection quality") {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Color(0xFF34D399)))
-                Text("~120ms", style = MaterialTheme.typography.labelMedium.copy(color = Color(0xFF34D399), fontWeight = FontWeight.Bold))
-            }
+        val screenShareFps by settingsManager.screenShareFps.collectAsState(30)
+        PrefCard("Frame Rate", "Smoothness of your screen capture.") {
+            ChipGroup(
+                options = listOf("15", "30", "60"),
+                selected = screenShareFps.toString(),
+                onSelect = { settingsManager.setScreenShareFps(it.toInt()) }
+            )
+        }
+        val latestScreenCaptureTech by settingsManager.latestScreenCaptureTech.collectAsState(true)
+        PrefCard("Use our latest technology", "Advanced GPU hooking for smoother game capture.") {
+            CosmicSwitch(checked = latestScreenCaptureTech, onCheckedChange = { settingsManager.setLatestScreenCaptureTech(it) })
+        }
+        val captureMouseCursor by settingsManager.captureMouseCursor.collectAsState(true)
+        PrefCard("Capture Mouse Cursor", "Whether viewers can see your mouse cursor.") {
+            CosmicSwitch(checked = captureMouseCursor, onCheckedChange = { settingsManager.setCaptureMouseCursor(it) })
         }
 
-        SectionHeader("Audio Subsystem")
+        Divider(color = Color.White.copy(alpha = 0.05f))
+
+        SectionHeader("Quality of Service")
+        val qosHighPacketPriority by settingsManager.qosHighPacketPriority.collectAsState(false)
+        PrefCard("Enable Quality of Service High Packet Priority", "Signals your router to prioritize Voice & Video packets.") {
+            CosmicSwitch(checked = qosHighPacketPriority, onCheckedChange = { settingsManager.setQosHighPacketPriority(it) })
+        }
+
+        SectionHeader("Advanced")
         val audioSubsystem by settingsManager.audioSubsystem.collectAsState("Standard")
-        PrefCard("Audio Subsystem", "Advanced: Change the audio processing backend.") {
+        PrefCard("Audio Subsystem", "Change the audio processing backend if you experience issues.") {
             ChipGroup(
                 options = listOf("Standard", "Experimental", "Legacy"),
                 selected = audioSubsystem,
                 onSelect = { settingsManager.setAudioSubsystem(it) }
             )
+        }
+        val audioBitrate by settingsManager.audioBitrate.collectAsState(64f)
+        PrefCard("Audio Bitrate", "Target audio bitrate for channels you host.") {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("${audioBitrate.toInt()} kbps", style = MaterialTheme.typography.labelMedium.copy(color = tokens.Accent, fontWeight = FontWeight.Bold))
+                Spacer(Modifier.width(8.dp))
+                Slider(
+                    value = audioBitrate,
+                    onValueChange = { settingsManager.setAudioBitrate(it) },
+                    valueRange = 8f..384f,
+                    colors = SliderDefaults.colors(thumbColor = tokens.Accent, activeTrackColor = tokens.Accent, inactiveTrackColor = tokens.Text_Muted.copy(alpha = 0.3f)),
+                    modifier = Modifier.width(100.dp)
+                )
+            }
         }
     }
 }
