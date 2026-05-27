@@ -14,6 +14,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import repository.OrbitRepository
+import ui.assets.OrbitEmptyIllustration
+import ui.assets.OrbitEmptyScene
 import ui.model.ChannelType
 import ui.model.OrbitServer
 import ui.theme.rememberCosmicTokens
@@ -72,6 +74,12 @@ fun JoinServerScreen(
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            OrbitEmptyIllustration(
+                scene = if (isCreateMode) OrbitEmptyScene.CreateServer else OrbitEmptyScene.Servers,
+                modifier = Modifier.width(220.dp).height(136.dp)
+            )
+            Spacer(Modifier.height(8.dp))
+
             Text(
                 text = "Add Server",
                 color = tokens.Text_White,
@@ -234,6 +242,12 @@ fun CreateRoomDialog(
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            OrbitEmptyIllustration(
+                scene = OrbitEmptyScene.CreateRoom,
+                modifier = Modifier.width(210.dp).height(130.dp)
+            )
+            Spacer(Modifier.height(8.dp))
+
             Text(
                 text = "Create Room",
                 color = tokens.Text_White,

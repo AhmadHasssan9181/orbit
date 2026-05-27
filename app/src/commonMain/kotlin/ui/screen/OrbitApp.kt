@@ -68,6 +68,10 @@ import repository.CredentialManager
 import repository.MatrixOrbitRepository
 import repository.OrbitRepository
 import repository.SettingsManager
+import ui.assets.OrbitDefaultAvatar
+import ui.assets.OrbitEmptyIllustration
+import ui.assets.OrbitEmptyScene
+import ui.assets.OrbitServerAssetIcon
 import ui.icons.OrbitIcons
 import ui.layout.LocalWindowSizeClass
 import ui.layout.WindowSizeClass
@@ -949,12 +953,10 @@ private fun CompactServerChip(server: OrbitServer, isSelected: Boolean, onClick:
                     modifier = Modifier.fillMaxSize()
                 )
             } else {
-                Text(
-                    text = server.name.take(2).uppercase(),
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelMedium.copy(
-                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
-                    )
+                OrbitServerAssetIcon(
+                    label = server.name,
+                    color = Color(server.iconColor),
+                    modifier = Modifier.fillMaxSize()
                 )
             }
         }
@@ -1075,12 +1077,11 @@ private fun CompactProfilePane(currentUser: OrbitUser?, onOpenSettings: () -> Un
                     modifier = Modifier.fillMaxSize()
                 )
             } else {
-                Text(
-                    text = (currentUser?.displayName ?: "Me").take(2).uppercase(),
-                    color = Color.White,
-                    style = MaterialTheme.typography.headlineSmall.copy(
-                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
-                    )
+                OrbitDefaultAvatar(
+                    label = currentUser?.displayName ?: "Me",
+                    seed = currentUser?.id ?: "me",
+                    color = Color(currentUser?.avatarColor ?: 0xFF7C6AF0.toInt()),
+                    modifier = Modifier.fillMaxSize()
                 )
             }
         }
@@ -1114,8 +1115,10 @@ private fun CompactEmptyDMs() {
     val tokens = rememberCosmicTokens()
     Box(modifier = Modifier.fillMaxSize().background(tokens.Bg), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(OrbitIcons.TextChannel, contentDescription = null,
-                tint = tokens.Text_Muted.copy(alpha = 0.4f), modifier = Modifier.size(48.dp))
+            OrbitEmptyIllustration(
+                scene = OrbitEmptyScene.DirectMessages,
+                modifier = Modifier.width(240.dp).height(150.dp)
+            )
             Spacer(Modifier.height(12.dp))
             Text("No direct messages yet", color = tokens.Text_Muted)
         }
@@ -1127,8 +1130,10 @@ private fun CompactEmptyServers(onAdd: () -> Unit) {
     val tokens = rememberCosmicTokens()
     Box(modifier = Modifier.fillMaxSize().background(tokens.Bg), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(OrbitIcons.Members, contentDescription = null,
-                tint = tokens.Text_Muted.copy(alpha = 0.4f), modifier = Modifier.size(48.dp))
+            OrbitEmptyIllustration(
+                scene = OrbitEmptyScene.Servers,
+                modifier = Modifier.width(240.dp).height(150.dp)
+            )
             Spacer(Modifier.height(12.dp))
             Text("No servers joined yet", color = tokens.Text_Muted)
             Spacer(Modifier.height(16.dp))

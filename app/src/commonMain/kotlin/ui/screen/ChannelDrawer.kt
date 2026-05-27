@@ -29,6 +29,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 // Removed MockData
+import ui.assets.OrbitDefaultAvatar
 import ui.icons.OrbitIcons
 import ui.model.*
 
@@ -558,23 +559,12 @@ private fun DmItem(
 @Composable
 private fun DmAvatar(displayName: String, avatarColor: Int, status: UserStatus, size: androidx.compose.ui.unit.Dp = 32.dp) {
     Box(modifier = Modifier.size(size)) {
-        val base = Color(avatarColor)
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .clip(CircleShape)
-                .background(Brush.linearGradient(listOf(base, base.copy(alpha = 0.6f)))),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = displayName.take(2).uppercase(),
-                style = MaterialTheme.typography.labelSmall.copy(
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                    fontSize = if (size > 40.dp) 16.sp else 10.sp
-                )
-            )
-        }
+        OrbitDefaultAvatar(
+            label = displayName,
+            seed = displayName,
+            color = Color(avatarColor),
+            modifier = Modifier.fillMaxSize()
+        )
         val dotColor = statusColor(status)
         Box(
             modifier = Modifier
@@ -799,33 +789,29 @@ private fun BarIconBtn(
 @Composable
 private fun UserAvatar(displayName: String, avatarColor: Int, status: UserStatus, avatarUrl: String? = null) {
     Box(modifier = Modifier.size(32.dp)) {
-        val base = Color(avatarColor)
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .border(1.dp, Text_White.copy(alpha = 0.08f), CircleShape)
-                .padding(1.dp)
-                .clip(CircleShape)
-                .background(Brush.linearGradient(listOf(base, base.copy(alpha = 0.7f)))),
-            contentAlignment = Alignment.Center
-        ) {
-            if (avatarUrl != null) {
+        if (avatarUrl != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .border(1.dp, Text_White.copy(alpha = 0.08f), CircleShape)
+                    .padding(1.dp)
+                    .clip(CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
                 coil3.compose.AsyncImage(
                     model = avatarUrl,
                     contentDescription = displayName,
                     contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
                 )
-            } else {
-                Text(
-                    text = displayName.take(2).uppercase(),
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                        fontSize = 10.sp
-                    )
-                )
             }
+        } else {
+            OrbitDefaultAvatar(
+                label = displayName,
+                seed = displayName,
+                color = Color(avatarColor),
+                modifier = Modifier.fillMaxSize()
+            )
         }
         val dotColor = statusColor(status)
         Box(
