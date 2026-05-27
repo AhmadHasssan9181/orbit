@@ -89,6 +89,11 @@ val LocalIsLiteMode = compositionLocalOf<Boolean> { false }
 val LocalOnLiteModeChange = compositionLocalOf<(Boolean) -> Unit> { {} }
 val LocalActiveTheme = compositionLocalOf<Theme> { Theme.Default }
 val LocalOnThemeChange = compositionLocalOf<(Theme) -> Unit> { {} }
+val LocalMessageDensity = compositionLocalOf<String> { "Comfortable" }
+val LocalFontSize = compositionLocalOf<Float> { 50f }
+val LocalReduceMotion = compositionLocalOf<Boolean> { false }
+val LocalMentionsOnly = compositionLocalOf<Boolean> { true }
+val LocalNotificationSound = compositionLocalOf<String> { "Chime" }
 
 /**
  * Discord/Revolt-style semantic color tokens derived from MaterialTheme.

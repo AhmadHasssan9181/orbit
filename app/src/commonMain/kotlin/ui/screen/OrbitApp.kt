@@ -65,6 +65,7 @@ import repository.AuthStatus
 import repository.CredentialManager
 import repository.MatrixOrbitRepository
 import repository.OrbitRepository
+import repository.SettingsManager
 import ui.icons.OrbitIcons
 import ui.layout.LocalWindowSizeClass
 import ui.layout.WindowSizeClass
@@ -100,15 +101,28 @@ fun OrbitApp(
 ) {
     var repository by remember { mutableStateOf<OrbitRepository?>(null) }
     var authResult by remember { mutableStateOf<AuthResult?>(null) }
-    var isLiteMode by remember { mutableStateOf(false) }
-    var activeTheme by remember { mutableStateOf(ui.theme.Theme.Default) }
+    
+    val settingsManager = remember { SettingsManager() }
+    val isLiteMode by settingsManager.isLiteMode.collectAsState(false)
+    val activeTheme by settingsManager.activeTheme.collectAsState(ui.theme.Theme.Default)
+    val messageDensity by settingsManager.messageDensity.collectAsState("Comfortable")
+    val fontSize by settingsManager.fontSize.collectAsState(50f)
+    val reduceMotion by settingsManager.reduceMotion.collectAsState(false)
+    val mentionsOnly by settingsManager.mentionsOnly.collectAsState(true)
+    val notificationSound by settingsManager.notificationSound.collectAsState("Chime")
+
     val scope = rememberCoroutineScope()
 
     CompositionLocalProvider(
         LocalIsLiteMode provides isLiteMode,
-        LocalOnLiteModeChange provides { isLiteMode = it },
+        LocalOnLiteModeChange provides { settingsManager.setLiteMode(it) },
         ui.theme.LocalActiveTheme provides activeTheme,
-        ui.theme.LocalOnThemeChange provides { activeTheme = it }
+        ui.theme.LocalOnThemeChange provides { settingsManager.setTheme(it) },
+        ui.theme.LocalMessageDensity provides messageDensity,
+        ui.theme.LocalFontSize provides fontSize,
+        ui.theme.LocalReduceMotion provides reduceMotion,
+        ui.theme.LocalMentionsOnly provides mentionsOnly,
+        ui.theme.LocalNotificationSound provides notificationSound
     ) {
         ui.theme.StoatTheme(
             requestedTheme = activeTheme,
@@ -160,6 +174,7 @@ fun OrbitApp(
                     } else {
                         MainAppContent(
                             repository = repository!!,
+                            settingsManager = settingsManager,
                             windowSize = windowSize,
                             onStartScreenShare = onStartScreenShare,
                             onLogoutRequested = {
@@ -186,6 +201,7 @@ private fun String.redactedIceUrl(): String {
 @Composable
 private fun MainAppContent(
     repository: OrbitRepository,
+    settingsManager: SettingsManager,
     windowSize: WindowSizeClass,
     onStartScreenShare: (( (onResult: (Any) -> Unit) -> Unit ))? = null,
     onLogoutRequested: () -> Unit,
@@ -447,6 +463,7 @@ private fun MainAppContent(
     if (showSettings) {
         SettingsScreen(
             repository = repository,
+            settingsManager = settingsManager,
             onBack = { showSettings = false },
             onLogout = {
                 onLogoutRequested()

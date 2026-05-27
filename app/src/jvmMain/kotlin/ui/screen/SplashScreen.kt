@@ -107,7 +107,7 @@ fun SplashScreenWindow(
                         val a = 110.0 // Major radius (width)
                         val b = 50.0 // Minor radius (height)
                         val centerX = 2.2 // Shift ellipse center horizontally
-                        val centerY = -2.0 // Shift ellipse center vertically
+                        val centerY = -2.2 // Shift ellipse center vertically
 
                         val ballColors = listOf(Color(0xFFE91E63), Color(0xFF2196F3), Color(0xFF00BCD4))
 
