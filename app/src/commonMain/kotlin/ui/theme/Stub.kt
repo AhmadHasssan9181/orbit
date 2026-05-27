@@ -79,13 +79,13 @@ object Colour {
     val SurfaceContainerHighestLight = Color(0xFFE6E0E9)
 
     // ─── Dark (Discord/Revolt style) ─────────────────────────────
-    val PrimaryDark = Color(0xFF7C6AF0)           // Accent purple
+    val PrimaryDark = Color(0xFF5865F2)           // Controlled blurple accent
     val OnPrimaryDark = Color(0xFFFFFFFF)
-    val PrimaryContainerDark = Color(0xFF3A2F72)   // Muted purple container
+    val PrimaryContainerDark = Color(0xFF313765)   // Muted accent container
     val OnPrimaryContainerDark = Color(0xFFE8DEFF)
-    val SecondaryDark = Color(0xFFA78BFA)          // Light purple accent
-    val OnSecondaryDark = Color(0xFF1E1036)
-    val SecondaryContainerDark = Color(0xFF342A5C)
+    val SecondaryDark = Color(0xFF8EA1E1)          // Softer active accent
+    val OnSecondaryDark = Color(0xFF111827)
+    val SecondaryContainerDark = Color(0xFF283152)
     val OnSecondaryContainerDark = Color(0xFFE8DEFF)
     val TertiaryDark = Color(0xFF34D399)           // Status green
     val OnTertiaryDark = Color(0xFF003822)
@@ -95,26 +95,26 @@ object Colour {
     val OnErrorDark = Color(0xFF601410)
     val ErrorContainerDark = Color(0xFF8C1D18)
     val OnErrorContainerDark = Color(0xFFF9DEDC)
-    val BackgroundDark = Color(0xFF111827)         // Discord-like dark navy
-    val OnBackgroundDark = Color(0xFFE5E7EB)
-    val SurfaceDark = Color(0xFF111827)
-    val OnSurfaceDark = Color(0xFFE5E7EB)
-    val SurfaceVariantDark = Color(0xFF2D3346)     // Slightly elevated
-    val OnSurfaceVariantDark = Color(0xFFCAC4D0)
-    val OutlineDark = Color(0xFF6B7280)            // Muted grey for outlines
-    val OutlineVariantDark = Color(0xFF374151)     // Subtle dividers
+    val BackgroundDark = Color(0xFF1E1F25)         // Main app canvas
+    val OnBackgroundDark = Color(0xFFF2F3F5)
+    val SurfaceDark = Color(0xFF1E1F25)
+    val OnSurfaceDark = Color(0xFFF2F3F5)
+    val SurfaceVariantDark = Color(0xFF2B2D36)     // Neutral hover/selected surface
+    val OnSurfaceVariantDark = Color(0xFFB8BCC8)
+    val OutlineDark = Color(0xFF8A8E9D)            // Muted copy and icon tone
+    val OutlineVariantDark = Color(0xFF343741)     // Subtle dividers
     val ScrimDark = Color(0xFF000000)
     val InverseSurfaceDark = Color(0xFFE5E7EB)
     val InverseOnSurfaceDark = Color(0xFF1F2937)
     val InversePrimaryDark = Color(0xFF5B47CC)
     // Surface depth hierarchy — key to Discord-like visual layering
-    val SurfaceDimDark = Color(0xFF0D1117)         // Deepest
-    val SurfaceBrightDark = Color(0xFF2D3346)
-    val SurfaceContainerLowestDark = Color(0xFF0B0F19)  // Server rail
-    val SurfaceContainerLowDark = Color(0xFF111827)     // Main background
-    val SurfaceContainerDark = Color(0xFF161D2F)        // Channel drawer, input
-    val SurfaceContainerHighDark = Color(0xFF1E2538)    // Cards, embeds
-    val SurfaceContainerHighestDark = Color(0xFF252D42) // Hover states, elevated
+    val SurfaceDimDark = Color(0xFF0D0F14)         // Deepest shadow
+    val SurfaceBrightDark = Color(0xFF323540)
+    val SurfaceContainerLowestDark = Color(0xFF111217)  // Server rail
+    val SurfaceContainerLowDark = Color(0xFF1E1F25)     // Chat canvas
+    val SurfaceContainerDark = Color(0xFF17181E)        // Channel drawer / member panel
+    val SurfaceContainerHighDark = Color(0xFF23252E)    // Cards / inputs
+    val SurfaceContainerHighestDark = Color(0xFF2B2D36) // Hover states, elevated
 }
 
 val Color_GradientStart = Color(0xFF6C20DF)
