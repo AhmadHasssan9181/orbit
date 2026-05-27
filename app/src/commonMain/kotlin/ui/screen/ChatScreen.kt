@@ -51,6 +51,8 @@ import ui.assets.OrbitDefaultAvatar
 import ui.assets.OrbitEmptyIllustration
 import ui.assets.OrbitEmptyScene
 import ui.assets.OrbitChatDoodleBackground
+import ui.assets.OrbitVerifiedBadge
+import ui.assets.isOrbitVerifiedUser
 import ui.icons.OrbitIcons
 import ui.theme.LocalIsLiteMode
 import ui.theme.rememberCosmicTokens
@@ -498,6 +500,11 @@ private fun MessageBubbleFull(message: OrbitMessage, currentUser: OrbitUser?) {
                             fontSize = 14.sp
                         )
                     )
+
+                    if (isOrbitVerifiedUser(message.username, message.userId)) {
+                        Spacer(Modifier.width(4.dp))
+                        OrbitVerifiedBadge(modifier = Modifier.size(14.dp))
+                    }
 
                     // Bot badge — like Discord/Revolt verified badge
                     if (message.username.contains("bot", ignoreCase = true) ||
@@ -1462,17 +1469,24 @@ private fun MemberItem(user: OrbitUser) {
 
         Spacer(Modifier.width(8.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = user.displayName,
-                style = MaterialTheme.typography.bodySmall.copy(
-                    color = if (user.status == UserStatus.OFFLINE)
-                        Text_Muted.copy(alpha = 0.6f) else Text_Secondary,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Normal
-                ),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = user.displayName,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        color = if (user.status == UserStatus.OFFLINE)
+                            Text_Muted.copy(alpha = 0.6f) else Text_Secondary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Normal
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                if (isOrbitVerifiedUser(user.username, user.displayName, user.id)) {
+                    Spacer(Modifier.width(4.dp))
+                    OrbitVerifiedBadge(modifier = Modifier.size(13.dp))
+                }
+            }
             Spacer(Modifier.height(2.dp))
             MemberRolePill(label = "Member", color = Color(user.avatarColor))
         }
