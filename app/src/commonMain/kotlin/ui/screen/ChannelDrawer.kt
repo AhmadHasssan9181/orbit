@@ -60,6 +60,15 @@ fun ChannelDrawer(
     selectedWhatsAppTab: String = "Chats",
     modifier: Modifier = Modifier
 ) {
+    var showInviteDialog by remember { mutableStateOf(false) }
+
+    if (showInviteDialog) {
+        InviteDialog(
+            server = server,
+            onDismiss = { showInviteDialog = false }
+        )
+    }
+
     Column(
         modifier = modifier
             .width(240.dp)
@@ -87,8 +96,19 @@ fun ChannelDrawer(
             }
         } else {
             // â”€â”€ Server header â€” Discord/Revolt style â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-            ServerHeader(server.name, showArrow = !server.isDM)
+            ServerHeader(
+                serverName = server.name, 
+                showArrow = !server.isDM,
+                onHeaderClick = {
+                    if (!server.isDM) showInviteDialog = true
+                }
+            )
             HorizontalDivider(color = Separator.copy(alpha = 0.3f), thickness = 1.dp)
+
+            if (!server.isDM) {
+                InvitePeopleButton { showInviteDialog = true }
+                Spacer(Modifier.height(4.dp))
+            }
 
             if (server.isDM) {
                 val callManager = webrtc.LocalCallManager.current
@@ -120,10 +140,98 @@ fun ChannelDrawer(
     }
 }
 
+// â”€â”€â”€ Invite Button & Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+@Composable
+private fun InvitePeopleButton(onClick: () -> Unit) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isHovered by interactionSource.collectIsHoveredAsState()
+    
+    val bgColor by animateColorAsState(
+        targetValue = if (isHovered) Accent.copy(alpha = 0.15f) else Color.Transparent,
+        label = "inviteBg"
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(bgColor)
+            .hoverable(interactionSource)
+            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = Icons.Default.PersonAdd,
+            contentDescription = "Invite People",
+            tint = AccentLight,
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(Modifier.width(10.dp))
+        Text(
+            text = "Invite People",
+            style = MaterialTheme.typography.bodySmall.copy(
+                color = AccentLight,
+                fontWeight = FontWeight.Medium,
+                fontSize = 14.sp
+            )
+        )
+    }
+}
+
+@Composable
+private fun InviteDialog(server: OrbitServer, onDismiss: () -> Unit) {
+    val inviteLink = "orbit://invite/${server.id}"
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = rememberCosmicTokens().CardBg,
+        title = {
+            Text(
+                "Invite friends to ${server.name}",
+                style = MaterialTheme.typography.titleMedium.copy(color = Text_White, fontWeight = FontWeight.Bold)
+            )
+        },
+        text = {
+            Column {
+                Text(
+                    "Share this link with others to grant them access to this server.",
+                    style = MaterialTheme.typography.bodySmall.copy(color = Text_Muted, fontSize = 13.sp),
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+                OutlinedTextField(
+                    value = inviteLink,
+                    onValueChange = {},
+                    readOnly = true,
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = rememberCosmicTokens().Bg,
+                        unfocusedContainerColor = rememberCosmicTokens().Bg,
+                        focusedTextColor = Text_White,
+                        unfocusedTextColor = Text_White,
+                        focusedBorderColor = Accent
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onDismiss,
+                colors = ButtonDefaults.buttonColors(containerColor = Accent)
+            ) {
+                Text("Done", color = Color.White)
+            }
+        }
+    )
+}
+
 // â”€â”€â”€ ServerHeader â€” Revolt/Discord style â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @Composable
-private fun ServerHeader(serverName: String, showArrow: Boolean) {
+private fun ServerHeader(serverName: String, showArrow: Boolean, onHeaderClick: () -> Unit = {}) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
 
@@ -132,7 +240,7 @@ private fun ServerHeader(serverName: String, showArrow: Boolean) {
             .fillMaxWidth()
             .height(48.dp)
             .hoverable(interactionSource)
-            .clickable(interactionSource = interactionSource, indication = null, onClick = {})
+            .clickable(interactionSource = interactionSource, indication = null, onClick = onHeaderClick)
             .background(if (isHovered) ChannelHover_Bg else Color.Transparent)
             .padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
