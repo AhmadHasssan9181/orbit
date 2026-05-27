@@ -185,6 +185,13 @@ class JvmWebRtcClient : WebRtcClient {
             runCatching {
                 videoSource.start()
                 isVideoCaptureRunning = true
+                
+                // Inject our custom video processor
+                val modelPath = extractModelToTempFile("selfie_segmentation.onnx")
+                if (modelPath != null) {
+                    println("DEBUG: [WebRTC] Injecting video processor with model: $modelPath")
+                    OrbitVideoEngine.injectVideoProcessor(videoSource, modelPath)
+                }
             }.onFailure {
                 runCatching { videoSource.dispose() }
                 return
@@ -500,6 +507,23 @@ class JvmWebRtcClient : WebRtcClient {
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
+    override fun getAudioInputDevices(): List<String> {
+        return runCatching {
+            dev.onvoid.webrtc.media.MediaDevices.getAudioCaptureDevices().map { it.name }
+        }.getOrDefault(listOf("Default"))
+    }
+
+    override fun getAudioOutputDevices(): List<String> {
+        return runCatching {
+            dev.onvoid.webrtc.media.MediaDevices.getAudioRenderDevices().map { it.name }
+        }.getOrDefault(listOf("Default"))
+    }
+
+    override fun getVideoCaptureDevices(): List<String> {
+        return runCatching {
+            dev.onvoid.webrtc.media.MediaDevices.getVideoCaptureDevices().map { it.name }
+        }.getOrDefault(listOf("Default"))
     }
 }
 

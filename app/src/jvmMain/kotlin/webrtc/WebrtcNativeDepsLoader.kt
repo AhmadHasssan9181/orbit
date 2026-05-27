@@ -21,10 +21,14 @@ object WebrtcNativeDepsLoader {
                 "libcrypto-3-x64.dll",
                 "libssl-3-x64.dll",
                 "libyuv.dll",
+                "opencv_core4.dll",
+                "opencv_imgproc4.dll",
+                "opencv_dnn4.dll",
                 "opus.dll",
                 "pkgconf-7.dll",
                 "srtp2.dll",
-                "turbojpeg.dll"
+                "turbojpeg.dll",
+                "OrbitAudioJNI.dll"
             )
 
             val tempDir = Files.createTempDirectory("webrtc-deps").toFile()
@@ -42,10 +46,9 @@ object WebrtcNativeDepsLoader {
                         println("DEBUG: Loaded $dll successfully")
                     } catch (e: UnsatisfiedLinkError) {
                         System.err.println("DEBUG: Failed to load $dll: ${e.message}")
-                        if (dll == "legacy.dll" || dll.contains("msvc") || dll.contains("vcruntime")) {
-                            System.err.println("DEBUG: [CRITICAL] This failure often means the Visual C++ Redistributable is missing. Please install it: https://aka.ms/vs/17/release/vc_redist.x64.exe")
-                        }
                     }
+                } else {
+                    println("DEBUG: Resource /webrtc-deps/$dll not found")
                 }
             }
             

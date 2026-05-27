@@ -14,6 +14,8 @@
 
 namespace orbit {
 
+class AudioDucker;
+
 class OrbitAudioDeviceModule : public webrtc::AudioDeviceModule, public webrtc::AudioTransport {
 public:
     OrbitAudioDeviceModule(webrtc::scoped_refptr<webrtc::AudioDeviceModule> core_adm);
@@ -158,6 +160,10 @@ private:
     // RNNoise (Orbit Zero)
     DenoiseState* rnnoise_state_ = nullptr;
     std::atomic<bool> orbit_zero_enabled_{true};
+
+    // Custom Audio Ducking
+    AudioDucker* audio_ducker_ = nullptr;
+    std::atomic<int> ducking_holdover_frames_{0};
 };
 
 } // namespace orbit

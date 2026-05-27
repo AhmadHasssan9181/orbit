@@ -75,16 +75,16 @@ internal fun AccessibilityExtrasPane(settingsManager: SettingsManager) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SectionHeader("Visual")
         val colorSaturation by settingsManager.colorSaturation.collectAsState(100f)
-        PrefCard("Color saturation", "Adjust the intensity of colors throughout the app.") {
+        PrefCard("Color saturation", "Adjust the intensity of colors throughout the app.", vertical = true) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("${colorSaturation.toInt()}%", style = MaterialTheme.typography.labelMedium.copy(color = tokens.Accent, fontWeight = FontWeight.Bold))
-                Spacer(Modifier.width(8.dp))
+                Text("${colorSaturation.toInt()}%", style = MaterialTheme.typography.labelMedium.copy(color = tokens.Accent, fontWeight = FontWeight.Bold, fontSize = 16.sp))
+                Spacer(Modifier.width(16.dp))
                 Slider(
                     value = colorSaturation,
                     onValueChange = { settingsManager.setColorSaturation(it) },
                     valueRange = 0f..100f,
                     colors = SliderDefaults.colors(thumbColor = tokens.Accent, activeTrackColor = tokens.Accent, inactiveTrackColor = tokens.Text_Muted.copy(alpha = 0.3f)),
-                    modifier = Modifier.width(100.dp)
+                    modifier = Modifier.weight(1f)
                 )
             }
         }
@@ -134,13 +134,26 @@ internal fun AccessibilityExtrasPane(settingsManager: SettingsManager) {
 @Composable
 internal fun VoiceVideoFullPane(settingsManager: SettingsManager) {
     val tokens = rememberCosmicTokens()
+    
+    // Fetch device lists at composition
+    var audioInputs by remember { mutableStateOf(listOf("Default")) }
+    var audioOutputs by remember { mutableStateOf(listOf("Default")) }
+    var videoInputs by remember { mutableStateOf(listOf("Default")) }
+    
+    LaunchedEffect(Unit) {
+        val client = webrtc.createWebRtcClient()
+        audioInputs = listOf("Default") + client.getAudioInputDevices().filter { it != "Default" }
+        audioOutputs = listOf("Default") + client.getAudioOutputDevices().filter { it != "Default" }
+        videoInputs = listOf("Default") + client.getVideoCaptureDevices().filter { it != "Default" }
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         
         SectionHeader("Voice Settings")
         val inputDevice by settingsManager.inputDevice.collectAsState("Default")
         PrefCard("Input Device", "Select your microphone.") {
             ChipGroup(
-                options = listOf("Default", "Headset", "Webcam"),
+                options = audioInputs,
                 selected = inputDevice,
                 onSelect = { settingsManager.setInputDevice(it) }
             )
@@ -163,11 +176,12 @@ internal fun VoiceVideoFullPane(settingsManager: SettingsManager) {
         val outputDevice by settingsManager.outputDevice.collectAsState("Default")
         PrefCard("Output Device", "Select your speakers or headphones.") {
             ChipGroup(
-                options = listOf("Default", "Headphones", "Speakers"),
+                options = audioOutputs,
                 selected = outputDevice,
                 onSelect = { settingsManager.setOutputDevice(it) }
             )
         }
+
         val outputVolume by settingsManager.outputVolume.collectAsState(100f)
         PrefCard("Output Volume", "Adjust how loud others are.") {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -266,7 +280,7 @@ internal fun VoiceVideoFullPane(settingsManager: SettingsManager) {
         val cameraDevice by settingsManager.cameraDevice.collectAsState("Default")
         PrefCard("Camera", "Select which camera to use.") {
             ChipGroup(
-                options = listOf("Default", "Webcam", "Virtual"),
+                options = videoInputs,
                 selected = cameraDevice,
                 onSelect = { settingsManager.setCameraDevice(it) }
             )

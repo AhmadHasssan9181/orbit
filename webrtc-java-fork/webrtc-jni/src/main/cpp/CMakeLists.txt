@@ -51,6 +51,8 @@ endif()
 set(AOM_DIR "D:/vcpkg/installed/x64-windows/share/aom")
 list(APPEND CMAKE_PREFIX_PATH "D:/vcpkg/installed/x64-windows")
 find_package(unofficial-webrtc CONFIG REQUIRED)
+find_package(OpenCV REQUIRED)
+
 add_subdirectory(dependencies/jni-voithos)
 
 file(GLOB SOURCES_ROOT "src/*.cpp")
@@ -117,6 +119,7 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 
 target_link_libraries(${PROJECT_NAME} PRIVATE jni-voithos)
 target_link_libraries(${PROJECT_NAME} PRIVATE unofficial::webrtc::webrtc)
+target_link_libraries(${PROJECT_NAME} PRIVATE ${OpenCV_LIBS})
 
 if(APPLE)
     set_source_files_properties(${SOURCES} PROPERTIES COMPILE_FLAGS "-x objective-c++")

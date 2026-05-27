@@ -54,6 +54,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
@@ -110,6 +112,7 @@ fun OrbitApp(
     val reduceMotion by settingsManager.reduceMotion.collectAsState(false)
     val mentionsOnly by settingsManager.mentionsOnly.collectAsState(true)
     val notificationSound by settingsManager.notificationSound.collectAsState("Chime")
+    val colorSaturation by settingsManager.colorSaturation.collectAsState(100f)
 
     val showTimestamps by settingsManager.showTimestamps.collectAsState(true)
     val compactMode by settingsManager.compactMode.collectAsState(false)
@@ -147,7 +150,9 @@ fun OrbitApp(
                 requestedUserInterfaceFont = ui.theme.UserInterfaceFont.Default
             ) {
             // Detect window size and inject into composition tree
-            BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+            BoxWithConstraints(
+                modifier = modifier.fillMaxSize()
+            ) {
                 val windowSize = windowSizeClassFor(maxWidth)
 
                 CompositionLocalProvider(LocalWindowSizeClass provides windowSize) {
@@ -614,8 +619,12 @@ private fun MainAppContent(
                 )
             }
 
+            val activeCallServer = servers.find { it.id == callManager.activeRoomId }
+            val callerName = activeCallServer?.name ?: "Friend"
+
             CallScreen(
                 callManager = callManager,
+                callerName = callerName,
                 onStartScreenShare = {
                     if (onStartScreenShare != null) {
                         onStartScreenShare { data ->

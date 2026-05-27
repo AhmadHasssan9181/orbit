@@ -19,6 +19,10 @@
 
 #include "api/video/i420_buffer.h"
 #include "modules/video_capture/video_capture_factory.h"
+#include "third_party/libyuv/include/libyuv.h"
+#include "rtc_base/logging.h"
+#include <opencv2/dnn.hpp>
+#include <opencv2/imgproc.hpp>
 
 namespace jni
 {
@@ -32,7 +36,29 @@ namespace jni
 	VideoTrackDeviceSource::~VideoTrackDeviceSource()
 	{
 		destroy();
+        if (selfie_net_) {
+            delete selfie_net_;
+            selfie_net_ = nullptr;
+        }
 	}
+
+    void VideoTrackDeviceSource::setBackgroundBlur(bool enable) {
+        enable_background_blur_.store(enable);
+        if (enable && !net_loaded_) {
+            try {
+                if (!selfie_net_) {
+                    selfie_net_ = new cv::dnn::Net();
+                }
+                *selfie_net_ = cv::dnn::readNetFromONNX("app/src/jvmMain/resources/selfie_segmentation.onnx");
+                selfie_net_->setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
+                selfie_net_->setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
+                net_loaded_ = true;
+            } catch (const cv::Exception& e) {
+                RTC_LOG(LS_ERROR) << "Failed to load Selfie Segmentation ONNX: " << e.what();
+                enable_background_blur_.store(false);
+            }
+        }
+    }
 
 	void VideoTrackDeviceSource::start()
 	{
@@ -183,22 +209,83 @@ namespace jni
 			return;
 		}
 
-		if (outHeight != frame.height() || outWidth != frame.width()) {
-			// Video adapter has requested a down-scale. Allocate a new buffer and return scaled version.
-			webrtc::scoped_refptr<webrtc::I420Buffer> scaled_buffer = webrtc::I420Buffer::Create(outWidth, outHeight);
+        webrtc::scoped_refptr<webrtc::I420BufferInterface> buffer = frame.video_frame_buffer()->ToI420();
 
-			scaled_buffer->ScaleFrom(*frame.video_frame_buffer()->ToI420());
+        // Check if Background Blur is enabled
+        if (enable_background_blur_.load() && net_loaded_ && selfie_net_) {
+            cv::Mat imgRgb(buffer->height(), buffer->width(), CV_8UC3);
+            libyuv::I420ToRGB24(
+                buffer->DataY(), buffer->StrideY(),
+                buffer->DataU(), buffer->StrideU(),
+                buffer->DataV(), buffer->StrideV(),
+                imgRgb.data, imgRgb.step[0],
+                buffer->width(), buffer->height()
+            );
+
+            cv::Mat resizedRgb;
+            cv::resize(imgRgb, resizedRgb, cv::Size(256, 256));
+
+            cv::Mat blob = cv::dnn::blobFromImage(resizedRgb, 1.0 / 255.0, cv::Size(256, 256), cv::Scalar(), true, false);
+            selfie_net_->setInput(blob);
+
+            cv::Mat out;
+            try {
+                out = selfie_net_->forward();
+                cv::Mat mask(256, 256, CV_32F, out.ptr<float>());
+                
+                cv::Mat maskOriginal;
+                cv::resize(mask, maskOriginal, cv::Size(imgRgb.cols, imgRgb.rows));
+
+                cv::Mat blurredRgb;
+                cv::GaussianBlur(imgRgb, blurredRgb, cv::Size(51, 51), 0);
+
+                cv::Mat result(imgRgb.size(), CV_8UC3);
+                for (int y = 0; y < imgRgb.rows; ++y) {
+                    for (int x = 0; x < imgRgb.cols; ++x) {
+                        float m = maskOriginal.at<float>(y, x);
+                        cv::Vec3b bg = blurredRgb.at<cv::Vec3b>(y, x);
+                        cv::Vec3b fg = imgRgb.at<cv::Vec3b>(y, x);
+                        
+                        cv::Vec3b& out_px = result.at<cv::Vec3b>(y, x);
+                        out_px[0] = static_cast<uchar>(fg[0] * m + bg[0] * (1.0f - m));
+                        out_px[1] = static_cast<uchar>(fg[1] * m + bg[1] * (1.0f - m));
+                        out_px[2] = static_cast<uchar>(fg[2] * m + bg[2] * (1.0f - m));
+                    }
+                }
+
+                webrtc::scoped_refptr<webrtc::I420Buffer> processed_buffer = webrtc::I420Buffer::Create(imgRgb.cols, imgRgb.rows);
+                libyuv::RGB24ToI420(
+                    result.data, result.step[0],
+                    processed_buffer->MutableDataY(), processed_buffer->StrideY(),
+                    processed_buffer->MutableDataU(), processed_buffer->StrideU(),
+                    processed_buffer->MutableDataV(), processed_buffer->StrideV(),
+                    imgRgb.cols, imgRgb.rows
+                );
+                
+                buffer = processed_buffer;
+            } catch (...) {
+                RTC_LOG(LS_ERROR) << "Exception during Selfie Segmentation inference.";
+            }
+        }
+
+		if (outHeight != buffer->height() || outWidth != buffer->width()) {
+			webrtc::scoped_refptr<webrtc::I420Buffer> scaled_buffer = webrtc::I420Buffer::Create(outWidth, outHeight);
+			scaled_buffer->ScaleFrom(*buffer);
 			
 			broadcaster.OnFrame(webrtc::VideoFrame::Builder()
 				.set_video_frame_buffer(scaled_buffer)
-				.set_rotation(webrtc::kVideoRotation_0)
+				.set_rotation(frame.rotation())
 				.set_timestamp_us(frame.timestamp_us())
 				.set_id(frame.id())
 				.build());
 		}
 		else {
-			// No adaptations needed, just return the frame as is.
-			broadcaster.OnFrame(frame);
+			broadcaster.OnFrame(webrtc::VideoFrame::Builder()
+				.set_video_frame_buffer(buffer)
+				.set_rotation(frame.rotation())
+				.set_timestamp_us(frame.timestamp_us())
+				.set_id(frame.id())
+				.build());
 		}
 	}
 }

@@ -55,6 +55,9 @@ extern "C" {
 	JNIEXPORT void JNICALL Java_dev_onvoid_webrtc_media_video_VideoDeviceSource_initialize
 	(JNIEnv *, jobject);
 
+	JNIEXPORT void JNICALL Java_dev_onvoid_webrtc_media_video_VideoDeviceSource_setBackgroundBlur
+	(JNIEnv *, jobject, jboolean);
+
 #ifdef __cplusplus
 }
 #endif

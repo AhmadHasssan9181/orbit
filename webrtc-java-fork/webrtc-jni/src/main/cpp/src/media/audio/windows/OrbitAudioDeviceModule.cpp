@@ -5,12 +5,114 @@
 #include <audioclientactivationparams.h>
 #include <audiopolicy.h>
 #include <algorithm>
+#include <thread>
+#include <math.h>
 
 namespace orbit {
+
+class AudioDucker {
+public:
+    AudioDucker() {}
+    ~AudioDucker() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        RestoreVolumes();
+    }
+
+    void SetSpeaking(bool is_speaking) {
+        if (is_speaking == is_ducked_.load()) return;
+        is_ducked_.store(is_speaking);
+        
+        std::thread([this, is_speaking]() {
+            CoInitializeEx(NULL, COINIT_MULTITHREADED);
+            std::lock_guard<std::mutex> lock(mutex_);
+            
+            if (is_speaking != is_ducked_.load()) {
+                CoUninitialize();
+                return;
+            }
+            
+            if (is_speaking) {
+                DuckVolumes();
+            } else {
+                RestoreVolumes();
+            }
+            CoUninitialize();
+        }).detach();
+    }
+
+private:
+    std::mutex mutex_;
+    std::atomic<bool> is_ducked_{false};
+    
+    struct DuckedSession {
+        ISimpleAudioVolume* volumeControl;
+        float originalVolume;
+    };
+    std::vector<DuckedSession> ducked_sessions_;
+
+    void DuckVolumes() {
+        if (!ducked_sessions_.empty()) return;
+
+        IMMDeviceEnumerator* deviceEnumerator = NULL;
+        IMMDevice* defaultDevice = NULL;
+        IAudioSessionManager2* sessionManager = NULL;
+        IAudioSessionEnumerator* sessionEnumerator = NULL;
+
+        if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), NULL, CLSCTX_INPROC_SERVER, __uuidof(IMMDeviceEnumerator), (void**)&deviceEnumerator))) return;
+        
+        if (SUCCEEDED(deviceEnumerator->GetDefaultAudioEndpoint(eRender, eConsole, &defaultDevice))) {
+            if (SUCCEEDED(defaultDevice->Activate(__uuidof(IAudioSessionManager2), CLSCTX_INPROC_SERVER, NULL, (void**)&sessionManager))) {
+                if (SUCCEEDED(sessionManager->GetSessionEnumerator(&sessionEnumerator))) {
+                    int count = 0;
+                    sessionEnumerator->GetCount(&count);
+                    
+                    DWORD currentPid = GetCurrentProcessId();
+                    
+                    for (int i = 0; i < count; i++) {
+                        IAudioSessionControl* sessionControl = NULL;
+                        if (SUCCEEDED(sessionEnumerator->GetSession(i, &sessionControl))) {
+                            IAudioSessionControl2* sessionControl2 = NULL;
+                            if (SUCCEEDED(sessionControl->QueryInterface(__uuidof(IAudioSessionControl2), (void**)&sessionControl2))) {
+                                DWORD pid = 0;
+                                sessionControl2->GetProcessId(&pid);
+                                
+                                if (pid != currentPid && pid != 0) {
+                                    ISimpleAudioVolume* volumeControl = NULL;
+                                    if (SUCCEEDED(sessionControl->QueryInterface(__uuidof(ISimpleAudioVolume), (void**)&volumeControl))) {
+                                        float currentVolume = 1.0f;
+                                        volumeControl->GetMasterVolume(&currentVolume);
+                                        
+                                        ducked_sessions_.push_back({volumeControl, currentVolume});
+                                        volumeControl->SetMasterVolume(currentVolume * 0.2f, NULL);
+                                    }
+                                }
+                                sessionControl2->Release();
+                            }
+                            sessionControl->Release();
+                        }
+                    }
+                    sessionEnumerator->Release();
+                }
+                sessionManager->Release();
+            }
+            defaultDevice->Release();
+        }
+        deviceEnumerator->Release();
+    }
+
+    void RestoreVolumes() {
+        for (auto& session : ducked_sessions_) {
+            session.volumeControl->SetMasterVolume(session.originalVolume, NULL);
+            session.volumeControl->Release();
+        }
+        ducked_sessions_.clear();
+    }
+};
 
 OrbitAudioDeviceModule::OrbitAudioDeviceModule(webrtc::scoped_refptr<webrtc::AudioDeviceModule> core_adm)
     : core_adm_(core_adm) {
     rnnoise_state_ = rnnoise_create(NULL);
+    audio_ducker_ = new AudioDucker();
 
     // Disable Windows Communications Ducking
     IMMDeviceEnumerator* deviceEnumerator = NULL;
@@ -41,6 +143,10 @@ OrbitAudioDeviceModule::~OrbitAudioDeviceModule() {
     if (rnnoise_state_) {
         rnnoise_destroy(rnnoise_state_);
         rnnoise_state_ = nullptr;
+    }
+    if (audio_ducker_) {
+        delete audio_ducker_;
+        audio_ducker_ = nullptr;
     }
 }
 
@@ -91,6 +197,28 @@ int32_t OrbitAudioDeviceModule::RecordedDataIsAvailable(
     const uint32_t currentMicLevel,
     const bool keyPressed,
     uint32_t& newMicLevel) {
+
+    // RMS Calculation for Audio Ducking
+    const int16_t* pcm_data = static_cast<const int16_t*>(audioSamples);
+    size_t total_samples = nSamples * nChannels;
+    double sum_squares = 0.0;
+    for (size_t i = 0; i < total_samples; ++i) {
+        sum_squares += pcm_data[i] * pcm_data[i];
+    }
+    double rms = sqrt(sum_squares / total_samples);
+    
+    // Threshold is arbitrary, approx -40dBFS for 16-bit PCM is 327.6
+    if (rms > 500.0) {
+        ducking_holdover_frames_.store(50); // 50 frames * 10ms = 500ms holdover
+        if (audio_ducker_) audio_ducker_->SetSpeaking(true);
+    } else {
+        int holdover = ducking_holdover_frames_.load();
+        if (holdover > 0) {
+            ducking_holdover_frames_.store(holdover - 1);
+        } else {
+            if (audio_ducker_) audio_ducker_->SetSpeaking(false);
+        }
+    }
 
     if (!is_system_audio_shared_.load() && !orbit_zero_enabled_.load()) {
         return real_audio_callback_ ? real_audio_callback_->RecordedDataIsAvailable(audioSamples, nSamples, nBytesPerSample, nChannels, samplesPerSec, totalDelayMS, clockDrift, currentMicLevel, keyPressed, newMicLevel) : 0;

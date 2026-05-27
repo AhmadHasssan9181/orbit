@@ -193,6 +193,7 @@ fun SettingsScreen(
                         SettingsCategory.Appearance -> {
                             item { ThemeSelectorCard() }
                             item { LiteModeCard() }
+                            item { FontSizeCard(settingsManager) }
                             item { AppearanceExtrasPane(settingsManager) }
                         }
                         SettingsCategory.Accessibility -> {
@@ -201,6 +202,7 @@ fun SettingsScreen(
                             item { AccessibilityExtrasPane(settingsManager) }
                         }
                         SettingsCategory.Chat -> {
+                            item { FontSizeCard(settingsManager) }
                             item { MessageDensityCard(settingsManager) }
                             item { ChatSettingsPane(settingsManager) }
                         }
@@ -419,27 +421,55 @@ private fun MyAccountPane(repository: OrbitRepository) {
 
 @Composable private fun FontSizeCard(settingsManager: SettingsManager) {
     val fontSize by settingsManager.fontSize.collectAsState(50f)
-    PrefCard("Font Size", "Adjust the size of message text") {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = "${(8 + fontSize * 0.08).toInt()}sp",
-                style = MaterialTheme.typography.labelMedium.copy(
-                    color = Accent,
-                    fontWeight = FontWeight.Bold
+    val tokens = rememberCosmicTokens()
+    
+    PrefCard("Font Size", "Adjust the size of message text and interface elements", vertical = true) {
+        Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "${(fontSize / 50f * 100).toInt()}%",
+                    style = MaterialTheme.typography.labelLarge.copy(
+                        color = tokens.Accent,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 16.sp
+                    )
                 )
-            )
-            Spacer(Modifier.width(8.dp))
-            Slider(
-                value = fontSize,
-                onValueChange = { settingsManager.setFontSize(it) },
-                valueRange = 0f..100f,
-                colors = SliderDefaults.colors(
-                    thumbColor        = Accent,
-                    activeTrackColor  = Accent,
-                    inactiveTrackColor = Text_Muted.copy(alpha = 0.3f)
-                ),
-                modifier = Modifier.width(110.dp)
-            )
+                Spacer(Modifier.width(16.dp))
+                Slider(
+                    value = fontSize,
+                    onValueChange = { settingsManager.setFontSize(it) },
+                    valueRange = 30f..100f,
+                    colors = SliderDefaults.colors(
+                        thumbColor        = tokens.Accent,
+                        activeTrackColor  = tokens.Accent,
+                        inactiveTrackColor = tokens.Text_Muted.copy(alpha = 0.3f)
+                    ),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            
+            Spacer(Modifier.height(16.dp))
+            
+            // Preview area
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(tokens.Bg)
+                    .padding(12.dp)
+            ) {
+                Column {
+                    Text(
+                        "Preview Text", 
+                        style = MaterialTheme.typography.labelSmall.copy(color = tokens.Text_Muted, fontWeight = FontWeight.Bold)
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "This is how your messages will look. Drag the slider to find your comfort zone.",
+                        style = MaterialTheme.typography.bodyMedium.copy(color = tokens.Text_White)
+                    )
+                }
+            }
         }
     }
 }

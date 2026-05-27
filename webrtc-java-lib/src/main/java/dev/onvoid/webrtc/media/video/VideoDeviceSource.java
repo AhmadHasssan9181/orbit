@@ -34,6 +34,8 @@ public class VideoDeviceSource extends VideoTrackSource {
 
 	public native void dispose();
 
+    public native void setBackgroundBlur(boolean enable);
+
 	private native void initialize();
 
 }
