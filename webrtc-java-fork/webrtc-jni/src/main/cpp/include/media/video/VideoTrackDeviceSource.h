@@ -28,6 +28,13 @@
 
 #include "media/video/VideoTrackDeviceSourceBase.h"
 #include "media/video/VideoDevice.h"
+#include <atomic>
+
+namespace cv {
+namespace dnn {
+    class Net;
+}
+}
 
 namespace jni
 {
@@ -40,6 +47,8 @@ namespace jni
             // VideoTrackDeviceSourceBase implementation.
             void start() override;
             void stop() override;
+
+            void setBackgroundBlur(bool enable);
 
 			// VideoSourceInterface implementation.
 			void AddOrUpdateSink(webrtc::VideoSinkInterface<webrtc::VideoFrame> * sink, const webrtc::VideoSinkWants & wants) override;
@@ -63,6 +72,10 @@ namespace jni
 			webrtc::scoped_refptr<webrtc::VideoCaptureModule> captureModule;
 			webrtc::VideoBroadcaster broadcaster;
 			webrtc::VideoAdapter videoAdapter;
+
+            std::atomic<bool> enable_background_blur_{false};
+            cv::dnn::Net* selfie_net_ = nullptr;
+            bool net_loaded_ = false;
 	};
 }
 

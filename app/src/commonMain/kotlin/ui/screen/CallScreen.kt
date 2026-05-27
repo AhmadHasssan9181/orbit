@@ -36,6 +36,7 @@ import kotlin.math.roundToInt
 @Composable
 fun CallScreen(
     callManager: CallManager,
+    callerName: String = "Friend",
     onStartScreenShare: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -194,7 +195,7 @@ fun CallScreen(
                         }
                     }
                     Box(modifier = Modifier.align(Alignment.BottomStart).padding(12.dp).background(Color.Black.copy(alpha=0.6f), RoundedCornerShape(8.dp)).padding(horizontal=12.dp, vertical=6.dp)) {
-                        Text("Friend", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Text(callerName, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                     }
                 }
 
@@ -252,7 +253,7 @@ fun CallScreen(
                         }
                     }
                     Spacer(Modifier.height(32.dp))
-                    Text("Friend", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+                    Text(callerName, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(8.dp))
                     Text(
                         when (callState) {
@@ -300,7 +301,7 @@ fun CallScreen(
                         }
                     }
                     Spacer(Modifier.height(24.dp))
-                    Text("Friend is calling you...", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                    Text("$callerName is calling you...", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(48.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(48.dp)) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {

@@ -31,6 +31,10 @@ interface WebRtcClient {
     fun switchCamera()
     fun setStreamAudioEnabled(enabled: Boolean)
     fun setOrbitZeroEnabled(enabled: Boolean)
+    
+    fun getAudioInputDevices(): List<String>
+    fun getAudioOutputDevices(): List<String>
+    fun getVideoCaptureDevices(): List<String>
 }
 
 expect fun createWebRtcClient(): WebRtcClient

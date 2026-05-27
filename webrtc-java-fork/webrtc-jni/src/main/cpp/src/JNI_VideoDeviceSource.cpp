@@ -149,3 +149,17 @@ JNIEXPORT void JNICALL Java_dev_onvoid_webrtc_media_video_VideoDeviceSource_init
     SetHandle(env, caller, videoSource.release());
 #endif
 }
+
+JNIEXPORT void JNICALL Java_dev_onvoid_webrtc_media_video_VideoDeviceSource_setBackgroundBlur
+(JNIEnv * env, jobject caller, jboolean enable)
+{
+#ifdef __APPLE__
+    jni::VideoTrackDeviceSourceMac * videoSource = GetHandle<jni::VideoTrackDeviceSourceMac>(env, caller);
+#else
+    jni::VideoTrackDeviceSource * videoSource = GetHandle<jni::VideoTrackDeviceSource>(env, caller);
+#endif
+
+	CHECK_HANDLE(videoSource);
+
+    videoSource->setBackgroundBlur(enable == JNI_TRUE);
+}

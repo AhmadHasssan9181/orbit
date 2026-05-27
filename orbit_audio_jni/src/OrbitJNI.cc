@@ -1,5 +1,6 @@
 #include <jni.h>
 #include "OrbitAudioDeviceModule.h"
+#include "OrbitVideoProcessor.h"
 #include "api/scoped_refptr.h"
 #include "rtc_base/ref_counted_object.h"
 
@@ -22,12 +23,44 @@ Java_webrtc_OrbitAudioEngine_injectCustomAdm(JNIEnv* env, jobject /* this */, jo
     jfieldID handle_fid = env->GetFieldID(native_obj_class, "nativeHandle", "J");
     if (!handle_fid) return;
 
-    // 4. Read the old handle (we DO NOT delete it here, because it was allocated by a different DLL's CRT, which causes EXCEPTION_ACCESS_VIOLATION on Windows!)
+    // 4. Read the old handle
     jlong old_handle = env->GetLongField(java_adm, handle_fid);
-    // intentional leak of the 8-byte pointer to prevent CRT heap corruption
 
     // 5. Inject our new handle! 
     env->SetLongField(java_adm, handle_fid, reinterpret_cast<jlong>(adm_ptr));
+}
+
+JNIEXPORT void JNICALL
+Java_webrtc_OrbitAudioEngine_setOrbitZeroEnabled(JNIEnv* env, jobject /* this */, jobject java_adm, jboolean enabled) {
+    // Stub for now to satisfy JNI
+}
+
+JNIEXPORT void JNICALL
+Java_webrtc_OrbitVideoEngine_injectVideoProcessor(JNIEnv* env, jobject /* this */, jobject java_source, jstring model_path) {
+    jclass native_obj_class = env->FindClass("dev/onvoid/webrtc/internal/NativeObject");
+    if (!native_obj_class) return;
+
+    jfieldID handle_fid = env->GetFieldID(native_obj_class, "nativeHandle", "J");
+    if (!handle_fid) return;
+
+    jlong handle = env->GetLongField(java_source, handle_fid);
+    if (handle == 0) return;
+
+    auto* source_ptr = reinterpret_cast<webrtc::scoped_refptr<webrtc::VideoTrackSourceInterface>*>(handle);
+    
+    const char* path_str = env->GetStringUTFChars(model_path, nullptr);
+    std::string model_path_cpp(path_str);
+    env->ReleaseStringUTFChars(model_path, path_str);
+
+    // Wrap the existing source with our processor source
+    webrtc::scoped_refptr<orbit::OrbitVideoProcessorSource> processor_source(
+        new webrtc::RefCountedObject<orbit::OrbitVideoProcessorSource>(*source_ptr)
+    );
+    processor_source->GetProcessor()->LoadModel(model_path_cpp);
+
+    // Replace the handle with our new wrapped source
+    auto* new_source_ptr = new webrtc::scoped_refptr<webrtc::VideoTrackSourceInterface>(processor_source);
+    env->SetLongField(java_source, handle_fid, reinterpret_cast<jlong>(new_source_ptr));
 }
 
 JNIEXPORT void JNICALL

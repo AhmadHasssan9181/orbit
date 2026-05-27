@@ -31,6 +31,7 @@ import ui.theme.rememberCosmicTokens
 internal fun PrefCard(
     title: String,
     description: String? = null,
+    vertical: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -43,17 +44,48 @@ internal fun PrefCard(
         label = "cardBg"
     )
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(bgColor)
-            .hoverable(interactionSource)
-            .clickable(interactionSource = interactionSource, indication = null, onClick = {})
-            .padding(horizontal = 14.dp, vertical = 11.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
+    if (vertical) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(bgColor)
+                .hoverable(interactionSource)
+                .clickable(interactionSource = interactionSource, indication = null, onClick = {})
+                .padding(horizontal = 14.dp, vertical = 11.dp)
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = FontWeight.Bold,
+                    color = tokens.Text_White
+                )
+            )
+            if (!description.isNullOrBlank()) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = description,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        color = tokens.Text_Muted,
+                        fontSize = 11.sp
+                    )
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            content()
+        }
+    } else {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(bgColor)
+                .hoverable(interactionSource)
+                .clickable(interactionSource = interactionSource, indication = null, onClick = {})
+                .padding(horizontal = 14.dp, vertical = 11.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
         Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
             Text(
                 text = title,
@@ -74,6 +106,7 @@ internal fun PrefCard(
             }
         }
         content()
+        }
     }
 }
 
