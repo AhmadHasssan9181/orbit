@@ -38,7 +38,7 @@ internal fun PrefCard(
     val tokens = rememberCosmicTokens()
     
     val bgColor by animateColorAsState(
-        targetValue = if (isHovered) tokens.CardBg else tokens.CardBgHover,
+        targetValue = if (isHovered) tokens.CardBgHover else tokens.CardBg,
         animationSpec = tween(150),
         label = "cardBg"
     )
@@ -46,11 +46,11 @@ internal fun PrefCard(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(8.dp))
             .background(bgColor)
             .hoverable(interactionSource)
             .clickable(interactionSource = interactionSource, indication = null, onClick = {})
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .padding(horizontal = 14.dp, vertical = 11.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -58,7 +58,7 @@ internal fun PrefCard(
             Text(
                 text = title,
                 style = MaterialTheme.typography.bodyMedium.copy(
-                    fontWeight = FontWeight.SemiBold,
+                    fontWeight = FontWeight.Bold,
                     color = tokens.Text_White
                 )
             )
@@ -68,7 +68,7 @@ internal fun PrefCard(
                     text = description,
                     style = MaterialTheme.typography.bodySmall.copy(
                         color = tokens.Text_Muted,
-                        fontSize = 12.sp
+                        fontSize = 11.sp
                     )
                 )
             }
@@ -113,14 +113,14 @@ internal fun HeroCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(8.dp))
             .then(bgMod)
-            .padding(28.dp),
+            .padding(22.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Icon(icon, null, tint = iconTint, modifier = Modifier.size(52.dp))
         Spacer(Modifier.height(16.dp))
-        Text(title, style = MaterialTheme.typography.titleLarge, color = if (gradient != null) Color.White else tokens.Text_White, fontWeight = FontWeight.ExtraBold, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        Text(title, style = MaterialTheme.typography.titleMedium, color = if (gradient != null) Color.White else tokens.Text_White, fontWeight = FontWeight.ExtraBold, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         Spacer(Modifier.height(6.dp))
         Text(subtitle, style = MaterialTheme.typography.bodySmall, color = if (gradient != null) Color.White.copy(alpha = 0.8f) else tokens.Text_Muted, textAlign = androidx.compose.ui.text.style.TextAlign.Center, lineHeight = 18.sp)
         if (buttonText != null) {
@@ -194,9 +194,9 @@ internal fun CosmicSwitch(
 internal fun StatusBadge(text: String, color: Color) {
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
+            .clip(RoundedCornerShape(5.dp))
             .background(color.copy(alpha = 0.15f))
-            .padding(horizontal = 10.dp, vertical = 4.dp)
+            .padding(horizontal = 9.dp, vertical = 3.dp)
     ) {
         Text(text, style = MaterialTheme.typography.labelSmall.copy(
             color = color, fontWeight = FontWeight.Bold, fontSize = 11.sp

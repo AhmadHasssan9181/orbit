@@ -175,24 +175,24 @@ fun rememberCosmicTokens(): CosmicTokens {
             CardBgHover = cs.surfaceContainerHighest, // hover state   (#303541)
             Accent = cs.primary,
             AccentLight = cs.secondary,
-            AccentGhost = cs.primary.copy(alpha = 0.12f),
+            AccentGhost = cs.primary.copy(alpha = 0.10f),
             Text_White = cs.onSurface,                // bright text   (#DEE2F2)
             Text_Secondary = cs.onSurfaceVariant,     // dimmer text   (#C0C6D9)
             Text_Muted = cs.outline,                  // muted text    (#8A90A2)
-            Separator = cs.outlineVariant,             // dividers      (#404756)
-            Header_Bg = cs.surfaceContainerLow.copy(alpha = 0.96f),
+            Separator = cs.outlineVariant.copy(alpha = 0.72f),
+            Header_Bg = cs.surfaceContainer.copy(alpha = 0.98f),
             Input_Bg = cs.surfaceContainer,            // input field   (#1A202B)
-            Members_Bg = cs.surfaceContainerLow,       // member panel
+            Members_Bg = cs.surfaceContainer,          // member panel
             Rail_Bg = cs.surfaceContainerLowest,       // server rail   (#090E19)
-            Rail_Active = cs.primary.copy(alpha = 0.15f),
+            Rail_Active = cs.primary.copy(alpha = 0.18f),
             Pill_Color = cs.onSurface,
             Drawer_Bg = cs.surfaceContainer,           // channel drawer (#1A202B)
             UserBar_Bg = cs.surfaceContainerLowest,    // user bar      (#090E19)
             // Discord-style extras
-            ChannelSelected_Bg = cs.surfaceVariant.copy(alpha = 0.25f),
-            ChannelHover_Bg = cs.surfaceVariant.copy(alpha = 0.12f),
-            MentionHighlight = cs.primary.copy(alpha = 0.08f),
-            MessageHover_Bg = Color(0x06FFFFFF),
+            ChannelSelected_Bg = cs.surfaceVariant.copy(alpha = 0.72f),
+            ChannelHover_Bg = cs.surfaceVariant.copy(alpha = 0.42f),
+            MentionHighlight = cs.primary.copy(alpha = 0.07f),
+            MessageHover_Bg = Color(0x0BFFFFFF),
         )
     }
 }
