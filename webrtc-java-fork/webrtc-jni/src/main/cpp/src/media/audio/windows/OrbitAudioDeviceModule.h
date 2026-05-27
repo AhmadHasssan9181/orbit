@@ -10,17 +10,21 @@
 
 #include <mmdeviceapi.h>
 #include <audioclient.h>
+#include "rnnoise.h"
 
 namespace orbit {
 
 class OrbitAudioDeviceModule : public webrtc::AudioDeviceModule, public webrtc::AudioTransport {
 public:
     OrbitAudioDeviceModule(webrtc::scoped_refptr<webrtc::AudioDeviceModule> core_adm);
-    ~OrbitAudioDeviceModule() override = default;
+    ~OrbitAudioDeviceModule() override;
 
     // Custom Flags
     void SetSystemAudioShareEnabled(bool enabled);
     bool IsSystemAudioShareEnabled() const;
+    
+    void SetOrbitZeroEnabled(bool enabled);
+    bool IsOrbitZeroEnabled() const;
 
     // --- webrtc::RefCountInterface Required Implementation ---
     void AddRef() const override;
@@ -150,6 +154,10 @@ private:
     void LoopbackThreadMain();
     void StartLoopback();
     void StopLoopback();
+    
+    // RNNoise (Orbit Zero)
+    DenoiseState* rnnoise_state_ = nullptr;
+    std::atomic<bool> orbit_zero_enabled_{true};
 };
 
 } // namespace orbit

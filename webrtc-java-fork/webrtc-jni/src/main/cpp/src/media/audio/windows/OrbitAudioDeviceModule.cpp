@@ -8,7 +8,16 @@
 namespace orbit {
 
 OrbitAudioDeviceModule::OrbitAudioDeviceModule(webrtc::scoped_refptr<webrtc::AudioDeviceModule> core_adm)
-    : core_adm_(core_adm) {}
+    : core_adm_(core_adm) {
+    rnnoise_state_ = rnnoise_create(NULL);
+}
+
+OrbitAudioDeviceModule::~OrbitAudioDeviceModule() {
+    if (rnnoise_state_) {
+        rnnoise_destroy(rnnoise_state_);
+        rnnoise_state_ = nullptr;
+    }
+}
 
 void OrbitAudioDeviceModule::SetSystemAudioShareEnabled(bool enabled) { 
     if (enabled == is_system_audio_shared_.load()) return;
@@ -20,6 +29,12 @@ void OrbitAudioDeviceModule::SetSystemAudioShareEnabled(bool enabled) {
     }
 }
 bool OrbitAudioDeviceModule::IsSystemAudioShareEnabled() const { return is_system_audio_shared_.load(); }
+
+void OrbitAudioDeviceModule::SetOrbitZeroEnabled(bool enabled) {
+    orbit_zero_enabled_.store(enabled);
+}
+
+bool OrbitAudioDeviceModule::IsOrbitZeroEnabled() const { return orbit_zero_enabled_.load(); }
 
 void OrbitAudioDeviceModule::AddRef() const {
     ref_count_.fetch_add(1, std::memory_order_relaxed);
@@ -52,13 +67,34 @@ int32_t OrbitAudioDeviceModule::RecordedDataIsAvailable(
     const bool keyPressed,
     uint32_t& newMicLevel) {
 
-    if (!is_system_audio_shared_.load() || !real_audio_callback_) {
+    if (!is_system_audio_shared_.load() && !orbit_zero_enabled_.load()) {
         return real_audio_callback_ ? real_audio_callback_->RecordedDataIsAvailable(audioSamples, nSamples, nBytesPerSample, nChannels, samplesPerSec, totalDelayMS, clockDrift, currentMicLevel, keyPressed, newMicLevel) : 0;
     }
 
     std::vector<int16_t> mixed_buffer((const int16_t*)audioSamples, ((const int16_t*)audioSamples) + nSamples * nChannels);
 
-    {
+    // Orbit Zero AI Noise Suppression
+    if (orbit_zero_enabled_.load() && rnnoise_state_ && samplesPerSec == 48000 && nSamples == 480) {
+        // RNNoise is mono, we apply it to the first channel
+        float in_float[480];
+        float out_float[480];
+        
+        for (size_t i = 0; i < 480; ++i) {
+            in_float[i] = (float)mixed_buffer[i * nChannels];
+        }
+        
+        rnnoise_process_frame(rnnoise_state_, out_float, in_float);
+        
+        for (size_t i = 0; i < 480; ++i) {
+            // Write processed data back to all channels to ensure mono expansion if stereo mic
+            int16_t out_pcm = (int16_t)out_float[i];
+            for (size_t c = 0; c < nChannels; ++c) {
+                mixed_buffer[i * nChannels + c] = out_pcm;
+            }
+        }
+    }
+
+    if (is_system_audio_shared_.load()) {
         std::lock_guard<std::mutex> lock(audio_mutex_);
         if (loopback_buffer_.size() >= nSamples * 2) { // Assume WASAPI loopback is always stereo (2 channels)
             // Simple mixing: add loopback samples to mic samples and clamp to 16-bit range

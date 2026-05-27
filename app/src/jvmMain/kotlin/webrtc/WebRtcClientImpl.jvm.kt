@@ -459,7 +459,14 @@ class JvmWebRtcClient : WebRtcClient {
 
     override fun setStreamAudioEnabled(enabled: Boolean) {
         audioDeviceModule?.setSystemAudioShareEnabled(enabled)
-        
+        recreateLocalAudioTrack(enabled)
+    }
+    
+    override fun setOrbitZeroEnabled(enabled: Boolean) {
+        audioDeviceModule?.setOrbitZeroEnabled(enabled)
+    }
+
+    private fun recreateLocalAudioTrack(enabled: Boolean) {
         try {
             val pConn = peerConnection ?: return
             val f = factory ?: return

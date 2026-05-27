@@ -215,6 +215,11 @@ private fun MainAppContent(
     // ─── WebRTC Call Manager ────────────────────────────────────
     val webRtcClient = remember { createWebRtcClient() }
     val callManager = remember { CallManager(webRtcClient, scope) }
+    
+    val orbitZeroEnabled by settingsManager.orbitZeroAiNoiseSuppression.collectAsState(true)
+    LaunchedEffect(orbitZeroEnabled) {
+        webRtcClient.setOrbitZeroEnabled(orbitZeroEnabled)
+    }
 
     LaunchedEffect(callManager, repository) {
         callManager.refreshIceServers = {

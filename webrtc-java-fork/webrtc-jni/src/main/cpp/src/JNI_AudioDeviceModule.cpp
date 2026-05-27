@@ -64,3 +64,14 @@ extern "C" JNIEXPORT void JNICALL Java_webrtc_OrbitAudioDeviceModule_setSystemAu
 	}
 #endif
 }
+
+extern "C" JNIEXPORT void JNICALL Java_webrtc_OrbitAudioDeviceModule_setOrbitZeroEnabled
+(JNIEnv * env, jobject caller, jboolean enabled)
+{
+#ifdef _WIN32
+	auto * audioModule = GetHandle<orbit::OrbitAudioDeviceModule>(env, caller);
+	if (audioModule) {
+		audioModule->SetOrbitZeroEnabled(enabled);
+	}
+#endif
+}
