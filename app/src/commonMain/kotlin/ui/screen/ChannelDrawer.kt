@@ -1,6 +1,11 @@
 package ui.screen
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -32,6 +37,8 @@ import androidx.compose.ui.unit.sp
 import ui.assets.OrbitDefaultAvatar
 import ui.assets.OrbitEmptyIllustration
 import ui.assets.OrbitEmptyScene
+import ui.assets.OrbitVerifiedBadge
+import ui.assets.isOrbitVerifiedUser
 import ui.icons.OrbitIcons
 import ui.model.*
 
@@ -480,20 +487,39 @@ private fun DmItem(
     val isLiteMode = ui.theme.LocalIsLiteMode.current
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
+    val cardShape = RoundedCornerShape(if (isLiteMode) 14.dp else 10.dp)
 
     val bgColor by animateColorAsState(
         targetValue = when {
-            isSelected -> ChannelSelected_Bg
+            isSelected -> Accent.copy(alpha = 0.16f)
             isHovered  -> ChannelHover_Bg
             else       -> Color.Transparent
         },
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
         label = "dmBg"
     )
+    val borderColor by animateColorAsState(
+        targetValue = when {
+            isSelected -> Accent.copy(alpha = 0.42f)
+            isHovered -> Text_White.copy(alpha = 0.10f)
+            else -> Text_White.copy(alpha = 0.04f)
+        },
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "dmBorder"
+    )
     val textColor by animateColorAsState(
         targetValue = if (isSelected || isHovered) Text_White else Text_Secondary,
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
         label = "dmText"
+    )
+    val indicatorAlpha by animateFloatAsState(
+        targetValue = when {
+            isSelected -> 1f
+            isHovered -> 0.45f
+            else -> 0f
+        },
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "dmIndicator"
     )
 
     if (isLiteMode) {
@@ -501,24 +527,51 @@ private fun DmItem(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                    .clip(cardShape)
                     .background(bgColor)
+                    .border(1.dp, borderColor, cardShape)
+                    .hoverable(interactionSource)
                     .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                    .padding(horizontal = 10.dp, vertical = 9.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Box(
+                    modifier = Modifier
+                        .width(3.dp)
+                        .height(34.dp)
+                        .clip(RoundedCornerShape(99.dp))
+                        .background(Accent.copy(alpha = indicatorAlpha))
+                )
+                Spacer(Modifier.width(10.dp))
                 DmAvatar(displayName, avatarColor, status, size = 48.dp)
                 Spacer(Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(
-                            text = displayName,
-                            style = MaterialTheme.typography.bodyMedium.copy(
-                                color = Text_White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp
-                            ),
-                            maxLines = 1
-                        )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = displayName,
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    color = Text_White,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 16.sp
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                            if (isOrbitVerifiedUser(displayName)) {
+                                Spacer(Modifier.width(5.dp))
+                                OrbitVerifiedBadge(modifier = Modifier.size(15.dp))
+                            }
+                        }
                         Text(
                             text = time,
                             style = MaterialTheme.typography.labelSmall.copy(
@@ -538,32 +591,57 @@ private fun DmItem(
                     )
                 }
             }
-            Box(modifier = Modifier.fillMaxWidth().padding(start = 76.dp).height(0.5.dp).background(Separator))
+            Box(modifier = Modifier.fillMaxWidth().padding(start = 76.dp).height(0.5.dp).background(Separator.copy(alpha = 0.55f)))
         }
     } else {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(4.dp))
+                .padding(horizontal = 1.dp, vertical = 1.dp)
+                .clip(cardShape)
                 .background(bgColor)
+                .border(1.dp, borderColor, cardShape)
+                .hoverable(interactionSource)
                 .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
-                .padding(horizontal = 8.dp, vertical = 5.dp),
+                .padding(horizontal = 7.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            Box(
+                modifier = Modifier
+                    .width(3.dp)
+                    .height(24.dp)
+                    .clip(RoundedCornerShape(99.dp))
+                    .background(Accent.copy(alpha = indicatorAlpha))
+            )
+            Spacer(Modifier.width(7.dp))
             DmAvatar(displayName, avatarColor, status, size = 30.dp)
             Spacer(Modifier.width(9.dp))
-            Text(
-                text = displayName,
-                style = MaterialTheme.typography.bodySmall.copy(
-                    color = textColor,
-                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                    fontSize = 14.sp
-                ),
-                maxLines = 1,
-                modifier = Modifier.weight(1f)
-            )
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = displayName,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        color = textColor,
+                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                        fontSize = 14.sp
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                if (isOrbitVerifiedUser(displayName)) {
+                    Spacer(Modifier.width(5.dp))
+                    OrbitVerifiedBadge(modifier = Modifier.size(13.dp))
+                }
+            }
             // Action icons on hover like Discord
-            if (isHovered) {
+            AnimatedVisibility(
+                visible = isHovered,
+                enter = fadeIn() + scaleIn(initialScale = 0.92f),
+                exit = fadeOut() + scaleOut(targetScale = 0.92f)
+            ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     IconButton(onClick = { onVoiceCall?.invoke() }, modifier = Modifier.size(20.dp)) {
                         Icon(
@@ -766,6 +844,21 @@ private fun UserProfileBar(
     onMicToggle: () -> Unit,
     onSettingsClick: () -> Unit
 ) {
+    var showProfilePopover by remember { mutableStateOf(false) }
+    val profileInteractionSource = remember { MutableInteractionSource() }
+    val isProfileHovered by profileInteractionSource.collectIsHoveredAsState()
+    val profileShape = RoundedCornerShape(10.dp)
+    val profileBg by animateColorAsState(
+        targetValue = if (showProfilePopover || isProfileHovered) ChannelHover_Bg else Color.Transparent,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "profileBg"
+    )
+    val profileBorder by animateColorAsState(
+        targetValue = if (showProfilePopover) Accent.copy(alpha = 0.38f) else Text_White.copy(alpha = if (isProfileHovered) 0.08f else 0f),
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "profileBorder"
+    )
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -774,31 +867,188 @@ private fun UserProfileBar(
             .height(48.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        UserAvatar(user.displayName, user.avatarColor, user.status, user.avatarUrl)
-        Spacer(Modifier.width(8.dp))
+        Box(modifier = Modifier.weight(1f)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(40.dp)
+                    .clip(profileShape)
+                    .background(profileBg)
+                    .border(1.dp, profileBorder, profileShape)
+                    .hoverable(profileInteractionSource)
+                    .clickable(
+                        interactionSource = profileInteractionSource,
+                        indication = null,
+                        onClick = { showProfilePopover = true }
+                    )
+                    .padding(horizontal = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                UserAvatar(user.displayName, user.avatarColor, user.status, user.avatarUrl)
+                Spacer(Modifier.width(8.dp))
 
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
-            Text(
-                text = user.displayName,
-                style = MaterialTheme.typography.labelMedium.copy(
-                    fontWeight = FontWeight.SemiBold,
-                    color = Text_White
-                ),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                text = "Online",
-                style = MaterialTheme.typography.labelSmall.copy(
-                    color = Color(0xFF34D399),
-                    fontSize = 10.sp
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = user.displayName,
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                color = Text_White
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        if (isOrbitVerifiedUser(user.username, user.displayName)) {
+                            Spacer(Modifier.width(4.dp))
+                            OrbitVerifiedBadge(modifier = Modifier.size(13.dp))
+                        }
+                    }
+                    Text(
+                        text = statusLabel(user.status),
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            color = statusColor(user.status),
+                            fontSize = 10.sp
+                        )
+                    )
+                }
+            }
+
+            DropdownMenu(
+                expanded = showProfilePopover,
+                onDismissRequest = { showProfilePopover = false },
+                modifier = Modifier
+                    .width(252.dp)
+                    .background(UserBar_Bg)
+            ) {
+                ProfilePopoverContent(
+                    user = user,
+                    onSettingsClick = {
+                        showProfilePopover = false
+                        onSettingsClick()
+                    }
                 )
-            )
+            }
         }
 
         BarIconBtn(icon = OrbitIcons.Mic, desc = "Mic", onClick = onMicToggle)
         BarIconBtn(icon = Icons.Default.Headset, desc = "Deafen", onClick = {})
         BarIconBtn(icon = Icons.Default.Settings, desc = "Settings", onClick = onSettingsClick)
+    }
+}
+
+@Composable
+private fun ProfilePopoverContent(
+    user: OrbitUser,
+    onSettingsClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .background(UserBar_Bg)
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            UserAvatar(user.displayName, user.avatarColor, user.status, user.avatarUrl, size = 42.dp)
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = user.displayName,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            color = Text_White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (isOrbitVerifiedUser(user.username, user.displayName)) {
+                        Spacer(Modifier.width(5.dp))
+                        OrbitVerifiedBadge(modifier = Modifier.size(15.dp))
+                    }
+                }
+                Text(
+                    text = "@${user.username}",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        color = Text_Muted,
+                        fontSize = 11.sp
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+
+        HorizontalDivider(color = Separator.copy(alpha = 0.45f), thickness = 1.dp)
+
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .background(Accent.copy(alpha = 0.10f))
+                .border(1.dp, Accent.copy(alpha = 0.18f), RoundedCornerShape(8.dp))
+                .padding(horizontal = 9.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(statusColor(user.status))
+            )
+            Spacer(Modifier.width(7.dp))
+            Text(
+                text = statusLabel(user.status),
+                style = MaterialTheme.typography.labelSmall.copy(
+                    color = Text_Secondary,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 11.sp
+                )
+            )
+        }
+
+        ProfilePopoverAction(
+            icon = Icons.Default.Settings,
+            label = "Profile settings",
+            onClick = onSettingsClick
+        )
+    }
+}
+
+@Composable
+private fun ProfilePopoverAction(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isHovered by interactionSource.collectIsHoveredAsState()
+    val bg by animateColorAsState(
+        targetValue = if (isHovered) ChannelHover_Bg else Color.Transparent,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "profileActionBg"
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(bg)
+            .hoverable(interactionSource)
+            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
+            .padding(horizontal = 9.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = label, tint = AccentLight, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium.copy(
+                color = Text_Secondary,
+                fontWeight = FontWeight.SemiBold
+            )
+        )
     }
 }
 
@@ -812,22 +1062,67 @@ private fun BarIconBtn(
     val isHovered by interactionSource.collectIsHoveredAsState()
     val tint by animateColorAsState(
         targetValue = if (isHovered) Text_White else Text_Muted,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
         label = "barIconTint"
     )
-    IconButton(
-        onClick = onClick,
-        modifier = Modifier.size(30.dp),
-        interactionSource = interactionSource
-    ) {
-        Icon(imageVector = icon, contentDescription = desc, tint = tint, modifier = Modifier.size(17.dp))
+    val bg by animateColorAsState(
+        targetValue = if (isHovered) ChannelHover_Bg else Color.Transparent,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "barIconBg"
+    )
+
+    Box(contentAlignment = Alignment.Center) {
+        AnimatedVisibility(
+            visible = isHovered,
+            enter = fadeIn() + scaleIn(initialScale = 0.94f),
+            exit = fadeOut() + scaleOut(targetScale = 0.94f),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .offset(y = (-31).dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(UserBar_Bg)
+                    .border(1.dp, Separator.copy(alpha = 0.55f), RoundedCornerShape(6.dp))
+                    .padding(horizontal = 7.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    text = desc,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        color = Text_White,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold
+                    ),
+                    maxLines = 1
+                )
+            }
+        }
+
+        IconButton(
+            onClick = onClick,
+            modifier = Modifier
+                .size(30.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(bg),
+            interactionSource = interactionSource
+        ) {
+            Icon(imageVector = icon, contentDescription = desc, tint = tint, modifier = Modifier.size(17.dp))
+        }
     }
 }
 
 // â”€â”€â”€ UserAvatar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @Composable
-private fun UserAvatar(displayName: String, avatarColor: Int, status: UserStatus, avatarUrl: String? = null) {
-    Box(modifier = Modifier.size(32.dp)) {
+private fun UserAvatar(
+    displayName: String,
+    avatarColor: Int,
+    status: UserStatus,
+    avatarUrl: String? = null,
+    size: androidx.compose.ui.unit.Dp = 32.dp
+) {
+    Box(modifier = Modifier.size(size)) {
         if (avatarUrl != null) {
             Box(
                 modifier = Modifier
@@ -855,7 +1150,7 @@ private fun UserAvatar(displayName: String, avatarColor: Int, status: UserStatus
         val dotColor = statusColor(status)
         Box(
             modifier = Modifier
-                .size(10.dp)
+                .size(if (size > 40.dp) 13.dp else 10.dp)
                 .align(Alignment.BottomEnd)
                 .border(2.dp, UserBar_Bg, CircleShape)
                 .clip(CircleShape)
@@ -871,6 +1166,13 @@ private fun statusColor(status: UserStatus) = when (status) {
     UserStatus.IDLE          -> Color(0xFFFBBF24)
     UserStatus.DO_NOT_DISTURB -> Color(0xFFF87171)
     UserStatus.OFFLINE       -> Color(0xFF3D4160)
+}
+
+private fun statusLabel(status: UserStatus) = when (status) {
+    UserStatus.ONLINE -> "Online"
+    UserStatus.IDLE -> "Idle"
+    UserStatus.DO_NOT_DISTURB -> "Do not disturb"
+    UserStatus.OFFLINE -> "Offline"
 }
 
 // â”€â”€â”€ Lite Mode Drawer Components â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
