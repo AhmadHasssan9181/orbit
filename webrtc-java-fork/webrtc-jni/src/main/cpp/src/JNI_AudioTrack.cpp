@@ -66,3 +66,12 @@ JNIEXPORT jint JNICALL Java_dev_onvoid_webrtc_media_audio_AudioTrack_getSignalLe
 
 	return static_cast<jint>(level);
 }
+
+JNIEXPORT void JNICALL Java_dev_onvoid_webrtc_media_audio_AudioTrack_setVolume
+(JNIEnv * env, jobject caller, jdouble volume)
+{
+	webrtc::AudioTrackInterface * track = GetHandle<webrtc::AudioTrackInterface>(env, caller);
+	CHECK_HANDLE(track);
+
+	track->SetVolume(volume);
+}

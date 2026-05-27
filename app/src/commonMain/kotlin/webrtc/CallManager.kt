@@ -287,6 +287,20 @@ class CallManager(
         webRtcClient.switchCamera()
     }
 
+    fun setAudioInputDevice(deviceName: String) {
+        webRtcClient.setAudioInputDevice(deviceName)
+    }
+
+    fun setAudioOutputDevice(deviceName: String) {
+        webRtcClient.setAudioOutputDevice(deviceName)
+    }
+
+    fun setVideoCaptureDevice(deviceName: String) {
+        webRtcClient.setVideoCaptureDevice(deviceName)
+    }
+
+    fun getDesktopSources() = webRtcClient.getDesktopSources()
+
     fun startScreenShare(data: Any? = null) {
         webRtcClient.startScreenShare(data)
         // Screen sharing often changes resolution/streams, trigger re-negotiation

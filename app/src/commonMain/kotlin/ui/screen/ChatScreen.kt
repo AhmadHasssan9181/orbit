@@ -734,6 +734,12 @@ private fun ImageMessageCard(content: ui.model.MessageContent.Image) {
     ) {
         coil3.compose.AsyncImage(
             model = url,
+            onState = { state ->
+                if (state is coil3.compose.AsyncImagePainter.State.Error) {
+                    println("DEBUG: [Coil] Error loading image: ${state.result.throwable.message}")
+                    println("DEBUG: [Coil] URL was: $url")
+                }
+            },
             contentDescription = content.body.ifBlank { "Image" },
             contentScale = androidx.compose.ui.layout.ContentScale.Fit,
             modifier = Modifier

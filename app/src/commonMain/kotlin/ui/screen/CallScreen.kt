@@ -2,11 +2,14 @@ package ui.screen
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -22,6 +25,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -31,6 +35,7 @@ import ui.icons.OrbitIcons
 import ui.theme.rememberCosmicTokens
 import webrtc.CallManager
 import webrtc.CallState
+import webrtc.DesktopSourceModel
 import kotlin.math.roundToInt
 
 @Composable
@@ -48,8 +53,22 @@ fun CallScreen(
     val isScreenSharing by callManager.isScreenSharing.collectAsState()
     val tokens = rememberCosmicTokens()
 
+    var showScreenShareDialog by remember { mutableStateOf(false) }
+    var showAudioDeviceMenu by remember { mutableStateOf(false) }
+
     if (callState == CallState.IDLE || callState == CallState.ENDED) {
         return
+    }
+
+    if (showScreenShareDialog) {
+        ScreenShareDialog(
+            callManager = callManager,
+            onDismiss = { showScreenShareDialog = false },
+            onSourceSelected = { source ->
+                callManager.startScreenShare(source.id)
+                showScreenShareDialog = false
+            }
+        )
     }
 
     val isAudioEnabled by callManager.isLocalAudioEnabled.collectAsState()
@@ -169,6 +188,9 @@ fun CallScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // Remote Participant
+                var remoteVolume by remember { mutableStateOf(1.0f) }
+                var showVolumeMenu by remember { mutableStateOf(false) }
+
                 Box(
                     modifier = Modifier
                         .weight(if (isScreenSharing) 0.4f else 1f)
@@ -176,6 +198,29 @@ fun CallScreen(
                         .clip(RoundedCornerShape(16.dp))
                         .background(Color(0xFF1E1F22))
                         .border(2.dp, Color.Transparent, RoundedCornerShape(16.dp))
+                        .pointerInput(Unit) {
+                            detectDragGestures(
+                                onDrag = { _, _ -> },
+                                onDragStart = { },
+                                onDragEnd = { },
+                                onDragCancel = { }
+                            )
+                        }
+                        .pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    if (event.type == androidx.compose.ui.input.pointer.PointerEventType.Press) {
+                                        val isSecondary = event.buttons.isSecondaryPressed
+                                        if (isSecondary) {
+                                            showVolumeMenu = true
+                                        } else {
+                                            showControls = !showControls
+                                        }
+                                    }
+                                }
+                            }
+                        }
                 ) {
                     if (remoteRenderer != null) {
                         VideoRenderer(
@@ -196,6 +241,41 @@ fun CallScreen(
                     }
                     Box(modifier = Modifier.align(Alignment.BottomStart).padding(12.dp).background(Color.Black.copy(alpha=0.6f), RoundedCornerShape(8.dp)).padding(horizontal=12.dp, vertical=6.dp)) {
                         Text(callerName, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    DropdownMenu(
+                        expanded = showVolumeMenu,
+                        onDismissRequest = { showVolumeMenu = false },
+                        modifier = Modifier.background(Color(0xFF1E1F22)).border(1.dp, Color.White.copy(alpha=0.1f), RoundedCornerShape(8.dp))
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp).width(200.dp)) {
+                            Text("User Volume", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.height(12.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    if (remoteVolume > 0) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
+                                    contentDescription = null,
+                                    tint = Color.White.copy(alpha=0.7f),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Slider(
+                                    value = remoteVolume,
+                                    onValueChange = { 
+                                        remoteVolume = it
+                                        callManager.webRtcClient.setRemoteVolume(it)
+                                    },
+                                    valueRange = 0f..1.0f,
+                                    colors = SliderDefaults.colors(
+                                        thumbColor = tokens.Accent,
+                                        activeTrackColor = tokens.Accent,
+                                        inactiveTrackColor = Color.White.copy(alpha=0.1f)
+                                    )
+                                )
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            Text("${(remoteVolume * 100).toInt()}%", color = tokens.Accent, fontSize = 12.sp, modifier = Modifier.align(Alignment.End))
+                        }
                     }
                 }
 
@@ -381,22 +461,42 @@ fun CallScreen(
                         ControlButton(
                             icon = if (isVideoEnabled) OrbitIcons.Video else OrbitIcons.VideoOff,
                             isActive = isVideoEnabled,
-                            activeColor = Color(0xFF313338), // active means unmuted (gray background)
+                            activeColor = Color(0xFF313338), 
                             activeIconColor = Color.White,
-                            inactiveColor = Color.White, // inactive means muted (white background, dark icon)
+                            inactiveColor = Color.White, 
                             inactiveIconColor = Color(0xFF111214),
                             onClick = { callManager.toggleVideo(!isVideoEnabled) }
                         )
 
-                        ControlButton(
-                            icon = if (!isMuted) OrbitIcons.Mic else OrbitIcons.MicOff,
-                            isActive = !isMuted,
-                            activeColor = Color(0xFF313338),
-                            activeIconColor = Color.White,
-                            inactiveColor = Color.White,
-                            inactiveIconColor = Color(0xFF111214),
-                            onClick = { callManager.toggleMute(!isMuted) }
-                        )
+                        Box {
+                            ControlButton(
+                                icon = if (!isMuted) OrbitIcons.Mic else OrbitIcons.MicOff,
+                                isActive = !isMuted,
+                                activeColor = Color(0xFF313338),
+                                activeIconColor = Color.White,
+                                inactiveColor = Color.White,
+                                inactiveIconColor = Color(0xFF111214),
+                                onClick = { callManager.toggleMute(!isMuted) }
+                            )
+                            // Small chevron for audio settings
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .offset(x = 4.dp, y = (-4).dp)
+                                    .size(20.dp)
+                                    .background(Color(0xFF2B2D31), CircleShape)
+                                    .clickable { showAudioDeviceMenu = true },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.KeyboardArrowUp, null, tint = Color.White, modifier = Modifier.size(14.dp))
+                            }
+                            
+                            AudioDeviceMenu(
+                                callManager = callManager,
+                                expanded = showAudioDeviceMenu,
+                                onDismiss = { showAudioDeviceMenu = false }
+                            )
+                        }
 
                         ControlButton(
                             icon = OrbitIcons.ScreenShare,
@@ -409,7 +509,7 @@ fun CallScreen(
                                 if (isScreenSharing) {
                                     callManager.stopScreenShare()
                                 } else {
-                                    callManager.startScreenShare(includeStreamAudio)
+                                    showScreenShareDialog = true
                                 }
                             }
                         )
@@ -424,6 +524,141 @@ fun CallScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun ScreenShareDialog(
+    callManager: CallManager,
+    onDismiss: () -> Unit,
+    onSourceSelected: (webrtc.DesktopSourceModel) -> Unit
+) {
+    var sources by remember { mutableStateOf<List<webrtc.DesktopSourceModel>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(true) }
+    val tokens = rememberCosmicTokens()
+
+    LaunchedEffect(Unit) {
+        sources = callManager.getDesktopSources()
+        isLoading = false
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF313338),
+        title = { Text("Share your screen", color = Color.White) },
+        text = {
+            if (isLoading) {
+                Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = tokens.Accent)
+                }
+            } else {
+                androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+                    columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(2),
+                    modifier = Modifier.heightIn(max = 400.dp),
+                    contentPadding = PaddingValues(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(sources.size) { index ->
+                        val source = sources[index]
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(1.5f)
+                                .clickable { onSourceSelected(source) },
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF2B2D31)),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
+                        ) {
+                            Column(
+                                modifier = Modifier.fillMaxSize().padding(8.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                Icon(
+                                    if (source.isWindow) Icons.Default.Window else Icons.Default.Monitor,
+                                    contentDescription = null,
+                                    tint = tokens.Accent,
+                                    modifier = Modifier.size(32.dp)
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    source.name,
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    maxLines = 2,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = Color.White.copy(alpha = 0.6f))
+            }
+        }
+    )
+}
+
+@Composable
+fun AudioDeviceMenu(
+    callManager: CallManager,
+    expanded: Boolean,
+    onDismiss: () -> Unit
+) {
+    var inputs by remember { mutableStateOf<List<String>>(emptyList()) }
+    var outputs by remember { mutableStateOf<List<String>>(emptyList()) }
+    val tokens = rememberCosmicTokens()
+
+    LaunchedEffect(expanded) {
+        if (expanded) {
+            inputs = callManager.webRtcClient.getAudioInputDevices()
+            outputs = callManager.webRtcClient.getAudioOutputDevices()
+        }
+    }
+
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismiss,
+        modifier = Modifier.background(Color(0xFF1E1F22)).width(240.dp)
+    ) {
+        Text(
+            "INPUT DEVICE",
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            style = MaterialTheme.typography.labelSmall.copy(color = Color.White.copy(alpha = 0.5f), fontWeight = FontWeight.Bold)
+        )
+        inputs.forEach { device ->
+            DropdownMenuItem(
+                text = { Text(device, color = Color.White, fontSize = 13.sp) },
+                onClick = {
+                    callManager.setAudioInputDevice(device)
+                    onDismiss()
+                },
+                trailingIcon = {
+                    // Logic to show checkmark if selected
+                }
+            )
+        }
+        
+        HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
+        
+        Text(
+            "OUTPUT DEVICE",
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            style = MaterialTheme.typography.labelSmall.copy(color = Color.White.copy(alpha = 0.5f), fontWeight = FontWeight.Bold)
+        )
+        outputs.forEach { device ->
+            DropdownMenuItem(
+                text = { Text(device, color = Color.White, fontSize = 13.sp) },
+                onClick = {
+                    callManager.setAudioOutputDevice(device)
+                    onDismiss()
+                }
+            )
         }
     }
 }

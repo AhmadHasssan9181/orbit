@@ -92,6 +92,22 @@ internal fun AccessibilityExtrasPane(settingsManager: SettingsManager) {
         PrefCard("High contrast mode", "Increase contrast between text and backgrounds.") {
             CosmicSwitch(checked = highContrast, onCheckedChange = { settingsManager.setHighContrast(it) })
         }
+        
+        val fontSize by settingsManager.fontSize.collectAsState(50f)
+        PrefCard("Text Size", "Adjust the scaling of all interface text.", vertical = true) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("${(fontSize / 50f * 100).toInt()}%", style = MaterialTheme.typography.labelMedium.copy(color = tokens.Accent, fontWeight = FontWeight.Bold, fontSize = 16.sp))
+                Spacer(Modifier.width(16.dp))
+                Slider(
+                    value = fontSize,
+                    onValueChange = { settingsManager.setFontSize(it) },
+                    valueRange = 30f..100f,
+                    colors = SliderDefaults.colors(thumbColor = tokens.Accent, activeTrackColor = tokens.Accent, inactiveTrackColor = tokens.Text_Muted.copy(alpha = 0.3f)),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+
         val colorblindMode by settingsManager.colorblindMode.collectAsState("None")
         PrefCard("Colorblind mode", "Adjust colors for different types of color vision deficiency.") {
             ChipGroup(
@@ -260,7 +276,7 @@ internal fun VoiceVideoFullPane(settingsManager: SettingsManager) {
             CosmicSwitch(checked = autoGainControl, onCheckedChange = { settingsManager.setAutoGainControl(it) })
         }
         val attenuation by settingsManager.attenuation.collectAsState(0f)
-        PrefCard("Attenuation", "Lower the volume of other applications when someone speaks.") {
+        PrefCard("Ducking Strength", "Lower the volume of other applications when someone speaks.") {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("${attenuation.toInt()}%", style = MaterialTheme.typography.labelMedium.copy(color = tokens.Accent, fontWeight = FontWeight.Bold))
                 Spacer(Modifier.width(8.dp))

@@ -18,11 +18,11 @@ public:
         RestoreVolumes();
     }
 
-    void SetSpeaking(bool is_speaking) {
+    void SetSpeaking(bool is_speaking, float strength) {
         if (is_speaking == is_ducked_.load()) return;
         is_ducked_.store(is_speaking);
         
-        std::thread([this, is_speaking]() {
+        std::thread([this, is_speaking, strength]() {
             CoInitializeEx(NULL, COINIT_MULTITHREADED);
             std::lock_guard<std::mutex> lock(mutex_);
             
@@ -32,9 +32,9 @@ public:
             }
             
             if (is_speaking) {
-                DuckVolumes();
+                DuckVolumes(strength);
             } else {
-                RestoreVolumes();
+                RestoreVolumes(strength);
             }
             CoUninitialize();
         }).detach();
@@ -50,7 +50,7 @@ private:
     };
     std::vector<DuckedSession> ducked_sessions_;
 
-    void DuckVolumes() {
+    void DuckVolumes(float strength) {
         if (!ducked_sessions_.empty()) return;
 
         IMMDeviceEnumerator* deviceEnumerator = NULL;
@@ -83,7 +83,6 @@ private:
                                         volumeControl->GetMasterVolume(&currentVolume);
                                         
                                         ducked_sessions_.push_back({volumeControl, currentVolume});
-                                        volumeControl->SetMasterVolume(currentVolume * 0.2f, NULL);
                                     }
                                 }
                                 sessionControl2->Release();
@@ -92,6 +91,15 @@ private:
                         }
                     }
                     sessionEnumerator->Release();
+                    
+                    // Fade out volumes smoothly
+                    for (int step = 1; step <= 10; ++step) {
+                        float factor = 1.0f - (strength * (step / 10.0f));
+                        for (auto& session : ducked_sessions_) {
+                            session.volumeControl->SetMasterVolume(session.originalVolume * factor, NULL);
+                        }
+                        std::this_thread::sleep_for(std::chrono::milliseconds(15));
+                    }
                 }
                 sessionManager->Release();
             }
@@ -100,7 +108,19 @@ private:
         deviceEnumerator->Release();
     }
 
-    void RestoreVolumes() {
+    void RestoreVolumes(float strength) {
+        if (ducked_sessions_.empty()) return;
+        
+        // Fade in volumes smoothly
+        float min_factor = 1.0f - strength;
+        for (int step = 1; step <= 10; ++step) {
+            float factor = min_factor + (strength * (step / 10.0f));
+            for (auto& session : ducked_sessions_) {
+                session.volumeControl->SetMasterVolume(session.originalVolume * factor, NULL);
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(15));
+        }
+        
         for (auto& session : ducked_sessions_) {
             session.volumeControl->SetMasterVolume(session.originalVolume, NULL);
             session.volumeControl->Release();
@@ -169,6 +189,14 @@ void OrbitAudioDeviceModule::SetOrbitZeroEnabled(bool enabled) {
 
 bool OrbitAudioDeviceModule::IsOrbitZeroEnabled() const { return orbit_zero_enabled_.load(); }
 
+void OrbitAudioDeviceModule::SetAttenuationStrength(float strength) {
+    attenuation_strength_.store(strength);
+}
+
+float OrbitAudioDeviceModule::GetAttenuationStrength() const {
+    return attenuation_strength_.load();
+}
+
 void OrbitAudioDeviceModule::AddRef() const {
     ref_count_.fetch_add(1, std::memory_order_relaxed);
 }
@@ -212,13 +240,13 @@ int32_t OrbitAudioDeviceModule::RecordedDataIsAvailable(
     // Threshold is arbitrary, approx -40dBFS for 16-bit PCM is 327.6
     if (rms > 500.0) {
         ducking_holdover_frames_.store(50); // 50 frames * 10ms = 500ms holdover
-        if (audio_ducker_) audio_ducker_->SetSpeaking(true);
+        if (audio_ducker_) audio_ducker_->SetSpeaking(true, attenuation_strength_.load());
     } else {
         int holdover = ducking_holdover_frames_.load();
         if (holdover > 0) {
             ducking_holdover_frames_.store(holdover - 1);
         } else {
-            if (audio_ducker_) audio_ducker_->SetSpeaking(false);
+            if (audio_ducker_) audio_ducker_->SetSpeaking(false, attenuation_strength_.load());
         }
     }
 

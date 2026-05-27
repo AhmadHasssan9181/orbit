@@ -31,10 +31,20 @@ interface WebRtcClient {
     fun switchCamera()
     fun setStreamAudioEnabled(enabled: Boolean)
     fun setOrbitZeroEnabled(enabled: Boolean)
+    fun setAttenuationStrength(strength: Float)
+    fun setRemoteVolume(volume: Float)
+    
+    fun setAudioInputDevice(deviceName: String)
+    fun setAudioOutputDevice(deviceName: String)
+    fun setVideoCaptureDevice(deviceName: String)
+    
+    fun getDesktopSources(): List<DesktopSourceModel>
     
     fun getAudioInputDevices(): List<String>
     fun getAudioOutputDevices(): List<String>
     fun getVideoCaptureDevices(): List<String>
 }
+
+data class DesktopSourceModel(val id: String, val name: String, val isWindow: Boolean)
 
 expect fun createWebRtcClient(): WebRtcClient
