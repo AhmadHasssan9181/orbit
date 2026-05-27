@@ -75,3 +75,15 @@ extern "C" JNIEXPORT void JNICALL Java_webrtc_OrbitAudioDeviceModule_setOrbitZer
 	}
 #endif
 }
+
+extern "C" JNIEXPORT void JNICALL Java_webrtc_OrbitAudioDeviceModule_setAttenuationStrength
+(JNIEnv * env, jobject caller, jfloat strength)
+{
+#ifdef _WIN32
+	auto * audioModule = GetHandle<orbit::OrbitAudioDeviceModule>(env, caller);
+	if (audioModule) {
+		audioModule->SetAttenuationStrength(strength);
+	}
+#endif
+}
+

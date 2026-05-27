@@ -6,9 +6,10 @@ import de.connect2x.trixnity.client.MatrixClient
 import de.connect2x.trixnity.client.MediaStoreModule
 import de.connect2x.trixnity.client.RepositoriesModule
 import de.connect2x.trixnity.client.create
+import de.connect2x.trixnity.client.media
+import de.connect2x.trixnity.client.room
 import de.connect2x.trixnity.client.cryptodriver.vodozemac.vodozemac
 import de.connect2x.trixnity.client.media.okio.okio
-import de.connect2x.trixnity.client.room
 import de.connect2x.trixnity.client.room.message.roomMessageBuilder
 import de.connect2x.trixnity.client.room.message.text
 import de.connect2x.trixnity.client.store.Room
@@ -862,14 +863,14 @@ class MatrixOrbitRepository(
     override suspend fun uploadMedia(bytes: ByteArray, mimeType: String, filename: String): Result<String> {
         return try {
             val trixnity = trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
-            val media = Media(
-                content = ByteReadChannel(bytes),
-                contentLength = bytes.size.toLong(),
-                contentType = ContentType.parse(mimeType),
-                contentDisposition = null
+
+            // In Trixnity, media uploading through the high-level API expects "upload://" URIs
+            // created via prepareUploadMedia. This ensures the Outbox handles everything correctly.
+            val cacheUri = trixnity.media.prepareUploadMedia(
+                kotlinx.coroutines.flow.flow { emit(bytes) },
+                ContentType.parse(mimeType)
             )
-            val mxcUrl = trixnity.api.media.upload(media).getOrThrow()
-            Result.success(mxcUrl.toString())
+            Result.success(cacheUri)
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -881,11 +882,12 @@ class MatrixOrbitRepository(
     ): Result<String> {
         return try {
             val trixnity = trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
+
             val txnId = trixnity.room.sendMessage(RoomId(channelId)) {
                 roomMessageBuilder(filename, null, null) {
                     FileBased.Image(
                         body = filename,
-                        url = mxcUrl,
+                        url = mxcUrl, // This will be "upload://" from uploadMedia
                         info = ImageInfo(
                             mimeType = mimeType,
                             width = width,
@@ -895,31 +897,6 @@ class MatrixOrbitRepository(
                     )
                 }
             }
-
-            // Manually emit a local echo
-            val orbitMessage = OrbitMessage(
-                id = txnId,
-                userId = trixnity.userId.full,
-                username = trixnity.userId.full,
-                body = filename,
-                timestamp = Instant.fromEpochMilliseconds(0), // Fallback fix
-                channelId = channelId,
-                content = MessageContent.Image(
-                    url = convertMxcUrl(mxcUrl),
-                    body = filename,
-                    mimeType = mimeType,
-                    size = size,
-                    width = width,
-                    height = height
-                ),
-                transactionId = txnId
-            )
-            synchronized(liveMessageStates) {
-                val state = liveMessageStates.getOrPut(channelId) { LiveMessageState(MutableSharedFlow(replay = 1, extraBufferCapacity = 64, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)) }
-                state.messages.add(orbitMessage)
-                state.flow.tryEmit(listOf(orbitMessage))
-            }
-
             Result.success(txnId)
         } catch (e: Exception) {
             Result.failure(e)
@@ -943,29 +920,6 @@ class MatrixOrbitRepository(
                     )
                 }
             }
-
-            // Manually emit a local echo
-            val orbitMessage = OrbitMessage(
-                id = txnId,
-                userId = trixnity.userId.full,
-                username = trixnity.userId.full,
-                body = filename,
-                timestamp = Instant.fromEpochMilliseconds(0), // Fallback fix
-                channelId = channelId,
-                content = MessageContent.File(
-                    url = convertMxcUrl(mxcUrl),
-                    filename = filename,
-                    mimeType = mimeType,
-                    size = size
-                ),
-                transactionId = txnId
-            )
-            synchronized(liveMessageStates) {
-                val state = liveMessageStates.getOrPut(channelId) { LiveMessageState(MutableSharedFlow(replay = 1, extraBufferCapacity = 64, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)) }
-                state.messages.add(orbitMessage)
-                state.flow.tryEmit(listOf(orbitMessage))
-            }
-
             Result.success(txnId)
         } catch (e: Exception) {
             Result.failure(e)
@@ -991,30 +945,6 @@ class MatrixOrbitRepository(
                     )
                 }
             }
-
-            // Manually emit a local echo
-            val orbitMessage = OrbitMessage(
-                id = txnId,
-                userId = trixnity.userId.full,
-                username = trixnity.userId.full,
-                body = filename,
-                timestamp = Instant.fromEpochMilliseconds(0), // Fallback fix
-                channelId = channelId,
-                content = MessageContent.Audio(
-                    url = convertMxcUrl(mxcUrl),
-                    body = filename,
-                    mimeType = mimeType,
-                    size = size,
-                    durationMs = durationMs
-                ),
-                transactionId = txnId
-            )
-            synchronized(liveMessageStates) {
-                val state = liveMessageStates.getOrPut(channelId) { LiveMessageState(MutableSharedFlow(replay = 1, extraBufferCapacity = 64, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)) }
-                state.messages.add(orbitMessage)
-                state.flow.tryEmit(listOf(orbitMessage))
-            }
-
             Result.success(txnId)
         } catch (e: Exception) {
             Result.failure(e)
@@ -1084,15 +1014,11 @@ class MatrixOrbitRepository(
     override suspend fun uploadAvatar(imageBytes: ByteArray): Result<String> {
         return try {
             val trixnity = trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
-            val media = Media(
-                content = ByteReadChannel(imageBytes),
-                contentLength = imageBytes.size.toLong(),
-                contentType = ContentType.Image.PNG,
-                contentDisposition = null
-            )
-            val mxcUrl = trixnity.api.media.upload(media).getOrThrow()
-            trixnity.setProfileField(ProfileField.AvatarUrl(mxcUrl.toString())).getOrThrow()
-            Result.success(mxcUrl.toString())
+            val mxcUrl = trixnity.media.uploadMedia(
+                trixnity.media.prepareUploadMedia(flowOf(imageBytes), ContentType.Image.PNG)
+            ).getOrThrow()
+            trixnity.setProfileField(ProfileField.AvatarUrl(mxcUrl)).getOrThrow()
+            Result.success(mxcUrl)
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -1448,7 +1374,7 @@ class MatrixOrbitRepository(
                                             val candidates = realContent["candidates"]?.jsonArray 
                                                 ?: realContent["candidate"]?.jsonObject?.let { buildJsonArray { add(it) } }
                                                 ?: JsonArray(emptyList())
-                                            
+
                                             println("DEBUG: [Sync] Fallback Call Candidates received for $callId (${candidates.size})")
                                             candidates.forEach { cand ->
                                                 val sdp = cand.jsonObject["candidate"]?.jsonPrimitive?.content 
@@ -1456,7 +1382,7 @@ class MatrixOrbitRepository(
                                                     ?: ""
                                                 val sdpMid = cand.jsonObject["sdpMid"]?.jsonPrimitive?.content ?: ""
                                                 val sdpMLineIndex = cand.jsonObject["sdpMLineIndex"]?.jsonPrimitive?.intOrNull ?: 0
-                                                
+
                                                 if (sdp.isNotBlank()) {
                                                     _callEvents.emit(CallEvent.Candidate(roomId, callId, sdp, sdpMid, sdpMLineIndex, sender, partyId))
                                                 }
@@ -1540,17 +1466,30 @@ class MatrixOrbitRepository(
     }
 
     private fun convertMxcUrl(mxcUrl: String): String {
-        if (!mxcUrl.startsWith("mxc://")) return mxcUrl
-        val parts = mxcUrl.removePrefix("mxc://").split("/")
-        if (parts.size != 2) return mxcUrl
-        return "${homeserverUrl.trimEnd('/')}/_matrix/media/v3/download/${parts[0]}/${parts[1]}"
-    }
+        if (mxcUrl.isBlank()) return ""
+        if (mxcUrl.startsWith("upload://")) return mxcUrl
 
+        val pathParts = if (mxcUrl.startsWith("mxc://")) {
+            mxcUrl.removePrefix("mxc://").split("/")
+        } else if (mxcUrl.contains("/_matrix/media/v3/download/")) {
+            mxcUrl.substringAfter("/_matrix/media/v3/download/").split("?").first().split("/")
+        } else if (mxcUrl.contains("/_matrix/client/v1/media/download/")) {
+            mxcUrl.substringAfter("/_matrix/client/v1/media/download/").split("?").first().split("/")
+        } else {
+            return mxcUrl
+        }
+
+        if (pathParts.size != 2) return mxcUrl
+
+        val hs = if (homeserverUrl.startsWith("http")) homeserverUrl.trimEnd('/') else "https://${homeserverUrl.trimEnd('/')}"
+        val finalUrl = "$hs/_matrix/client/v1/media/download/${pathParts[0]}/${pathParts[1]}"
+        println("DEBUG: [Repo] Converted $mxcUrl -> $finalUrl")
+        return finalUrl
+    }
     private fun extractRoomFromEventId(eventId: String): String {
         val parts = eventId.split(":")
         return parts.first().removePrefix("!")
     }
-
     private suspend fun timelineEventToOrbitMessage(timelineEvent: TimelineEvent): OrbitMessage? {
         val contentResult = timelineEvent.content
         val event = timelineEvent.event as? RoomEvent<*> ?: return null

@@ -31,6 +31,14 @@ extern "C" {
 	JNIEXPORT void JNICALL Java_dev_onvoid_webrtc_media_audio_AudioTrack_removeSinkInternal
 	(JNIEnv *, jobject, jlong);
 
+	/*
+	 * Class:     dev_onvoid_webrtc_media_audio_AudioTrack
+	 * Method:    setVolume
+	 * Signature: (D)V
+	 */
+	JNIEXPORT void JNICALL Java_dev_onvoid_webrtc_media_audio_AudioTrack_setVolume
+	(JNIEnv *, jobject, jdouble);
+
 #ifdef __cplusplus
 }
 #endif

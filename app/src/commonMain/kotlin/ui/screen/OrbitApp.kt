@@ -90,9 +90,35 @@ import webrtc.CallManager
 import webrtc.LocalCallManager
 import webrtc.createWebRtcClient
 
+import coil3.ImageLoader
+import coil3.compose.setSingletonImageLoaderFactory
+import coil3.network.ktor3.KtorNetworkFetcherFactory
+import coil3.request.crossfade
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.cio.CIO
+import io.ktor.client.request.header
+
 // ─── Cosmic Design Tokens ──────────────────────────────────────
 private val App_Bg: Color @Composable get() = rememberCosmicTokens().Bg
 private val Accent: Color @Composable get() = rememberCosmicTokens().Accent
+
+private val coilHttpClient = HttpClient(CIO) {
+    install(io.ktor.client.plugins.logging.Logging) {
+        logger = object : io.ktor.client.plugins.logging.Logger {
+            override fun log(message: String) {
+                println("DEBUG: [Coil-Ktor] $message")
+            }
+        }
+        level = io.ktor.client.plugins.logging.LogLevel.ALL
+    }
+}.apply {
+    // Dynamic header injection interceptor
+    requestPipeline.intercept(io.ktor.client.request.HttpRequestPipeline.Before) {
+        repository.CredentialManager.accessToken?.let { token ->
+            context.header("Authorization", "Bearer $token")
+        }
+    }
+}
 
 /**
  * OrbitApp — Root composable.
@@ -127,6 +153,15 @@ fun OrbitApp(
     val use24HourClock by settingsManager.use24HourClock.collectAsState(false)
     val dateFormat by settingsManager.dateFormat.collectAsState("DD/MM/YYYY")
     val scope = rememberCoroutineScope()
+
+    setSingletonImageLoaderFactory { context ->
+        ImageLoader.Builder(context)
+            .components {
+                add(KtorNetworkFetcherFactory(httpClient = coilHttpClient))
+            }
+            .crossfade(true)
+            .build()
+    }
 
     CompositionLocalProvider(
         LocalIsLiteMode provides isLiteMode,
@@ -247,8 +282,25 @@ private fun MainAppContent(
     val callManager = remember { CallManager(webRtcClient, scope) }
     
     val orbitZeroEnabled by settingsManager.orbitZeroAiNoiseSuppression.collectAsState(true)
+    val attenuation by settingsManager.attenuation.collectAsState(0f)
+    val inputDevice by settingsManager.inputDevice.collectAsState("Default")
+    val outputDevice by settingsManager.outputDevice.collectAsState("Default")
+    val cameraDevice by settingsManager.cameraDevice.collectAsState("Default")
+
     LaunchedEffect(orbitZeroEnabled) {
         webRtcClient.setOrbitZeroEnabled(orbitZeroEnabled)
+    }
+    LaunchedEffect(attenuation) {
+        webRtcClient.setAttenuationStrength(attenuation / 100f)
+    }
+    LaunchedEffect(inputDevice) {
+        callManager.setAudioInputDevice(inputDevice)
+    }
+    LaunchedEffect(outputDevice) {
+        callManager.setAudioOutputDevice(outputDevice)
+    }
+    LaunchedEffect(cameraDevice) {
+        callManager.setVideoCaptureDevice(cameraDevice)
     }
 
     LaunchedEffect(callManager, repository) {

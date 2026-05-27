@@ -28,6 +28,9 @@ public:
     void SetOrbitZeroEnabled(bool enabled);
     bool IsOrbitZeroEnabled() const;
 
+    void SetAttenuationStrength(float strength);
+    float GetAttenuationStrength() const;
+
     // --- webrtc::RefCountInterface Required Implementation ---
     void AddRef() const override;
     webrtc::RefCountReleaseStatus Release() const override;
@@ -164,6 +167,7 @@ private:
     // Custom Audio Ducking
     AudioDucker* audio_ducker_ = nullptr;
     std::atomic<int> ducking_holdover_frames_{0};
+    std::atomic<float> attenuation_strength_{0.8f};
 };
 
 } // namespace orbit

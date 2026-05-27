@@ -85,6 +85,13 @@ public class AudioTrack extends MediaStreamTrack {
 	 */
 	public native int getSignalLevel();
 
+	/**
+	 * Sets the volume for the audio track.
+	 *
+	 * @param volume The volume (0.0 to 10.0).
+	 */
+	public native void setVolume(double volume);
+
 	private native long addSinkInternal(AudioTrackSink sink);
 
 	private native void removeSinkInternal(long sinkHandle);

@@ -67,6 +67,11 @@ class JvmWebRtcClient : WebRtcClient {
     private var remoteVideoTrack: VideoTrack? = null
     private var remoteAudioTrack: AudioTrack? = null
     private var screenSource: VideoDesktopSource? = null
+    private var screenVideoTrack: VideoTrack? = null
+
+    private var selectedAudioInput: String = "Default"
+    private var selectedAudioOutput: String = "Default"
+    private var selectedCamera: String = "Default"
 
     private var localRenderer: DesktopVideoRenderer? = DesktopVideoRenderer(mirror = true)
     private var remoteRenderer: DesktopVideoRenderer? = DesktopVideoRenderer()
@@ -78,6 +83,8 @@ class JvmWebRtcClient : WebRtcClient {
             if (factory == null) {
                 factory = createFactory()
             }
+
+            applyAudioDevices()
 
             val rtcIceServers = iceServers.map { server ->
                 RTCIceServer().apply {
@@ -140,6 +147,24 @@ class JvmWebRtcClient : WebRtcClient {
         }
     }
 
+    private fun applyAudioDevices() {
+        val adm = audioDeviceModule ?: return
+        
+        if (selectedAudioInput != "Default") {
+            val devices = MediaDevices.getAudioCaptureDevices()
+            devices.find { it.getName() == selectedAudioInput }?.let {
+                runCatching { adm.setRecordingDevice(it) }
+            }
+        }
+        
+        if (selectedAudioOutput != "Default") {
+            val devices = MediaDevices.getAudioRenderDevices()
+            devices.find { it.getName() == selectedAudioOutput }?.let {
+                runCatching { adm.setPlayoutDevice(it) }
+            }
+        }
+    }
+
     override fun startLocalMedia(isVideoEnabled: Boolean) {
         try {
             val pConn = peerConnection ?: return
@@ -171,7 +196,7 @@ class JvmWebRtcClient : WebRtcClient {
             val devices = MediaDevices.getVideoCaptureDevices()
             if (devices.isEmpty()) return
 
-            val device = devices.first()
+            val device = devices.find { it.name == selectedCamera } ?: devices.first()
             val capabilities = MediaDevices.getVideoCaptureCapabilities(device)
             val capability = chooseVideoCapability(capabilities)
 
@@ -200,15 +225,23 @@ class JvmWebRtcClient : WebRtcClient {
             val videoTrack = f.createVideoTrack("videoTrack", videoSource)
             localVideoSource = videoSource
             cameraVideoTrack = videoTrack
-            localVideoTrack = videoTrack
-            localRenderer?.isScreenShare = false
-            (localRenderer as? VideoTrackSink)?.let { sink ->
-                videoTrack.addSink(sink)
+            
+            // If we are screen sharing, don't set this as localVideoTrack yet
+            if (screenVideoTrack == null) {
+                localVideoTrack = videoTrack
+                localRenderer?.isScreenShare = false
+                (localRenderer as? VideoTrackSink)?.let { sink ->
+                    videoTrack.addSink(sink)
+                }
+                if (localVideoSender != null) {
+                    localVideoSender?.replaceTrack(videoTrack)
+                } else {
+                    localVideoSender = pConn.addTrack(videoTrack, listOf("mediaStream"))
+                }
             }
-            localVideoSender = pConn.addTrack(videoTrack, listOf("mediaStream"))
         }
 
-        localVideoTrack?.setEnabled(true)
+        cameraVideoTrack?.setEnabled(true)
         if (!isVideoCaptureRunning && localVideoSource != null) {
             runCatching {
                 localVideoSource?.start()
@@ -274,7 +307,7 @@ class JvmWebRtcClient : WebRtcClient {
     }
 
     private fun stopVideoCapture(disposeTrack: Boolean) {
-        localVideoTrack?.setEnabled(false)
+        cameraVideoTrack?.setEnabled(false)
 
         if (isVideoCaptureRunning) {
             runCatching { localVideoSource?.stop() }
@@ -282,16 +315,24 @@ class JvmWebRtcClient : WebRtcClient {
         }
 
         if (disposeTrack) {
-            localVideoSender?.let { sender ->
-                runCatching { peerConnection?.removeTrack(sender) }
+            // Only remove from sender if screen share is NOT active
+            if (screenVideoTrack == null) {
+                localVideoSender?.let { sender ->
+                    runCatching { peerConnection?.removeTrack(sender) }
+                }
+                localVideoSender = null
             }
-            localVideoSender = null
+            
             (localRenderer as? VideoTrackSink)?.let { sink ->
-                runCatching { localVideoTrack?.removeSink(sink) }
+                runCatching { cameraVideoTrack?.removeSink(sink) }
             }
             runCatching { cameraVideoTrack?.dispose() }
             cameraVideoTrack = null
-            localVideoTrack = null
+            
+            if (screenVideoTrack == null) {
+                localVideoTrack = null
+            }
+            
             runCatching { localVideoSource?.dispose() }
             localVideoSource = null
         }
@@ -299,6 +340,7 @@ class JvmWebRtcClient : WebRtcClient {
 
     override fun stopLocalMedia() {
         stopVideoCapture(disposeTrack = true)
+        stopScreenShare()
 
         localAudioSender?.let { sender ->
             runCatching { peerConnection?.removeTrack(sender) }
@@ -310,22 +352,26 @@ class JvmWebRtcClient : WebRtcClient {
     }
 
     override fun startScreenShare(data: Any?) {
-        val includeAudio = data as? Boolean ?: false
+        val sourceId = data as? String
         try {
             val pConn = peerConnection ?: return
             val f = factory ?: return
 
-            // Stop camera if running
-            stopVideoCapture(disposeTrack = false)
-            
             val screenCapturer = ScreenCapturer()
             val sources = screenCapturer.desktopSources
-            if (sources.isNotEmpty()) {
+            val source = if (sourceId != null) sources.find { it.id.toString() == sourceId } else sources.firstOrNull()
+            
+            if (source != null) {
+                // If already screen sharing, stop old one
+                if (screenVideoTrack != null) {
+                    stopScreenShare()
+                }
+
                 screenSource = VideoDesktopSource()
-                screenSource?.setSourceId(sources[0].id, false)
+                screenSource?.setSourceId(source.id, source.title.contains("Window"))
                 screenSource?.start()
                 
-                val screenTrack = f.createVideoTrack("screenTrack", screenSource)
+                val screenTrack = f.createVideoTrack("screenTrack_${System.currentTimeMillis()}", screenSource)
                 screenTrack.setEnabled(true)
                 
                 if (localVideoSender != null) {
@@ -334,12 +380,14 @@ class JvmWebRtcClient : WebRtcClient {
                     localVideoSender = pConn.addTrack(screenTrack, listOf("mediaStream"))
                 }
                 
+                screenVideoTrack = screenTrack
                 localVideoTrack = screenTrack
+                localRenderer?.isScreenShare = true
+                (localRenderer as? VideoTrackSink)?.let { sink ->
+                    screenTrack.addSink(sink)
+                }
+                
                 _isScreenSharing.tryEmit(true)
-
-                  if (includeAudio) {
-                      runCatching { audioDeviceModule?.setSystemAudioShareEnabled(true) }
-                  }
             }
             screenCapturer.dispose()
         } catch (e: Exception) {
@@ -349,15 +397,33 @@ class JvmWebRtcClient : WebRtcClient {
 
     override fun stopScreenShare() {
         try {
+            val pConn = peerConnection ?: return
+            
+            (localRenderer as? VideoTrackSink)?.let { sink ->
+                runCatching { screenVideoTrack?.removeSink(sink) }
+            }
+            
             screenSource?.stop()
             screenSource?.dispose()
             screenSource = null
             
+            runCatching { screenVideoTrack?.dispose() }
+            screenVideoTrack = null
+            
             // Resume camera if it was enabled
             if (cameraVideoTrack != null) {
-                startVideoCapture()
                 localVideoSender?.replaceTrack(cameraVideoTrack)
                 localVideoTrack = cameraVideoTrack
+                localRenderer?.isScreenShare = false
+                (localRenderer as? VideoTrackSink)?.let { sink ->
+                    cameraVideoTrack?.addSink(sink)
+                }
+            } else {
+                localVideoSender?.let { sender ->
+                    runCatching { pConn.removeTrack(sender) }
+                }
+                localVideoSender = null
+                localVideoTrack = null
             }
             
             // Stop sharing system audio
@@ -374,12 +440,22 @@ class JvmWebRtcClient : WebRtcClient {
     }
 
     override fun toggleVideo(isVideoEnabled: Boolean) {
-        if (localVideoTrack == null && isVideoEnabled) {
-            startLocalMedia(true)
+        if (cameraVideoTrack == null && isVideoEnabled) {
+            startVideoCapture()
+            // If screen share is active, startVideoCapture won't swap it in. 
+            // We should only swap if screen share is NOT active.
+            if (screenVideoTrack == null && cameraVideoTrack != null) {
+                localVideoSender?.replaceTrack(cameraVideoTrack)
+                localVideoTrack = cameraVideoTrack
+            }
             return
         }
         if (isVideoEnabled) {
             startVideoCapture()
+            if (screenVideoTrack == null) {
+                localVideoSender?.replaceTrack(cameraVideoTrack)
+                localVideoTrack = cameraVideoTrack
+            }
         } else {
             stopVideoCapture(disposeTrack = false)
         }
@@ -453,7 +529,9 @@ class JvmWebRtcClient : WebRtcClient {
             peerConnection = null
             screenSource?.stop()
             screenSource = null
+            screenVideoTrack = null
             localVideoTrack = null
+            cameraVideoTrack = null
             localAudioTrack = null
             remoteVideoTrack = null
             remoteAudioTrack = null
@@ -473,6 +551,49 @@ class JvmWebRtcClient : WebRtcClient {
     
     override fun setOrbitZeroEnabled(enabled: Boolean) {
         audioDeviceModule?.setOrbitZeroEnabled(enabled)
+    }
+
+    override fun setAttenuationStrength(strength: Float) {
+        audioDeviceModule?.setAttenuationStrength(strength)
+    }
+
+    override fun setRemoteVolume(volume: Float) {
+        remoteAudioTrack?.setVolume(volume.toDouble())
+    }
+
+    override fun setAudioInputDevice(deviceName: String) {
+        selectedAudioInput = deviceName
+        applyAudioDevices()
+    }
+
+    override fun setAudioOutputDevice(deviceName: String) {
+        selectedAudioOutput = deviceName
+        applyAudioDevices()
+    }
+
+    override fun setVideoCaptureDevice(deviceName: String) {
+        selectedCamera = deviceName
+        // If camera is already running, we need to restart it
+        if (cameraVideoTrack != null) {
+            stopVideoCapture(disposeTrack = true)
+            startVideoCapture()
+        }
+    }
+
+    override fun getDesktopSources(): List<DesktopSourceModel> {
+        val screenCapturer = ScreenCapturer()
+        val sources = screenCapturer.desktopSources.map { 
+            DesktopSourceModel(it.id.toString(), it.title, it.title.contains("Window")) 
+        }
+        screenCapturer.dispose()
+        
+        val windowCapturer = dev.onvoid.webrtc.media.video.desktop.WindowCapturer()
+        val windowSources = windowCapturer.desktopSources.map {
+            DesktopSourceModel(it.id.toString(), it.title, true)
+        }
+        windowCapturer.dispose()
+        
+        return sources + windowSources
     }
 
     private fun recreateLocalAudioTrack(enabled: Boolean) {
@@ -512,19 +633,19 @@ class JvmWebRtcClient : WebRtcClient {
     }
     override fun getAudioInputDevices(): List<String> {
         return runCatching {
-            dev.onvoid.webrtc.media.MediaDevices.getAudioCaptureDevices().map { it.name }
+            dev.onvoid.webrtc.media.MediaDevices.getAudioCaptureDevices().map { it.getName() }
         }.getOrDefault(listOf("Default"))
     }
 
     override fun getAudioOutputDevices(): List<String> {
         return runCatching {
-            dev.onvoid.webrtc.media.MediaDevices.getAudioRenderDevices().map { it.name }
+            dev.onvoid.webrtc.media.MediaDevices.getAudioRenderDevices().map { it.getName() }
         }.getOrDefault(listOf("Default"))
     }
 
     override fun getVideoCaptureDevices(): List<String> {
         return runCatching {
-            dev.onvoid.webrtc.media.MediaDevices.getVideoCaptureDevices().map { it.name }
+            dev.onvoid.webrtc.media.MediaDevices.getVideoCaptureDevices().map { it.getName() }
         }.getOrDefault(listOf("Default"))
     }
 }
