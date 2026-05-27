@@ -115,6 +115,7 @@ OrbitAudioDeviceModule::OrbitAudioDeviceModule(webrtc::scoped_refptr<webrtc::Aud
     audio_ducker_ = new AudioDucker();
 
     // Disable Windows Communications Ducking
+    CoInitializeEx(NULL, COINIT_MULTITHREADED);
     IMMDeviceEnumerator* deviceEnumerator = NULL;
     IMMDevice* defaultDevice = NULL;
     IAudioSessionManager2* sessionManager = NULL;
@@ -137,6 +138,7 @@ OrbitAudioDeviceModule::OrbitAudioDeviceModule(webrtc::scoped_refptr<webrtc::Aud
         }
         deviceEnumerator->Release();
     }
+    CoUninitialize();
 }
 
 OrbitAudioDeviceModule::~OrbitAudioDeviceModule() {

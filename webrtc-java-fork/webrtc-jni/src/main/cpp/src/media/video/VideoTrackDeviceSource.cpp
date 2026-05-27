@@ -19,7 +19,7 @@
 
 #include "api/video/i420_buffer.h"
 #include "modules/video_capture/video_capture_factory.h"
-#include "third_party/libyuv/include/libyuv.h"
+#include "libyuv.h"
 #include "rtc_base/logging.h"
 #include <opencv2/dnn.hpp>
 #include <opencv2/imgproc.hpp>

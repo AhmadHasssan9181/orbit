@@ -89,6 +89,9 @@ kotlin {
                 implementation(project(":webrtc-java-lib"))
                 implementation("net.java.dev.jna:jna:5.14.0")
                 implementation("net.java.dev.jna:jna-platform:5.14.0")
+                
+                // VLCJ for Native Video Playback
+                implementation("uk.co.caprica:vlcj:4.8.2")
                 // Keep native dependencies if needed, or remove them if the DLL is loaded from resources
                 // implementation("dev.onvoid.webrtc:webrtc-java:0.14.0:windows-x86_64")
                 // implementation("dev.onvoid.webrtc:webrtc-java:0.14.0:linux-x86_64")

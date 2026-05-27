@@ -625,8 +625,8 @@ private fun MainAppContent(
                 )
             }
 
-            val activeCallServer = servers.find { it.id == callManager.activeRoomId }
-            val callerName = activeCallServer?.name ?: "Friend"
+            val activeCallChannel = channels.find { it.id == callManager.activeRoomId }
+            val callerName = activeCallChannel?.name ?: "Friend"
 
             CallScreen(
                 callManager = callManager,

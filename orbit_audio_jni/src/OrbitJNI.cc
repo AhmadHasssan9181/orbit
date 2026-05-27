@@ -3,6 +3,9 @@
 #include "OrbitVideoProcessor.h"
 #include "api/scoped_refptr.h"
 #include "rtc_base/ref_counted_object.h"
+#include <comdef.h>
+#include <audiopolicy.h>
+#include <mmdeviceapi.h>
 
 extern "C" {
 
@@ -81,6 +84,37 @@ Java_webrtc_OrbitAudioEngine_setSystemAudioShareEnabled(JNIEnv* env, jobject /* 
             custom_adm->SetSystemAudioShareEnabled(enabled);
         }
     }
+}
+
+JNIEXPORT void JNICALL
+Java_webrtc_OrbitAudioEngine_disableWindowsDucking(JNIEnv* env, jobject /* this */) {
+    CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    IMMDeviceEnumerator* deviceEnumerator = NULL;
+    IMMDevice* defaultDevice = NULL;
+    IAudioSessionManager2* sessionManager = NULL;
+    IAudioSessionControl* sessionControl = NULL;
+    IAudioSessionControl2* sessionControl2 = NULL;
+
+    if (SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator), NULL, CLSCTX_INPROC_SERVER, 
+        __uuidof(IMMDeviceEnumerator), (void**)&deviceEnumerator))) {
+        if (SUCCEEDED(deviceEnumerator->GetDefaultAudioEndpoint(eRender, eCommunications, &defaultDevice))) {
+            if (SUCCEEDED(defaultDevice->Activate(__uuidof(IAudioSessionManager2), CLSCTX_INPROC_SERVER, NULL, 
+                (void**)&sessionManager))) {
+                if (SUCCEEDED(sessionManager->GetAudioSessionControl(NULL, 0, &sessionControl))) {
+                    if (SUCCEEDED(sessionControl->QueryInterface(__uuidof(IAudioSessionControl2), 
+                        (void**)&sessionControl2))) {
+                        sessionControl2->SetDuckingPreference(TRUE); // TRUE means opt out of ducking
+                        sessionControl2->Release();
+                    }
+                    sessionControl->Release();
+                }
+                sessionManager->Release();
+            }
+            defaultDevice->Release();
+        }
+        deviceEnumerator->Release();
+    }
+    CoUninitialize();
 }
 
 } // extern "C"

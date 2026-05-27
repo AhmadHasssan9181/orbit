@@ -21,14 +21,14 @@ object WebrtcNativeDepsLoader {
                 "libcrypto-3-x64.dll",
                 "libssl-3-x64.dll",
                 "libyuv.dll",
+                "z.dll",
                 "opencv_core4.dll",
                 "opencv_imgproc4.dll",
                 "opencv_dnn4.dll",
                 "opus.dll",
                 "pkgconf-7.dll",
                 "srtp2.dll",
-                "turbojpeg.dll",
-                "OrbitAudioJNI.dll"
+                "turbojpeg.dll"
             )
 
             val tempDir = Files.createTempDirectory("webrtc-deps").toFile()

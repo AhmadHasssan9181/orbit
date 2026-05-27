@@ -49,6 +49,14 @@ internal fun ProfilesPane(repository: OrbitRepository) {
                     .clip(RoundedCornerShape(12.dp))
                     .background(Brush.horizontalGradient(listOf(Color(0xFF6366F1), Color(0xFF8B5CF6), Color(0xFFA78BFA))))
             ) {
+                if (!currentExtras.bannerUrl.isNullOrBlank()) {
+                    coil3.compose.AsyncImage(
+                        model = currentExtras.bannerUrl,
+                        contentDescription = "Profile Banner",
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
                 Box(
                     modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)
                         .clip(RoundedCornerShape(6.dp)).background(Color.Black.copy(alpha = 0.45f))
@@ -93,6 +101,11 @@ internal fun ProfilesPane(repository: OrbitRepository) {
         var aboutMe by remember(currentExtras.aboutMe) { mutableStateOf(currentExtras.aboutMe) }
         SettingsTextField(label = "About Me", description = "Write a short bio that appears on your profile card.", value = aboutMe, onValueChange = { aboutMe = it }, placeholder = "Tell the world something about yourself", multiline = true, onBlur = {
             scope.launch { repository.setAccountData("im.orbit.profile_extras", currentExtras.copy(aboutMe = aboutMe), OrbitProfileExtras.serializer()) }
+        })
+
+        var bannerUrl by remember(currentExtras.bannerUrl) { mutableStateOf(currentExtras.bannerUrl ?: "") }
+        SettingsTextField(label = "Banner URL", description = "Link to an image for your profile banner.", value = bannerUrl, onValueChange = { bannerUrl = it }, placeholder = "https://example.com/banner.jpg", onBlur = {
+            scope.launch { repository.setAccountData("im.orbit.profile_extras", currentExtras.copy(bannerUrl = bannerUrl), OrbitProfileExtras.serializer()) }
         })
 
         var customStatus by remember(currentExtras.customStatus) { mutableStateOf(currentExtras.customStatus) }

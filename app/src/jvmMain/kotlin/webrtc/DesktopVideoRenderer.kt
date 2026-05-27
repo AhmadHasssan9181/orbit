@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.StateFlow
 class DesktopVideoRenderer(
     val mirror: Boolean = false
 ) : VideoTrackSink {
+    var isScreenShare: Boolean = false
     private val _frameImage = MutableStateFlow<BufferedImage?>(null)
     val frameImage: StateFlow<BufferedImage?> = _frameImage
     private var lastFrameNanos = 0L
@@ -59,7 +60,11 @@ class DesktopVideoRenderer(
                 val green = clamp(c - ((d * 88) shr 8) - ((e * 183) shr 8))
                 val blue = clamp(c + ((d * 454) shr 8))
 
-                image.setRGB(x, y, (red shl 16) or (green shl 8) or blue)
+                if (isScreenShare) {
+                    image.setRGB(x, y, (blue shl 16) or (green shl 8) or red)
+                } else {
+                    image.setRGB(x, y, (red shl 16) or (green shl 8) or blue)
+                }
             }
         }
 

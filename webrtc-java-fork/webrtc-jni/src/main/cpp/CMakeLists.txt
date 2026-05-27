@@ -134,7 +134,7 @@ elseif(LINUX)
 
     target_link_libraries(${PROJECT_NAME} PRIVATE ${CXX_LIBS} pulse udev)
 elseif(WIN32)
-    target_link_libraries(${PROJECT_NAME} PRIVATE dwmapi.lib mf.lib mfreadwrite.lib mfplat.lib mfuuid.lib shcore.lib strmiids.lib d3d11.lib dxgi.lib)
+    target_link_libraries(${PROJECT_NAME} PRIVATE dwmapi.lib mf.lib mfreadwrite.lib mfplat.lib mfuuid.lib shcore.lib strmiids.lib d3d11.lib dxgi.lib mmdevapi.lib)
 endif()
 
 install(TARGETS ${PROJECT_NAME}

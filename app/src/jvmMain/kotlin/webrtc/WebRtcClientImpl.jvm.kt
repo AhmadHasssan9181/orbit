@@ -201,6 +201,7 @@ class JvmWebRtcClient : WebRtcClient {
             localVideoSource = videoSource
             cameraVideoTrack = videoTrack
             localVideoTrack = videoTrack
+            localRenderer?.isScreenShare = false
             (localRenderer as? VideoTrackSink)?.let { sink ->
                 videoTrack.addSink(sink)
             }
@@ -249,11 +250,12 @@ class JvmWebRtcClient : WebRtcClient {
             is VideoTrack -> {
                 println("DEBUG: [WebRTC] Attaching VideoTrack sink! track ID: ${track.getId()}")
                 _onStreamAdded.tryEmit(true)
-                (remoteRenderer as? VideoTrackSink)?.let { sink ->
-                    track.addSink(sink)
+                remoteVideoTrack = track
+                remoteRenderer?.let {
+                    it.isScreenShare = track.getId().contains("screen")
+                    track.addSink(it)
                     println("DEBUG: [WebRTC] Sink successfully added to VideoTrack.")
                 }
-                remoteVideoTrack = track
             }
         }
     }
