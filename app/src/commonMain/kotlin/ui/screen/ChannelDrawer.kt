@@ -57,6 +57,7 @@ fun ChannelDrawer(
     currentUser: OrbitUser,
     onChannelClick: (String) -> Unit,
     onOpenSettings: (() -> Unit)? = null,
+    onCreateRoomClick: (() -> Unit)? = null,
     selectedWhatsAppTab: String = "Chats",
     modifier: Modifier = Modifier
 ) {
@@ -97,11 +98,12 @@ fun ChannelDrawer(
         } else {
             // â”€â”€ Server header â€” Discord/Revolt style â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             ServerHeader(
-                serverName = server.name, 
+                serverName = server.name,
                 showArrow = !server.isDM,
                 onHeaderClick = {
                     if (!server.isDM) showInviteDialog = true
-                }
+                },
+                onCreateRoomClick = if (server.isDM) null else onCreateRoomClick
             )
             HorizontalDivider(color = Separator.copy(alpha = 0.3f), thickness = 1.dp)
 
@@ -231,7 +233,12 @@ private fun InviteDialog(server: OrbitServer, onDismiss: () -> Unit) {
 // â”€â”€â”€ ServerHeader â€” Revolt/Discord style â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @Composable
-private fun ServerHeader(serverName: String, showArrow: Boolean, onHeaderClick: () -> Unit = {}) {
+private fun ServerHeader(
+    serverName: String,
+    showArrow: Boolean,
+    onHeaderClick: () -> Unit = {},
+    onCreateRoomClick: (() -> Unit)? = null
+) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
 
@@ -256,13 +263,31 @@ private fun ServerHeader(serverName: String, showArrow: Boolean, onHeaderClick: 
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f)
         )
-        if (showArrow) {
-            Icon(
-                imageVector = Icons.Default.MoreVert,
-                contentDescription = null,
-                tint = Text_Muted,
-                modifier = Modifier.size(18.dp).alpha(0.7f)
-            )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (onCreateRoomClick != null) {
+                IconButton(
+                    onClick = onCreateRoomClick,
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(
+                        imageVector = OrbitIcons.Add,
+                        contentDescription = "Create Room",
+                        tint = Text_Muted,
+                        modifier = Modifier.size(18.dp).alpha(0.9f)
+                    )
+                }
+            }
+            if (showArrow) {
+                Icon(
+                    imageVector = Icons.Default.MoreVert,
+                    contentDescription = null,
+                    tint = Text_Muted,
+                    modifier = Modifier.size(18.dp).alpha(0.7f)
+                )
+            }
         }
     }
 }

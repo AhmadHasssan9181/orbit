@@ -130,6 +130,7 @@ class MatrixOrbitRepository(
 
     companion object {
         private const val CLIENT_PREFIX = "/_matrix/client/v3"
+        private val ROOM_NAME_REGEX = Regex("^[a-z]+(?:-[a-z]+)*$")
     }
 
     private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -464,8 +465,12 @@ class MatrixOrbitRepository(
     ): Result<String> {
         return try {
             val trixnity = trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
+            val roomName = name.trim().lowercase()
+            if (!ROOM_NAME_REGEX.matches(roomName)) {
+                return Result.failure(IllegalArgumentException("Room names can only use letters and hyphens"))
+            }
             val response = trixnity.api.room.createRoom(
-                name = name,
+                name = roomName,
                 topic = topic,
                 preset = if (type == ChannelType.VOICE) {
                     CreateRoom.Request.Preset.TRUSTED_PRIVATE
