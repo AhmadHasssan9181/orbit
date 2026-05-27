@@ -191,6 +191,50 @@ void OrbitAudioDeviceModule::StopLoopback() {
     }
 }
 
+#include <mmdeviceapi.h>
+#include <audioclient.h>
+#include <objbase.h>
+
+class AudioClientActivator : public IActivateAudioInterfaceCompletionHandler {
+public:
+    HANDLE m_hEvent;
+    IAudioClient* m_pAudioClient;
+    HRESULT m_hr;
+
+    AudioClientActivator() : m_hEvent(NULL), m_pAudioClient(NULL), m_hr(E_FAIL) {
+        m_hEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+    }
+    ~AudioClientActivator() {
+        if (m_hEvent) CloseHandle(m_hEvent);
+        if (m_pAudioClient) m_pAudioClient->Release();
+    }
+
+    STDMETHODIMP QueryInterface(REFIID riid, void** ppv) override {
+        if (riid == __uuidof(IUnknown) || riid == __uuidof(IActivateAudioInterfaceCompletionHandler)) {
+            *ppv = static_cast<IActivateAudioInterfaceCompletionHandler*>(this);
+            return S_OK;
+        }
+        *ppv = NULL;
+        return E_NOINTERFACE;
+    }
+    STDMETHODIMP_(ULONG) AddRef() override { return 1; }
+    STDMETHODIMP_(ULONG) Release() override { return 1; }
+
+    STDMETHODIMP ActivateCompleted(IActivateAudioInterfaceAsyncOperation* pOperation) override {
+        HRESULT hrActivateResult = E_FAIL;
+        IUnknown* pUnk = NULL;
+        m_hr = pOperation->GetActivateResult(&hrActivateResult, &pUnk);
+        if (SUCCEEDED(m_hr) && SUCCEEDED(hrActivateResult) && pUnk != NULL) {
+            m_hr = pUnk->QueryInterface(__uuidof(IAudioClient), (void**)&m_pAudioClient);
+            pUnk->Release();
+        } else {
+            m_hr = hrActivateResult;
+        }
+        SetEvent(m_hEvent);
+        return S_OK;
+    }
+};
+
 void OrbitAudioDeviceModule::LoopbackThreadMain() {
     CoInitializeEx(NULL, COINIT_MULTITHREADED);
     
@@ -216,9 +260,34 @@ void OrbitAudioDeviceModule::LoopbackThreadMain() {
     activateParams.blob.cbSize = sizeof(params);
     activateParams.blob.pBlobData = (BYTE*)&params;
 
-    hr = pDevice->Activate(__uuidof(IAudioClient), CLSCTX_ALL, &activateParams, (void**)&pAudioClient);
+    LPWSTR pwszID = NULL;
+    hr = pDevice->GetId(&pwszID);
+    if (SUCCEEDED(hr)) {
+        AudioClientActivator activator;
+        IActivateAudioInterfaceAsyncOperation* asyncOp = NULL;
+        
+        HRESULT asyncHr = ActivateAudioInterfaceAsync(pwszID, __uuidof(IAudioClient), &activateParams, &activator, &asyncOp);
+        if (SUCCEEDED(asyncHr) && asyncOp) {
+            WaitForSingleObject(activator.m_hEvent, 2000); // Wait up to 2 seconds
+            if (SUCCEEDED(activator.m_hr) && activator.m_pAudioClient != NULL) {
+                pAudioClient = activator.m_pAudioClient;
+                pAudioClient->AddRef();
+            }
+            asyncOp->Release();
+        }
+        CoTaskMemFree(pwszID);
+    }
+
+    // Fallback: If process loopback failed or isn't supported, use normal system loopback
+    if (pAudioClient == NULL) {
+        hr = pDevice->Activate(__uuidof(IAudioClient), CLSCTX_ALL, NULL, (void**)&pAudioClient);
+        if (FAILED(hr)) {
+            pDevice->Release();
+            return;
+        }
+    }
+    
     pDevice->Release();
-    if (FAILED(hr)) return;
 
     WAVEFORMATEX* pwfx = NULL;
     hr = pAudioClient->GetMixFormat(&pwfx);

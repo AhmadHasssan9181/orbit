@@ -94,6 +94,13 @@ val LocalFontSize = compositionLocalOf<Float> { 50f }
 val LocalReduceMotion = compositionLocalOf<Boolean> { false }
 val LocalMentionsOnly = compositionLocalOf<Boolean> { true }
 val LocalNotificationSound = compositionLocalOf<String> { "Chime" }
+val LocalShowTimestamps = compositionLocalOf<Boolean> { true }
+val LocalCompactMode = compositionLocalOf<Boolean> { false }
+val LocalShowRoleColors = compositionLocalOf<Boolean> { true }
+val LocalShowMemberList = compositionLocalOf<Boolean> { true }
+val LocalEnterSend = compositionLocalOf<Boolean> { true }
+val LocalUse24HourClock = compositionLocalOf<Boolean> { false }
+val LocalDateFormat = compositionLocalOf<String> { "DD/MM/YYYY" }
 
 /**
  * Discord/Revolt-style semantic color tokens derived from MaterialTheme.
