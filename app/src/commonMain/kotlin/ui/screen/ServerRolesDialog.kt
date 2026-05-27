@@ -20,11 +20,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -53,6 +51,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.launch
 import repository.OrbitRepository
+import ui.assets.OrbitEmptyIllustration
+import ui.assets.OrbitEmptyScene
+import ui.assets.OrbitRoleBadgeAsset
 import ui.model.OrbitPermission
 import ui.model.OrbitPermissionCategory
 import ui.model.OrbitRole
@@ -60,7 +61,6 @@ import ui.model.OrbitRoleDefaults
 import ui.model.OrbitServer
 import ui.model.OrbitServerRolesState
 import ui.model.PermissionGrant
-import ui.assets.OrbitRoleBadgeAsset
 import ui.theme.rememberCosmicTokens
 
 @Composable
@@ -217,16 +217,11 @@ private fun RoleDialogHeader(
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-            Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(tokens.AccentGhost),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Default.Security, null, tint = tokens.AccentLight, modifier = Modifier.size(21.dp))
-            }
-            Spacer(Modifier.width(12.dp))
+            OrbitEmptyIllustration(
+                scene = OrbitEmptyScene.Roles,
+                modifier = Modifier.width(86.dp).height(54.dp)
+            )
+            Spacer(Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "Roles for $serverName",

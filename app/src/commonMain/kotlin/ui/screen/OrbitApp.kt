@@ -1019,31 +1019,50 @@ private fun CompactSearchPane(channels: List<OrbitChannel>, onChannelClick: (Str
             singleLine = true
         )
 
-        androidx.compose.foundation.lazy.LazyColumn(modifier = Modifier.weight(1f)) {
-            items(filtered) { ch ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onChannelClick(ch.id) }
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = if (ch.type == ChannelType.VOICE) OrbitIcons.VoiceChannel else OrbitIcons.TextChannel,
-                        contentDescription = null,
-                        tint = tokens.Text_Muted,
-                        modifier = Modifier.size(18.dp)
+        if (filtered.isEmpty()) {
+            Box(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    OrbitEmptyIllustration(
+                        scene = OrbitEmptyScene.Search,
+                        modifier = Modifier.width(240.dp).height(150.dp)
                     )
-                    Spacer(Modifier.width(12.dp))
-                    Column {
-                        Text(ch.name, style = MaterialTheme.typography.bodyMedium.copy(color = tokens.Text_White))
-                        if (ch.topic.isNotBlank()) {
-                            Text(ch.topic, style = MaterialTheme.typography.bodySmall.copy(color = tokens.Text_Muted),
-                                maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        text = if (query.isBlank()) "Search your channels" else "No channels found",
+                        color = tokens.Text_Muted
+                    )
+                }
+            }
+        } else {
+            androidx.compose.foundation.lazy.LazyColumn(modifier = Modifier.weight(1f)) {
+                items(filtered) { ch ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onChannelClick(ch.id) }
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = if (ch.type == ChannelType.VOICE) OrbitIcons.VoiceChannel else OrbitIcons.TextChannel,
+                            contentDescription = null,
+                            tint = tokens.Text_Muted,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text(ch.name, style = MaterialTheme.typography.bodyMedium.copy(color = tokens.Text_White))
+                            if (ch.topic.isNotBlank()) {
+                                Text(ch.topic, style = MaterialTheme.typography.bodySmall.copy(color = tokens.Text_Muted),
+                                    maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                            }
                         }
                     }
+                    HorizontalDivider(color = tokens.Separator.copy(alpha = 0.15f), modifier = Modifier.padding(start = 46.dp))
                 }
-                HorizontalDivider(color = tokens.Separator.copy(alpha = 0.15f), modifier = Modifier.padding(start = 46.dp))
             }
         }
     }
