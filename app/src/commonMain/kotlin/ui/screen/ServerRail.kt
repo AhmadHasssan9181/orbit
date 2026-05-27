@@ -29,6 +29,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.assets.OrbitBrandMark
+import ui.assets.OrbitServerAssetIcon
 import ui.icons.OrbitIcons
 import ui.model.OrbitServer
 
@@ -77,7 +79,7 @@ fun ServerRail(
                 isHovered = false,
                 onClick = { servers.firstOrNull { it.isDM }?.let { onServerClick(it.id) } }
             ) {
-                Box(
+                OrbitBrandMark(
                     modifier = Modifier
                         .size(44.dp)
                         .clip(
@@ -88,25 +90,9 @@ fun ServerRail(
                                     label = "homeCorner"
                                 ).value
                             )
-                        )
-                        .background(
-                            if (isSelected) Brush.linearGradient(listOf(Accent, AccentLight))
-                            else Brush.linearGradient(
-                                listOf(
-                                    MaterialTheme.colorScheme.surfaceContainer,
-                                    MaterialTheme.colorScheme.surfaceContainerHigh
-                                )
-                            )
                         ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = OrbitIcons.TextChannel,
-                        contentDescription = "Home",
-                        tint = if (isSelected) Color.White else Text_Muted,
-                        modifier = Modifier.size(21.dp)
-                    )
-                }
+                    showGlow = isSelected
+                )
             }
         }
 
@@ -164,13 +150,10 @@ fun ServerRail(
                         )
                     } else {
                         val initials = getInitials(server.name)
-                        val fontSize: TextUnit = if (initials.length > 2) 11.sp else 15.sp
-                        Text(
-                            text = initials,
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = fontSize,
-                            maxLines = 1
+                        OrbitServerAssetIcon(
+                            label = initials,
+                            color = Color(server.iconColor),
+                            modifier = Modifier.fillMaxSize()
                         )
                     }
                 }

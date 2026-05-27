@@ -45,6 +45,9 @@ import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 
+import ui.assets.OrbitDefaultAvatar
+import ui.assets.OrbitEmptyIllustration
+import ui.assets.OrbitEmptyScene
 import ui.icons.OrbitIcons
 import ui.theme.LocalIsLiteMode
 import ui.theme.rememberCosmicTokens
@@ -1092,28 +1095,11 @@ private fun UnsupportedBody(content: ui.model.MessageContent.Unsupported) {
 
 @Composable
 private fun MessageAvatar(message: OrbitMessage) {
-    val hue   = remember(message.userId) { Math.abs(message.userId.hashCode()) % 360 }
-    val start = remember(hue) { hslToColor(hue.toFloat()) }
-    val end   = remember(hue) { hslToColor((hue + 30).toFloat() % 360) }
-
-    Box(
-        modifier = Modifier
-            .size(36.dp)
-            .border(1.dp, Color.White.copy(alpha = 0.08f), CircleShape)
-            .padding(1.dp)
-            .clip(CircleShape)
-            .background(Brush.linearGradient(listOf(start, end))),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = message.username.take(2).uppercase(),
-            style = MaterialTheme.typography.labelMedium.copy(
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-                fontSize = 12.sp
-            )
-        )
-    }
+    OrbitDefaultAvatar(
+        label = message.username,
+        seed = message.userId,
+        modifier = Modifier.size(36.dp)
+    )
 }
 
 // ─── MessageInputBar — Discord/Revolt style ──────────────────────
@@ -1388,34 +1374,29 @@ private fun MemberItem(user: OrbitUser) {
     ) {
         // Avatar + status dot
         Box(modifier = Modifier.size(32.dp)) {
-            val hue   = remember(user.id) { Math.abs(user.id.hashCode()) % 360 }
-            val color = remember(hue) { hslToColor(hue.toFloat()) }
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .border(1.dp, Color.White.copy(alpha = 0.08f), CircleShape)
-                    .padding(1.dp)
-                    .clip(CircleShape)
-                    .background(Brush.linearGradient(listOf(color, color.copy(alpha = 0.7f)))),
-                contentAlignment = Alignment.Center
-            ) {
-                if (user.avatarUrl != null) {
+            if (user.avatarUrl != null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .border(1.dp, Color.White.copy(alpha = 0.08f), CircleShape)
+                        .padding(1.dp)
+                        .clip(CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
                     coil3.compose.AsyncImage(
                         model = user.avatarUrl,
                         contentDescription = user.displayName,
                         contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()
                     )
-                } else {
-                    Text(
-                        text = user.displayName.take(1).uppercase(),
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
-                            fontSize = 11.sp
-                        )
-                    )
                 }
+            } else {
+                OrbitDefaultAvatar(
+                    label = user.displayName,
+                    seed = user.id,
+                    color = Color(user.avatarColor),
+                    modifier = Modifier.fillMaxSize()
+                )
             }
             val dotColor = memberStatusColor(user.status)
             Box(
@@ -1498,21 +1479,10 @@ fun ChatEmptyState(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Giant hash icon — Discord welcome style
-            Box(
-                modifier = Modifier
-                    .size(80.dp)
-                    .clip(CircleShape)
-                    .background(Brush.radialGradient(listOf(Accent.copy(alpha = 0.3f), Color.Transparent))),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = OrbitIcons.TextChannel,
-                    contentDescription = null,
-                    tint = Accent,
-                    modifier = Modifier.size(40.dp)
-                )
-            }
+            OrbitEmptyIllustration(
+                scene = OrbitEmptyScene.Chat,
+                modifier = Modifier.width(260.dp).height(162.dp)
+            )
 
             Text(
                 text = "Welcome to $serverName",

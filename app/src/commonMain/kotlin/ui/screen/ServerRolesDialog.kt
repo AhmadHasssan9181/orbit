@@ -25,7 +25,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -61,6 +60,7 @@ import ui.model.OrbitRoleDefaults
 import ui.model.OrbitServer
 import ui.model.OrbitServerRolesState
 import ui.model.PermissionGrant
+import ui.assets.OrbitRoleBadgeAsset
 import ui.theme.rememberCosmicTokens
 
 @Composable
@@ -295,12 +295,10 @@ private fun RoleListItem(role: OrbitRole, selected: Boolean, onClick: () -> Unit
             .padding(horizontal = 9.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(
-            modifier = Modifier
-                .width(3.dp)
-                .height(32.dp)
-                .clip(RoundedCornerShape(3.dp))
-                .background(Color(role.color))
+        OrbitRoleBadgeAsset(
+            roleId = role.id,
+            color = Color(role.color),
+            modifier = Modifier.size(32.dp)
         )
         Spacer(Modifier.width(9.dp))
         Column(modifier = Modifier.weight(1f)) {
@@ -335,15 +333,11 @@ private fun RolePermissionEditor(
             .padding(12.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(role.color).copy(alpha = 0.22f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Default.Tune, null, tint = Color(role.color), modifier = Modifier.size(21.dp))
-            }
+            OrbitRoleBadgeAsset(
+                roleId = role.id,
+                color = Color(role.color),
+                modifier = Modifier.size(40.dp)
+            )
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
