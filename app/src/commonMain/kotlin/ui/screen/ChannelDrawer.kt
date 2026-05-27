@@ -58,6 +58,7 @@ fun ChannelDrawer(
     onChannelClick: (String) -> Unit,
     onOpenSettings: (() -> Unit)? = null,
     onCreateRoomClick: (() -> Unit)? = null,
+    onOpenRolesClick: (() -> Unit)? = null,
     selectedWhatsAppTab: String = "Chats",
     modifier: Modifier = Modifier
 ) {
@@ -109,6 +110,9 @@ fun ChannelDrawer(
 
             if (!server.isDM) {
                 InvitePeopleButton { showInviteDialog = true }
+                if (onOpenRolesClick != null) {
+                    RolesButton(onOpenRolesClick)
+                }
                 Spacer(Modifier.height(4.dp))
             }
 
@@ -176,6 +180,45 @@ private fun InvitePeopleButton(onClick: () -> Unit) {
             text = "Invite People",
             style = MaterialTheme.typography.bodySmall.copy(
                 color = AccentLight,
+                fontWeight = FontWeight.Medium,
+                fontSize = 14.sp
+            )
+        )
+    }
+}
+
+@Composable
+private fun RolesButton(onClick: () -> Unit) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isHovered by interactionSource.collectIsHoveredAsState()
+
+    val bgColor by animateColorAsState(
+        targetValue = if (isHovered) Accent.copy(alpha = 0.12f) else Color.Transparent,
+        label = "rolesBg"
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 2.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(bgColor)
+            .hoverable(interactionSource)
+            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = Icons.Default.Security,
+            contentDescription = "Server Roles",
+            tint = Text_Muted,
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(Modifier.width(10.dp))
+        Text(
+            text = "Roles",
+            style = MaterialTheme.typography.bodySmall.copy(
+                color = Text_White,
                 fontWeight = FontWeight.Medium,
                 fontSize = 14.sp
             )
