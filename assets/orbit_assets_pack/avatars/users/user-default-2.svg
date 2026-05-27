@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" fill="none">
+<defs>
+
+</defs>
+
+
+<circle cx="64" cy="64" r="62" fill="#111827"/>
+<circle cx="64" cy="64" r="58" fill="#22D3EE" opacity="0.9"/>
+<circle cx="48" cy="42" r="28" fill="#FFFFFF" opacity="0.14"/>
+<ellipse cx="64" cy="64" rx="78" ry="28" transform="rotate(-18 64 64)" stroke="#FFFFFF" stroke-opacity="0.38" stroke-width="4"/>
+<text x="64" y="78" font-family="Inter, Arial, sans-serif" font-size="44" font-weight="900" text-anchor="middle" fill="#FFFFFF">B</text>
+
+</svg>

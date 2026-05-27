@@ -1,0 +1,37 @@
+:root {
+  --orbit-bg-main: #0B0F19;
+  --orbit-bg-sidebar: #070A12;
+  --orbit-bg-panel: #111827;
+  --orbit-bg-card: #161F2F;
+  --orbit-bg-card-hover: #1B2538;
+  --orbit-accent: #8B5CF6;
+  --orbit-accent-hover: #A78BFA;
+  --orbit-accent-soft: rgba(139, 92, 246, 0.16);
+  --orbit-text-main: #F3F4F6;
+  --orbit-text-muted: #9CA3AF;
+  --orbit-border-soft: rgba(255, 255, 255, 0.06);
+  --orbit-online: #22C55E;
+  --orbit-idle: #F59E0B;
+  --orbit-dnd: #EF4444;
+}
+
+.orbit-empty-state {
+  background-image: url('../backgrounds/orbit-line-pattern.svg');
+  background-size: cover;
+  background-position: center;
+}
+
+.orbit-soft-card {
+  background: rgba(22, 31, 47, 0.72);
+  border: 1px solid var(--orbit-border-soft);
+  border-radius: 18px;
+  backdrop-filter: blur(14px);
+}
+
+.orbit-hover-glow:hover {
+  box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.22), 0 16px 40px rgba(139, 92, 246, 0.12);
+}
+
+.orbit-speaking-ring {
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.45), 0 0 24px rgba(34, 197, 94, 0.26);
+}

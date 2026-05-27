@@ -1,0 +1,37 @@
+{
+  "pack": "Orbit UI Asset Pack",
+  "version": "1.0",
+  "description": "Original dark mode friendly assets for a Discord-style Orbit chat app.",
+  "formats": [
+    "svg",
+    "json",
+    "wav",
+    "png",
+    "css"
+  ],
+  "colors": {
+    "bg": "#0B0F19",
+    "panel": "#111827",
+    "card": "#161F2F",
+    "card2": "#1B2538",
+    "accent": "#8B5CF6",
+    "accent2": "#A78BFA",
+    "accent3": "#6D5DFB",
+    "text": "#F3F4F6",
+    "muted": "#9CA3AF",
+    "line": "#263244",
+    "green": "#22C55E",
+    "yellow": "#F59E0B",
+    "red": "#EF4444",
+    "blue": "#60A5FA",
+    "pink": "#F472B6",
+    "cyan": "#22D3EE"
+  },
+  "recommendedUse": {
+    "centerEmptyScreen": "illustrations/empty-direct-messages.svg or animations/empty-chat.json",
+    "loading": "animations/orbit-loader.json",
+    "typing": "animations/typing-dots.json",
+    "background": "backgrounds/orbit-line-pattern.svg with backgrounds/noise-texture.png overlay",
+    "defaultAvatars": "avatars/users and avatars/servers"
+  }
+}
