@@ -66,6 +66,15 @@ file(GLOB SOURCES_MEDIA_VIDEO_OS "src/media/video/${SOURCE_TARGET}/*.cpp")
 file(GLOB SOURCES_PLATFORM "src/platform/${SOURCE_TARGET}/*.cpp")
 file(GLOB SOURCES_RTC "src/rtc/*.cpp")
 
+# RNNoise Integration
+file(GLOB SOURCES_RNNOISE "rnnoise/src/*.c")
+list(REMOVE_ITEM SOURCES_RNNOISE 
+    "${CMAKE_CURRENT_SOURCE_DIR}/rnnoise/src/dump_features.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/rnnoise/src/dump_rnnoise_tables.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/rnnoise/src/write_weights.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/rnnoise/src/rnnoise_data_little.c"
+)
+
 list(APPEND SOURCES
     ${SOURCES_ROOT}
     ${SOURCES_API}
@@ -79,6 +88,7 @@ list(APPEND SOURCES
     ${SOURCES_MEDIA_VIDEO_OS}
     ${SOURCES_PLATFORM}
     ${SOURCES_RTC}
+    ${SOURCES_RNNOISE}
 )
 
 add_library(${PROJECT_NAME} SHARED ${SOURCES})
@@ -93,6 +103,8 @@ target_include_directories(${PROJECT_NAME}
         include/api
         include/media
         include/rtc
+        rnnoise/include
+        rnnoise/src
         "D:/vcpkg/installed/x64-windows/include/webrtc"
 )
 

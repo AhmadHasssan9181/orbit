@@ -331,7 +331,11 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
     override fun getRemoteVideoRenderer(): Any? = remoteRenderer
 
     override fun setStreamAudioEnabled(enabled: Boolean) {
-        // Not implemented on Android yet
+        // No-op for Android placeholder
+    }
+    
+    override fun setOrbitZeroEnabled(enabled: Boolean) {
+        // No-op for Android placeholder
     }
 }
 

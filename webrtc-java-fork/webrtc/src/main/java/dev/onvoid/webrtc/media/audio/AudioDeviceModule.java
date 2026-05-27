@@ -54,4 +54,6 @@ public class AudioDeviceModule extends AudioDeviceModuleBase {
      * @param enabled True to enable sharing system audio, false to disable.
      */
     public native void setSystemAudioShareEnabled(boolean enabled);
+    
+    public native void setOrbitZeroEnabled(boolean enabled);
 }
