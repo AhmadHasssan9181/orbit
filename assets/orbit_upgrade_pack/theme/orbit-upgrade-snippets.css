@@ -1,0 +1,75 @@
+/* Orbit upgrade snippets */
+
+/* Big empty states and modal dialogs only */
+.orbit-empty-surface,
+.orbit-dialog-surface {
+  position: relative;
+  overflow: hidden;
+}
+
+.orbit-empty-surface::before,
+.orbit-dialog-surface::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: url("../backgrounds/noise-texture.png"), url("../backgrounds/orbit-line-pattern.svg");
+  background-size: 240px 240px, cover;
+  background-repeat: repeat, no-repeat;
+  background-position: center;
+  opacity: 0.035;
+  pointer-events: none;
+}
+
+.orbit-dialog-surface::before {
+  opacity: 0.028;
+}
+
+/* Role badges */
+.orbit-role-badge {
+  width: 18px;
+  height: 18px;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.member-list .orbit-role-badge,
+.role-picker .orbit-role-badge,
+.profile-popover .orbit-role-badge {
+  margin-right: 8px;
+}
+
+/* Splash, login, title bar */
+.orbit-titlebar-mark {
+  width: 22px;
+  height: 22px;
+}
+
+.orbit-login-logo,
+.orbit-splash-logo {
+  width: 160px;
+  height: auto;
+}
+
+/* Visual create / join server choice cards */
+.orbit-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.orbit-choice-card {
+  background: rgba(22, 31, 47, 0.88);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 18px;
+  overflow: hidden;
+}
+
+.orbit-choice-card img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.orbit-choice-card .body {
+  padding: 12px 14px 16px;
+}

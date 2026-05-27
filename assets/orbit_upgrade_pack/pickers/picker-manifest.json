@@ -1,0 +1,32 @@
+{
+  "avatarPicker": {
+    "description": "Default user avatars for the avatar picker",
+    "files": [
+      "avatars/users/bot-avatar.svg",
+      "avatars/users/guest-avatar.svg",
+      "avatars/users/user-default-1.svg",
+      "avatars/users/user-default-2.svg",
+      "avatars/users/user-default-3.svg",
+      "avatars/users/user-default-4.svg",
+      "avatars/users/user-default-5.svg",
+      "avatars/users/user-default-6.svg",
+      "avatars/users/user-default-7.svg",
+      "avatars/users/user-default-8.svg"
+    ],
+    "preview": "pickers/avatar-picker-grid.svg"
+  },
+  "serverPicker": {
+    "description": "Default server icons for the server icon picker",
+    "files": [
+      "avatars/servers/server-default-1.svg",
+      "avatars/servers/server-default-2.svg",
+      "avatars/servers/server-default-3.svg",
+      "avatars/servers/server-default-4.svg",
+      "avatars/servers/server-default-5.svg",
+      "avatars/servers/server-default-6.svg",
+      "avatars/servers/server-default-7.svg",
+      "avatars/servers/server-default-8.svg"
+    ],
+    "preview": "pickers/server-picker-grid.svg"
+  }
+}
