@@ -366,6 +366,7 @@ private fun MainAppContent(
     var showSettings by remember { mutableStateOf(false) }
     var showJoinServer by remember { mutableStateOf(false) }
     var showCreateRoom by remember { mutableStateOf(false) }
+    var showServerRoles by remember { mutableStateOf(false) }
 
     var channels by remember { mutableStateOf<List<OrbitChannel>>(emptyList()) }
     var isLoadingChannels by remember { mutableStateOf(false) }
@@ -502,6 +503,7 @@ private fun MainAppContent(
                     onOpenSettings = { showSettings = true },
                     onAddServer = { showJoinServer = true },
                     onCreateRoom = { showCreateRoom = true },
+                    onOpenRoles = { showServerRoles = true },
                     modifier = Modifier.fillMaxSize()
                 )
 
@@ -518,6 +520,7 @@ private fun MainAppContent(
                     onOpenSettings = { showSettings = true },
                     onAddServer = { showJoinServer = true },
                     onCreateRoom = { showCreateRoom = true },
+                    onOpenRoles = { showServerRoles = true },
                     modifier = Modifier.fillMaxSize()
                 )
 
@@ -534,6 +537,7 @@ private fun MainAppContent(
                     onOpenSettings = { showSettings = true },
                     onAddServer = { showJoinServer = true },
                     onCreateRoom = { showCreateRoom = true },
+                    onOpenRoles = { showServerRoles = true },
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -569,6 +573,15 @@ private fun MainAppContent(
                             channels = repository.getChannelsForSpace(createRoomServer.id)
                         }
                     }
+                )
+            }
+
+            val rolesServer = servers.find { it.id == selectedServerId && !it.isDM }
+            if (showServerRoles && rolesServer != null) {
+                ServerRolesDialog(
+                    repository = repository,
+                    server = rolesServer,
+                    onDismiss = { showServerRoles = false }
                 )
             }
 
@@ -612,6 +625,7 @@ private fun CompactLayout(
     onOpenSettings: () -> Unit,
     onAddServer: () -> Unit,
     onCreateRoom: () -> Unit,
+    onOpenRoles: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val tokens = rememberCosmicTokens()
@@ -681,7 +695,8 @@ private fun CompactLayout(
                             onChannelClick = onChannelClick,
                             onOpenSettings = onOpenSettings,
                             onAddServer = onAddServer,
-                            onCreateRoom = onCreateRoom
+                            onCreateRoom = onCreateRoom,
+                            onOpenRoles = onOpenRoles
                         )
                     }
                 }
@@ -782,7 +797,8 @@ private fun CompactServerList(
     onChannelClick: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onAddServer: () -> Unit,
-    onCreateRoom: () -> Unit
+    onCreateRoom: () -> Unit,
+    onOpenRoles: () -> Unit
 ) {
     val tokens = rememberCosmicTokens()
     val selectedServer = servers.find { it.id == selectedServerId }
@@ -852,6 +868,7 @@ private fun CompactServerList(
                 onChannelClick = onChannelClick,
                 onOpenSettings = onOpenSettings,
                 onCreateRoomClick = onCreateRoom,
+                onOpenRolesClick = onOpenRoles,
                 modifier = Modifier.weight(1f)
             )
         } else {
@@ -1103,6 +1120,7 @@ private fun MediumLayout(
     onOpenSettings: () -> Unit,
     onAddServer: () -> Unit,
     onCreateRoom: () -> Unit,
+    onOpenRoles: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val tokens = rememberCosmicTokens()
@@ -1140,6 +1158,7 @@ private fun MediumLayout(
                         },
                         onOpenSettings = onOpenSettings,
                         onCreateRoomClick = onCreateRoom,
+                        onOpenRolesClick = onOpenRoles,
                         selectedWhatsAppTab = if (isLiteMode) "Chats" else ""
                     )
                 }
@@ -1206,6 +1225,7 @@ private fun ExpandedLayout(
     onOpenSettings: () -> Unit,
     onAddServer: () -> Unit,
     onCreateRoom: () -> Unit,
+    onOpenRoles: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val tokens = rememberCosmicTokens()
@@ -1244,6 +1264,7 @@ private fun ExpandedLayout(
                 onChannelClick = onChannelClick,
                 onOpenSettings = onOpenSettings,
                 onCreateRoomClick = onCreateRoom,
+                onOpenRolesClick = onOpenRoles,
                 selectedWhatsAppTab = selectedWhatsAppTab
             )
 
