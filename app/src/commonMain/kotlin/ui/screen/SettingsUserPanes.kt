@@ -42,10 +42,10 @@ internal fun ProfilesPane(repository: OrbitRepository) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         // ── Banner & Avatar ──
         Box(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 44.dp)
+            modifier = Modifier.fillMaxWidth().padding(bottom = 60.dp)
         ) {
             Box(
-                modifier = Modifier.fillMaxWidth().height(160.dp)
+                modifier = Modifier.fillMaxWidth().height(180.dp)
                     .clip(RoundedCornerShape(12.dp))
                     .background(Brush.horizontalGradient(listOf(Color(0xFF6366F1), Color(0xFF8B5CF6), Color(0xFFA78BFA))))
             ) {
@@ -64,8 +64,8 @@ internal fun ProfilesPane(repository: OrbitRepository) {
             
             // Avatar
             Box(
-                modifier = Modifier.align(Alignment.BottomStart).offset(x = 24.dp, y = 44.dp)
-                    .size(100.dp).clip(CircleShape).background(t.Bg).padding(6.dp)
+                modifier = Modifier.align(Alignment.BottomStart).offset(x = 24.dp, y = 60.dp)
+                .size(120.dp).clip(CircleShape).background(t.Bg).padding(6.dp)
             ) {
                 Box(
                     modifier = Modifier.fillMaxSize().clip(CircleShape).background(t.CardBgHover),

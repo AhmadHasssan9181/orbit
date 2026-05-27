@@ -111,6 +111,13 @@ fun OrbitApp(
     val mentionsOnly by settingsManager.mentionsOnly.collectAsState(true)
     val notificationSound by settingsManager.notificationSound.collectAsState("Chime")
 
+    val showTimestamps by settingsManager.showTimestamps.collectAsState(true)
+    val compactMode by settingsManager.compactMode.collectAsState(false)
+    val showRoleColors by settingsManager.showRoleColors.collectAsState(true)
+    val showMemberList by settingsManager.showMemberList.collectAsState(true)
+    val enterSend by settingsManager.enterSend.collectAsState(true)
+    val use24HourClock by settingsManager.use24HourClock.collectAsState(false)
+    val dateFormat by settingsManager.dateFormat.collectAsState("DD/MM/YYYY")
     val scope = rememberCoroutineScope()
 
     CompositionLocalProvider(
@@ -122,12 +129,23 @@ fun OrbitApp(
         ui.theme.LocalFontSize provides fontSize,
         ui.theme.LocalReduceMotion provides reduceMotion,
         ui.theme.LocalMentionsOnly provides mentionsOnly,
-        ui.theme.LocalNotificationSound provides notificationSound
+        ui.theme.LocalNotificationSound provides notificationSound,
+        ui.theme.LocalShowTimestamps provides showTimestamps,
+        ui.theme.LocalCompactMode provides compactMode,
+        ui.theme.LocalShowRoleColors provides showRoleColors,
+        ui.theme.LocalShowMemberList provides showMemberList,
+        ui.theme.LocalEnterSend provides enterSend,
+        ui.theme.LocalUse24HourClock provides use24HourClock,
+        ui.theme.LocalDateFormat provides dateFormat
     ) {
-        ui.theme.StoatTheme(
-            requestedTheme = activeTheme,
-            requestedUserInterfaceFont = ui.theme.UserInterfaceFont.Default
-        ) {
+        val baseDensity = androidx.compose.ui.platform.LocalDensity.current
+        val customDensity = androidx.compose.ui.unit.Density(baseDensity.density, fontScale = fontSize / 50f)
+        
+        CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides customDensity) {
+            ui.theme.StoatTheme(
+                requestedTheme = activeTheme,
+                requestedUserInterfaceFont = ui.theme.UserInterfaceFont.Default
+            ) {
             // Detect window size and inject into composition tree
             BoxWithConstraints(modifier = modifier.fillMaxSize()) {
                 val windowSize = windowSizeClassFor(maxWidth)
@@ -187,6 +205,7 @@ fun OrbitApp(
                         )
                     }
                 }
+            }
             }
         }
     }

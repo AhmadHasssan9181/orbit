@@ -186,7 +186,7 @@ fun ChatScreen(
                 onTyping = onTyping
             )
         }
-        if (showMemberList && windowSize.isExpanded) MemberListPanel(members = members)
+        if (ui.theme.LocalShowMemberList.current && windowSize.isExpanded) MemberListPanel(members = members)
     }
 }
 
@@ -324,10 +324,15 @@ private fun MessageList(
     val listState = rememberLazyListState()
     val grouped   = groupMessages(messages)
     val coroutineScope = rememberCoroutineScope()
+    val reduceMotion = ui.theme.LocalReduceMotion.current
 
     LaunchedEffect(messages.size) {
         if (grouped.isNotEmpty()) {
-            listState.animateScrollToItem(grouped.size - 1)
+            if (reduceMotion) {
+                listState.scrollToItem(grouped.size - 1)
+            } else {
+                listState.animateScrollToItem(grouped.size - 1)
+            }
         }
     }
     
@@ -349,17 +354,26 @@ private fun MessageList(
             verticalArrangement = Arrangement.spacedBy(0.dp)
         ) {
             items(grouped, key = { it.key }) { group ->
-                when (group) {
-                    is MessageGroup.Single -> MessageBubbleFull(group.message, currentUser)
-                    is MessageGroup.Dense  -> {
-                        if (ui.theme.LocalIsLiteMode.current) {
-                            for (msg in group.messages) {
-                                MessageBubbleFull(msg, currentUser)
-                            }
-                        } else {
-                            MessageBubbleFull(group.messages[0], currentUser)
-                            for (i in 1 until group.messages.size) {
-                                DenseMessageBody(group.messages[i])
+                if (ui.theme.LocalCompactMode.current) {
+                    when (group) {
+                        is MessageGroup.Single -> DenseMessageBody(group.message)
+                        is MessageGroup.Dense -> {
+                            for (msg in group.messages) DenseMessageBody(msg)
+                        }
+                    }
+                } else {
+                    when (group) {
+                        is MessageGroup.Single -> MessageBubbleFull(group.message, currentUser)
+                        is MessageGroup.Dense  -> {
+                            if (ui.theme.LocalIsLiteMode.current) {
+                                for (msg in group.messages) {
+                                    MessageBubbleFull(msg, currentUser)
+                                }
+                            } else {
+                                MessageBubbleFull(group.messages[0], currentUser)
+                                for (i in 1 until group.messages.size) {
+                                    DenseMessageBody(group.messages[i])
+                                }
                             }
                         }
                     }
@@ -381,7 +395,11 @@ private fun MessageList(
                 onClick = {
                     coroutineScope.launch {
                         if (grouped.isNotEmpty()) {
-                            listState.animateScrollToItem(grouped.size - 1)
+                            if (reduceMotion) {
+                                listState.scrollToItem(grouped.size - 1)
+                            } else {
+                                listState.animateScrollToItem(grouped.size - 1)
+                            }
                         }
                     }
                 },
@@ -493,14 +511,16 @@ private fun MessageBubbleFull(message: OrbitMessage, currentUser: OrbitUser?) {
                         }
                     }
 
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = formatTimestamp(message.timestamp),
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            color = Text_Muted,
-                            fontSize = 10.sp
+                    if (ui.theme.LocalShowTimestamps.current) {
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = formatTimestamp(message.timestamp),
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = Text_Muted,
+                                fontSize = 10.sp
+                            )
                         )
-                    )
+                    }
                 }
 
                 Spacer(Modifier.height(2.dp))
@@ -591,7 +611,7 @@ private fun DenseMessageBody(message: OrbitMessage) {
             verticalAlignment = Alignment.Top
         ) {
             // Show timestamp on hover, like Discord
-            if (isHovered) {
+            if (isHovered && ui.theme.LocalShowTimestamps.current) {
                 Text(
                     text = formatTimestamp(message.timestamp).replace("Today at ", ""),
                     style = MaterialTheme.typography.labelSmall.copy(
@@ -1249,11 +1269,12 @@ private fun BasicTextField_Compat(
     modifier: Modifier = Modifier,
     onSend: (() -> Unit)? = null
 ) {
+    val enterSend = ui.theme.LocalEnterSend.current
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
         modifier = modifier.heightIn(min = 36.dp).onKeyEvent { event ->
-            if (event.key == Key.Enter && event.type == KeyEventType.KeyDown && !event.isShiftPressed) {
+            if (enterSend && event.key == Key.Enter && event.type == KeyEventType.KeyDown && !event.isShiftPressed) {
                 onSend?.invoke()
                 true
             } else false
@@ -1626,17 +1647,33 @@ fun VoiceChannelPlaceholder(channel: OrbitChannel) {
 // ─── Username color (HSL, vivid) ─────────────────────────────────
 
 @Composable
-private fun resolveUsernameColor(message: OrbitMessage): Color =
-    remember(message.userId) { hslToColor(Math.abs(message.userId.hashCode()).toFloat() % 360f) }
+private fun resolveUsernameColor(message: OrbitMessage): Color {
+    val showRoleColors = ui.theme.LocalShowRoleColors.current
+    val fallbackColor = Text_White
+    return remember(message.userId, showRoleColors) { 
+        if (showRoleColors) hslToColor(Math.abs(message.userId.hashCode()).toFloat() % 360f) 
+        else fallbackColor
+    }
+}
 
 // ─── Timestamp ───────────────────────────────────────────────────
 
+@Composable
 private fun formatTimestamp(ts: Instant): String {
+    val use24Hour = ui.theme.LocalUse24HourClock.current
     val dt    = ts.toLocalDateTime(TimeZone.currentSystemDefault())
-    val amPm  = if (dt.hour >= 12) "PM" else "AM"
-    val h12   = if (dt.hour % 12 == 0) 12 else dt.hour % 12
-    val min   = dt.minute.toString().padStart(2, '0')
-    return "Today at $h12:$min $amPm"
+    
+    val timeStr = if (use24Hour) {
+        val h24 = dt.hour.toString().padStart(2, '0')
+        val min = dt.minute.toString().padStart(2, '0')
+        "$h24:$min"
+    } else {
+        val amPm  = if (dt.hour >= 12) "PM" else "AM"
+        val h12   = if (dt.hour % 12 == 0) 12 else dt.hour % 12
+        val min   = dt.minute.toString().padStart(2, '0')
+        "$h12:$min $amPm"
+    }
+    return "Today at $timeStr"
 }
 
 // ─── HSL helpers ─────────────────────────────────────────────────

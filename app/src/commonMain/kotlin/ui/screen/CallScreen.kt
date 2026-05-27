@@ -157,25 +157,76 @@ fun CallScreen(
         val remoteRenderer = callManager.webRtcClient.getRemoteVideoRenderer()
         val localRenderer = callManager.webRtcClient.getLocalVideoRenderer()
 
-        // ── Remote Video (Main) ──
+        // ── Video Grid (Main) ──
         if (callState == CallState.CONNECTED) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                if (remoteRenderer != null) {
-                    VideoRenderer(
-                        renderer = remoteRenderer,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    // Fallback if remote has no camera
-                    Box(modifier = Modifier.fillMaxSize().background(Color(0xFF1E1F22)), contentAlignment = Alignment.Center) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Surface(shape = CircleShape, color = tokens.Accent, modifier = Modifier.size(120.dp)) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(Icons.Default.Person, contentDescription = null, tint = Color.White, modifier = Modifier.size(64.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 24.dp, vertical = 24.dp)
+                    .padding(bottom = 100.dp), // Space for controls
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Remote Participant
+                Box(
+                    modifier = Modifier
+                        .weight(if (isScreenSharing) 0.4f else 1f)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color(0xFF1E1F22))
+                        .border(2.dp, Color.Transparent, RoundedCornerShape(16.dp))
+                ) {
+                    if (remoteRenderer != null) {
+                        VideoRenderer(
+                            renderer = remoteRenderer,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        // Fallback if remote has no camera
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Surface(shape = CircleShape, color = tokens.Accent, modifier = Modifier.size(100.dp)) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Default.Person, contentDescription = null, tint = Color.White, modifier = Modifier.size(56.dp))
+                                    }
                                 }
                             }
-                            Spacer(Modifier.height(16.dp))
-                            Text("Friend's Camera is Off", color = Color.White.copy(alpha=0.6f), fontSize = 18.sp)
+                        }
+                    }
+                    Box(modifier = Modifier.align(Alignment.BottomStart).padding(12.dp).background(Color.Black.copy(alpha=0.6f), RoundedCornerShape(8.dp)).padding(horizontal=12.dp, vertical=6.dp)) {
+                        Text("Friend", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                // Local Participant
+                Box(
+                    modifier = Modifier
+                        .weight(if (isScreenSharing) 1f else 1f)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color(0xFF1E1F22))
+                        .border(2.dp, if (!isMuted) Color(0xFF23A559) else Color.Transparent, RoundedCornerShape(16.dp))
+                ) {
+                    if ((isVideoEnabled || isScreenSharing) && localRenderer != null) {
+                        VideoRenderer(renderer = localRenderer, modifier = Modifier.fillMaxSize())
+                    } else {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Surface(shape = CircleShape, color = tokens.Accent.copy(alpha = 0.5f), modifier = Modifier.size(100.dp)) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Default.Person, contentDescription = null, tint = Color.White, modifier = Modifier.size(56.dp))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Box(modifier = Modifier.align(Alignment.BottomStart).padding(12.dp).background(Color.Black.copy(alpha=0.6f), RoundedCornerShape(8.dp)).padding(horizontal=12.dp, vertical=6.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (isMuted) {
+                                Icon(OrbitIcons.MicOff, null, tint = Color(0xFFF23F42), modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(6.dp))
+                            }
+                            Text("You", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -212,38 +263,6 @@ fun CallScreen(
                         color = Color.White.copy(alpha = 0.6f),
                         fontSize = 16.sp
                     )
-                }
-            }
-        }
-
-        // ── Local Video (PiP) ──
-        if ((isVideoEnabled || isScreenSharing) && localRenderer != null) {
-            var pipOffsetX by remember { mutableStateOf(0f) }
-            var pipOffsetY by remember { mutableStateOf(0f) }
-            
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(bottom = 120.dp, end = 24.dp) // Avoid controls
-                    .offset { IntOffset(pipOffsetX.roundToInt(), pipOffsetY.roundToInt()) }
-                    .size(240.dp, 135.dp) // 16:9 ratio
-                    .shadow(16.dp, RoundedCornerShape(12.dp))
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Color.Black)
-                    .border(2.dp, Color(0xFF2B2D31), RoundedCornerShape(12.dp))
-                    .pointerInput(Unit) {
-                        detectDragGestures { change, dragAmount ->
-                            change.consume()
-                            pipOffsetX += dragAmount.x
-                            pipOffsetY += dragAmount.y
-                        }
-                    }
-            ) {
-                VideoRenderer(renderer = localRenderer, modifier = Modifier.fillMaxSize())
-                
-                // Small indicator for you
-                Box(modifier = Modifier.align(Alignment.BottomStart).padding(8.dp).background(Color.Black.copy(alpha=0.6f), RoundedCornerShape(4.dp)).padding(horizontal=6.dp, vertical=2.dp)) {
-                    Text("You", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
