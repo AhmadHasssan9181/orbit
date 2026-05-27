@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="560" viewBox="0 0 900 560" fill="none">
+<defs>
+  <radialGradient id="purpleGlow" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="#8B5CF6" stop-opacity="0.40"/>
+    <stop offset="60%" stop-color="#8B5CF6" stop-opacity="0.10"/>
+    <stop offset="100%" stop-color="#8B5CF6" stop-opacity="0"/>
+  </radialGradient>
+  <linearGradient id="purpleGrad" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0%" stop-color="#A78BFA"/>
+    <stop offset="100%" stop-color="#6D5DFB"/>
+  </linearGradient>
+  <linearGradient id="cardGrad" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0%" stop-color="#1B2538"/>
+    <stop offset="100%" stop-color="#101827"/>
+  </linearGradient>
+  <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+    <feDropShadow dx="0" dy="16" stdDeviation="16" flood-color="#000000" flood-opacity="0.28"/>
+  </filter>
+</defs>
+
+<circle cx="450" cy="250" r="220" fill="url(#purpleGlow)"/>
+<ellipse cx="450" cy="256" rx="320" ry="96" transform="rotate(-14 450 256)" stroke="#8B5CF6" stroke-opacity="0.18" stroke-width="4"/>
+<g filter="url(#softShadow)">
+  <rect x="275" y="128" width="350" height="235" rx="28" fill="url(#cardGrad)" stroke="#FFFFFF" stroke-opacity="0.08"/>
+  <rect x="305" y="165" width="110" height="30" rx="15" fill="#8B5CF6" fill-opacity="0.18"/>
+  <circle cx="340" cy="251" r="34" fill="#F6C7A9"/>
+  <path d="M316 245c10-36 51-36 59 0" stroke="#1F2937" stroke-width="8" stroke-linecap="round"/>
+  <rect x="392" y="224" width="172" height="22" rx="11" fill="#F3F4F6" fill-opacity="0.90"/>
+  <rect x="392" y="258" width="142" height="14" rx="7" fill="#9CA3AF" fill-opacity="0.55"/>
+  <g transform="translate(309 302)">
+    <rect x="0" y="0" width="72" height="34" rx="17" fill="#1F2937" stroke="#FFFFFF" stroke-opacity="0.07"/>
+    <path d="M18 17h36" stroke="#A78BFA" stroke-width="5" stroke-linecap="round"/>
+    <circle cx="18" cy="17" r="6" fill="#A78BFA"/>
+  </g>
+  <g transform="translate(397 300)">
+    <rect x="0" y="0" width="76" height="34" rx="17" fill="#1F2937" stroke="#FFFFFF" stroke-opacity="0.07"/>
+    <path d="M19 17h38" stroke="#F59E0B" stroke-width="5" stroke-linecap="round"/>
+    <circle cx="19" cy="17" r="6" fill="#F59E0B"/>
+  </g>
+  <g transform="translate(489 300)">
+    <rect x="0" y="0" width="94" height="34" rx="17" fill="#1F2937" stroke="#FFFFFF" stroke-opacity="0.07"/>
+    <path d="M19 17h46" stroke="#22C55E" stroke-width="5" stroke-linecap="round"/>
+    <circle cx="19" cy="17" r="6" fill="#22C55E"/>
+  </g>
+</g>
+<rect x="210" y="405" width="480" height="78" rx="38" fill="#161F2F" fill-opacity="0.72" stroke="#FFFFFF" stroke-opacity="0.06"/>
+<text x="450" y="456" font-family="Inter, Arial, sans-serif" font-size="34" font-weight="800" text-anchor="middle" fill="#F3F4F6">Roles and permissions</text>
+<text x="450" y="494" font-family="Inter, Arial, sans-serif" font-size="18" text-anchor="middle" fill="#9CA3AF">Use in the roles modal header or empty role setup</text>
+
+</svg>

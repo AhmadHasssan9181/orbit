@@ -1,0 +1,76 @@
+{
+  "emptyStates": {
+    "search": "illustrations/empty-search.svg",
+    "pins": "illustrations/empty-pins.svg",
+    "media": "illustrations/empty-media.svg",
+    "notifications": "illustrations/empty-notifications.svg",
+    "offline": "illustrations/offline-state.svg",
+    "permission": "illustrations/permission-denied.svg"
+  },
+  "modalHeaderArt": {
+    "invite": "illustrations/modal-invite.svg",
+    "leaveServer": "illustrations/modal-leave-server.svg",
+    "delete": "illustrations/modal-delete-warning.svg",
+    "upload": "illustrations/modal-upload.svg",
+    "voiceSettings": "illustrations/modal-voice-settings.svg",
+    "roles": "illustrations/modal-roles.svg"
+  },
+  "pickerAssets": {
+    "userAvatars": [
+      "avatars/users/bot-avatar.svg",
+      "avatars/users/guest-avatar.svg",
+      "avatars/users/user-default-1.svg",
+      "avatars/users/user-default-2.svg",
+      "avatars/users/user-default-3.svg",
+      "avatars/users/user-default-4.svg",
+      "avatars/users/user-default-5.svg",
+      "avatars/users/user-default-6.svg",
+      "avatars/users/user-default-7.svg",
+      "avatars/users/user-default-8.svg"
+    ],
+    "serverIcons": [
+      "avatars/servers/server-default-1.svg",
+      "avatars/servers/server-default-2.svg",
+      "avatars/servers/server-default-3.svg",
+      "avatars/servers/server-default-4.svg",
+      "avatars/servers/server-default-5.svg",
+      "avatars/servers/server-default-6.svg",
+      "avatars/servers/server-default-7.svg",
+      "avatars/servers/server-default-8.svg"
+    ],
+    "avatarPreview": "pickers/avatar-picker-grid.svg",
+    "serverPreview": "pickers/server-picker-grid.svg"
+  },
+  "backgrounds": {
+    "noiseTexture": "backgrounds/noise-texture.png",
+    "orbitLines": "backgrounds/orbit-line-pattern.svg",
+    "dialogGlass": "backgrounds/glass-card-bg.svg",
+    "glow": "backgrounds/radial-glow.svg"
+  },
+  "roleBadges": {
+    "owner": "badges/badge-owner.svg",
+    "admin": "badges/badge-admin.svg",
+    "mod": "badges/badge-mod.svg",
+    "helper": "badges/badge-helper.svg",
+    "verified": "badges/badge-verified.svg",
+    "bot": "badges/badge-bot.svg",
+    "muted": "badges/badge-muted.svg"
+  },
+  "brand": {
+    "splashLogo": "brand/splash-logo.svg",
+    "orbitLogo": "brand/orbit-logo.svg",
+    "orbitMark": "brand/orbit-mark.svg",
+    "titlebarMark": "brand/titlebar-mark.svg"
+  },
+  "createJoinFlow": {
+    "createHero": "illustrations/create-server.svg",
+    "joinHero": "illustrations/join-server.svg",
+    "createChoiceCustom": "illustrations/create-server-choice-custom.svg",
+    "createChoiceTemplate": "illustrations/create-server-choice-template.svg",
+    "joinChoiceInvite": "illustrations/join-server-choice-invite.svg",
+    "joinChoiceDiscover": "illustrations/join-server-choice-discover.svg",
+    "templateFriends": "illustrations/template-friends.svg",
+    "templateStudy": "illustrations/template-study.svg",
+    "templateCommunity": "illustrations/template-community.svg"
+  }
+}
