@@ -178,11 +178,11 @@ fun SettingsScreen(
                 ) {
                     when (selectedCategory) {
                         SettingsCategory.MyAccount -> item { MyAccountPane(repository) }
-                        SettingsCategory.Profiles -> item { ProfilesPane() }
-                        SettingsCategory.Privacy -> item { PrivacyPane() }
-                        SettingsCategory.FamilyCenter -> item { FamilyCenterPane() }
+                        SettingsCategory.Profiles -> item { ProfilesPane(repository) }
+                        SettingsCategory.Privacy -> item { PrivacyPane(repository) }
+                        SettingsCategory.FamilyCenter -> item { FamilyCenterPane(repository) }
                         SettingsCategory.AuthorizedApps -> item { AuthorizedAppsPane() }
-                        SettingsCategory.Connections -> item { ConnectionsPane() }
+                        SettingsCategory.Connections -> item { ConnectionsPane(repository) }
                         
                         SettingsCategory.OrbitPlus -> item { OrbitPlusPane() }
                         SettingsCategory.ServerOverdrive -> item { ServerOverdrivePane() }
@@ -193,33 +193,33 @@ fun SettingsScreen(
                         SettingsCategory.Appearance -> {
                             item { ThemeSelectorCard() }
                             item { LiteModeCard() }
-                            item { AppearanceExtrasPane() }
+                            item { AppearanceExtrasPane(settingsManager) }
                         }
                         SettingsCategory.Accessibility -> {
                             item { FontSizeCard(settingsManager) }
                             item { ReduceMotionCard(settingsManager) }
-                            item { AccessibilityExtrasPane() }
+                            item { AccessibilityExtrasPane(settingsManager) }
                         }
                         SettingsCategory.Chat -> {
                             item { MessageDensityCard(settingsManager) }
-                            item { ChatSettingsPane() }
+                            item { ChatSettingsPane(settingsManager) }
                         }
                         SettingsCategory.VoiceVideo -> {
-                            item { VoiceVideoFullPane() }
+                            item { VoiceVideoFullPane(settingsManager) }
                         }
                         SettingsCategory.Notifications -> {
                             item { MentionsOnlyCard(settingsManager) }
                             item { SoundPickerCard(settingsManager) }
-                            item { NotificationsExtrasPane() }
+                            item { NotificationsExtrasPane(settingsManager) }
                         }
                         SettingsCategory.Keybinds -> item { KeybindsPane() }
-                        SettingsCategory.Language -> item { LanguageTimePane() }
-                        SettingsCategory.Windows -> item { WindowsSettingsPane() }
-                        SettingsCategory.Advanced -> item { AdvancedPane() }
+                        SettingsCategory.Language -> item { LanguageTimePane(settingsManager) }
+                        SettingsCategory.Windows -> item { WindowsSettingsPane(settingsManager) }
+                        SettingsCategory.Advanced -> item { AdvancedPane(settingsManager) }
                         
-                        SettingsCategory.ActivityPrivacy -> item { ActivityPrivacyPane() }
-                        SettingsCategory.RegisteredGames -> item { RegisteredGamesPane() }
-                        SettingsCategory.GameOverlay -> item { GameOverlayPane() }
+                        SettingsCategory.ActivityPrivacy -> item { ActivityPrivacyPane(settingsManager) }
+                        SettingsCategory.RegisteredGames -> item { RegisteredGamesPane(settingsManager) }
+                        SettingsCategory.GameOverlay -> item { GameOverlayPane(settingsManager) }
                         
                         SettingsCategory.Logout -> {}
                         else -> {

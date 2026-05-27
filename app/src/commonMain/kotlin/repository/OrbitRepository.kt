@@ -136,6 +136,10 @@ interface OrbitRepository {
     // Session Management ──────────────────────────────────
     val authStatus: Flow<AuthStatus>
     suspend fun logout()
+
+    // ─── Account Data (Backend Sync) ─────────────────────────
+    suspend fun <T> setAccountData(eventType: String, data: T, serializer: kotlinx.serialization.KSerializer<T>): Result<Unit>
+    fun <T> observeAccountData(eventType: String, deserializer: kotlinx.serialization.KSerializer<T>): Flow<T?>
 }
 
 sealed class AuthStatus {

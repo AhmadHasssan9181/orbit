@@ -18,6 +18,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
+import repository.OrbitRepository
+import ui.model.OrbitConnectionSettings
+import ui.model.OrbitFamilyCenterSettings
+import ui.model.OrbitPrivacySettings
+import ui.model.OrbitProfileExtras
 import ui.theme.rememberCosmicTokens
 
 // ═══════════════════════════════════════════════════════════════════
@@ -25,68 +31,80 @@ import ui.theme.rememberCosmicTokens
 // ═══════════════════════════════════════════════════════════════════
 
 @Composable
-internal fun ProfilesPane() {
+internal fun ProfilesPane(repository: OrbitRepository) {
     val t = rememberCosmicTokens()
+    val scope = rememberCoroutineScope()
+    
+    val profileExtras by repository.observeAccountData("im.orbit.profile_extras", OrbitProfileExtras.serializer()).collectAsState(null)
+    
+    val currentExtras = profileExtras ?: OrbitProfileExtras()
+
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        // ── Banner ──
+        // ── Banner & Avatar ──
         Box(
-            modifier = Modifier.fillMaxWidth().height(160.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(Brush.horizontalGradient(listOf(Color(0xFF6366F1), Color(0xFF8B5CF6), Color(0xFFA78BFA))))
+            modifier = Modifier.fillMaxWidth().padding(bottom = 44.dp)
         ) {
             Box(
-                modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)
-                    .clip(RoundedCornerShape(6.dp)).background(Color.Black.copy(alpha = 0.45f))
-                    .clickable { }.padding(horizontal = 10.dp, vertical = 5.dp)
+                modifier = Modifier.fillMaxWidth().height(160.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Brush.horizontalGradient(listOf(Color(0xFF6366F1), Color(0xFF8B5CF6), Color(0xFFA78BFA))))
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Edit, null, tint = Color.White, modifier = Modifier.size(14.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Change Banner", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                Box(
+                    modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)
+                        .clip(RoundedCornerShape(6.dp)).background(Color.Black.copy(alpha = 0.45f))
+                        .clickable { }.padding(horizontal = 10.dp, vertical = 5.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Edit, null, tint = Color.White, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Change Banner", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                    }
                 }
             }
+            
             // Avatar
             Box(
                 modifier = Modifier.align(Alignment.BottomStart).offset(x = 24.dp, y = 44.dp)
-                    .size(88.dp).clip(CircleShape).background(t.Bg).padding(4.dp)
+                    .size(100.dp).clip(CircleShape).background(t.Bg).padding(6.dp)
             ) {
                 Box(
                     modifier = Modifier.fillMaxSize().clip(CircleShape).background(t.CardBgHover),
                     contentAlignment = Alignment.Center
-                ) { Icon(Icons.Default.AddAPhoto, null, tint = t.Text_Muted, modifier = Modifier.size(28.dp)) }
+                ) { Icon(Icons.Default.AddAPhoto, null, tint = t.Text_Muted, modifier = Modifier.size(32.dp)) }
             }
         }
 
-        Spacer(Modifier.height(40.dp))
-
         // ── Identity ──
         SectionHeader("Identity")
-        var displayName by remember { mutableStateOf("User") }
-        SettingsTextField(label = "Display Name", description = "This is the name others see in chat and servers.", value = displayName, onValueChange = { displayName = it })
+        
+        // These fields are standard OrbitProfileExtras for now
+        var pronouns by remember(currentExtras.pronouns) { mutableStateOf(currentExtras.pronouns) }
+        SettingsTextField(label = "Pronouns", description = "Add your pronouns so others know how to refer to you.", value = pronouns, onValueChange = { pronouns = it }, placeholder = "e.g. they/them, she/her, he/him", onBlur = {
+            scope.launch { repository.setAccountData("im.orbit.profile_extras", currentExtras.copy(pronouns = pronouns), OrbitProfileExtras.serializer()) }
+        })
 
-        var username by remember { mutableStateOf("@user") }
-        SettingsTextField(label = "Username", description = "Your unique @handle used for mentions and friend requests.", value = username, onValueChange = { username = it })
-
-        var pronouns by remember { mutableStateOf("") }
-        SettingsTextField(label = "Pronouns", description = "Add your pronouns so others know how to refer to you.", value = pronouns, onValueChange = { pronouns = it }, placeholder = "e.g. they/them, she/her, he/him")
-
-        var email by remember { mutableStateOf("user@orbit.chat") }
-        SettingsTextField(label = "Email", description = "Your email address. Used for password recovery and notifications.", value = email, onValueChange = { email = it })
+        var email by remember(currentExtras.email) { mutableStateOf(currentExtras.email) }
+        SettingsTextField(label = "Email", description = "Your email address. Used for password recovery and notifications.", value = email, onValueChange = { email = it }, onBlur = {
+            scope.launch { repository.setAccountData("im.orbit.profile_extras", currentExtras.copy(email = email), OrbitProfileExtras.serializer()) }
+        })
 
         // ── Profile Customization ──
         SectionHeader("Profile Customization")
-        var aboutMe by remember { mutableStateOf("") }
-        SettingsTextField(label = "About Me", description = "Write a short bio that appears on your profile card.", value = aboutMe, onValueChange = { aboutMe = it }, placeholder = "Tell the world something about yourself", multiline = true)
+        var aboutMe by remember(currentExtras.aboutMe) { mutableStateOf(currentExtras.aboutMe) }
+        SettingsTextField(label = "About Me", description = "Write a short bio that appears on your profile card.", value = aboutMe, onValueChange = { aboutMe = it }, placeholder = "Tell the world something about yourself", multiline = true, onBlur = {
+            scope.launch { repository.setAccountData("im.orbit.profile_extras", currentExtras.copy(aboutMe = aboutMe), OrbitProfileExtras.serializer()) }
+        })
 
-        var customStatus by remember { mutableStateOf("") }
-        SettingsTextField(label = "Custom Status", description = "Set an emoji or text status visible to your friends.", value = customStatus, onValueChange = { customStatus = it }, placeholder = "🎮 Playing Valorant")
+        var customStatus by remember(currentExtras.customStatus) { mutableStateOf(currentExtras.customStatus) }
+        SettingsTextField(label = "Custom Status", description = "Set an emoji or text status visible to your friends.", value = customStatus, onValueChange = { customStatus = it }, placeholder = "🎮 Playing Valorant", onBlur = {
+            scope.launch { repository.setAccountData("im.orbit.profile_extras", currentExtras.copy(customStatus = customStatus), OrbitProfileExtras.serializer()) }
+        })
 
-        var profileColor by remember { mutableStateOf("Purple") }
         PrefCard("Profile Accent Color", "Customize the accent color on your profile card.") {
             ChipGroup(
                 options = listOf("Purple", "Blue", "Teal", "Green", "Pink", "Orange", "Red"),
-                selected = profileColor,
-                onSelect = { profileColor = it }
+                selected = currentExtras.profileColor,
+                onSelect = { color -> scope.launch { repository.setAccountData("im.orbit.profile_extras", currentExtras.copy(profileColor = color), OrbitProfileExtras.serializer()) } }
             )
         }
 
@@ -95,178 +113,182 @@ internal fun ProfilesPane() {
         PrefCard("Animated Avatar", "Use an animated GIF as your profile picture.") {
             StatusBadge("Free", Color(0xFF10B981))
         }
-        PrefCard("Avatar Decorations", "Add animated rings and effects around your avatar.") {
-            var selected by remember { mutableStateOf("None") }
+        PrefCard("Avatar Decoration", "Add a border or effect around your avatar.") {
             ChipGroup(
-                options = listOf("None", "Flame", "Frost", "Sakura", "Electric"),
-                selected = selected,
-                onSelect = { selected = it }
+                options = listOf("None", "Fire", "Sparkles", "Neon Border", "Glitch"),
+                selected = currentExtras.avatarDecoration,
+                onSelect = { dec -> scope.launch { repository.setAccountData("im.orbit.profile_extras", currentExtras.copy(avatarDecoration = dec), OrbitProfileExtras.serializer()) } }
             )
         }
-        PrefCard("Profile Effect", "Add particle effects that play on your profile card.") {
-            var selected by remember { mutableStateOf("None") }
+        PrefCard("Profile Effect", "Add a background effect to your profile card.") {
             ChipGroup(
-                options = listOf("None", "Sparkle", "Confetti", "Rain", "Stars"),
-                selected = selected,
-                onSelect = { selected = it }
+                options = listOf("None", "Falling Stars", "Matrix Rain", "Cherry Blossoms", "Snow"),
+                selected = currentExtras.profileEffect,
+                onSelect = { eff -> scope.launch { repository.setAccountData("im.orbit.profile_extras", currentExtras.copy(profileEffect = eff), OrbitProfileExtras.serializer()) } }
             )
         }
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  PRIVACY & SAFETY
+//  PRIVACY
 // ═══════════════════════════════════════════════════════════════════
 
 @Composable
-internal fun PrivacyPane() {
+internal fun PrivacyPane(repository: OrbitRepository) {
+    val t = rememberCosmicTokens()
+    val scope = rememberCoroutineScope()
+    
+    val privacyData by repository.observeAccountData("im.orbit.privacy", OrbitPrivacySettings.serializer()).collectAsState(null)
+    val priv = privacyData ?: OrbitPrivacySettings()
+
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        SectionHeader("Safe Direct Messaging")
-        var dmFilter by remember { mutableStateOf("My friends are nice") }
-        PrefCard("Explicit content filter", "Automatically scan and filter explicit media in DMs.") {
+        SectionHeader("Direct Messages")
+        PrefCard("Safe Direct Messaging", "Automatically scan and delete direct messages you receive that contain explicit media.") {
             ChipGroup(
                 options = listOf("Keep me safe", "My friends are nice", "Do not scan"),
-                selected = dmFilter,
-                onSelect = { dmFilter = it }
+                selected = priv.dmFilter,
+                onSelect = { f -> scope.launch { repository.setAccountData("im.orbit.privacy", priv.copy(dmFilter = f), OrbitPrivacySettings.serializer()) } }
             )
         }
-
-        SectionHeader("Server Privacy Defaults")
-        var allowDms by remember { mutableStateOf(true) }
-        PrefCard("Allow DMs from server members", "When you join a new server, members can message you directly.") {
-            CosmicSwitch(checked = allowDms, onCheckedChange = { allowDms = it })
+        PrefCard("Allow direct messages from server members", "If disabled, you won't receive DMs from people in a server unless you are friends.") {
+            CosmicSwitch(checked = priv.allowDmsFromServerMembers, onCheckedChange = { b -> scope.launch { repository.setAccountData("im.orbit.privacy", priv.copy(allowDmsFromServerMembers = b), OrbitPrivacySettings.serializer()) } })
         }
-        var friendAll by remember { mutableStateOf(true) }
-        PrefCard("Allow friend requests from everyone", "Anyone can send you a friend request. Turn off to restrict.") {
-            CosmicSwitch(checked = friendAll, onCheckedChange = { friendAll = it })
-        }
-        var friendServer by remember { mutableStateOf(true) }
-        PrefCard("Allow friend requests from server members", "People who share servers with you can add you.") {
-            CosmicSwitch(checked = friendServer, onCheckedChange = { friendServer = it })
-        }
-        var msgRequests by remember { mutableStateOf(true) }
-        PrefCard("Message request inbox", "Messages from non-friends land in a separate inbox.") {
-            CosmicSwitch(checked = msgRequests, onCheckedChange = { msgRequests = it })
+        PrefCard("Message Request Inbox", "Route messages from people you don't know into a separate inbox.") {
+            CosmicSwitch(checked = priv.messageRequestInbox, onCheckedChange = { b -> scope.launch { repository.setAccountData("im.orbit.privacy", priv.copy(messageRequestInbox = b), OrbitPrivacySettings.serializer()) } })
         }
 
-        SectionHeader("Activity & Data")
-        var analytics by remember { mutableStateOf(false) }
-        PrefCard("Share usage statistics", "Help Orbit improve by sharing anonymous usage data.") {
-            CosmicSwitch(checked = analytics, onCheckedChange = { analytics = it })
+        SectionHeader("Friend Requests")
+        PrefCard("Everyone can send requests", "Anyone with your username can send you a friend request.") {
+            CosmicSwitch(checked = priv.allowFriendRequestsFromEveryone, onCheckedChange = { b -> scope.launch { repository.setAccountData("im.orbit.privacy", priv.copy(allowFriendRequestsFromEveryone = b), OrbitPrivacySettings.serializer()) } })
         }
-        var personalization by remember { mutableStateOf(false) }
-        PrefCard("Personalization", "Tailor content based on your activity and interests.") {
-            CosmicSwitch(checked = personalization, onCheckedChange = { personalization = it })
-        }
-        var dataRequest by remember { mutableStateOf(false) }
-        PrefCard("Use data to improve Orbit", "Opt in to let Orbit analyze your data for a better experience.") {
-            CosmicSwitch(checked = dataRequest, onCheckedChange = { dataRequest = it })
+        PrefCard("Server members can send requests", "People who share a server with you can send a friend request.") {
+            CosmicSwitch(checked = priv.allowFriendRequestsFromServerMembers, onCheckedChange = { b -> scope.launch { repository.setAccountData("im.orbit.privacy", priv.copy(allowFriendRequestsFromServerMembers = b), OrbitPrivacySettings.serializer()) } })
         }
 
-        SectionHeader("Blocked & Hidden")
-        PrefCard("Blocked Users", "Manage users you've blocked from contacting you.") {
-            StatusBadge("0 blocked", Color(0xFF10B981))
+        SectionHeader("Data & Analytics")
+        PrefCard("Help improve Orbit", "Allow Orbit to collect anonymous crash reports and usage statistics to improve the app.") {
+            CosmicSwitch(checked = priv.shareAnalytics, onCheckedChange = { b -> scope.launch { repository.setAccountData("im.orbit.privacy", priv.copy(shareAnalytics = b), OrbitPrivacySettings.serializer()) } })
         }
-        PrefCard("Hidden Channels", "Channels you've muted or hidden from your sidebar.") {
-            StatusBadge("0 hidden", Color(0xFF6366F1))
+        PrefCard("Personalization", "Use my data to customize my Orbit experience.") {
+            CosmicSwitch(checked = priv.personalization, onCheckedChange = { b -> scope.launch { repository.setAccountData("im.orbit.privacy", priv.copy(personalization = b), OrbitPrivacySettings.serializer()) } })
         }
-        PrefCard("Restricted Servers", "Servers where you have restricted your DM settings.") {
-            StatusBadge("0 servers", Color(0xFFF59E0B))
+        PrefCard("Request Data", "Receive a copy of all your messages, images, and account data via email.") {
+            Button(onClick = { scope.launch { repository.setAccountData("im.orbit.privacy", priv.copy(dataRequest = true), OrbitPrivacySettings.serializer()) } }, colors = ButtonDefaults.buttonColors(containerColor = t.Accent)) {
+                Text("Request Data Archive")
+            }
         }
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  FAMILY CENTRE
+//  FAMILY CENTER
 // ═══════════════════════════════════════════════════════════════════
 
 @Composable
-internal fun FamilyCenterPane() {
+internal fun FamilyCenterPane(repository: OrbitRepository) {
     val t = rememberCosmicTokens()
+    val scope = rememberCoroutineScope()
+    
+    val famData by repository.observeAccountData("im.orbit.family", OrbitFamilyCenterSettings.serializer()).collectAsState(null)
+    val fam = famData ?: OrbitFamilyCenterSettings()
+
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         HeroCard(
             icon = Icons.Default.FamilyRestroom,
-            iconTint = Color(0xFF60A5FA),
+            iconTint = Color(0xFF10B981),
             title = "Family Centre",
-            subtitle = "Keep your family safe online. Set up parental controls, monitor activity, and manage screen time for linked accounts.",
-            buttonText = "Get Started"
+            subtitle = "Manage your teen's account settings and review their activity to keep them safe.",
+            buttonText = "Link Teen Account"
         )
 
-        SectionHeader("Parental Controls")
-        var restrictDms by remember { mutableStateOf(false) }
-        PrefCard("Restrict direct messages", "Prevent your teen from receiving DMs from unknown users.") {
-            CosmicSwitch(checked = restrictDms, onCheckedChange = { restrictDms = it })
+        SectionHeader("Teen Safety Controls")
+        PrefCard("Restrict Direct Messages", "Prevent teen from receiving DMs from non-friends.") {
+            CosmicSwitch(checked = fam.restrictDms, onCheckedChange = { b -> scope.launch { repository.setAccountData("im.orbit.family", fam.copy(restrictDms = b), OrbitFamilyCenterSettings.serializer()) } })
         }
-        var restrictServers by remember { mutableStateOf(false) }
-        PrefCard("Restrict server joining", "Require approval before your teen joins new servers.") {
-            CosmicSwitch(checked = restrictServers, onCheckedChange = { restrictServers = it })
+        PrefCard("Restrict Server Joining", "Require approval before joining new communities.") {
+            CosmicSwitch(checked = fam.restrictServerJoining, onCheckedChange = { b -> scope.launch { repository.setAccountData("im.orbit.family", fam.copy(restrictServerJoining = b), OrbitFamilyCenterSettings.serializer()) } })
         }
-        var nsfwBlock by remember { mutableStateOf(true) }
-        PrefCard("Block NSFW content", "Prevent access to age-restricted channels and media.") {
-            CosmicSwitch(checked = nsfwBlock, onCheckedChange = { nsfwBlock = it })
+        PrefCard("Block NSFW Content", "Strictly enforce NSFW filters across all channels.") {
+            CosmicSwitch(checked = fam.blockNsfw, onCheckedChange = { b -> scope.launch { repository.setAccountData("im.orbit.family", fam.copy(blockNsfw = b), OrbitFamilyCenterSettings.serializer()) } })
         }
-        var restrictFriends by remember { mutableStateOf(false) }
-        PrefCard("Restrict friend requests", "Only allow friend requests from existing friends-of-friends.") {
-            CosmicSwitch(checked = restrictFriends, onCheckedChange = { restrictFriends = it })
+        PrefCard("Restrict Friend Requests", "Only allow friend requests from server members or stop them entirely.") {
+            CosmicSwitch(checked = fam.restrictFriendRequests, onCheckedChange = { b -> scope.launch { repository.setAccountData("im.orbit.family", fam.copy(restrictFriendRequests = b), OrbitFamilyCenterSettings.serializer()) } })
         }
 
-        SectionHeader("Screen Time")
-        var screenTime by remember { mutableStateOf(false) }
-        PrefCard("Enable screen time limits", "Set a daily limit for Orbit usage.") {
-            CosmicSwitch(checked = screenTime, onCheckedChange = { screenTime = it })
+        SectionHeader("Screen Time & Activity")
+        PrefCard("Enable Screen Time Limits", "Automatically lock access to Orbit after a certain amount of time.") {
+            CosmicSwitch(checked = fam.enableScreenTimeLimits, onCheckedChange = { b -> scope.launch { repository.setAccountData("im.orbit.family", fam.copy(enableScreenTimeLimits = b), OrbitFamilyCenterSettings.serializer()) } })
         }
-        var dailyLimit by remember { mutableStateOf("2 hours") }
-        PrefCard("Daily time limit", "Maximum daily usage before Orbit locks.") {
-            ChipGroup(
-                options = listOf("1 hour", "2 hours", "4 hours", "Unlimited"),
-                selected = dailyLimit,
-                onSelect = { dailyLimit = it }
-            )
+        if (fam.enableScreenTimeLimits) {
+            PrefCard("Daily Time Limit", "Maximum hours allowed per day.") {
+                ChipGroup(
+                    options = listOf("1 hour", "2 hours", "4 hours", "Custom"),
+                    selected = fam.dailyTimeLimit,
+                    onSelect = { l -> scope.launch { repository.setAccountData("im.orbit.family", fam.copy(dailyTimeLimit = l), OrbitFamilyCenterSettings.serializer()) } }
+                )
+            }
         }
-
-        SectionHeader("Reports")
-        var weeklyDigest by remember { mutableStateOf(true) }
-        PrefCard("Weekly activity digest", "Receive a summary of activity every Sunday.") {
-            CosmicSwitch(checked = weeklyDigest, onCheckedChange = { weeklyDigest = it })
+        PrefCard("Weekly Activity Digest", "Send a summary of friends added and servers joined to your email.") {
+            CosmicSwitch(checked = fam.weeklyDigest, onCheckedChange = { b -> scope.launch { repository.setAccountData("im.orbit.family", fam.copy(weeklyDigest = b), OrbitFamilyCenterSettings.serializer()) } })
         }
-        var alertDMs by remember { mutableStateOf(true) }
-        PrefCard("Alert on new DM contacts", "Get notified when your teen messages someone new.") {
-            CosmicSwitch(checked = alertDMs, onCheckedChange = { alertDMs = it })
+        PrefCard("Alert on new DM from unknown user", "Send a notification when your teen is messaged by a stranger.") {
+            CosmicSwitch(checked = fam.alertOnNewDm, onCheckedChange = { b -> scope.launch { repository.setAccountData("im.orbit.family", fam.copy(alertOnNewDm = b), OrbitFamilyCenterSettings.serializer()) } })
         }
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  AUTHORISED APPS
+//  AUTHORIZED APPS
 // ═══════════════════════════════════════════════════════════════════
 
 @Composable
 internal fun AuthorizedAppsPane() {
     val t = rememberCosmicTokens()
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Applications that have been granted access to your Orbit account.", color = t.Text_Muted, style = MaterialTheme.typography.bodySmall)
+        SectionHeader("Active Authorizations")
+        Text("These apps and services have access to your Orbit account.", color = t.Text_Secondary, style = MaterialTheme.typography.bodyMedium)
 
-        SectionHeader("Authorized Applications")
-        PrefCard("Rythm Bot", "Music bot • Authorized Oct 2024\nPermissions: Read messages, Join voice channels") {
-            Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444).copy(alpha = 0.8f)), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) { Text("Deauthorize", fontSize = 12.sp) }
-        }
-        PrefCard("Midjourney", "AI Art • Authorized Nov 2024\nPermissions: Send messages, Read message history") {
-            Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444).copy(alpha = 0.8f)), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) { Text("Deauthorize", fontSize = 12.sp) }
-        }
-        PrefCard("MEE6", "Moderation • Authorized Dec 2024\nPermissions: Manage roles, Kick members, Ban members") {
-            Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444).copy(alpha = 0.8f)), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) { Text("Deauthorize", fontSize = 12.sp) }
-        }
-        PrefCard("Carl-bot", "Utility • Authorized Jan 2025\nPermissions: Manage channels, Send messages") {
-            Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444).copy(alpha = 0.8f)), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) { Text("Deauthorize", fontSize = 12.sp) }
-        }
+        AppCard("Midjourney Bot", "Authorized on Oct 12, 2024", "Can read your messages and generate images.", Icons.Default.Brush, Color(0xFFF59E0B))
+        AppCard("Rythm", "Authorized on Jan 3, 2024", "Can join voice channels and play audio.", Icons.Default.MusicNote, Color(0xFFEF4444))
+        AppCard("Carl-bot", "Authorized on Nov 22, 2023", "Can manage roles and read message history.", Icons.Default.SmartToy, Color(0xFF3B82F6))
+        AppCard("Tracker.gg", "Authorized on May 5, 2023", "Can see your username and activity status.", Icons.Default.Analytics, Color(0xFF10B981))
 
+        Spacer(Modifier.height(16.dp))
         SectionHeader("Security")
-        var authNotify by remember { mutableStateOf(true) }
-        PrefCard("Notify on new authorization", "Get a notification when a new app is authorized on your account.") {
-            CosmicSwitch(checked = authNotify, onCheckedChange = { authNotify = it })
+        var notifyOnAuth by remember { mutableStateOf(true) }
+        PrefCard("Notify on new authorization", "Send a direct message when a new app is authorized to access your account.") {
+            CosmicSwitch(checked = notifyOnAuth, onCheckedChange = { notifyOnAuth = it })
         }
-        PrefCard("How apps access your data", "Apps can only perform actions you explicitly grant. You can revoke access at any time from this page.") {
-            Icon(Icons.Default.Info, null, tint = t.Accent)
+        PrefCard("Deauthorize all apps", "Instantly revoke access for all bots and third-party services.") {
+            Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444).copy(alpha = 0.8f))) {
+                Text("Revoke All")
+            }
+        }
+    }
+}
+
+@Composable
+private fun AppCard(name: String, date: String, perms: String, icon: androidx.compose.ui.graphics.vector.ImageVector, iconColor: Color) {
+    val t = rememberCosmicTokens()
+    Box(
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
+            .background(t.CardBg).border(1.dp, t.Separator, RoundedCornerShape(8.dp))
+            .clickable { }.padding(16.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(modifier = Modifier.size(40.dp).clip(CircleShape).background(iconColor.copy(alpha = 0.2f)), contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = iconColor, modifier = Modifier.size(24.dp))
+            }
+            Spacer(Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(name, color = t.Text_White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(date, color = t.Text_Muted, style = MaterialTheme.typography.bodySmall)
+                Text(perms, color = t.Text_Secondary, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
+            }
+            Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = t.CardBgHover, contentColor = Color(0xFFEF4444))) {
+                Text("Revoke", fontWeight = FontWeight.Bold)
+            }
         }
     }
 }
@@ -276,77 +298,88 @@ internal fun AuthorizedAppsPane() {
 // ═══════════════════════════════════════════════════════════════════
 
 @Composable
-internal fun ConnectionsPane() {
+internal fun ConnectionsPane(repository: OrbitRepository) {
     val t = rememberCosmicTokens()
+    val scope = rememberCoroutineScope()
+    
+    val connData by repository.observeAccountData("im.orbit.connections", OrbitConnectionSettings.serializer()).collectAsState(null)
+    val conn = connData ?: OrbitConnectionSettings()
+    
+    fun setLinked(service: String, isLinked: Boolean) {
+        val newLinks = conn.linkedServices.toMutableMap()
+        if (isLinked) newLinks[service] = true else newLinks.remove(service)
+        scope.launch { repository.setAccountData("im.orbit.connections", conn.copy(linkedServices = newLinks), OrbitConnectionSettings.serializer()) }
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Link your accounts to show what you're playing, listening to, or streaming on your profile.", color = t.Text_Muted, style = MaterialTheme.typography.bodySmall)
+        HeroCard(
+            icon = Icons.Default.Link,
+            iconTint = Color(0xFF3B82F6),
+            title = "Connections",
+            subtitle = "Connect your other accounts to find friends and show off your activity.",
+            buttonText = ""
+        )
 
-        SectionHeader("Gaming")
+        SectionHeader("Gaming & Streaming")
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            ConnectionCard(Icons.Default.VideogameAsset, "Xbox", Color(0xFF107C10))
-            ConnectionCard(Icons.Default.SportsEsports, "PlayStation", Color(0xFF003791))
-            ConnectionCard(Icons.Default.Gamepad, "Steam", Color(0xFF1B2838))
-            ConnectionCard(Icons.Default.SportsEsports, "Epic Games", Color(0xFF2F2F2F))
+            ConnectionCard(Icons.Default.Gamepad, "Xbox", Color(0xFF107C10), conn.linkedServices["Xbox"] == true) { setLinked("Xbox", it) }
+            ConnectionCard(Icons.Default.SportsEsports, "PlayStation", Color(0xFF003087), conn.linkedServices["PlayStation"] == true) { setLinked("PlayStation", it) }
+            ConnectionCard(Icons.Default.Computer, "Steam", Color(0xFF171A21), conn.linkedServices["Steam"] == true) { setLinked("Steam", it) }
         }
-
-        SectionHeader("Streaming & Media")
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            ConnectionCard(Icons.Default.VideoCameraBack, "Twitch", Color(0xFF9146FF))
-            ConnectionCard(Icons.Default.PlayArrow, "YouTube", Color(0xFFFF0000))
-            ConnectionCard(Icons.Default.MusicNote, "Spotify", Color(0xFF1DB954))
-            ConnectionCard(Icons.Default.Radio, "SoundCloud", Color(0xFFFF5500))
+            ConnectionCard(Icons.Default.LiveTv, "Twitch", Color(0xFF9146FF), conn.linkedServices["Twitch"] == true) { setLinked("Twitch", it) }
+            ConnectionCard(Icons.Default.PlayArrow, "YouTube", Color(0xFFFF0000), conn.linkedServices["YouTube"] == true) { setLinked("YouTube", it) }
+            ConnectionCard(Icons.Default.Games, "Epic Games", Color(0xFF313131), conn.linkedServices["Epic Games"] == true) { setLinked("Epic Games", it) }
         }
 
-        SectionHeader("Social & Dev")
+        SectionHeader("Social & Music")
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            ConnectionCard(Icons.Default.Code, "GitHub", Color(0xFF8B5CF6))
-            ConnectionCard(Icons.Default.Language, "Reddit", Color(0xFFFF4500))
-            ConnectionCard(Icons.Default.CameraAlt, "Instagram", Color(0xFFE1306C))
-            ConnectionCard(Icons.Default.Send, "Telegram", Color(0xFF26A5E4))
+            ConnectionCard(Icons.Default.MusicNote, "Spotify", Color(0xFF1DB954), conn.linkedServices["Spotify"] == true) { setLinked("Spotify", it) }
+            ConnectionCard(Icons.Default.CameraAlt, "Instagram", Color(0xFFE1306C), conn.linkedServices["Instagram"] == true) { setLinked("Instagram", it) }
+            ConnectionCard(Icons.Default.Message, "Twitter / X", Color(0xFF000000), conn.linkedServices["Twitter"] == true) { setLinked("Twitter", it) }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            ConnectionCard(Icons.Default.Tag, "Reddit", Color(0xFFFF4500), conn.linkedServices["Reddit"] == true) { setLinked("Reddit", it) }
+            ConnectionCard(Icons.Default.Forum, "GitHub", Color(0xFF333333), conn.linkedServices["GitHub"] == true) { setLinked("GitHub", it) }
+            ConnectionCard(Icons.Default.Send, "Telegram", Color(0xFF26A5E4), conn.linkedServices["Telegram"] == true) { setLinked("Telegram", it) }
         }
 
-        SectionHeader("Connected Account Settings")
-        var showOnProfile by remember { mutableStateOf(true) }
-        PrefCard("Display on profile", "Show your linked accounts on your profile card.") {
-            CosmicSwitch(checked = showOnProfile, onCheckedChange = { showOnProfile = it })
+        SectionHeader("Connection Settings")
+        PrefCard("Display on profile", "Show your connected accounts on your public profile card.") {
+            CosmicSwitch(checked = conn.displayOnProfile, onCheckedChange = { b -> scope.launch { repository.setAccountData("im.orbit.connections", conn.copy(displayOnProfile = b), OrbitConnectionSettings.serializer()) } })
         }
-        var richPresence by remember { mutableStateOf(true) }
-        PrefCard("Enable Rich Presence", "Show detailed info like current song or game on your status.") {
-            CosmicSwitch(checked = richPresence, onCheckedChange = { richPresence = it })
+        PrefCard("Display status", "Show what you're playing/listening to from connected accounts as your status.") {
+            CosmicSwitch(checked = conn.enableRichPresence, onCheckedChange = { b -> scope.launch { repository.setAccountData("im.orbit.connections", conn.copy(enableRichPresence = b), OrbitConnectionSettings.serializer()) } })
         }
-        var syncName by remember { mutableStateOf(false) }
-        PrefCard("Sync display name", "Automatically update your Orbit display name from connected accounts.") {
-            CosmicSwitch(checked = syncName, onCheckedChange = { syncName = it })
+        PrefCard("Sync Display Name", "Automatically update your Orbit name to match your primary gaming account.") {
+            CosmicSwitch(checked = conn.syncDisplayName, onCheckedChange = { b -> scope.launch { repository.setAccountData("im.orbit.connections", conn.copy(syncDisplayName = b), OrbitConnectionSettings.serializer()) } })
         }
-        var syncAvatar by remember { mutableStateOf(false) }
-        PrefCard("Sync avatar", "Use your avatar from a connected account as your Orbit avatar.") {
-            CosmicSwitch(checked = syncAvatar, onCheckedChange = { syncAvatar = it })
+        PrefCard("Sync Avatar", "Automatically update your Orbit avatar to match your primary gaming account.") {
+            CosmicSwitch(checked = conn.syncAvatar, onCheckedChange = { b -> scope.launch { repository.setAccountData("im.orbit.connections", conn.copy(syncAvatar = b), OrbitConnectionSettings.serializer()) } })
         }
     }
 }
 
 @Composable
-private fun ConnectionCard(icon: androidx.compose.ui.graphics.vector.ImageVector, name: String, color: Color) {
+private fun RowScope.ConnectionCard(icon: androidx.compose.ui.graphics.vector.ImageVector, name: String, color: Color, isLinked: Boolean, onLinkChange: (Boolean) -> Unit) {
     val t = rememberCosmicTokens()
     Box(
-        modifier = Modifier
-            .size(85.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(t.CardBg)
-            .border(1.dp, t.Separator, RoundedCornerShape(10.dp))
-            .clickable { },
-        contentAlignment = Alignment.Center
+        modifier = Modifier.weight(1f).clip(RoundedCornerShape(8.dp))
+            .background(t.CardBg).border(1.dp, if (isLinked) color.copy(alpha=0.5f) else t.Separator, RoundedCornerShape(8.dp))
+            .clickable { onLinkChange(!isLinked) }.padding(12.dp)
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(icon, null, tint = color, modifier = Modifier.size(26.dp))
-            Spacer(Modifier.height(6.dp))
-            Text(name, color = t.Text_White, style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp))
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+            Icon(icon, null, tint = color, modifier = Modifier.size(32.dp))
+            Spacer(Modifier.height(8.dp))
+            Text(name, color = t.Text_White, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            Text(if (isLinked) "Linked" else "Connect", color = if (isLinked) color else t.Text_Muted, style = MaterialTheme.typography.labelSmall)
         }
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  Reusable Text Field for Settings
+//  HELPER: SettingsTextField (Actual working text input)
 // ═══════════════════════════════════════════════════════════════════
 
 @Composable
@@ -356,35 +389,52 @@ internal fun SettingsTextField(
     value: String,
     onValueChange: (String) -> Unit,
     placeholder: String = "",
-    multiline: Boolean = false
+    multiline: Boolean = false,
+    onBlur: () -> Unit = {}
 ) {
     val t = rememberCosmicTokens()
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = Modifier.fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(t.CardBgHover)
+            .background(t.CardBg)
+            .border(1.dp, t.Separator, RoundedCornerShape(12.dp))
             .padding(16.dp)
     ) {
-        Text(label, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold, color = t.Text_White))
-        Text(description, style = MaterialTheme.typography.bodySmall.copy(color = t.Text_Muted, fontSize = 11.sp), modifier = Modifier.padding(top = 2.dp, bottom = 10.dp))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
+                Text(label, color = t.Text_White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                if (description.isNotEmpty()) {
+                    Text(description, color = t.Text_Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,
-            placeholder = { if (placeholder.isNotEmpty()) Text(placeholder, color = t.Text_Muted.copy(alpha = 0.5f), fontSize = 13.sp) },
-            singleLine = !multiline,
-            minLines = if (multiline) 3 else 1,
+            modifier = Modifier.fillMaxWidth().heightIn(min = if (multiline) 100.dp else 56.dp),
+            placeholder = { Text(placeholder, color = t.Text_Muted.copy(alpha = 0.5f)) },
             colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = t.Accent,
+                unfocusedBorderColor = t.Separator,
                 focusedContainerColor = t.Bg,
                 unfocusedContainerColor = t.Bg,
                 focusedTextColor = t.Text_White,
-                unfocusedTextColor = t.Text_White,
-                focusedBorderColor = t.Accent,
-                unfocusedBorderColor = t.Separator,
-                cursorColor = t.Accent
+                unfocusedTextColor = t.Text_White
             ),
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(8.dp)
+            shape = RoundedCornerShape(8.dp),
+            singleLine = !multiline,
+            maxLines = if (multiline) 5 else 1
         )
+        
+        // Save hint or button can go here if needed.
+        // I will add a small save button.
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            Button(onClick = onBlur, colors = ButtonDefaults.buttonColors(containerColor = t.Accent)) {
+                Text("Save")
+            }
+        }
     }
 }
