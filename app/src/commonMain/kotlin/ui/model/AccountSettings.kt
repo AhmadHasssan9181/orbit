@@ -16,7 +16,8 @@ data class OrbitProfileExtras(
     val customStatus: String = "",
     val profileColor: String = "Purple",
     val avatarDecoration: String = "None",
-    val profileEffect: String = "None"
+    val profileEffect: String = "None",
+    val bannerUrl: String? = null
 )
 
 // Event Type: im.orbit.privacy

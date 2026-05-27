@@ -102,7 +102,7 @@ fun ChannelDrawer(
         } else {
             // â”€â”€ Server header â€” Discord/Revolt style â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             ServerHeader(
-                serverName = server.name,
+                server = server,
                 showArrow = !server.isDM,
                 onHeaderClick = {
                     if (!server.isDM) showInviteDialog = true
@@ -266,11 +266,11 @@ private fun InviteDialog(server: OrbitServer, onDismiss: () -> Unit) {
     )
 }
 
-// â”€â”€â”€ ServerHeader â€” Revolt/Discord style â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ——— ServerHeader — Revolt/Discord style ————————————————————————————
 
 @Composable
 private fun ServerHeader(
-    serverName: String,
+    server: OrbitServer,
     showArrow: Boolean,
     onHeaderClick: () -> Unit = {},
     onCreateRoomClick: (() -> Unit)? = null
@@ -278,51 +278,82 @@ private fun ServerHeader(
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
 
-    Row(
+    val headerHeight = if (server.bannerUrl != null) 100.dp else 46.dp
+
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(46.dp)
+            .height(headerHeight)
             .hoverable(interactionSource)
             .clickable(interactionSource = interactionSource, indication = null, onClick = onHeaderClick)
-            .background(if (isHovered) ChannelHover_Bg else Color.Transparent)
-            .padding(horizontal = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+            .background(if (isHovered && server.bannerUrl == null) ChannelHover_Bg else Color.Transparent)
     ) {
-        Text(
-            text = serverName,
-            style = MaterialTheme.typography.titleSmall.copy(
-                fontWeight = FontWeight.Bold,
-                color = Text_White
-            ),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f)
-        )
+        if (server.bannerUrl != null) {
+            coil3.compose.AsyncImage(
+                model = server.bannerUrl,
+                contentDescription = "Server Banner",
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+            // Gradient overlay to ensure text is readable
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color.Transparent,
+                                Color.Black.copy(alpha = 0.8f)
+                            )
+                        )
+                    )
+            )
+        }
+
         Row(
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-            verticalAlignment = Alignment.CenterVertically
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.BottomStart)
+                .padding(horizontal = 12.dp, vertical = if (server.bannerUrl != null) 8.dp else 0.dp)
+                .height(if (server.bannerUrl != null) 24.dp else 46.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            if (onCreateRoomClick != null) {
-                IconButton(
-                    onClick = onCreateRoomClick,
-                    modifier = Modifier.size(26.dp)
-                ) {
+            Text(
+                text = server.name,
+                style = MaterialTheme.typography.titleSmall.copy(
+                    fontWeight = FontWeight.Bold,
+                    color = Text_White
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                if (onCreateRoomClick != null) {
+                    IconButton(
+                        onClick = onCreateRoomClick,
+                        modifier = Modifier.size(26.dp)
+                    ) {
+                        Icon(
+                            imageVector = OrbitIcons.Add,
+                            contentDescription = "Create Room",
+                            tint = Text_Muted,
+                            modifier = Modifier.size(17.dp).alpha(0.9f)
+                        )
+                    }
+                }
+                if (showArrow) {
                     Icon(
-                        imageVector = OrbitIcons.Add,
-                        contentDescription = "Create Room",
+                        imageVector = Icons.Default.MoreVert,
+                        contentDescription = null,
                         tint = Text_Muted,
-                        modifier = Modifier.size(17.dp).alpha(0.9f)
+                        modifier = Modifier.size(17.dp).alpha(0.7f)
                     )
                 }
-            }
-            if (showArrow) {
-                Icon(
-                    imageVector = Icons.Default.MoreVert,
-                    contentDescription = null,
-                    tint = Text_Muted,
-                    modifier = Modifier.size(17.dp).alpha(0.7f)
-                )
             }
         }
     }

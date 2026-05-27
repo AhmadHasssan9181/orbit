@@ -358,7 +358,8 @@ class MatrixOrbitRepository(
                 name = "Rooms",
                 iconColor = 0xFF34D399.toInt(),
                 description = "General rooms",
-                isDM = false
+                isDM = false,
+                bannerUrl = "file:///C:/Users/Ahmad/.gemini/antigravity-ide/brain/06a7c3ed-9cc1-4f7e-82b0-2c46bc319bcd/space_nebula_banner_1779904255274.png"
             ))
         }
 
@@ -1542,7 +1543,7 @@ class MatrixOrbitRepository(
         if (!mxcUrl.startsWith("mxc://")) return mxcUrl
         val parts = mxcUrl.removePrefix("mxc://").split("/")
         if (parts.size != 2) return mxcUrl
-        return "${homeserverUrl.trimEnd('/')}/_matrix/media/r3/download/${parts[0]}/${parts[1]}"
+        return "${homeserverUrl.trimEnd('/')}/_matrix/media/v3/download/${parts[0]}/${parts[1]}"
     }
 
     private fun extractRoomFromEventId(eventId: String): String {

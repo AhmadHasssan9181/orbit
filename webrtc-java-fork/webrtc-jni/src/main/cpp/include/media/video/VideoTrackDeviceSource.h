@@ -29,12 +29,7 @@
 #include "media/video/VideoTrackDeviceSourceBase.h"
 #include "media/video/VideoDevice.h"
 #include <atomic>
-
-namespace cv {
-namespace dnn {
-    class Net;
-}
-}
+#include <opencv2/dnn.hpp>
 
 namespace jni
 {

@@ -34,6 +34,8 @@ import io.ktor.client.statement.readBytes
 import kotlinx.coroutines.flow.collectLatest
 // Remove MockData
 import ui.model.*
+import ui.components.NativeVideoPlayer
+import ui.components.openUrlInBrowser
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.key
@@ -732,6 +734,18 @@ private fun ImageMessageCard(content: ui.model.MessageContent.Image) {
                 .heightIn(max = 280.dp)
                 .clip(RoundedCornerShape(8.dp))
         )
+        // Download button overlay
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(8.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color.Black.copy(alpha = 0.5f))
+                .clickable { openUrlInBrowser(content.url) }
+                .padding(6.dp)
+        ) {
+            Icon(Icons.Default.Download, contentDescription = "Download", tint = Color.White, modifier = Modifier.size(20.dp))
+        }
     }
     if (content.body.isNotBlank()) {
         Text(
@@ -833,65 +847,97 @@ private fun AudioMessageCard(content: ui.model.MessageContent.Audio) {
 @Composable
 private fun VideoMessageCard(content: ui.model.MessageContent.Video) {
     val tokens = rememberCosmicTokens()
+    var isPlaying by remember { mutableStateOf(false) }
+
     val durationText = remember(content.durationMs) {
         if (content.durationMs != null) {
             val secs = content.durationMs / 1000
             "${secs / 60}:${(secs % 60).toString().padStart(2, '0')}"
         } else null
     }
+
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(8.dp))
             .background(tokens.CardBg)
             .widthIn(max = 360.dp)
+            .heightIn(min = 220.dp)
     ) {
-        if (content.thumbnailUrl != null) {
-            coil3.compose.AsyncImage(
-                model = content.thumbnailUrl,
-                contentDescription = content.body,
-                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+        if (isPlaying) {
+            NativeVideoPlayer(url = content.url, modifier = Modifier.fillMaxWidth().height(220.dp).clip(RoundedCornerShape(8.dp)))
+            // Close button overlay
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 220.dp)
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp)
                     .clip(RoundedCornerShape(8.dp))
-            )
-        } else {
-            Box(
-                modifier = Modifier.fillMaxWidth().height(120.dp).background(tokens.CardBg),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Default.VideoFile, contentDescription = null, tint = tokens.Text_Muted,
-                    modifier = Modifier.size(48.dp))
-            }
-        }
-        // Play overlay
-        Box(
-            modifier = Modifier.matchParentSize(),
-            contentAlignment = Alignment.Center
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(androidx.compose.foundation.shape.CircleShape)
-                    .background(Color.Black.copy(alpha = 0.6f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Default.PlayArrow, contentDescription = "Play video",
-                    tint = Color.White, modifier = Modifier.size(28.dp))
-            }
-        }
-        // Duration chip
-        if (durationText != null) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
+                    .background(Color.Black.copy(alpha = 0.5f))
+                    .clickable { isPlaying = false }
                     .padding(6.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(Color.Black.copy(alpha = 0.7f))
-                    .padding(horizontal = 6.dp, vertical = 2.dp)
             ) {
-                Text(durationText, style = MaterialTheme.typography.labelSmall.copy(
-                    color = Color.White, fontSize = 10.sp))
+                Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White, modifier = Modifier.size(20.dp))
+            }
+        } else {
+            if (content.thumbnailUrl != null) {
+                coil3.compose.AsyncImage(
+                    model = content.thumbnailUrl,
+                    contentDescription = content.body,
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(220.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                )
+            } else {
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(220.dp).background(tokens.CardBg),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.VideoFile, contentDescription = null, tint = tokens.Text_Muted,
+                        modifier = Modifier.size(48.dp))
+                }
+            }
+            // Play overlay
+            Box(
+                modifier = Modifier.matchParentSize().clickable { isPlaying = true },
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(Color.Black.copy(alpha = 0.6f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = "Play video",
+                        tint = Color.White, modifier = Modifier.size(28.dp))
+                }
+            }
+            // Download button overlay
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color.Black.copy(alpha = 0.5f))
+                    .clickable { openUrlInBrowser(content.url) }
+                    .padding(6.dp)
+            ) {
+                Icon(Icons.Default.Download, contentDescription = "Download", tint = Color.White, modifier = Modifier.size(20.dp))
+            }
+            // Duration chip
+            if (durationText != null) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(6.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color.Black.copy(alpha = 0.7f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(durationText, style = MaterialTheme.typography.labelSmall.copy(
+                        color = Color.White, fontSize = 10.sp))
+                }
             }
         }
     }
@@ -1150,7 +1196,7 @@ private fun MessageInputBar(
             Spacer(Modifier.height(8.dp))
         }
         if (showGifPicker) {
-            GifPicker(onGifSelected = { bytes ->
+            GifPicker(commonHttpClient = commonHttpClient, onGifSelected = { bytes ->
                 showGifPicker = false
                 onSendAttachment?.invoke(bytes, "gif.gif", "image/gif")
             })
@@ -1794,7 +1840,7 @@ private fun WhatsAppInputBar(
             Spacer(Modifier.height(8.dp))
         }
         if (showGifPicker) {
-            GifPicker(onGifSelected = { bytes ->
+            GifPicker(commonHttpClient = commonHttpClient, onGifSelected = { bytes ->
                 showGifPicker = false
                 onSendAttachment?.invoke(bytes, "gif.gif", "image/gif")
             })
@@ -1893,68 +1939,7 @@ fun EmojiPicker(onEmojiSelected: (String) -> Unit) {
     }
 }
 
-@Composable
-fun GifPicker(onGifSelected: (ByteArray) -> Unit) {
-    val gifs = listOf(
-        "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExcHI2aHJtcGpmODhmYzc3ajYzbXNxZmtkaGNxdTF4amw2YXA1ZnRneiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/3oriO0OEd9QIDdllqo/giphy.gif",
-        "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3ZlaHM2Mms0cTczZnJpeW8wMGg3Znlxb3Q4dTN4dGpxa3hxZmJxdyZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/3o7TKSjRrfIPjeiVyM/giphy.gif",
-        "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExNndpeHNoZmU1eGQyeGk2aGNnMXB4bnV1OW8zcnNqbzkwcWt4eTR3OCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/l0HlBO7eyXzSZkJri/giphy.gif",
-        "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExOGxjcTZ5OTNwZWtzaXZvcW85MGpxa3FxbzRpeXZxeDcwYW15ZXl4aSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/26FPJGjhefSJuaRhu/giphy.gif",
-        "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExeHNtcTh2NnhqdGJzOGF1aHhzbzMwNXA2NmpxanR2dTZxZnh2eHpyaSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/xT5LMFZDsj0AKUDYTS/giphy.gif",
-        "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExZnh5MXA3ZmRla2VxeHpueTZwOXJzaGNweXNxNnpveHp5bXZveXZyaCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/3o6UB5RrlQuMfZp82Y/giphy.gif"
-    )
-    val scope = rememberCoroutineScope()
-    var isLoading by remember { mutableStateOf(false) }
-    
-    Surface(
-        modifier = Modifier.fillMaxWidth().height(250.dp),
-        color = Input_Bg,
-        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
-    ) {
-        if (isLoading) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = Accent)
-            }
-        } else {
-            androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
-                columns = androidx.compose.foundation.lazy.grid.GridCells.Adaptive(100.dp),
-                modifier = Modifier.padding(8.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                items(gifs.size) { index ->
-                    val url = gifs[index]
-                    Box(
-                        modifier = Modifier
-                            .height(100.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable {
-                                scope.launch {
-                                    isLoading = true
-                                    try {
-                                        val response: io.ktor.client.statement.HttpResponse = commonHttpClient.get(url)
-                                        val bytes: ByteArray = response.readBytes()
-                                        onGifSelected(bytes)
-                                    } catch (e: Exception) {
-                                        // Ignore
-                                    } finally {
-                                        isLoading = false
-                                    }
-                                }
-                            }
-                    ) {
-                        coil3.compose.AsyncImage(
-                            model = url,
-                            contentDescription = "GIF",
-                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
+
 @Composable
 fun GroupCallBanner(url: String, roomId: String, modifier: Modifier = Modifier) {
     val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current

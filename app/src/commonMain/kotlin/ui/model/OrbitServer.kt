@@ -9,7 +9,8 @@ data class OrbitServer(
     val iconColor: Int, // Material color Int for rendering
     val description: String = "",
     val isDM: Boolean = false,
-    val avatarUrl: String? = null
+    val avatarUrl: String? = null,
+    val bannerUrl: String? = null
 )
 
 /**
