@@ -104,11 +104,11 @@ fun ServerRolesDialog(
                 .fillMaxWidth(0.96f)
                 .widthIn(max = 980.dp)
                 .heightIn(max = 720.dp),
-            shape = RoundedCornerShape(12.dp),
-            color = tokens.CardBg,
+            shape = RoundedCornerShape(8.dp),
+            color = tokens.Bg,
             tonalElevation = 8.dp
         ) {
-            Column(modifier = Modifier.fillMaxSize().padding(20.dp)) {
+            Column(modifier = Modifier.fillMaxSize().padding(18.dp)) {
                 RoleDialogHeader(
                     serverName = server.name,
                     statusText = statusText,
@@ -121,7 +121,7 @@ fun ServerRolesDialog(
                     if (maxWidth < 700.dp) {
                         Column(
                             modifier = Modifier.fillMaxSize(),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             RolePicker(
                                 roles = roles,
@@ -138,7 +138,7 @@ fun ServerRolesDialog(
                     } else {
                         Row(
                             modifier = Modifier.fillMaxSize(),
-                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             RolePicker(
                                 roles = roles,
@@ -155,9 +155,9 @@ fun ServerRolesDialog(
                     }
                 }
 
-                Spacer(Modifier.height(16.dp))
-                HorizontalDivider(color = tokens.Separator.copy(alpha = 0.35f))
                 Spacer(Modifier.height(14.dp))
+                HorizontalDivider(color = tokens.Separator.copy(alpha = 0.35f))
+                Spacer(Modifier.height(12.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -219,12 +219,12 @@ private fun RoleDialogHeader(
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
             Box(
                 modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(tokens.Accent.copy(alpha = 0.18f)),
+                    .size(38.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(tokens.AccentGhost),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Default.Security, null, tint = tokens.AccentLight, modifier = Modifier.size(22.dp))
+                Icon(Icons.Default.Security, null, tint = tokens.AccentLight, modifier = Modifier.size(21.dp))
             }
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -260,10 +260,10 @@ private fun RolePicker(
     val tokens = rememberCosmicTokens()
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(10.dp))
-            .border(1.dp, tokens.Separator.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
-            .background(tokens.Bg)
-            .padding(10.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .border(1.dp, tokens.Separator.copy(alpha = 0.30f), RoundedCornerShape(8.dp))
+            .background(tokens.CardBg)
+            .padding(9.dp)
     ) {
         Text(
             text = "Role hierarchy",
@@ -289,23 +289,24 @@ private fun RoleListItem(role: OrbitRole, selected: Boolean, onClick: () -> Unit
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (selected) tokens.Accent.copy(alpha = 0.18f) else Color.Transparent)
+            .clip(RoundedCornerShape(6.dp))
+            .background(if (selected) Color(role.color).copy(alpha = 0.12f) else Color.Transparent)
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 9.dp),
+            .padding(horizontal = 9.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
             modifier = Modifier
-                .size(10.dp)
-                .clip(CircleShape)
+                .width(3.dp)
+                .height(32.dp)
+                .clip(RoundedCornerShape(3.dp))
                 .background(Color(role.color))
         )
-        Spacer(Modifier.width(10.dp))
+        Spacer(Modifier.width(9.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = role.name,
-                color = if (selected) tokens.AccentLight else tokens.Text_White,
+                color = if (selected) Color(role.color) else tokens.Text_White,
                 style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -328,20 +329,20 @@ private fun RolePermissionEditor(
     val tokens = rememberCosmicTokens()
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(10.dp))
-            .border(1.dp, tokens.Separator.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
-            .background(tokens.Bg)
-            .padding(14.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .border(1.dp, tokens.Separator.copy(alpha = 0.30f), RoundedCornerShape(8.dp))
+            .background(tokens.CardBg)
+            .padding(12.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Box(
                 modifier = Modifier
-                    .size(42.dp)
-                    .clip(RoundedCornerShape(10.dp))
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(8.dp))
                     .background(Color(role.color).copy(alpha = 0.22f)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Default.Tune, null, tint = Color(role.color), modifier = Modifier.size(22.dp))
+                Icon(Icons.Default.Tune, null, tint = Color(role.color), modifier = Modifier.size(21.dp))
             }
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -407,9 +408,9 @@ private fun RolePermissionEditor(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(tokens.CardBgHover)
-                                .padding(10.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(tokens.Bg)
+                                .padding(9.dp)
                         ) {
                             Column {
                                 Text(
@@ -441,9 +442,9 @@ private fun PermissionRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(tokens.CardBg.copy(alpha = 0.72f))
-            .padding(horizontal = 10.dp, vertical = 9.dp),
+            .clip(RoundedCornerShape(6.dp))
+            .background(tokens.Bg.copy(alpha = 0.82f))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -478,11 +479,11 @@ private fun PermissionGrantBadge(grant: PermissionGrant, onClick: () -> Unit) {
     }
     Box(
         modifier = Modifier
-            .width(104.dp)
-            .height(30.dp)
-            .clip(RoundedCornerShape(7.dp))
+            .width(98.dp)
+            .height(28.dp)
+            .clip(RoundedCornerShape(5.dp))
             .background(color.copy(alpha = 0.16f))
-            .border(1.dp, color.copy(alpha = 0.28f), RoundedCornerShape(7.dp))
+            .border(1.dp, color.copy(alpha = 0.28f), RoundedCornerShape(5.dp))
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
