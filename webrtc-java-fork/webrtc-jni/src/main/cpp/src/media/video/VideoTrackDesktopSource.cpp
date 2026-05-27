@@ -196,7 +196,7 @@ namespace jni
 			crop_x, crop_y,
 			frame->stride() / webrtc::DesktopFrame::kBytesPerPixel, buffer->height(), crop_w, crop_h,
 			libyuv::kRotate0,
-			libyuv::FOURCC_ABGR);
+			libyuv::FOURCC_ARGB);
 
 		if (conversionResult >= 0) {
 			if (!maxFrameSize.is_empty()) {
