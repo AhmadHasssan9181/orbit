@@ -284,6 +284,7 @@ private fun MainAppContent(
                     put("sdp", sdp)
                 })
                 put("version", "1")
+                CredentialManager.deviceId?.let { put("party_id", it) }
                 put("lifetime", 30000)
             }).onFailure { error ->
                 println("DEBUG: [WebRTC] Failed to send call invite: ${error.message}")
@@ -298,6 +299,7 @@ private fun MainAppContent(
                     put("sdp", sdp)
                 })
                 put("version", "1")
+                CredentialManager.deviceId?.let { put("party_id", it) }
             }).onFailure { error ->
                 println("DEBUG: [WebRTC] Failed to send call answer: ${error.message}")
             }
@@ -311,6 +313,7 @@ private fun MainAppContent(
                     put("sdp", sdp)
                 })
                 put("version", "1")
+                CredentialManager.deviceId?.let { put("party_id", it) }
                 put("lifetime", 30000)
             }).onFailure { error ->
                 println("DEBUG: [WebRTC] Failed to send call negotiate: ${error.message}")
@@ -321,6 +324,7 @@ private fun MainAppContent(
             repository.sendCallEvent(roomId, "m.call.hangup", buildJsonObject {
                 put("call_id", callId)
                 put("version", "1")
+                CredentialManager.deviceId?.let { put("party_id", it) }
             }).onFailure { error ->
                 println("DEBUG: [WebRTC] Failed to send call hangup: ${error.message}")
             }
@@ -345,6 +349,7 @@ private fun MainAppContent(
                         repository.sendCallEvent(roomId, "m.call.candidates", buildJsonObject {
                             put("call_id", callId)
                             put("version", "1")
+                            CredentialManager.deviceId?.let { put("party_id", it) }
                             put("candidates", buildJsonArray {
                                 toSend.forEach { cand ->
                                     add(buildJsonObject {
