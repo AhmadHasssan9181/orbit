@@ -63,9 +63,9 @@ fun ServerRail(
     LazyColumn(
         modifier = modifier
             .fillMaxHeight()
-            .width(72.dp)
+            .width(68.dp)
             .background(Rail_Bg),
-        contentPadding = PaddingValues(vertical = 10.dp),
+        contentPadding = PaddingValues(vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.Top)
     ) {
@@ -79,11 +79,11 @@ fun ServerRail(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(48.dp)
+                        .size(44.dp)
                         .clip(
                             RoundedCornerShape(
                                 animateDpAsState(
-                                    if (isSelected) 16.dp else 24.dp,
+                                    if (isSelected) 15.dp else 22.dp,
                                     spring(stiffness = Spring.StiffnessMedium),
                                     label = "homeCorner"
                                 ).value
@@ -93,7 +93,7 @@ fun ServerRail(
                             if (isSelected) Brush.linearGradient(listOf(Accent, AccentLight))
                             else Brush.linearGradient(
                                 listOf(
-                                    MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    MaterialTheme.colorScheme.surfaceContainer,
                                     MaterialTheme.colorScheme.surfaceContainerHigh
                                 )
                             )
@@ -104,7 +104,7 @@ fun ServerRail(
                         imageVector = OrbitIcons.TextChannel,
                         contentDescription = "Home",
                         tint = if (isSelected) Color.White else Text_Muted,
-                        modifier = Modifier.size(22.dp)
+                        modifier = Modifier.size(21.dp)
                     )
                 }
             }
@@ -134,12 +134,12 @@ fun ServerRail(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(48.dp)
+                        .size(44.dp)
                         .hoverable(interactionSource)
                         .clip(
                             RoundedCornerShape(
                                 animateDpAsState(
-                                    if (isSelected || isHovered) 16.dp else 24.dp,
+                                    if (isSelected || isHovered) 15.dp else 22.dp,
                                     spring(stiffness = Spring.StiffnessMedium),
                                     label = "srvCorner"
                                 ).value
@@ -188,28 +188,28 @@ fun ServerRail(
                 val isHovered by interactionSource.collectIsHoveredAsState()
                 Box(
                     modifier = Modifier
-                        .size(48.dp)
+                        .size(44.dp)
                         .hoverable(interactionSource)
                         .clip(
                             RoundedCornerShape(
                                 animateDpAsState(
-                                    if (isHovered) 16.dp else 24.dp,
+                                    if (isHovered) 15.dp else 22.dp,
                                     spring(stiffness = Spring.StiffnessMedium),
                                     label = "addCorner"
                                 ).value
                             )
                         )
                         .background(
-                            if (isHovered) Accent.copy(alpha = 0.2f)
-                            else MaterialTheme.colorScheme.surfaceContainerHigh
+                            if (isHovered) Accent.copy(alpha = 0.14f)
+                            else MaterialTheme.colorScheme.surfaceContainer
                         ),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = OrbitIcons.Add,
                         contentDescription = "Add Server",
-                        tint = if (isHovered) Accent else Text_Muted,
-                        modifier = Modifier.size(22.dp)
+                        tint = if (isHovered) AccentLight else Text_Muted,
+                        modifier = Modifier.size(21.dp)
                     )
                 }
             }
@@ -226,28 +226,28 @@ fun ServerRail(
                 val isHovered by interactionSource.collectIsHoveredAsState()
                 Box(
                     modifier = Modifier
-                        .size(48.dp)
+                        .size(44.dp)
                         .hoverable(interactionSource)
                         .clip(
                             RoundedCornerShape(
                                 animateDpAsState(
-                                    if (isHovered) 16.dp else 24.dp,
+                                    if (isHovered) 15.dp else 22.dp,
                                     spring(stiffness = Spring.StiffnessMedium),
                                     label = "discoverCorner"
                                 ).value
                             )
                         )
                         .background(
-                            if (isHovered) Accent.copy(alpha = 0.2f)
-                            else MaterialTheme.colorScheme.surfaceContainerHigh
+                            if (isHovered) Accent.copy(alpha = 0.14f)
+                            else MaterialTheme.colorScheme.surfaceContainer
                         ),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.Explore,
                         contentDescription = "Discover",
-                        tint = if (isHovered) Accent else Text_Muted,
-                        modifier = Modifier.size(22.dp)
+                        tint = if (isHovered) AccentLight else Text_Muted,
+                        modifier = Modifier.size(21.dp)
                     )
                 }
             }
@@ -267,8 +267,8 @@ private fun ServerRailItem(
     // Left pill indicator — exactly like Discord/Revolt
     val pillHeight by animateDpAsState(
         targetValue = when {
-            isSelected -> 36.dp
-            isHovered -> 20.dp
+            isSelected -> 34.dp
+            isHovered -> 18.dp
             else -> 0.dp
         },
         animationSpec = spring(
@@ -293,7 +293,7 @@ private fun ServerRailItem(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(52.dp)
+            .height(48.dp)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {

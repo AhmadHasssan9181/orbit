@@ -469,13 +469,13 @@ private fun MessageBubbleFull(message: OrbitMessage, currentUser: OrbitUser?) {
                 .fillMaxWidth()
                 .hoverable(interactionSource)
                 .background(if (isHovered) MessageHover_Bg else Color.Transparent)
-                .padding(horizontal = 16.dp, vertical = 2.dp)
-                .padding(top = 4.dp),
+                .padding(horizontal = 14.dp, vertical = 1.dp)
+                .padding(top = 3.dp),
             verticalAlignment = Alignment.Top
         ) {
             // Avatar — 40dp circle like Discord/Revolt
             MessageAvatar(message)
-            Spacer(Modifier.width(16.dp))
+            Spacer(Modifier.width(12.dp))
 
             Column(modifier = Modifier.weight(1f)) {
                 // Username + timestamp row — Discord style
@@ -553,13 +553,13 @@ private fun MessageBubbleFull(message: OrbitMessage, currentUser: OrbitUser?) {
             Row(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .offset(y = (-8).dp, x = (-16).dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .offset(y = (-7).dp, x = (-14).dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHighest)
                     .border(
                         1.dp,
                         Separator.copy(alpha = 0.3f),
-                        RoundedCornerShape(4.dp)
+                        RoundedCornerShape(6.dp)
                     )
                     .padding(horizontal = 2.dp),
                 horizontalArrangement = Arrangement.spacedBy(0.dp)
@@ -1098,7 +1098,9 @@ private fun MessageAvatar(message: OrbitMessage) {
 
     Box(
         modifier = Modifier
-            .size(40.dp)
+            .size(36.dp)
+            .border(1.dp, Color.White.copy(alpha = 0.08f), CircleShape)
+            .padding(1.dp)
             .clip(CircleShape)
             .background(Brush.linearGradient(listOf(start, end))),
         contentAlignment = Alignment.Center
@@ -1108,7 +1110,7 @@ private fun MessageAvatar(message: OrbitMessage) {
             style = MaterialTheme.typography.labelMedium.copy(
                 fontWeight = FontWeight.Bold,
                 color = Color.White,
-                fontSize = 13.sp
+                fontSize = 12.sp
             )
         )
     }
@@ -1150,7 +1152,7 @@ private fun MessageInputBar(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 16.dp)
+            .padding(horizontal = 14.dp, vertical = 12.dp)
     ) {
         if (showEmojiPicker) {
             EmojiPicker(onEmojiSelected = { text += it })
@@ -1166,18 +1168,18 @@ private fun MessageInputBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
+                .clip(RoundedCornerShape(8.dp))
                 .background(Input_Bg)
-                .padding(horizontal = 8.dp, vertical = 6.dp),
+                .padding(horizontal = 6.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Attach button — Discord style "+"
-            IconButton(onClick = { launchPicker() }, modifier = Modifier.size(36.dp)) {
+            IconButton(onClick = { launchPicker() }, modifier = Modifier.size(34.dp)) {
                 Icon(
                     imageVector = OrbitIcons.Add,
                     contentDescription = "Attach",
                     tint = Text_Muted,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(19.dp)
                 )
             }
 
@@ -1219,13 +1221,13 @@ private fun MessageInputBar(
                             onSend(text)
                             text = ""
                         },
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier.size(34.dp)
                     ) {
                         Icon(
                             imageVector = OrbitIcons.Send,
                             contentDescription = "Send",
                             tint = Accent,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(19.dp)
                         )
                     }
                 }
@@ -1248,14 +1250,14 @@ private fun InputIconBtn(
     )
     IconButton(
         onClick = onClick,
-        modifier = Modifier.size(36.dp).hoverable(interactionSource),
+        modifier = Modifier.size(34.dp).hoverable(interactionSource),
         interactionSource = interactionSource
     ) {
         Icon(
             imageVector = icon,
             contentDescription = desc,
             tint = tint,
-            modifier = Modifier.size(20.dp)
+            modifier = Modifier.size(19.dp)
         )
     }
 }
@@ -1322,13 +1324,13 @@ private fun MemberListPanel(members: List<OrbitUser>) {
 
     Column(
         modifier = Modifier
-            .width(240.dp)
+            .width(224.dp)
             .fillMaxHeight()
             .background(Members_Bg)
     ) {
         LazyColumn(
             modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(top = 16.dp, bottom = 8.dp),
+            contentPadding = PaddingValues(top = 10.dp, bottom = 8.dp),
             verticalArrangement = Arrangement.spacedBy(1.dp)
         ) {
             if (online.isNotEmpty()) {
@@ -1358,10 +1360,10 @@ private fun MemberSectionLabel(label: String) {
         style = MaterialTheme.typography.labelSmall.copy(
             fontWeight = FontWeight.SemiBold,
             color = Text_Muted,
-            fontSize = 11.sp,
+            fontSize = 10.sp,
             letterSpacing = 0.5.sp
         ),
-        modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)
+        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
     )
 }
 
@@ -1381,7 +1383,7 @@ private fun MemberItem(user: OrbitUser) {
             .background(bgColor)
             .hoverable(interactionSource)
             .clickable(interactionSource = interactionSource, indication = null, onClick = {})
-            .padding(horizontal = 8.dp, vertical = 4.dp),
+            .padding(horizontal = 8.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Avatar + status dot
@@ -1391,6 +1393,8 @@ private fun MemberItem(user: OrbitUser) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
+                    .border(1.dp, Color.White.copy(alpha = 0.08f), CircleShape)
+                    .padding(1.dp)
                     .clip(CircleShape)
                     .background(Brush.linearGradient(listOf(color, color.copy(alpha = 0.7f)))),
                 contentAlignment = Alignment.Center
@@ -1419,14 +1423,13 @@ private fun MemberItem(user: OrbitUser) {
                     .size(10.dp)
                     .align(Alignment.BottomEnd)
                     .border(2.dp, Members_Bg, CircleShape)
-                    .padding(2.dp)
                     .clip(CircleShape)
                     .background(dotColor)
             )
         }
 
         Spacer(Modifier.width(8.dp))
-        Column {
+        Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = user.displayName,
                 style = MaterialTheme.typography.bodySmall.copy(
@@ -1438,7 +1441,37 @@ private fun MemberItem(user: OrbitUser) {
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+            Spacer(Modifier.height(2.dp))
+            MemberRolePill(label = "Member", color = Color(user.avatarColor))
         }
+    }
+}
+
+@Composable
+private fun MemberRolePill(label: String, color: Color) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(color.copy(alpha = 0.10f))
+            .padding(horizontal = 5.dp, vertical = 1.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(5.dp)
+                .clip(CircleShape)
+                .background(color)
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(
+            text = label,
+            color = color,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold
+            ),
+            maxLines = 1
+        )
     }
 }
 
