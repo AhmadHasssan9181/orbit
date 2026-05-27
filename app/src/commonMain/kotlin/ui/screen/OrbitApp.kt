@@ -116,6 +116,7 @@ fun OrbitApp(
     val reduceMotion by settingsManager.reduceMotion.collectAsState(false)
     val mentionsOnly by settingsManager.mentionsOnly.collectAsState(true)
     val notificationSound by settingsManager.notificationSound.collectAsState("Chime")
+    val chatWallpaper by settingsManager.chatWallpaper.collectAsState("auto")
     val colorSaturation by settingsManager.colorSaturation.collectAsState(100f)
 
     val showTimestamps by settingsManager.showTimestamps.collectAsState(true)
@@ -137,6 +138,7 @@ fun OrbitApp(
         ui.theme.LocalReduceMotion provides reduceMotion,
         ui.theme.LocalMentionsOnly provides mentionsOnly,
         ui.theme.LocalNotificationSound provides notificationSound,
+        ui.theme.LocalChatWallpaper provides chatWallpaper,
         ui.theme.LocalShowTimestamps provides showTimestamps,
         ui.theme.LocalCompactMode provides compactMode,
         ui.theme.LocalShowRoleColors provides showRoleColors,

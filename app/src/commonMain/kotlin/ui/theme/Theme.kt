@@ -94,6 +94,7 @@ val LocalFontSize = compositionLocalOf<Float> { 50f }
 val LocalReduceMotion = compositionLocalOf<Boolean> { false }
 val LocalMentionsOnly = compositionLocalOf<Boolean> { true }
 val LocalNotificationSound = compositionLocalOf<String> { "Chime" }
+val LocalChatWallpaper = compositionLocalOf<String> { "auto" }
 val LocalShowTimestamps = compositionLocalOf<Boolean> { true }
 val LocalCompactMode = compositionLocalOf<Boolean> { false }
 val LocalShowRoleColors = compositionLocalOf<Boolean> { true }

@@ -16,6 +16,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.border
 import repository.SettingsManager
+import ui.assets.OrbitDoodleWallpaperOptions
+import ui.assets.orbitDoodleWallpaperIdForLabel
+import ui.assets.orbitDoodleWallpaperLabelForId
 import ui.theme.rememberCosmicTokens
 
 // ═══════════════════════════════════════════════════════════════════
@@ -41,6 +44,14 @@ internal fun ChatSettingsPane(settingsManager: SettingsManager) {
         val gifAutoplay by settingsManager.gifAutoplay.collectAsState(true)
         PrefCard("Auto-play GIFs", "GIFs animate automatically instead of on hover.") {
             CosmicSwitch(checked = gifAutoplay, onCheckedChange = { settingsManager.setGifAutoplay(it) })
+        }
+        val chatWallpaper by settingsManager.chatWallpaper.collectAsState("auto")
+        PrefCard("Chat wallpaper", "Pick one of the Orbit doodle SVG backgrounds for message spaces.") {
+            ChipGroup(
+                options = OrbitDoodleWallpaperOptions,
+                selected = orbitDoodleWallpaperLabelForId(chatWallpaper),
+                onSelect = { label -> settingsManager.setChatWallpaper(orbitDoodleWallpaperIdForLabel(label)) }
+            )
         }
 
         SectionHeader("Emojis & Stickers")

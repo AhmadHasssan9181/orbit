@@ -48,6 +48,7 @@ import kotlinx.datetime.toLocalDateTime
 import ui.assets.OrbitDefaultAvatar
 import ui.assets.OrbitEmptyIllustration
 import ui.assets.OrbitEmptyScene
+import ui.assets.OrbitChatDoodleBackground
 import ui.icons.OrbitIcons
 import ui.theme.LocalIsLiteMode
 import ui.theme.rememberCosmicTokens
@@ -350,6 +351,10 @@ private fun MessageList(
     }
 
     Box(modifier = modifier.fillMaxWidth()) {
+        OrbitChatDoodleBackground(
+            selectedId = ui.theme.LocalChatWallpaper.current,
+            modifier = Modifier.matchParentSize()
+        )
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
@@ -1472,9 +1477,14 @@ fun ChatEmptyState(
     onChannelClick: (String) -> Unit
 ) {
     Box(
-        modifier = Modifier.fillMaxSize().background(Chat_Bg),
+        modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
+        OrbitChatDoodleBackground(
+            selectedId = ui.theme.LocalChatWallpaper.current,
+            modifier = Modifier.matchParentSize(),
+            intensity = 0.78f
+        )
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -1577,9 +1587,14 @@ fun VoiceChannelPlaceholder(channel: OrbitChannel) {
     )
 
     Box(
-        modifier = Modifier.fillMaxSize().background(Chat_Bg),
+        modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
+        OrbitChatDoodleBackground(
+            selectedId = ui.theme.LocalChatWallpaper.current,
+            modifier = Modifier.matchParentSize(),
+            intensity = 0.78f
+        )
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp)
