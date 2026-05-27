@@ -42,6 +42,9 @@ class SettingsManager {
     val notificationSound = flowSettings.getStringFlow("notificationSound", "Chime")
     fun setNotificationSound(value: String) = settings.putString("notificationSound", value)
 
+    val chatWallpaper = flowSettings.getStringFlow("chatWallpaper", "auto")
+    fun setChatWallpaper(value: String) = settings.putString("chatWallpaper", value)
+
     // --- Appearance & Chat ---
     val showTimestamps = flowSettings.getBooleanFlow("showTimestamps", true)
     fun setShowTimestamps(value: Boolean) = settings.putBoolean("showTimestamps", value)
