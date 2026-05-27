@@ -118,7 +118,10 @@ int32_t OrbitAudioDeviceModule::RecordedDataIsAvailable(
         }
     }
 
-    return real_audio_callback_->RecordedDataIsAvailable(mixed_buffer.data(), nSamples, nBytesPerSample, nChannels, samplesPerSec, totalDelayMS, clockDrift, currentMicLevel, keyPressed, newMicLevel);
+    if (real_audio_callback_) {
+        return real_audio_callback_->RecordedDataIsAvailable(mixed_buffer.data(), nSamples, nBytesPerSample, nChannels, samplesPerSec, totalDelayMS, clockDrift, currentMicLevel, keyPressed, newMicLevel);
+    }
+    return 0;
 }
 
 int32_t OrbitAudioDeviceModule::NeedMorePlayData(
