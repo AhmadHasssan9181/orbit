@@ -1,0 +1,182 @@
+[
+  {
+    "index": 1,
+    "name": "dark-01",
+    "file": "01-dark-01-whatsapp-style-doodle.svg",
+    "resolution": "1440x2560",
+    "background": "#0B1220",
+    "stroke": "#6EA8FF",
+    "type": "dark"
+  },
+  {
+    "index": 2,
+    "name": "dark-02",
+    "file": "02-dark-02-whatsapp-style-doodle.svg",
+    "resolution": "1440x2560",
+    "background": "#071A1A",
+    "stroke": "#5DE4C7",
+    "type": "dark"
+  },
+  {
+    "index": 3,
+    "name": "dark-03",
+    "file": "03-dark-03-whatsapp-style-doodle.svg",
+    "resolution": "1440x2560",
+    "background": "#101827",
+    "stroke": "#93C5FD",
+    "type": "dark"
+  },
+  {
+    "index": 4,
+    "name": "dark-04",
+    "file": "04-dark-04-whatsapp-style-doodle.svg",
+    "resolution": "1440x2560",
+    "background": "#102018",
+    "stroke": "#7DD3A7",
+    "type": "dark"
+  },
+  {
+    "index": 5,
+    "name": "light-01",
+    "file": "05-light-01-whatsapp-style-doodle.svg",
+    "resolution": "1440x2560",
+    "background": "#F5EFE3",
+    "stroke": "#8A7A62",
+    "type": "light"
+  },
+  {
+    "index": 6,
+    "name": "light-02",
+    "file": "06-light-02-whatsapp-style-doodle.svg",
+    "resolution": "1440x2560",
+    "background": "#F6F7F3",
+    "stroke": "#9CA3AF",
+    "type": "light"
+  },
+  {
+    "index": 7,
+    "name": "light-03",
+    "file": "07-light-03-whatsapp-style-doodle.svg",
+    "resolution": "1440x2560",
+    "background": "#EFE2CE",
+    "stroke": "#9B7C54",
+    "type": "light"
+  },
+  {
+    "index": 8,
+    "name": "light-04",
+    "file": "08-light-04-whatsapp-style-doodle.svg",
+    "resolution": "1440x2560",
+    "background": "#EDF5F8",
+    "stroke": "#7BA6B4",
+    "type": "light"
+  },
+  {
+    "index": 9,
+    "name": "grey-01",
+    "file": "09-grey-01-whatsapp-style-doodle.svg",
+    "resolution": "1440x2560",
+    "background": "#8D948D",
+    "stroke": "#374151",
+    "type": "grey"
+  },
+  {
+    "index": 10,
+    "name": "grey-02",
+    "file": "10-grey-02-whatsapp-style-doodle.svg",
+    "resolution": "1440x2560",
+    "background": "#C7C9C3",
+    "stroke": "#6B7280",
+    "type": "grey"
+  },
+  {
+    "index": 11,
+    "name": "grey-03",
+    "file": "11-grey-03-whatsapp-style-doodle.svg",
+    "resolution": "1440x2560",
+    "background": "#51585D",
+    "stroke": "#D1D5DB",
+    "type": "grey"
+  },
+  {
+    "index": 12,
+    "name": "grey-04",
+    "file": "12-grey-04-whatsapp-style-doodle.svg",
+    "resolution": "1440x2560",
+    "background": "#A7A89F",
+    "stroke": "#4B5563",
+    "type": "grey"
+  },
+  {
+    "index": 13,
+    "name": "amoled-01",
+    "file": "13-amoled-01-whatsapp-style-doodle.svg",
+    "resolution": "1440x2560",
+    "background": "#000000",
+    "stroke": "#5B6472",
+    "type": "amoled"
+  },
+  {
+    "index": 14,
+    "name": "amoled-02",
+    "file": "14-amoled-02-whatsapp-style-doodle.svg",
+    "resolution": "1440x2560",
+    "background": "#020202",
+    "stroke": "#2F855A",
+    "type": "amoled"
+  },
+  {
+    "index": 15,
+    "name": "amoled-03",
+    "file": "15-amoled-03-whatsapp-style-doodle.svg",
+    "resolution": "1440x2560",
+    "background": "#000000",
+    "stroke": "#6D5DFB",
+    "type": "amoled"
+  },
+  {
+    "index": 16,
+    "name": "amoled-04",
+    "file": "16-amoled-04-whatsapp-style-doodle.svg",
+    "resolution": "1440x2560",
+    "background": "#020003",
+    "stroke": "#A855F7",
+    "type": "amoled"
+  },
+  {
+    "index": 17,
+    "name": "mixed-01",
+    "file": "17-mixed-01-whatsapp-style-doodle.svg",
+    "resolution": "1440x2560",
+    "background": "#101729",
+    "stroke": "#7C3AED",
+    "type": "mixed"
+  },
+  {
+    "index": 18,
+    "name": "mixed-02",
+    "file": "18-mixed-02-whatsapp-style-doodle.svg",
+    "resolution": "1440x2560",
+    "background": "#0B2A28",
+    "stroke": "#38BDF8",
+    "type": "mixed"
+  },
+  {
+    "index": 19,
+    "name": "mixed-03",
+    "file": "19-mixed-03-whatsapp-style-doodle.svg",
+    "resolution": "1440x2560",
+    "background": "#0E2434",
+    "stroke": "#22D3EE",
+    "type": "mixed"
+  },
+  {
+    "index": 20,
+    "name": "mixed-04",
+    "file": "20-mixed-04-whatsapp-style-doodle.svg",
+    "resolution": "1440x2560",
+    "background": "#2B0D24",
+    "stroke": "#EC4899",
+    "type": "mixed"
+  }
+]
