@@ -283,8 +283,8 @@ private fun MainAppContent(
                     put("type", "offer")
                     put("sdp", sdp)
                 })
-                put("version", "1")
-                CredentialManager.deviceId?.let { put("party_id", it) }
+                put("version", 0)
+
                 put("lifetime", 30000)
             }).onFailure { error ->
                 println("DEBUG: [WebRTC] Failed to send call invite: ${error.message}")
@@ -298,8 +298,8 @@ private fun MainAppContent(
                     put("type", "answer")
                     put("sdp", sdp)
                 })
-                put("version", "1")
-                CredentialManager.deviceId?.let { put("party_id", it) }
+                put("version", 0)
+
             }).onFailure { error ->
                 println("DEBUG: [WebRTC] Failed to send call answer: ${error.message}")
             }
@@ -312,8 +312,8 @@ private fun MainAppContent(
                     put("type", type)
                     put("sdp", sdp)
                 })
-                put("version", "1")
-                CredentialManager.deviceId?.let { put("party_id", it) }
+                put("version", 0)
+
                 put("lifetime", 30000)
             }).onFailure { error ->
                 println("DEBUG: [WebRTC] Failed to send call negotiate: ${error.message}")
@@ -323,8 +323,8 @@ private fun MainAppContent(
         callManager.sendHangup = { roomId, callId ->
             repository.sendCallEvent(roomId, "m.call.hangup", buildJsonObject {
                 put("call_id", callId)
-                put("version", "1")
-                CredentialManager.deviceId?.let { put("party_id", it) }
+                put("version", 0)
+
             }).onFailure { error ->
                 println("DEBUG: [WebRTC] Failed to send call hangup: ${error.message}")
             }
@@ -348,8 +348,8 @@ private fun MainAppContent(
                         println("DEBUG: [WebRTC] Sending ${toSend.size} local ICE candidates")
                         repository.sendCallEvent(roomId, "m.call.candidates", buildJsonObject {
                             put("call_id", callId)
-                            put("version", "1")
-                            CredentialManager.deviceId?.let { put("party_id", it) }
+                            put("version", 0)
+            
                             put("candidates", buildJsonArray {
                                 toSend.forEach { cand ->
                                     add(buildJsonObject {
