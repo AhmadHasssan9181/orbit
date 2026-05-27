@@ -104,7 +104,6 @@ fun SplashScreenWindow(
 
                     // Rotating Balls Container
                     Box(modifier = Modifier.fillMaxSize().rotate(-35f)) {
-                        // Using your custom tweaked values!
                         val a = 110.0 // Major radius (width)
                         val b = 50.0 // Minor radius (height)
                         val centerX = 2.2 // Shift ellipse center horizontally
@@ -118,8 +117,6 @@ fun SplashScreenWindow(
                             val tDeg = Math.toDegrees(offsetProgress % (2 * Math.PI))
                             
                             // 3D Depth Masking Logic:
-                            // The front half of the tilted ellipse is roughly 0 to 180 degrees.
-                            // The back half is 180 to 360 degrees.
                             val isVisible = tDeg in 0.0..180.0
                             
                             // Smooth fade in/out to simulate passing behind the edge
