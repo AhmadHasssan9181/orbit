@@ -1387,19 +1387,45 @@ private fun VoiceSettingRow(
     value: String,
     onClick: () -> Unit
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isHovered by interactionSource.collectIsHoveredAsState()
+    val bgColor by animateColorAsState(
+        targetValue = if (isHovered) ChannelHover_Bg else Color.Transparent,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "voiceSettingBg"
+    )
+    val titleColor by animateColorAsState(
+        targetValue = if (isHovered) Text_White else Text_Secondary,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "voiceSettingTitle"
+    )
+    val iconTint by animateColorAsState(
+        targetValue = if (isHovered) Text_White else Text_Muted,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "voiceSettingIcon"
+    )
+    val rowOffset by animateDpAsState(
+        targetValue = if (isHovered) 2.dp else 0.dp,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "voiceSettingOffset"
+    )
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .offset(x = rowOffset)
             .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
-            .padding(vertical = 2.dp),
+            .background(bgColor)
+            .hoverable(interactionSource)
+            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
                 style = MaterialTheme.typography.bodyMedium.copy(
-                    color = Text_White,
+                    color = titleColor,
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp
                 )
@@ -1415,7 +1441,7 @@ private fun VoiceSettingRow(
                 overflow = TextOverflow.Ellipsis
             )
         }
-        Icon(Icons.Default.ChevronRight, contentDescription = null, tint = Text_Muted, modifier = Modifier.size(22.dp))
+        Icon(Icons.Default.ChevronRight, contentDescription = null, tint = iconTint, modifier = Modifier.size(22.dp))
     }
 }
 
@@ -1511,10 +1537,21 @@ private fun ProfilePopoverAction(
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
         label = "profileActionBg"
     )
+    val iconTint by animateColorAsState(
+        targetValue = if (isHovered) Text_White else AccentLight,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "profileActionIcon"
+    )
+    val rowOffset by animateDpAsState(
+        targetValue = if (isHovered) 2.dp else 0.dp,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "profileActionOffset"
+    )
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .offset(x = rowOffset)
             .clip(RoundedCornerShape(8.dp))
             .background(bg)
             .hoverable(interactionSource)
@@ -1522,7 +1559,7 @@ private fun ProfilePopoverAction(
             .padding(horizontal = 9.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(icon, contentDescription = label, tint = AccentLight, modifier = Modifier.size(16.dp))
+        Icon(icon, contentDescription = label, tint = iconTint, modifier = Modifier.size(16.dp))
         Spacer(Modifier.width(8.dp))
         Text(
             text = label,
