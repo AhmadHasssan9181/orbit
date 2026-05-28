@@ -101,7 +101,17 @@ object WindowsAudioDucker {
             unduckVolumes()
             return
         }
-        if (duckedSessions.isNotEmpty()) return // Already ducked
+        
+        if (duckedSessions.isNotEmpty()) {
+            duckJob?.cancel()
+            duckJob = scope.launch {
+                val currentFactor = 1.0f - strength
+                duckedSessions.forEach { (vol, original) ->
+                    vol.SetMasterVolume(original * currentFactor, null)
+                }
+            }
+            return
+        }
         
         try {
             val currentPid = com.sun.jna.platform.win32.Kernel32.INSTANCE.GetCurrentProcessId()
@@ -149,7 +159,6 @@ object WindowsAudioDucker {
                             duckJob?.cancel()
                             duckJob = scope.launch {
                                 // Fade down
-                                val factor = 1.0f - strength
                                 for (step in 1..10) {
                                     val currentFactor = 1.0f - (strength * (step / 10.0f))
                                     duckedSessions.forEach { (vol, original) ->
@@ -172,18 +181,18 @@ object WindowsAudioDucker {
 
     fun unduckVolumes() {
         if (duckedSessions.isEmpty()) return
+        
+        val sessionsToUnduck = duckedSessions.toList()
+        duckedSessions.clear()
+        
         duckJob?.cancel()
         duckJob = scope.launch {
-            // Fade up
-            for (step in 1..10) {
-                val currentFactor = 1.0f - (0.5f * ((10 - step) / 10.0f)) // approximate
-                duckedSessions.forEach { (vol, original) ->
-                    vol.SetMasterVolume(original, null)
-                }
-                delay(15)
+            // Restore original volume
+            sessionsToUnduck.forEach { (vol, original) ->
+                vol.SetMasterVolume(original, null)
             }
-            duckedSessions.forEach { it.first.Release() }
-            duckedSessions.clear()
+            delay(15) // small delay to ensure COM calls finish
+            sessionsToUnduck.forEach { it.first.Release() }
         }
     }
 }

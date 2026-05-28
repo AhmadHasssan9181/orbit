@@ -690,14 +690,21 @@ private fun MainAppContent(
                 )
             }
 
-            val activeCallChannel = channels.find { it.id == callManager.activeRoomId }
+            val activeRoomId by callManager.activeRoomIdFlow.collectAsState()
+            val activeCallChannel = channels.find { it.matrixRoomId == activeRoomId || it.id == activeRoomId }
             val callerName = activeCallChannel?.name ?: "Friend"
 
-            val isViewingActiveCall = windowSize == WindowSizeClass.Expanded && selectedChannelId == callManager.activeRoomId
+            val isViewingActiveCall = windowSize == WindowSizeClass.Expanded && 
+                                      activeCallChannel != null &&
+                                      selectedChannelId == activeCallChannel.id && 
+                                      activeCallChannel.type == ui.model.ChannelType.VOICE
             
-            LaunchedEffect(selectedChannelId, callManager.activeRoomId) {
-                if (callManager.activeRoomId != null && selectedChannelId != callManager.activeRoomId) {
-                    callManager.isMinimized.value = true
+            LaunchedEffect(selectedChannelId, activeRoomId, channels) {
+                if (activeRoomId != null) {
+                    val callChannel = channels.find { it.matrixRoomId == activeRoomId || it.id == activeRoomId }
+                    if (callChannel == null || selectedChannelId != callChannel.id) {
+                        callManager.isMinimized.value = true
+                    }
                 }
             }
 
