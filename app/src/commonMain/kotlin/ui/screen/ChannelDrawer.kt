@@ -1150,21 +1150,105 @@ private fun UserProfileBar(
 
 @Composable
 private fun VoiceControlPopover(onSettingsClick: () -> Unit) {
+    val callManager = webrtc.LocalCallManager.current
+    var inputVolume by remember { mutableStateOf(1f) }
+    val inputDevices = remember(callManager) {
+        runCatching { callManager?.webRtcClient?.getAudioInputDevices().orEmpty() }.getOrDefault(emptyList())
+    }
+    val inputDeviceName = inputDevices.firstOrNull() ?: "Windows Default (Internal Microphone)"
+
     Column(
         modifier = Modifier
             .background(UserBar_Bg)
             .padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text(
-            text = "Voice Settings",
-            style = MaterialTheme.typography.bodyMedium.copy(
-                color = Text_White,
-                fontWeight = FontWeight.Bold,
-                fontSize = 15.sp
-            ),
-            modifier = Modifier.clickable(onClick = onSettingsClick)
+        VoiceSettingRow(
+            title = "Input Device",
+            value = inputDeviceName,
+            onClick = {}
         )
+        VoiceSettingRow(
+            title = "Input Profile",
+            value = "Custom",
+            onClick = {}
+        )
+
+        HorizontalDivider(color = Separator.copy(alpha = 0.45f), thickness = 1.dp)
+
+        Text(
+            "Input Volume",
+            style = MaterialTheme.typography.bodyMedium.copy(color = Text_White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        )
+        Slider(
+            value = inputVolume,
+            onValueChange = { inputVolume = it },
+            colors = SliderDefaults.colors(
+                thumbColor = Color.White,
+                activeTrackColor = Accent,
+                inactiveTrackColor = Separator.copy(alpha = 0.7f)
+            )
+        )
+
+        HorizontalDivider(color = Separator.copy(alpha = 0.45f), thickness = 1.dp)
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(onClick = onSettingsClick)
+                .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Voice Settings",
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    color = Text_White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp
+                ),
+                modifier = Modifier.weight(1f)
+            )
+            Icon(Icons.Default.Settings, contentDescription = null, tint = Text_Muted, modifier = Modifier.size(22.dp))
+        }
+    }
+}
+
+@Composable
+private fun VoiceSettingRow(
+    title: String,
+    value: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    color = Text_White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp
+                )
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodySmall.copy(
+                    color = Text_Muted,
+                    fontSize = 13.sp
+                ),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Icon(Icons.Default.ChevronRight, contentDescription = null, tint = Text_Muted, modifier = Modifier.size(22.dp))
     }
 }
 
