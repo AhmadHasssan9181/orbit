@@ -334,13 +334,29 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
         // No-op for Android placeholder
     }
     
-    override fun setOrbitZeroEnabled(enabled: Boolean) {
+    override fun setAudioOptions(noiseSuppression: Boolean, echoCancellation: Boolean, autoGainControl: Boolean) {
         // No-op for Android placeholder
     }
 
     override fun getAudioInputDevices(): List<String> = listOf("Default Microphone")
     override fun getAudioOutputDevices(): List<String> = listOf("Default Speaker")
     override fun getVideoCaptureDevices(): List<String> = listOf("Front Camera", "Back Camera")
+
+    override fun setAttenuationStrength(strength: Float) {
+        // TODO: Implement audio ducking
+    }
+
+    override fun setRemoteVolume(volume: Float) {
+        // TODO: Implement
+    }
+
+    override fun setAudioInputDevice(deviceName: String) {}
+    override fun setAudioOutputDevice(deviceName: String) {}
+    override fun setVideoCaptureDevice(deviceName: String) {}
+    override fun getDesktopSources(): List<DesktopSourceModel> = emptyList()
 }
 
+
+
 actual fun createWebRtcClient(): WebRtcClient = AndroidWebRtcClient(util.appContext)
+

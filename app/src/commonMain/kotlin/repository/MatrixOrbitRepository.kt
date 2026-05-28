@@ -143,6 +143,9 @@ class MatrixOrbitRepository(
     private val _roomListFlow = MutableSharedFlow<List<OrbitServer>>(replay = 1)
     private val _callEvents = MutableSharedFlow<CallEvent>(extraBufferCapacity = 10)
 
+    private val _globalActiveCalls = MutableStateFlow<Map<String, String>>(emptyMap())
+    override val activeCallsFlow: kotlinx.coroutines.flow.StateFlow<Map<String, String>> = _globalActiveCalls.asStateFlow()
+
     private val _authStatus = MutableStateFlow<AuthStatus>(AuthStatus.Authenticated)
     override val authStatus: Flow<AuthStatus> = _authStatus.asStateFlow()
 
@@ -1105,11 +1108,69 @@ class MatrixOrbitRepository(
     }
 
     override fun observeChannelList(spaceId: String): Flow<List<OrbitChannel>> {
-        return _roomListFlow.map { getChannelsForSpace(spaceId) }
+        return kotlinx.coroutines.flow.combine(
+            _roomListFlow,
+            activeCallsFlow
+        ) { _, activeCalls ->
+            val channels = getChannelsForSpace(spaceId)
+            val result = mutableListOf<OrbitChannel>()
+            for (ch in channels) {
+                val callUrl = activeCalls[ch.id]
+                val channelWithCall = ch.copy(activeCallUrl = callUrl)
+                result.add(channelWithCall)
+                
+                if (callUrl != null && channelWithCall.type == ChannelType.TEXT) {
+                    result.add(
+                        OrbitChannel(
+                            id = "voice_${ch.id}",
+                            name = "${ch.name} (Call)",
+                            type = ChannelType.VOICE,
+                            categoryId = ch.categoryId,
+                            activeCallUrl = callUrl,
+                            matrixRoomId = ch.id
+                        )
+                    )
+                }
+            }
+            result
+        }
     }
 
     fun observeSpaces(): Flow<List<OrbitServer>> {
         return _roomListFlow.asSharedFlow()
+    }
+
+    override suspend fun startGroupCall(roomId: String, callId: String) {
+        val token = _accessToken ?: return
+        val url = "$homeserverUrl/_matrix/client/v3/rooms/$roomId/state/org.matrix.msc3401.call/$callId"
+        val content = kotlinx.serialization.json.buildJsonObject {
+            put("m.intent", kotlinx.serialization.json.JsonPrimitive("m.room"))
+            put("m.type", kotlinx.serialization.json.JsonPrimitive("m.voice"))
+            put("m.name", kotlinx.serialization.json.JsonPrimitive("Voice Call"))
+        }
+        try {
+            client.put(url) {
+                header(io.ktor.http.HttpHeaders.Authorization, "Bearer $token")
+                contentType(io.ktor.http.ContentType.Application.Json)
+                setBody(content)
+            }
+        } catch (e: Exception) {
+            println("Failed to start group call: ${e.message}")
+        }
+    }
+
+    override suspend fun endGroupCall(roomId: String, callId: String) {
+        val token = _accessToken ?: return
+        val url = "$homeserverUrl/_matrix/client/v3/rooms/$roomId/state/org.matrix.msc3401.call/$callId"
+        try {
+            client.put(url) {
+                header(io.ktor.http.HttpHeaders.Authorization, "Bearer $token")
+                contentType(io.ktor.http.ContentType.Application.Json)
+                setBody(kotlinx.serialization.json.buildJsonObject {}) // empty state content removes it
+            }
+        } catch (e: Exception) {
+            println("Failed to end group call: ${e.message}")
+        }
     }
 
     override fun observeCallEvents(): Flow<CallEvent> = _callEvents.asSharedFlow()
@@ -1297,6 +1358,20 @@ class MatrixOrbitRepository(
             launch {
                 trixnity.room.getAll().collectLatest { allRoomsMap ->
                     _roomListFlow.emit(getSpaces())
+                    // Scan for active calls on startup
+                    for (roomId in allRoomsMap.keys) {
+                        launch {
+                            observeActiveGroupCall(roomId.full).collect { activeUrl ->
+                                val currentGlobal = _globalActiveCalls.value.toMutableMap()
+                                if (activeUrl != null) {
+                                    currentGlobal[roomId.full] = activeUrl
+                                } else {
+                                    currentGlobal.remove(roomId.full)
+                                }
+                                _globalActiveCalls.value = currentGlobal
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1401,6 +1476,9 @@ class MatrixOrbitRepository(
                                     if (groupFlow != null) {
                                         if (realContent.isEmpty()) {
                                             groupFlow.value = null
+                                            val currentGlobal = _globalActiveCalls.value.toMutableMap()
+                                            currentGlobal.remove(roomId)
+                                            _globalActiveCalls.value = currentGlobal
                                         } else {
                                             var url: String? = null
                                             if (realContent["type"]?.jsonPrimitive?.content == "jitsi" || realContent["type"]?.jsonPrimitive?.content == "m.custom") {
@@ -1410,6 +1488,9 @@ class MatrixOrbitRepository(
                                             }
                                             if (url != null) {
                                                 groupFlow.value = url
+                                                val currentGlobal = _globalActiveCalls.value.toMutableMap()
+                                                currentGlobal[roomId] = url
+                                                _globalActiveCalls.value = currentGlobal
                                             }
                                         }
                                     }

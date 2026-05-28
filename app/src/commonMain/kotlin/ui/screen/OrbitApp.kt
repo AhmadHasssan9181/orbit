@@ -287,9 +287,7 @@ private fun MainAppContent(
     val outputDevice by settingsManager.outputDevice.collectAsState("Default")
     val cameraDevice by settingsManager.cameraDevice.collectAsState("Default")
 
-    LaunchedEffect(orbitZeroEnabled) {
-        webRtcClient.setOrbitZeroEnabled(orbitZeroEnabled)
-    }
+
     LaunchedEffect(attenuation) {
         webRtcClient.setAttenuationStrength(attenuation / 100f)
     }

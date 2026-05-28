@@ -70,6 +70,28 @@ class CallManager(
         }
     }
 
+    fun joinGroupCall(roomId: String, callId: String, isVideo: Boolean) {
+        if (callState.value != CallState.IDLE) return
+
+        activeRoomId = roomId
+        this.callId = callId
+        isIncomingCall.value = false
+        isVideoCall.value = isVideo
+        isLocalVideoEnabled.value = isVideo
+        isLocalAudioEnabled.value = true
+        candidatesAllowedForCallId = null
+        pendingLocalCandidates.clear()
+        _callState.value = CallState.CONNECTING
+
+        scope.launch {
+            loadIceServers()
+            webRtcClient.initialize()
+            webRtcClient.startLocalMedia(isVideo)
+            // sendCallMember(roomId, callId, true) 
+            // TODO: implement call member sending
+        }
+    }
+
     fun startCall(roomId: String, isVideo: Boolean) {
         val newCallId = "call_${System.currentTimeMillis()}"
         activeRoomId = roomId
@@ -388,3 +410,5 @@ class CallManager(
         }
     }
 }
+
+

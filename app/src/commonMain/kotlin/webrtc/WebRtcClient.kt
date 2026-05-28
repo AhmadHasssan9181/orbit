@@ -30,7 +30,7 @@ interface WebRtcClient {
     fun toggleVideo(isVideoEnabled: Boolean)
     fun switchCamera()
     fun setStreamAudioEnabled(enabled: Boolean)
-    fun setOrbitZeroEnabled(enabled: Boolean)
+    fun setAudioOptions(noiseSuppression: Boolean, echoCancellation: Boolean, autoGainControl: Boolean)
     fun setAttenuationStrength(strength: Float)
     fun setRemoteVolume(volume: Float)
     
