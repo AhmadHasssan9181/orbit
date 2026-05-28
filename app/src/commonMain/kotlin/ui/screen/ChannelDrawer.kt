@@ -1041,6 +1041,7 @@ private fun UserProfileBar(
     onSettingsClick: () -> Unit
 ) {
     var showProfilePopover by remember { mutableStateOf(false) }
+    var showVoicePopover by remember { mutableStateOf(false) }
     val profileInteractionSource = remember { MutableInteractionSource() }
     val isProfileHovered by profileInteractionSource.collectIsHoveredAsState()
     val profileShape = RoundedCornerShape(10.dp)
@@ -1127,9 +1128,43 @@ private fun UserProfileBar(
             }
         }
 
-        BarIconBtn(icon = OrbitIcons.Mic, desc = "Mic", onClick = onMicToggle)
+        Box {
+            BarIconBtn(icon = OrbitIcons.Mic, desc = "Mic", onClick = { showVoicePopover = true })
+            DropdownMenu(
+                expanded = showVoicePopover,
+                onDismissRequest = { showVoicePopover = false },
+                modifier = Modifier
+                    .width(278.dp)
+                    .background(UserBar_Bg)
+            ) {
+                VoiceControlPopover(onSettingsClick = {
+                    showVoicePopover = false
+                    onSettingsClick()
+                })
+            }
+        }
         BarIconBtn(icon = Icons.Default.Headset, desc = "Deafen", onClick = {})
         BarIconBtn(icon = Icons.Default.Settings, desc = "Settings", onClick = onSettingsClick)
+    }
+}
+
+@Composable
+private fun VoiceControlPopover(onSettingsClick: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .background(UserBar_Bg)
+            .padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Text(
+            text = "Voice Settings",
+            style = MaterialTheme.typography.bodyMedium.copy(
+                color = Text_White,
+                fontWeight = FontWeight.Bold,
+                fontSize = 15.sp
+            ),
+            modifier = Modifier.clickable(onClick = onSettingsClick)
+        )
     }
 }
 
