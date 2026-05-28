@@ -480,6 +480,16 @@ private fun MessageBubbleFull(message: OrbitMessage, currentUser: OrbitUser?) {
 
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
+    val rowBg by animateColorAsState(
+        targetValue = if (isHovered) MessageHover_Bg else Color.Transparent,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "messageRowBg"
+    )
+    val rowOffset by animateDpAsState(
+        targetValue = if (isHovered) 2.dp else 0.dp,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "messageRowOffset"
+    )
 
     Box(
         modifier = Modifier.fillMaxWidth()
@@ -487,8 +497,9 @@ private fun MessageBubbleFull(message: OrbitMessage, currentUser: OrbitUser?) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .offset(x = rowOffset)
                 .hoverable(interactionSource)
-                .background(if (isHovered) MessageHover_Bg else Color.Transparent)
+                .background(rowBg)
                 .padding(horizontal = 14.dp, vertical = 1.dp)
                 .padding(top = 3.dp),
             verticalAlignment = Alignment.Top
@@ -574,11 +585,16 @@ private fun MessageBubbleFull(message: OrbitMessage, currentUser: OrbitUser?) {
         }
 
         // Floating action toolbar on hover — Discord style
-        if (isHovered) {
+        AnimatedVisibility(
+            visible = isHovered,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .offset(y = (-7).dp, x = (-14).dp),
+            enter = fadeIn() + scaleIn(initialScale = 0.94f),
+            exit = fadeOut() + scaleOut(targetScale = 0.94f)
+        ) {
             Row(
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .offset(y = (-7).dp, x = (-14).dp)
                     .clip(RoundedCornerShape(6.dp))
                     .background(MaterialTheme.colorScheme.surfaceContainerHighest)
                     .border(
@@ -625,13 +641,24 @@ private fun MessageActionBtn(
 private fun DenseMessageBody(message: OrbitMessage) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
+    val rowBg by animateColorAsState(
+        targetValue = if (isHovered) MessageHover_Bg else Color.Transparent,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "denseMessageBg"
+    )
+    val rowOffset by animateDpAsState(
+        targetValue = if (isHovered) 2.dp else 0.dp,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "denseMessageOffset"
+    )
 
     Box(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .offset(x = rowOffset)
                 .hoverable(interactionSource)
-                .background(if (isHovered) MessageHover_Bg else Color.Transparent)
+                .background(rowBg)
                 .padding(start = 72.dp, end = 16.dp, top = 1.dp, bottom = 1.dp),
             verticalAlignment = Alignment.Top
         ) {
@@ -655,11 +682,16 @@ private fun DenseMessageBody(message: OrbitMessage) {
         }
 
         // Floating action toolbar on hover
-        if (isHovered) {
+        AnimatedVisibility(
+            visible = isHovered,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .offset(y = (-4).dp, x = (-16).dp),
+            enter = fadeIn() + scaleIn(initialScale = 0.94f),
+            exit = fadeOut() + scaleOut(targetScale = 0.94f)
+        ) {
             Row(
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .offset(y = (-4).dp, x = (-16).dp)
                     .clip(RoundedCornerShape(4.dp))
                     .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                     .border(
