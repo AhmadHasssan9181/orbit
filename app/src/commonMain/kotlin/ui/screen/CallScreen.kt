@@ -47,6 +47,7 @@ fun CallScreen(
     callManager: CallManager,
     callerName: String = "Friend",
     onStartScreenShare: () -> Unit = {},
+    isEmbedded: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val callState by callManager.callState.collectAsState()
@@ -108,7 +109,7 @@ fun CallScreen(
         )
     )
 
-    if (isMinimized) {
+    if (isMinimized && !isEmbedded) {
         Box(
             modifier = modifier.wrapContentSize(Alignment.BottomEnd) // Allow it to shrink and align to bottom end
         ) {
@@ -217,57 +218,7 @@ fun CallScreen(
                     .padding(horizontal = 24.dp, vertical = 24.dp)
                     .padding(bottom = 100.dp) // Space for controls
             ) {
-                if (nodes.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("Waiting for video...", color = Color.White.copy(alpha = 0.5f))
-                    }
-                } else if (nodes.size == 1) {
-                    val node = nodes.first()
-                    Column(
-                        modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        VideoNodeCard(node, tokens, modifier = Modifier.weight(1f).fillMaxWidth())
-                        InviteActivityCard(tokens, modifier = Modifier.weight(1f).fillMaxWidth())
-                    }
-                } else if (nodes.size == 2) {
-                    Column(
-                        modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        val weight0 = if (nodes[0].isScreenShare) 2f else 1f
-                        val weight1 = if (nodes[1].isScreenShare) 2f else 1f
-                        VideoNodeCard(nodes[0], tokens, modifier = Modifier.weight(weight0).fillMaxWidth())
-                        VideoNodeCard(nodes[1], tokens, modifier = Modifier.weight(weight1).fillMaxWidth())
-                    }
-                } else {
-                    // Masonry style (3+ items)
-                    val screenShareNode = nodes.find { it.isScreenShare }
-                    if (screenShareNode != null) {
-                        // Big screen share, small thumbnails below
-                        Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                            VideoNodeCard(screenShareNode, tokens, modifier = Modifier.weight(2f).fillMaxWidth())
-                            Row(
-                                modifier = Modifier.weight(1f).fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(16.dp)
-                            ) {
-                                nodes.filter { !it.isScreenShare }.forEach { node ->
-                                    VideoNodeCard(node, tokens, modifier = Modifier.weight(1f).fillMaxHeight())
-                                }
-                            }
-                        }
-                    } else {
-                        // Equal grid
-                        Row(
-                            modifier = Modifier.fillMaxSize(),
-                            horizontalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            nodes.forEach { node ->
-                                VideoNodeCard(node, tokens, modifier = Modifier.weight(1f).fillMaxHeight())
-                            }
-                        }
-                    }
-                }
+                ui.screen.call.CallGrid(nodes = nodes, tokens = tokens, modifier = Modifier.fillMaxSize())
             }
         } else {
             // Ringing / Dialing screen (Audio only or waiting)
@@ -304,17 +255,19 @@ fun CallScreen(
         }
 
         // ── Top Controls ──
-        AnimatedVisibility(
-            visible = showControls || callState != CallState.CONNECTED,
-            enter = fadeIn() + slideInVertically { -it / 2 },
-            exit = fadeOut() + slideOutVertically { -it / 2 },
-            modifier = Modifier.align(Alignment.TopStart).padding(24.dp)
-        ) {
-            IconButton(
-                onClick = { callManager.isMinimized.value = true },
-                modifier = Modifier.size(48.dp).background(Color(0xFF1E1F22).copy(alpha = 0.8f), CircleShape)
+        if (!isEmbedded) {
+            AnimatedVisibility(
+                visible = showControls || callState != CallState.CONNECTED,
+                enter = fadeIn() + slideInVertically { -it / 2 },
+                exit = fadeOut() + slideOutVertically { -it / 2 },
+                modifier = Modifier.align(Alignment.TopStart).padding(24.dp)
             ) {
-                Icon(Icons.Default.ArrowBack, contentDescription = "Minimize", tint = Color.White)
+                IconButton(
+                    onClick = { callManager.isMinimized.value = true },
+                    modifier = Modifier.size(48.dp).background(Color(0xFF1E1F22).copy(alpha = 0.8f), CircleShape)
+                ) {
+                    Icon(Icons.Default.ArrowBack, contentDescription = "Minimize", tint = Color.White)
+                }
             }
         }
 
@@ -371,111 +324,19 @@ fun CallScreen(
                 exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 32.dp)
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    
-                    // Main Control Bar
-                    Row(
-                        modifier = Modifier
-                            .background(Color(0xFF1E1F22).copy(alpha = 0.95f), CircleShape) // Pill shape
-                            .padding(horizontal = 24.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        ControlButton(
-                            icon = if (isVideoEnabled) OrbitIcons.Video else OrbitIcons.VideoOff,
-                            isActive = isVideoEnabled,
-                            activeColor = Color(0xFF313338), 
-                            activeIconColor = Color.White,
-                            inactiveColor = Color.White, 
-                            inactiveIconColor = Color(0xFF111214),
-                            onClick = { callManager.toggleVideo(!isVideoEnabled) }
-                        )
-
-                        Box {
-                            ControlButton(
-                                icon = if (!isMuted) OrbitIcons.Mic else OrbitIcons.MicOff,
-                                isActive = !isMuted,
-                                activeColor = Color(0xFF313338),
-                                activeIconColor = Color.White,
-                                inactiveColor = Color.White,
-                                inactiveIconColor = Color(0xFF111214),
-                                onClick = { callManager.toggleMute(!isMuted) }
-                            )
-                            
-                            // Audio settings dropdown trigger next to mic
-                            Box(
-                                modifier = Modifier
-                                    .padding(start = 4.dp)
-                                    .size(width = 24.dp, height = 48.dp) // Taller, explicit button
-                                    .background(Color(0xFF2B2D31), RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp))
-                                    .clickable { showAudioDeviceMenu = true },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(Icons.Default.KeyboardArrowUp, null, tint = Color.White.copy(alpha=0.7f), modifier = Modifier.size(16.dp))
-                            }
-                            
-                            AudioDeviceMenu(
-                                callManager = callManager,
-                                expanded = showAudioDeviceMenu,
-                                onDismiss = { showAudioDeviceMenu = false }
-                            )
-                        }
-
-                        ControlButton(
-                            icon = OrbitIcons.ScreenShare,
-                            isActive = isScreenSharing,
-                            activeColor = Color(0xFF23A559), // Green when sharing
-                            activeIconColor = Color.White,
-                            inactiveColor = Color(0xFF313338),
-                            inactiveIconColor = Color.White,
-                            onClick = {
-                                if (isScreenSharing) {
-                                    callManager.stopScreenShare()
-                                } else {
-                                    showScreenShareDialog = true
-                                }
-                            }
-                        )
-
-                        ControlButton(
-                            icon = Icons.Default.GridView,
-                            isActive = false,
-                            activeColor = Color.White,
-                            activeIconColor = Color(0xFF111214),
-                            inactiveColor = Color(0xFF313338),
-                            inactiveIconColor = Color.White,
-                            onClick = { /* Grid Layout toggle */ }
-                        )
-
-                        ControlButton(
-                            icon = Icons.Default.MusicNote,
-                            isActive = false,
-                            activeColor = Color.White,
-                            activeIconColor = Color(0xFF111214),
-                            inactiveColor = Color(0xFF313338),
-                            inactiveIconColor = Color.White,
-                            onClick = { /* Soundboard */ }
-                        )
-
-                        ControlButton(
-                            icon = Icons.Default.MoreHoriz,
-                            isActive = false,
-                            activeColor = Color.White,
-                            activeIconColor = Color(0xFF111214),
-                            inactiveColor = Color(0xFF313338),
-                            inactiveIconColor = Color.White,
-                            onClick = { /* More Options */ }
-                        )
-
-                        // Red Hangup Button
-                        IconButton(
-                            onClick = { callManager.endCall() },
-                            modifier = Modifier.size(56.dp).background(Color(0xFFF23F42), CircleShape)
-                        ) {
-                            Icon(OrbitIcons.CallEnd, contentDescription = "Hang Up", tint = Color.White, modifier = Modifier.size(28.dp))
+                ui.screen.call.CallControlsBar(
+                    callManager = callManager,
+                    isVideoEnabled = isVideoEnabled,
+                    isMuted = isMuted,
+                    isScreenSharing = isScreenSharing,
+                    onScreenShareClick = {
+                        if (isScreenSharing) {
+                            callManager.stopScreenShare()
+                        } else {
+                            showScreenShareDialog = true
                         }
                     }
-                }
+                )
             }
         }
     }
@@ -489,6 +350,7 @@ fun ScreenShareDialog(
 ) {
     var sources by remember { mutableStateOf<List<webrtc.DesktopSourceModel>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
+    var shareSystemAudio by remember { mutableStateOf(false) }
     val tokens = rememberCosmicTokens()
 
     LaunchedEffect(Unit) {
@@ -506,45 +368,64 @@ fun ScreenShareDialog(
                     CircularProgressIndicator(color = tokens.Accent)
                 }
             } else {
-                androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
-                    columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(2),
-                    modifier = Modifier.heightIn(max = 400.dp),
-                    contentPadding = PaddingValues(8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    items(sources.size) { index ->
-                        val source = sources[index]
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .aspectRatio(1.5f)
-                                .clickable { onSourceSelected(source) },
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF2B2D31)),
-                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
-                        ) {
-                            Column(
-                                modifier = Modifier.fillMaxSize().padding(8.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center
+                Column {
+                    androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+                        columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(2),
+                        modifier = Modifier.heightIn(max = 400.dp).weight(1f, fill = false),
+                        contentPadding = PaddingValues(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(sources.size) { index ->
+                            val source = sources[index]
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .aspectRatio(1.5f)
+                                    .clickable {
+                                        callManager.setStreamAudioEnabled(shareSystemAudio)
+                                        onSourceSelected(source)
+                                    },
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF2B2D31)),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
                             ) {
-                                Icon(
-                                    if (source.isWindow) Icons.Default.Window else Icons.Default.Monitor,
-                                    contentDescription = null,
-                                    tint = tokens.Accent,
-                                    modifier = Modifier.size(32.dp)
-                                )
-                                Spacer(Modifier.height(8.dp))
-                                Text(
-                                    source.name,
-                                    color = Color.White,
-                                    fontSize = 12.sp,
-                                    maxLines = 2,
-                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                                )
+                                Column(
+                                    modifier = Modifier.fillMaxSize().padding(8.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
+                                ) {
+                                    Icon(
+                                        if (source.isWindow) Icons.Default.Window else Icons.Default.Monitor,
+                                        contentDescription = null,
+                                        tint = tokens.Accent,
+                                        modifier = Modifier.size(32.dp)
+                                    )
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(
+                                        source.name,
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        maxLines = 2,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                    )
+                                }
                             }
                         }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { shareSystemAudio = !shareSystemAudio }.padding(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = shareSystemAudio,
+                            onCheckedChange = { shareSystemAudio = it },
+                            colors = CheckboxDefaults.colors(checkedColor = tokens.Accent, checkmarkColor = Color.White)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Share System Audio", color = Color.White, fontSize = 14.sp)
                     }
                 }
             }
@@ -641,77 +522,6 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
     }
 }
 
-@Composable
-fun InviteActivityCard(tokens: ui.theme.CosmicTokens, modifier: Modifier = Modifier) {
-    var showActivities by remember { mutableStateOf(false) }
-
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(Brush.linearGradient(listOf(Color(0xFF2A1B38), Color(0xFF111214))))
-    ) {
-        Column(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                // Background visual for activities
-                Icon(Icons.Default.Star, contentDescription = null, tint = tokens.Accent.copy(alpha=0.5f), modifier = Modifier.size(100.dp))
-                Icon(Icons.Default.Face, contentDescription = null, tint = Color.White, modifier = Modifier.size(48.dp))
-            }
-            Spacer(Modifier.height(24.dp))
-            
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Button(
-                    onClick = { /* Invite */ },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E1F22)),
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Icon(Icons.Default.PersonAdd, null, tint = Color.White, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Invite to Voice", color = Color.White, fontSize = 14.sp)
-                }
-                
-                Box {
-                    Button(
-                        onClick = { showActivities = true },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E1F22)),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Icon(Icons.Default.Games, null, tint = Color.White, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Choose Activity", color = Color.White, fontSize = 14.sp)
-                    }
-                    
-                    DropdownMenu(
-                        expanded = showActivities,
-                        onDismissRequest = { showActivities = false },
-                        modifier = Modifier.background(Color(0xFF2B2D31))
-                    ) {
-                        Text(
-                            "SUGGESTED ACTIVITIES", 
-                            color = Color.White.copy(alpha = 0.5f), 
-                            fontSize = 10.sp, 
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                        )
-                        DropdownMenuItem(
-                            text = { Text("White Board", color = Color.White) },
-                            onClick = { showActivities = false },
-                            leadingIcon = { Icon(Icons.Default.Create, null, tint = Color.White) }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Subway Game", color = Color.White) },
-                            onClick = { showActivities = false },
-                            leadingIcon = { Icon(Icons.Default.DirectionsRun, null, tint = Color.White) }
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
 
 @Composable
 fun AudioDeviceMenu(
@@ -820,30 +630,6 @@ fun AudioDeviceMenu(
     }
 }
 
-@Composable
-private fun ControlButton(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    isActive: Boolean,
-    activeColor: Color,
-    activeIconColor: Color,
-    inactiveColor: Color,
-    inactiveIconColor: Color,
-    size: androidx.compose.ui.unit.Dp = 56.dp,
-    iconSize: androidx.compose.ui.unit.Dp = 24.dp,
-    onClick: () -> Unit
-) {
-    val bgColor by animateColorAsState(if (isActive) activeColor else inactiveColor, label = "bgColor")
-    val iconTint by animateColorAsState(if (isActive) activeIconColor else inactiveIconColor, label = "iconTint")
-
-    IconButton(
-        onClick = onClick,
-        modifier = Modifier
-            .size(size)
-            .background(bgColor, CircleShape)
-    ) {
-        Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(iconSize))
-    }
-}
 
 @Composable
 expect fun VideoRenderer(renderer: Any?, modifier: Modifier = Modifier)

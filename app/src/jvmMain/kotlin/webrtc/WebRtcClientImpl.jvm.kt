@@ -371,17 +371,25 @@ class JvmWebRtcClient : WebRtcClient {
             val f = factory ?: return
 
             val screenCapturer = ScreenCapturer()
-            val sources = screenCapturer.desktopSources
-            val source = if (sourceId != null) sources.find { it.id.toString() == sourceId } else sources.firstOrNull()
+            val windowCapturer = dev.onvoid.webrtc.media.video.desktop.WindowCapturer()
             
-            if (source != null) {
+            val screenSources = screenCapturer.desktopSources
+            val windowSources = windowCapturer.desktopSources
+            
+            val sSource = screenSources.find { it.id.toString() == sourceId }
+            val wSource = windowSources.find { it.id.toString() == sourceId }
+            
+            val isWindow = wSource != null
+            val finalSourceId = wSource?.id ?: sSource?.id ?: screenSources.firstOrNull()?.id
+            
+            if (finalSourceId != null) {
                 // If already screen sharing, stop old one
                 if (screenVideoTrack != null) {
                     stopScreenShare()
                 }
 
                 screenSource = VideoDesktopSource()
-                screenSource?.setSourceId(source.id, source.title?.contains("Window") == true)
+                screenSource?.setSourceId(finalSourceId, isWindow)
                 screenSource?.start()
                 
                 val screenTrack = f.createVideoTrack("screenTrack_${System.currentTimeMillis()}", screenSource)
@@ -402,7 +410,9 @@ class JvmWebRtcClient : WebRtcClient {
                 
                 _isScreenSharing.tryEmit(true)
             }
+            
             screenCapturer.dispose()
+            windowCapturer.dispose()
         } catch (e: Exception) {
             e.printStackTrace()
         }

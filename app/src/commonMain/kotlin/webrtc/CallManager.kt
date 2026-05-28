@@ -22,8 +22,13 @@ class CallManager(
 
     var iceServers: List<TurnServer> = emptyList()
 
-    var activeRoomId: String? = null
-        private set
+    val activeRoomIdFlow = MutableStateFlow<String?>(null)
+    var activeRoomId: String?
+        get() = activeRoomIdFlow.value
+        private set(value) {
+            activeRoomIdFlow.value = value
+        }
+        
     var callId: String? = null
         private set
         
@@ -359,6 +364,10 @@ class CallManager(
     }
 
     fun getDesktopSources() = webRtcClient.getDesktopSources()
+
+    fun setStreamAudioEnabled(enabled: Boolean) {
+        webRtcClient.setStreamAudioEnabled(enabled)
+    }
 
     fun startScreenShare(data: Any? = null) {
         webRtcClient.startScreenShare(data)
