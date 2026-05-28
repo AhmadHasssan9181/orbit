@@ -325,6 +325,23 @@ class MatrixOrbitRepository(
     }
 
     // ─── Servers / Spaces ──────────────────────────────────────
+    private fun roomDisplayName(room: Room): String {
+        return room.name?.explicitName ?: room.name?.heroes?.firstOrNull()?.localpart ?: room.roomId.full.takeLast(8)
+    }
+
+    private fun inferChannelType(roomName: String): ChannelType {
+        return if (roomName.contains("voice", ignoreCase = true)) ChannelType.VOICE else ChannelType.TEXT
+    }
+
+    private fun orbitChannelName(roomName: String, type: ChannelType): String {
+        if (type != ChannelType.VOICE) return roomName
+        val cleaned = roomName.replace(
+            Regex("(?i)([-_\\s]+voice(?:[-_\\s]+channel)?)$"),
+            ""
+        ).trim('-', '_', ' ')
+        return cleaned.ifBlank { roomName }
+    }
+
     override suspend fun getSpaces(): List<OrbitServer> {
         val allRooms = getAllRoomsSnapshot()
         val servers = mutableListOf<OrbitServer>()
@@ -417,9 +434,10 @@ class MatrixOrbitRepository(
         when (spaceId) {
             "dm" -> {
                 allRooms.filter { it.isDirect }.forEach { room ->
+                    val roomName = roomDisplayName(room)
                     channels.add(OrbitChannel(
                         id = room.roomId.full,
-                        name = room.name?.explicitName ?: room.name?.heroes?.firstOrNull()?.localpart ?: room.roomId.full.takeLast(8),
+                        name = roomName,
                         type = ChannelType.TEXT,
                         categoryId = "dm",
                         topic = ""
@@ -428,10 +446,12 @@ class MatrixOrbitRepository(
             }
             "rooms" -> {
                 allRooms.filter { !it.isDirect && it.name?.explicitName?.contains("space", ignoreCase = true) != true }.forEach { room ->
+                    val roomName = roomDisplayName(room)
+                    val channelType = inferChannelType(roomName)
                     channels.add(OrbitChannel(
                         id = room.roomId.full,
-                        name = room.name?.explicitName ?: room.name?.heroes?.firstOrNull()?.localpart ?: room.roomId.full.takeLast(8),
-                        type = ChannelType.TEXT,
+                        name = orbitChannelName(roomName, channelType),
+                        type = channelType,
                         categoryId = "rooms",
                         topic = ""
                     ))
@@ -447,10 +467,12 @@ class MatrixOrbitRepository(
                     if (childRoomId != null) {
                         val room = allRooms.find { it.roomId == childRoomId }
                         if (room != null) {
+                            val roomName = roomDisplayName(room)
+                            val channelType = inferChannelType(roomName)
                             channels.add(OrbitChannel(
                                 id = room.roomId.full,
-                                name = room.name?.explicitName ?: room.name?.heroes?.firstOrNull()?.localpart ?: room.roomId.full.takeLast(8),
-                                type = if (room.name?.explicitName?.contains("voice", ignoreCase = true) == true) ChannelType.VOICE else ChannelType.TEXT,
+                                name = orbitChannelName(roomName, channelType),
+                                type = channelType,
                                 categoryId = spaceId,
                                 topic = ""
                             ))
@@ -482,13 +504,18 @@ class MatrixOrbitRepository(
     ): Result<String> {
         return try {
             val trixnity = trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
-            val roomName = name.trim().lowercase()
-            if (!ROOM_NAME_REGEX.matches(roomName)) {
+            val baseRoomName = name.trim().lowercase()
+            if (!ROOM_NAME_REGEX.matches(baseRoomName)) {
                 return Result.failure(IllegalArgumentException("Room names can only use letters and hyphens"))
+            }
+            val roomName = if (type == ChannelType.VOICE && !baseRoomName.contains("voice", ignoreCase = true)) {
+                "$baseRoomName-voice"
+            } else {
+                baseRoomName
             }
             val response = trixnity.api.room.createRoom(
                 name = roomName,
-                topic = topic,
+                topic = topic.ifBlank { if (type == ChannelType.VOICE) "Voice channel" else "" },
                 preset = if (type == ChannelType.VOICE) {
                     CreateRoom.Request.Preset.TRUSTED_PRIVATE
                 } else {
@@ -515,11 +542,13 @@ class MatrixOrbitRepository(
         return try {
             val trixnity = trixnityClient ?: return null
             val room = trixnity.room.getById(RoomId(channelId)).first() ?: return null
+            val roomName = roomDisplayName(room)
+            val channelType = inferChannelType(roomName)
 
             return OrbitChannel(
                 id = channelId,
-                name = room.name?.explicitName ?: room.name?.heroes?.firstOrNull()?.localpart ?: channelId.takeLast(8),
-                type = if (room.name?.explicitName?.contains("voice", ignoreCase = true) == true) ChannelType.VOICE else ChannelType.TEXT,
+                name = orbitChannelName(roomName, channelType),
+                type = channelType,
                 categoryId = null,
                 topic = ""
             )
@@ -1127,7 +1156,7 @@ class MatrixOrbitRepository(
             val channels = getChannelsForSpace(spaceId)
             val result = mutableListOf<OrbitChannel>()
             for (ch in channels) {
-                val callUrl = activeCalls[ch.id]
+                val callUrl = activeCalls[ch.matrixRoomId] ?: activeCalls[ch.id]
                 val channelWithCall = ch.copy(activeCallUrl = callUrl)
                 result.add(channelWithCall)
                 

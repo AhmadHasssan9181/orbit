@@ -83,7 +83,7 @@ fun ChannelDrawer(
 
     Column(
         modifier = modifier
-            .width(232.dp)
+            .width(252.dp)
             .fillMaxSize()
             .background(Drawer_Bg)
     ) {
@@ -120,6 +120,12 @@ fun ChannelDrawer(
 
             if (!server.isDM) {
                 DrawerActionButton(
+                    icon = Icons.Default.Search,
+                    text = "Browse Channels",
+                    accent = false,
+                    onClick = {}
+                )
+                DrawerActionButton(
                     icon = Icons.Default.PersonAdd,
                     text = "Invite People",
                     accent = true,
@@ -152,6 +158,7 @@ fun ChannelDrawer(
                     channels = channels,
                     selectedChannelId = selectedChannelId,
                     onChannelClick = onChannelClick,
+                    onCreateRoomClick = onCreateRoomClick,
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -374,50 +381,57 @@ private fun ChannelListContent(
     channels: List<OrbitChannel>,
     selectedChannelId: String?,
     onChannelClick: (String) -> Unit,
+    onCreateRoomClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    val expandedCategories = remember { mutableStateOf<Set<String>?>(null) }
-    LaunchedEffect(categories) {
-        if (expandedCategories.value == null && categories.isNotEmpty()) {
-            expandedCategories.value = categories.map { it.id }.toSet()
-        }
-    }
-    val currentExpanded = expandedCategories.value ?: emptySet()
+    var textExpanded by remember { mutableStateOf(true) }
+    var voiceExpanded by remember { mutableStateOf(true) }
+    val textChannels = remember(channels) { channels.filter { it.type == ChannelType.TEXT } }
+    val voiceChannels = remember(channels) { channels.filter { it.type == ChannelType.VOICE } }
 
     LazyColumn(
         modifier = modifier,
-        contentPadding = PaddingValues(vertical = 5.dp, horizontal = 7.dp),
+        contentPadding = PaddingValues(top = 6.dp, bottom = 10.dp, start = 8.dp, end = 8.dp),
         verticalArrangement = Arrangement.spacedBy(1.dp)
     ) {
-        categories.forEach { cat ->
-            val isExpanded = cat.id in currentExpanded
-            item(cat.id) {
-                CategoryHeader(
-                    name = cat.name,
-                    isExpanded = isExpanded,
-                    onToggle = {
-                        val current = expandedCategories.value ?: emptySet()
-                        expandedCategories.value =
-                            if (cat.id in current)
-                                current - cat.id
-                            else current + cat.id
-                    }
-                )
-            }
-            if (isExpanded) {
-                val catChannels = channels.filter { it.categoryId == cat.id }
-                items(catChannels, key = { it.id }) { ch ->
-                    ChannelItem(ch, ch.id == selectedChannelId) { onChannelClick(ch.id) }
-                }
+        item(key = "text_header") {
+            ChannelSectionHeader(
+                name = "Text channels",
+                isExpanded = textExpanded,
+                onToggle = { textExpanded = !textExpanded },
+                onAddClick = onCreateRoomClick
+            )
+        }
+        if (textExpanded) {
+            items(textChannels, key = { it.id }) { ch ->
+                ChannelItem(ch, ch.id == selectedChannelId) { onChannelClick(ch.id) }
             }
         }
 
-        val uncategorized = channels.filter { ch ->
-            ch.categoryId == null || ch.categoryId !in categories.map { it.id }
+        item(key = "voice_spacer") { Spacer(Modifier.height(10.dp)) }
+        item(key = "voice_header") {
+            ChannelSectionHeader(
+                name = "Voice channels",
+                isExpanded = voiceExpanded,
+                onToggle = { voiceExpanded = !voiceExpanded },
+                onAddClick = onCreateRoomClick
+            )
         }
-        if (uncategorized.isNotEmpty()) {
-            items(uncategorized, key = { it.id }) { ch ->
+        if (voiceExpanded) {
+            items(voiceChannels, key = { it.id }) { ch ->
                 ChannelItem(ch, ch.id == selectedChannelId) { onChannelClick(ch.id) }
+            }
+            if (voiceChannels.isEmpty()) {
+                item(key = "empty_voice") {
+                    Text(
+                        text = "No voice channels yet",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = Text_Muted.copy(alpha = 0.72f),
+                            fontSize = 12.sp
+                        ),
+                        modifier = Modifier.padding(horizontal = 28.dp, vertical = 8.dp)
+                    )
+                }
             }
         }
     }
@@ -738,13 +752,78 @@ private fun CategoryHeader(name: String, isExpanded: Boolean, onToggle: () -> Un
 // â”€â”€â”€ ChannelItem â€” Discord/Revolt style â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @Composable
-private fun ChannelItem(channel: OrbitChannel, isSelected: Boolean, onClick: () -> Unit) {
+private fun ChannelSectionHeader(
+    name: String,
+    isExpanded: Boolean,
+    onToggle: () -> Unit,
+    onAddClick: (() -> Unit)? = null
+) {
+    val rotation by animateFloatAsState(
+        targetValue = if (isExpanded) 0f else -90f,
+        animationSpec = spring(stiffness = Spring.StiffnessMedium),
+        label = "sectionChevronRot"
+    )
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
 
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(32.dp)
+            .hoverable(interactionSource),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(4.dp))
+                .clickable(interactionSource = interactionSource, indication = null, onClick = onToggle)
+                .padding(horizontal = 2.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.KeyboardArrowDown,
+                contentDescription = null,
+                tint = if (isHovered) Text_Secondary else Text_Muted,
+                modifier = Modifier.size(13.dp).rotate(rotation)
+            )
+            Spacer(Modifier.width(3.dp))
+            Text(
+                text = name,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (isHovered) Text_Secondary else Text_Muted,
+                    fontSize = 13.sp
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+
+        if (onAddClick != null) {
+            IconButton(onClick = onAddClick, modifier = Modifier.size(28.dp)) {
+                Icon(
+                    imageVector = OrbitIcons.Add,
+                    contentDescription = "Create Channel",
+                    tint = if (isHovered) Text_Secondary else Text_Muted,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChannelItem(channel: OrbitChannel, isSelected: Boolean, onClick: () -> Unit) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isHovered by interactionSource.collectIsHoveredAsState()
+    val isLive = channel.activeCallUrl != null
+    val liveGreen = Color(0xFF23A55A)
+    val displayName = remember(channel.name, channel.type) { channelDisplayName(channel) }
+
     val bgColor by animateColorAsState(
         targetValue = when {
-            isSelected -> ChannelSelected_Bg
+            isSelected -> if (channel.type == ChannelType.VOICE) liveGreen.copy(alpha = 0.16f) else ChannelSelected_Bg
             isHovered  -> ChannelHover_Bg
             else       -> Color.Transparent
         },
@@ -762,6 +841,8 @@ private fun ChannelItem(channel: OrbitChannel, isSelected: Boolean, onClick: () 
     )
     val iconColor by animateColorAsState(
         targetValue = when {
+            isSelected && channel.type == ChannelType.VOICE -> liveGreen
+            isLive -> liveGreen
             isSelected -> Text_White
             isHovered  -> Text_Secondary
             else       -> Text_Muted
@@ -776,7 +857,7 @@ private fun ChannelItem(channel: OrbitChannel, isSelected: Boolean, onClick: () 
             .background(bgColor)
             .hoverable(interactionSource)
             .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 5.dp),
+            .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
@@ -784,7 +865,14 @@ private fun ChannelItem(channel: OrbitChannel, isSelected: Boolean, onClick: () 
                 .width(3.dp)
                 .height(18.dp)
                 .clip(RoundedCornerShape(3.dp))
-                .background(if (isSelected) Accent else Color.Transparent)
+                .background(
+                    when {
+                        isSelected && channel.type == ChannelType.VOICE -> liveGreen
+                        isSelected -> Accent
+                        isLive -> liveGreen.copy(alpha = 0.85f)
+                        else -> Color.Transparent
+                    }
+                )
         )
         Spacer(Modifier.width(5.dp))
         when (channel.type) {
@@ -805,19 +893,34 @@ private fun ChannelItem(channel: OrbitChannel, isSelected: Boolean, onClick: () 
         Spacer(Modifier.width(6.dp))
 
         Text(
-            text = channel.name,
+            text = displayName,
             style = MaterialTheme.typography.bodyMedium.copy(
                 color = textColor,
                 fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal,
-                fontSize = 13.sp
+                fontSize = 14.sp
             ),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f)
         )
 
-        // Action icons on hover (like Discord)
-        if (isHovered) {
+        if (channel.type == ChannelType.VOICE && isLive) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(liveGreen.copy(alpha = 0.16f))
+                    .padding(horizontal = 7.dp, vertical = 2.dp)
+            ) {
+                Text(
+                    text = "LIVE",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        color = liveGreen,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 10.sp
+                    )
+                )
+            }
+        } else if (isHovered) {
             Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                 Icon(
                     imageVector = Icons.Default.PersonAdd,
@@ -837,6 +940,16 @@ private fun ChannelItem(channel: OrbitChannel, isSelected: Boolean, onClick: () 
 }
 
 // â”€â”€â”€ UserProfileBar â€” Discord-style â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+private fun channelDisplayName(channel: OrbitChannel): String {
+    if (channel.type != ChannelType.VOICE) return channel.name
+    val withoutCall = channel.name.removeSuffix(" (Call)")
+    val cleaned = withoutCall.replace(
+        Regex("(?i)([-_\\s]+voice(?:[-_\\s]+channel)?)$"),
+        ""
+    ).trim('-', '_', ' ')
+    return cleaned.ifBlank { withoutCall }
+}
 
 @Composable
 private fun UserProfileBar(

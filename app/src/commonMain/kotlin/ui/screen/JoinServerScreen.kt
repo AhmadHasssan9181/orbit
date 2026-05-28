@@ -2,6 +2,7 @@ package ui.screen
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -42,6 +43,31 @@ private fun validateRoomName(value: String): String? {
         value.isBlank() -> "Room name is required"
         !DiscordRoomNameRegex.matches(value) -> "Use letters and hyphens only, like general-chat"
         else -> null
+    }
+}
+
+@Composable
+private fun ChannelTypeChoice(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val tokens = rememberCosmicTokens()
+    Box(
+        modifier = modifier
+            .fillMaxHeight()
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (selected) tokens.Accent.copy(alpha = 0.18f) else Color.Transparent)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            color = if (selected) tokens.Text_White else tokens.Text_Muted,
+            fontSize = 13.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold
+        )
     }
 }
 
@@ -280,6 +306,7 @@ fun CreateRoomDialog(
 ) {
     val tokens = rememberCosmicTokens()
     var input by remember { mutableStateOf("") }
+    var channelType by remember { mutableStateOf(ChannelType.TEXT) }
     var isWorking by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -318,8 +345,34 @@ fun CreateRoomDialog(
                 text = server.name,
                 color = tokens.Text_Muted,
                 fontSize = 13.sp,
-                modifier = Modifier.padding(bottom = 16.dp)
+                modifier = Modifier.padding(bottom = 14.dp)
             )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(40.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(tokens.CardBg)
+                    .border(1.dp, tokens.Separator.copy(alpha = 0.25f), RoundedCornerShape(10.dp))
+                    .padding(3.dp),
+                horizontalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                ChannelTypeChoice(
+                    label = "Text",
+                    selected = channelType == ChannelType.TEXT,
+                    onClick = { channelType = ChannelType.TEXT },
+                    modifier = Modifier.weight(1f)
+                )
+                ChannelTypeChoice(
+                    label = "Voice",
+                    selected = channelType == ChannelType.VOICE,
+                    onClick = { channelType = ChannelType.VOICE },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            Spacer(Modifier.height(14.dp))
 
             OutlinedTextField(
                 value = input,
@@ -329,7 +382,7 @@ fun CreateRoomDialog(
                 },
                 label = { Text("Room name") },
                 placeholder = {
-                    Text("general-chat", color = tokens.Text_Muted)
+                    Text(if (channelType == ChannelType.VOICE) "general" else "general-chat", color = tokens.Text_Muted)
                 },
                 singleLine = true,
                 isError = validationMsg != null || errorMsg != null,
@@ -345,7 +398,11 @@ fun CreateRoomDialog(
             )
 
             Text(
-                text = validationMsg ?: errorMsg ?: "Only letters and hyphens are allowed.",
+                text = validationMsg ?: errorMsg ?: if (channelType == ChannelType.VOICE) {
+                    "Voice channels appear in the separate voice section."
+                } else {
+                    "Only letters and hyphens are allowed."
+                },
                 color = if (validationMsg != null || errorMsg != null) Color(0xFFF87171) else tokens.Text_Muted,
                 fontSize = 12.sp,
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 16.dp)
@@ -378,7 +435,8 @@ fun CreateRoomDialog(
                             repository.createChannel(
                                 spaceId = server.id,
                                 name = value,
-                                type = ChannelType.TEXT
+                                type = channelType,
+                                topic = if (channelType == ChannelType.VOICE) "Voice channel" else ""
                             ).onSuccess { channelId ->
                                 onRoomCreated(channelId)
                                 onClose()
@@ -399,7 +457,7 @@ fun CreateRoomDialog(
                             strokeWidth = 2.dp
                         )
                     } else {
-                        Text("Create", color = Color.White)
+                        Text(if (channelType == ChannelType.VOICE) "Create Voice" else "Create Text", color = Color.White)
                     }
                 }
             }
