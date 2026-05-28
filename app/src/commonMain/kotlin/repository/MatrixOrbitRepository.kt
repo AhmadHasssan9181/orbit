@@ -347,10 +347,31 @@ class MatrixOrbitRepository(
         val servers = mutableListOf<OrbitServer>()
         val dms = allRooms.filter { it.isDirect }
 
+        val trixnity = trixnityClient
         val spaces = allRooms.filter { room ->
-            room.createEventContent?.type == CreateEventContent.RoomType.Space
+            val typeStr = room.createEventContent?.type?.toString()
+            var isSpace = room.createEventContent?.type == CreateEventContent.RoomType.Space || typeStr?.contains("space", ignoreCase=true) == true
+            if (!isSpace && trixnity != null) {
+                // If it doesn't explicitly have the space room type, check if it has any children
+                try {
+                    val children = trixnity.room.getAllState(room.roomId, ChildEventContent::class).first()
+                    if (children.isNotEmpty()) isSpace = true
+                } catch(e: Exception) {}
+            }
+            isSpace
         }
-        val flatRooms = allRooms.filter { !it.isDirect && !spaces.contains(it) }
+        
+        val allChildren = mutableSetOf<String>()
+        if (trixnity != null) {
+            for (space in spaces) {
+                try {
+                    val children = trixnity.room.getAllState(space.roomId, ChildEventContent::class).first()
+                    allChildren.addAll(children.keys)
+                } catch(e: Exception) {}
+            }
+        }
+        
+        val flatRooms = allRooms.filter { !it.isDirect && !spaces.contains(it) && !allChildren.contains(it.roomId.full) }
 
         if (dms.isNotEmpty()) {
             servers.add(OrbitServer(
@@ -445,7 +466,32 @@ class MatrixOrbitRepository(
                 }
             }
             "rooms" -> {
-                allRooms.filter { !it.isDirect && it.name?.explicitName?.contains("space", ignoreCase = true) != true }.forEach { room ->
+                val trixnity = trixnityClient
+                val spaceIds = mutableSetOf<String>()
+                val childrenIds = mutableSetOf<String>()
+                
+                // Identify spaces
+                allRooms.forEach { room ->
+                    val typeStr = room.createEventContent?.type?.toString()
+                    var isSpace = room.createEventContent?.type == CreateEventContent.RoomType.Space || typeStr?.contains("space", ignoreCase=true) == true
+                    if (!isSpace && trixnity != null) {
+                        try {
+                            val children = trixnity.room.getAllState(room.roomId, ChildEventContent::class).first()
+                            if (children.isNotEmpty()) isSpace = true
+                        } catch(e: Exception) {}
+                    }
+                    if (isSpace) {
+                        spaceIds.add(room.roomId.full)
+                        if (trixnity != null) {
+                            try {
+                                val children = trixnity.room.getAllState(room.roomId, ChildEventContent::class).first()
+                                childrenIds.addAll(children.keys)
+                            } catch(e: Exception) {}
+                        }
+                    }
+                }
+
+                allRooms.filter { !it.isDirect && !spaceIds.contains(it.roomId.full) && !childrenIds.contains(it.roomId.full) }.forEach { room ->
                     val roomName = roomDisplayName(room)
                     val channelType = inferChannelType(roomName)
                     channels.add(OrbitChannel(
@@ -1301,6 +1347,44 @@ class MatrixOrbitRepository(
     }
 
     private val activeGroupCalls = mutableMapOf<String, MutableStateFlow<String?>>()
+    private val activeCallMembers = mutableMapOf<String, MutableStateFlow<List<OrbitUser>>>()
+
+    override fun observeCallMembers(channelId: String): Flow<List<OrbitUser>> {
+        val flow = activeCallMembers.getOrPut(channelId) { MutableStateFlow(emptyList()) }
+        
+        // Background scan for initial members
+        repositoryScope.launch {
+            val trixnity = trixnityClient ?: return@launch
+            try {
+                val lastEventId = trixnity.room.getById(RoomId(channelId)).first()?.lastEventId
+                if (lastEventId != null) {
+                    val currentMembers = mutableListOf<OrbitUser>()
+                    val events = trixnity.room.getTimelineEvents(RoomId(channelId), startFrom = lastEventId, direction = Direction.BACKWARDS)
+                    // Simplified scan: we look back at the timeline for recent m.call.member events.
+                    events.take(200).collect { flowEvent ->
+                        val timelineEvent = flowEvent.first()
+                        val content = timelineEvent.content?.getOrNull()
+                        if (content is UnknownEventContent && content.eventType == "m.call.member") {
+                            val sender = timelineEvent.sender.full
+                            val realContent = unwrapUnknownEventContent(content)
+                            val membership = realContent["membership"]?.jsonPrimitive?.content
+                            // If we haven't seen this user yet in our backward scan, their latest event dictates their state
+                            if (currentMembers.none { it.id == sender } && membership == "join") {
+                                val user = getUserProfile(sender) ?: OrbitUser(
+                                    id = sender, username = sender.split(":").first().removePrefix("@"),
+                                    displayName = sender, avatarColor = hashToColor(sender), status = UserStatus.ONLINE, isBot = false, avatarUrl = null
+                                )
+                                currentMembers.add(user)
+                            }
+                        }
+                    }
+                    flow.value = currentMembers
+                }
+            } catch (e: Exception) {}
+        }
+        
+        return flow.asStateFlow()
+    }
 
     override fun observeActiveGroupCall(channelId: String): Flow<String?> {
         val flow = activeGroupCalls.getOrPut(channelId) { MutableStateFlow(null) }
@@ -1508,6 +1592,25 @@ class MatrixOrbitRepository(
                                             _callEvents.emit(CallEvent.Hangup(roomId, callId, sender, partyId))
                                         }
                                     }
+                                }
+                                
+                                if (typeStr == "m.call.member") {
+                                    val membership = realContent["membership"]?.jsonPrimitive?.content
+                                    val membersFlow = activeCallMembers.getOrPut(roomId) { MutableStateFlow(emptyList()) }
+                                    val currentMembers = membersFlow.value.toMutableList()
+                                    
+                                    if (membership == "join") {
+                                        if (currentMembers.none { it.id == sender }) {
+                                            val user = getUserProfile(sender) ?: OrbitUser(
+                                                id = sender, username = sender.split(":").first().removePrefix("@"),
+                                                displayName = sender, avatarColor = hashToColor(sender), status = UserStatus.ONLINE, isBot = false, avatarUrl = null
+                                            )
+                                            currentMembers.add(user)
+                                        }
+                                    } else {
+                                        currentMembers.removeAll { it.id == sender }
+                                    }
+                                    membersFlow.value = currentMembers
                                 }
                             }
 

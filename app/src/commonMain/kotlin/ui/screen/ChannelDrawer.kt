@@ -71,6 +71,7 @@ fun ChannelDrawer(
     onCreateRoomClick: (() -> Unit)? = null,
     onOpenRolesClick: (() -> Unit)? = null,
     selectedWhatsAppTab: String = "Chats",
+    repository: repository.OrbitRepository? = null,
     modifier: Modifier = Modifier
 ) {
     var showInviteDialog by remember { mutableStateOf(false) }
@@ -161,6 +162,8 @@ fun ChannelDrawer(
                     categories = categories,
                     channels = channels,
                     selectedChannelId = selectedChannelId,
+                    currentUser = currentUser,
+                    repository = repository,
                     onChannelClick = onChannelClick,
                     onCreateRoomClick = onCreateRoomClick,
                     modifier = Modifier.weight(1f)
@@ -384,51 +387,35 @@ private fun ChannelListContent(
     categories: List<ChannelCategory>,
     channels: List<OrbitChannel>,
     selectedChannelId: String?,
+    currentUser: OrbitUser?,
+    repository: repository.OrbitRepository? = null,
     onChannelClick: (String) -> Unit,
     onCreateRoomClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    var textExpanded by remember { mutableStateOf(true) }
-    var voiceExpanded by remember { mutableStateOf(true) }
-    val textChannels = remember(channels) { channels.filter { it.type == ChannelType.TEXT } }
-    val voiceChannels = remember(channels) { channels.filter { it.type == ChannelType.VOICE } }
+    var roomsExpanded by remember { mutableStateOf(true) }
 
     LazyColumn(
         modifier = modifier,
         contentPadding = PaddingValues(top = 6.dp, bottom = 10.dp, start = 8.dp, end = 8.dp),
         verticalArrangement = Arrangement.spacedBy(1.dp)
     ) {
-        item(key = "text_header") {
+        item(key = "rooms_header") {
             ChannelSectionHeader(
-                name = "Text channels",
-                isExpanded = textExpanded,
-                onToggle = { textExpanded = !textExpanded },
+                name = "Rooms and spaces",
+                isExpanded = roomsExpanded,
+                onToggle = { roomsExpanded = !roomsExpanded },
                 onAddClick = onCreateRoomClick
             )
         }
-        if (textExpanded) {
-            items(textChannels, key = { it.id }) { ch ->
-                ChannelItem(ch, ch.id == selectedChannelId) { onChannelClick(ch.id) }
+        if (roomsExpanded) {
+            items(channels, key = { it.id }) { ch ->
+                ChannelItem(ch, ch.id == selectedChannelId, currentUser, repository) { onChannelClick(ch.id) }
             }
-        }
-
-        item(key = "voice_spacer") { Spacer(Modifier.height(10.dp)) }
-        item(key = "voice_header") {
-            ChannelSectionHeader(
-                name = "Voice channels",
-                isExpanded = voiceExpanded,
-                onToggle = { voiceExpanded = !voiceExpanded },
-                onAddClick = onCreateRoomClick
-            )
-        }
-        if (voiceExpanded) {
-            items(voiceChannels, key = { it.id }) { ch ->
-                ChannelItem(ch, ch.id == selectedChannelId) { onChannelClick(ch.id) }
-            }
-            if (voiceChannels.isEmpty()) {
-                item(key = "empty_voice") {
+            if (channels.isEmpty()) {
+                item(key = "empty_rooms") {
                     Text(
-                        text = "No voice channels yet",
+                        text = "No rooms yet",
                         style = MaterialTheme.typography.bodySmall.copy(
                             color = Text_Muted.copy(alpha = 0.72f),
                             fontSize = 12.sp
@@ -960,10 +947,13 @@ private fun ChannelSectionHeader(
 }
 
 @Composable
-private fun ChannelItem(channel: OrbitChannel, isSelected: Boolean, onClick: () -> Unit) {
+private fun ChannelItem(channel: OrbitChannel, isSelected: Boolean, currentUser: OrbitUser?, repository: repository.OrbitRepository? = null, onClick: () -> Unit) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
-    val isLive = channel.activeCallUrl != null
+    val callManager = webrtc.LocalCallManager.current
+    val callState by callManager?.callState?.collectAsState(initial = webrtc.CallState.IDLE) ?: remember { mutableStateOf(webrtc.CallState.IDLE) }
+    val isActiveCallInChannel = callManager?.activeRoomId == channel.id && callState != webrtc.CallState.IDLE && callState != webrtc.CallState.ENDED
+    val isLive = channel.activeCallUrl != null || isActiveCallInChannel
     val liveGreen = Color(0xFF23A55A)
     val displayName = remember(channel.name, channel.type) { channelDisplayName(channel) }
 
@@ -1011,17 +1001,18 @@ private fun ChannelItem(channel: OrbitChannel, isSelected: Boolean, onClick: () 
         label = "chIndicatorHeight"
     )
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .offset(x = rowOffset)
-            .clip(RoundedCornerShape(4.dp))
-            .background(bgColor)
-            .hoverable(interactionSource)
-            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .offset(x = rowOffset)
+                .clip(RoundedCornerShape(4.dp))
+                .background(bgColor)
+                .hoverable(interactionSource)
+                .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
         Box(
             modifier = Modifier
                 .width(3.dp)
@@ -1106,6 +1097,97 @@ private fun ChannelItem(channel: OrbitChannel, isSelected: Boolean, onClick: () 
                     tint = Text_Muted,
                     modifier = Modifier.size(14.dp).alpha(0.6f)
                 )
+            }
+        }
+        }
+        
+        // Always observe live members from Matrix for voice channels
+        val members by repository?.observeCallMembers(channel.id)?.collectAsState(initial = emptyList()) ?: mutableStateOf(emptyList())
+        
+        if (members.isNotEmpty() || isActiveCallInChannel) {
+            val isMuted by callManager?.isLocalAudioEnabled?.collectAsState() ?: mutableStateOf(true)
+            
+            Column(modifier = Modifier.padding(start = 24.dp, bottom = 4.dp)) {
+                // If local user is in the call but not in Matrix state yet (e.g. just joined), we can artificially show them
+                val showLocalUserFallback = isActiveCallInChannel && currentUser != null && members.none { it.id == currentUser.id }
+
+                
+                members.forEach { member ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(4.dp))
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(modifier = Modifier.size(20.dp)) {
+                            if (member.avatarUrl != null) {
+                                coil3.compose.AsyncImage(
+                                    model = member.avatarUrl,
+                                    contentDescription = member.displayName,
+                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize().clip(CircleShape)
+                                )
+                            } else {
+                                ui.assets.OrbitDefaultAvatar(
+                                    label = member.displayName,
+                                    seed = member.id,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = member.displayName,
+                            style = MaterialTheme.typography.bodySmall.copy(color = Text_Secondary, fontSize = 13.sp),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(Modifier.weight(1f))
+                        // Muted state would ideally come from m.call.member too, for now just local logic for the current user
+                        if (member.id == currentUser?.id && !isMuted) {
+                            Icon(OrbitIcons.MicOff, null, tint = Color(0xFFF23F42), modifier = Modifier.size(14.dp))
+                        }
+                    }
+                }
+                
+                if (showLocalUserFallback && currentUser != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(4.dp))
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(modifier = Modifier.size(20.dp)) {
+                            if (currentUser.avatarUrl != null) {
+                                coil3.compose.AsyncImage(
+                                    model = currentUser.avatarUrl,
+                                    contentDescription = currentUser.displayName,
+                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize().clip(CircleShape)
+                                )
+                            } else {
+                                ui.assets.OrbitDefaultAvatar(
+                                    label = currentUser.displayName,
+                                    seed = currentUser.id,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = currentUser.displayName,
+                            style = MaterialTheme.typography.bodySmall.copy(color = Text_Secondary, fontSize = 13.sp),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(Modifier.weight(1f))
+                        if (!isMuted) {
+                            Icon(OrbitIcons.MicOff, null, tint = Color(0xFFF23F42), modifier = Modifier.size(14.dp))
+                        }
+                    }
+                }
             }
         }
     }

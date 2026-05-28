@@ -33,7 +33,7 @@ actual fun VideoRenderer(renderer: Any?, modifier: Modifier) {
                     Image(
                         bitmap = image.toComposeImageBitmap(),
                         contentDescription = null,
-                        contentScale = ContentScale.Crop,
+                        contentScale = if (renderer.isScreenShare) ContentScale.Fit else ContentScale.Crop,
                         modifier = Modifier
                             .fillMaxSize()
                             .graphicsLayer {

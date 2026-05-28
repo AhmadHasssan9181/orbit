@@ -79,6 +79,7 @@ private val CardBg: Color @Composable get() = rememberCosmicTokens().CardBg
 
 @Composable
 fun ChatScreen(
+    repository: repository.OrbitRepository? = null,
     channel: OrbitChannel,
     messages: List<OrbitMessage>,
     members: List<OrbitUser>,
@@ -98,6 +99,10 @@ fun ChatScreen(
     val windowSize = LocalWindowSizeClass.current
     val callManager = webrtc.LocalCallManager.current
 
+    val callState by callManager?.callState?.collectAsState(initial = webrtc.CallState.IDLE) ?: remember { mutableStateOf(webrtc.CallState.IDLE) }
+    val isCallActiveInRoom = callManager?.activeRoomId == channel.id && callState != webrtc.CallState.IDLE && callState != webrtc.CallState.ENDED
+    val showVoiceChannelUi = (channel.type == ChannelType.VOICE || isCallActiveInRoom) && windowSize.isExpanded
+
     Row(
         modifier = modifier
             .fillMaxSize()
@@ -112,94 +117,106 @@ fun ChatScreen(
                 onVoiceCall = { callManager?.startCall(channel.id, false) }
             )
             HorizontalDivider(color = Separator.copy(alpha = 0.2f), thickness = 1.dp)
-            
-            // Active Call Banner
-            (activeCall as? repository.CallEvent.Invite)?.let {
-                Surface(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                    color = Accent.copy(alpha = 0.1f),
-                    shape = RoundedCornerShape(8.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Accent.copy(alpha = 0.3f))
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+            if (showVoiceChannelUi) {
+                VoiceChannelScreen(
+                    callManager = callManager!!,
+                    matrixRepository = repository as repository.MatrixOrbitRepository,
+                    channel = channel,
+                    modifier = Modifier.weight(1f).fillMaxWidth()
+                )
+            } else {
+                // Active Call Banner
+                (activeCall as? repository.CallEvent.Invite)?.let {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                        color = Accent.copy(alpha = 0.1f),
+                        shape = RoundedCornerShape(8.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Accent.copy(alpha = 0.3f))
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(OrbitIcons.Call, contentDescription = null, tint = Accent, modifier = Modifier.size(24.dp))
-                            Spacer(Modifier.width(12.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(OrbitIcons.Call, contentDescription = null, tint = Accent, modifier = Modifier.size(24.dp))
+                                Spacer(Modifier.width(12.dp))
+                                Text(
+                                    "Ongoing Call",
+                                    style = MaterialTheme.typography.titleSmall.copy(color = Text_White, fontWeight = FontWeight.Bold)
+                                )
+                            }
+                            val isMyCall = currentUser?.id == activeCall.senderId
+                            if (isMyCall) {
+                                Button(
+                                    onClick = { callManager?.isMinimized?.value = false },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Accent)
+                                ) {
+                                    Text("Return to Call", color = Color.White)
+                                }
+                            } else {
+                                Button(
+                                    onClick = { callManager?.answerCallInvite(activeCall.roomId, activeCall.callId, activeCall.sdp) },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Accent)
+                                ) {
+                                    Text("Join Call", color = Color.White)
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Group Call Banner
+                if (activeGroupCallUrl != null) {
+                    GroupCallBanner(
+                        url = activeGroupCallUrl,
+                        roomId = channel.id,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+                    )
+                }
+                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    MessageList(
+                        messages = messages,
+                        currentUser = currentUser,
+                        modifier = Modifier.fillMaxSize(),
+                        onSeen = onSeen
+                    )
+                    
+                    // Typing Indicator Overlay
+                    if (typingUsers.isNotEmpty()) {
+                        val typingText = when {
+                            typingUsers.size == 1 -> "${typingUsers[0]} is typing..."
+                            typingUsers.size == 2 -> "${typingUsers[0]} and ${typingUsers[1]} are typing..."
+                            else -> "Several people are typing..."
+                        }
+                        Surface(
+                            modifier = Modifier.align(Alignment.BottomStart).padding(bottom = 8.dp, start = 16.dp),
+                            color = Chat_Bg.copy(alpha = 0.8f),
+                            shape = RoundedCornerShape(4.dp)
+                        ) {
                             Text(
-                                "Ongoing Call",
-                                style = MaterialTheme.typography.titleSmall.copy(color = Text_White, fontWeight = FontWeight.Bold)
+                                text = typingText,
+                                style = MaterialTheme.typography.bodySmall.copy(color = Text_Muted, fontSize = 11.sp),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                             )
                         }
-                        val isMyCall = currentUser?.id == activeCall.senderId
-                        if (isMyCall) {
-                            Button(
-                                onClick = { callManager?.isMinimized?.value = false },
-                                colors = ButtonDefaults.buttonColors(containerColor = Accent)
-                            ) {
-                                Text("Return to Call", color = Color.White)
-                            }
-                        } else {
-                            Button(
-                                onClick = { callManager?.answerCallInvite(activeCall.roomId, activeCall.callId, activeCall.sdp) },
-                                colors = ButtonDefaults.buttonColors(containerColor = Accent)
-                            ) {
-                                Text("Join Call", color = Color.White)
-                            }
-                        }
                     }
                 }
-            }
-            
-            // Group Call Banner
-            if (activeGroupCallUrl != null) {
-                GroupCallBanner(
-                    url = activeGroupCallUrl,
-                    roomId = channel.id,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+                MessageInputBar(
+                    placeholder = directProfile?.let { "Message @${it.displayName}" } ?: "Message #${channel.name}",
+                    onSend = onSend,
+                    onSendAttachment = onSendAttachment,
+                    onTyping = onTyping
                 )
             }
-            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                MessageList(
-                    messages = messages,
-                    currentUser = currentUser,
-                    modifier = Modifier.fillMaxSize(),
-                    onSeen = onSeen
-                )
-                
-                // Typing Indicator Overlay
-                if (typingUsers.isNotEmpty()) {
-                    val typingText = when {
-                        typingUsers.size == 1 -> "${typingUsers[0]} is typing..."
-                        typingUsers.size == 2 -> "${typingUsers[0]} and ${typingUsers[1]} are typing..."
-                        else -> "Several people are typing..."
-                    }
-                    Surface(
-                        modifier = Modifier.align(Alignment.BottomStart).padding(bottom = 8.dp, start = 16.dp),
-                        color = Chat_Bg.copy(alpha = 0.8f),
-                        shape = RoundedCornerShape(4.dp)
-                    ) {
-                        Text(
-                            text = typingText,
-                            style = MaterialTheme.typography.bodySmall.copy(color = Text_Muted, fontSize = 11.sp),
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                        )
-                    }
-                }
-            }
-            MessageInputBar(
-                placeholder = directProfile?.let { "Message @${it.displayName}" } ?: "Message #${channel.name}",
-                onSend = onSend,
-                onSendAttachment = onSendAttachment,
-                onTyping = onTyping
-            )
         }
-        when {
-            directProfile != null && windowSize.isExpanded -> DirectProfilePanel(directProfile)
-            ui.theme.LocalShowMemberList.current && windowSize.isExpanded -> MemberListPanel(members = members)
+        
+        // Panels that should only appear if the text chat is visible
+        if (!showVoiceChannelUi) {
+            when {
+                directProfile != null && windowSize.isExpanded -> DirectProfilePanel(directProfile)
+                ui.theme.LocalShowMemberList.current && windowSize.isExpanded -> MemberListPanel(members = members)
+            }
         }
     }
 }

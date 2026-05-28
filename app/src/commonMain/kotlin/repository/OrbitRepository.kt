@@ -132,6 +132,7 @@ interface OrbitRepository {
     fun observeCallEvents(): Flow<CallEvent>
     fun observeActiveCall(channelId: String): Flow<CallEvent.Invite?>
     fun observeActiveGroupCall(channelId: String): Flow<String?>
+    fun observeCallMembers(channelId: String): Flow<List<OrbitUser>>
     suspend fun startGroupCall(roomId: String, callId: String)
     suspend fun endGroupCall(roomId: String, callId: String)
     val activeCallsFlow: kotlinx.coroutines.flow.StateFlow<Map<String, String>>

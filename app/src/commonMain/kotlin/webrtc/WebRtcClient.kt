@@ -32,6 +32,7 @@ interface WebRtcClient {
     fun setStreamAudioEnabled(enabled: Boolean)
     fun setAudioOptions(noiseSuppression: Boolean, echoCancellation: Boolean, autoGainControl: Boolean)
     fun setAttenuationStrength(strength: Float)
+    var isVirtualBackgroundEnabled: Boolean
     fun setRemoteVolume(volume: Float)
     
     fun setAudioInputDevice(deviceName: String)
