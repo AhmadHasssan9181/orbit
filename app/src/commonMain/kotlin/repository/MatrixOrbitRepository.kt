@@ -457,6 +457,18 @@ class MatrixOrbitRepository(
                         }
                     }
                 }
+
+                // Discord-like: Always ensure a "General Voice" channel exists if it's a real space
+                if (channels.none { it.type == ChannelType.VOICE }) {
+                    channels.add(0, OrbitChannel(
+                        id = "general_voice_$spaceId",
+                        name = "General Voice",
+                        type = ChannelType.VOICE,
+                        categoryId = spaceId,
+                        topic = "Join here for voice and video",
+                        matrixRoomId = spaceId
+                    ))
+                }
             }
         }
         return channels
