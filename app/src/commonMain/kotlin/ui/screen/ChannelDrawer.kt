@@ -444,27 +444,52 @@ private fun ChannelListContent(
 
 @Composable
 private fun DirectMessageSearchBar() {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isHovered by interactionSource.collectIsHoveredAsState()
+    val bgColor by animateColorAsState(
+        targetValue = if (isHovered) Color(0xFF15161A) else Color(0xFF111214),
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "dmSearchBg"
+    )
+    val borderColor by animateColorAsState(
+        targetValue = if (isHovered) Text_White.copy(alpha = 0.12f) else Separator.copy(alpha = 0.34f),
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "dmSearchBorder"
+    )
+    val textColor by animateColorAsState(
+        targetValue = if (isHovered) Text_White.copy(alpha = 0.82f) else Text_Secondary,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "dmSearchText"
+    )
+    val textOffset by animateDpAsState(
+        targetValue = if (isHovered) 2.dp else 0.dp,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "dmSearchTextOffset"
+    )
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 10.dp, vertical = 10.dp)
             .height(38.dp)
             .clip(RoundedCornerShape(8.dp))
-            .background(Color(0xFF111214))
-            .border(1.dp, Separator.copy(alpha = 0.34f), RoundedCornerShape(8.dp))
-            .clickable {}
+            .background(bgColor)
+            .border(1.dp, borderColor, RoundedCornerShape(8.dp))
+            .hoverable(interactionSource)
+            .clickable(interactionSource = interactionSource, indication = null, onClick = {})
             .padding(horizontal = 12.dp),
         contentAlignment = Alignment.CenterStart
     ) {
         Text(
             text = "Find or start a conversation",
             style = MaterialTheme.typography.bodySmall.copy(
-                color = Text_Secondary,
+                color = textColor,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold
             ),
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.offset(x = textOffset)
         )
     }
 }
@@ -491,12 +516,33 @@ private fun DirectMessageNavItem(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
+    val bgColor by animateColorAsState(
+        targetValue = if (isHovered) ChannelHover_Bg else Color.Transparent,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "dmNavBg"
+    )
+    val iconTint by animateColorAsState(
+        targetValue = if (isHovered) Text_White else Text_Muted,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "dmNavIcon"
+    )
+    val textColor by animateColorAsState(
+        targetValue = if (isHovered) Text_White else Text_Secondary,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "dmNavText"
+    )
+    val rowOffset by animateDpAsState(
+        targetValue = if (isHovered) 3.dp else 0.dp,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "dmNavOffset"
+    )
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .offset(x = rowOffset)
             .height(42.dp)
             .clip(RoundedCornerShape(6.dp))
-            .background(if (isHovered) ChannelHover_Bg else Color.Transparent)
+            .background(bgColor)
             .hoverable(interactionSource)
             .clickable(interactionSource = interactionSource, indication = null, onClick = {})
             .padding(horizontal = 12.dp),
@@ -505,14 +551,14 @@ private fun DirectMessageNavItem(
         Icon(
             imageVector = icon,
             contentDescription = label,
-            tint = if (isHovered) Text_White else Text_Muted,
+            tint = iconTint,
             modifier = Modifier.size(22.dp)
         )
         Spacer(Modifier.width(14.dp))
         Text(
             text = label,
             style = MaterialTheme.typography.bodyMedium.copy(
-                color = if (isHovered) Text_White else Text_Secondary,
+                color = textColor,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Medium
             ),
