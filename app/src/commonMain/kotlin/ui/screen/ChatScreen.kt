@@ -23,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -621,16 +622,35 @@ private fun MessageActionBtn(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
+    val tint by animateColorAsState(
+        targetValue = if (isHovered) Text_White else Text_Muted,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "messageActionTint"
+    )
+    val bgColor by animateColorAsState(
+        targetValue = if (isHovered) AccentGhost.copy(alpha = 0.45f) else Color.Transparent,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "messageActionBg"
+    )
+    val iconScale by animateFloatAsState(
+        targetValue = if (isHovered) 1.08f else 1f,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "messageActionScale"
+    )
     IconButton(
         onClick = {},
-        modifier = Modifier.size(28.dp).hoverable(interactionSource),
+        modifier = Modifier
+            .size(28.dp)
+            .clip(RoundedCornerShape(5.dp))
+            .background(bgColor)
+            .hoverable(interactionSource),
         interactionSource = interactionSource
     ) {
         Icon(
             imageVector = icon,
             contentDescription = desc,
-            tint = if (isHovered) Text_White else Text_Muted,
-            modifier = Modifier.size(16.dp)
+            tint = tint,
+            modifier = Modifier.size(16.dp).scale(iconScale)
         )
     }
 }
