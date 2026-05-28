@@ -1356,18 +1356,33 @@ private fun InputIconBtn(
     val isHovered by interactionSource.collectIsHoveredAsState()
     val tint by animateColorAsState(
         targetValue = if (isHovered) Text_White else Text_Muted,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
         label = "inputIconTint"
+    )
+    val bgColor by animateColorAsState(
+        targetValue = if (isHovered) AccentGhost.copy(alpha = 0.42f) else Color.Transparent,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "inputIconBg"
+    )
+    val iconScale by animateFloatAsState(
+        targetValue = if (isHovered) 1.08f else 1f,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "inputIconScale"
     )
     IconButton(
         onClick = onClick,
-        modifier = Modifier.size(34.dp).hoverable(interactionSource),
+        modifier = Modifier
+            .size(34.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(bgColor)
+            .hoverable(interactionSource),
         interactionSource = interactionSource
     ) {
         Icon(
             imageVector = icon,
             contentDescription = desc,
             tint = tint,
-            modifier = Modifier.size(19.dp)
+            modifier = Modifier.size(19.dp).scale(iconScale)
         )
     }
 }
