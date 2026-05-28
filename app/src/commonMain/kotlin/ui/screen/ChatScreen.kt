@@ -318,14 +318,28 @@ private fun HeaderIconBtn(
     val isHovered by interactionSource.collectIsHoveredAsState()
     val tint by animateColorAsState(
         targetValue = if (isHovered) Text_White else Text_Muted,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
         label = "headerIconTint"
+    )
+    val bgColor by animateColorAsState(
+        targetValue = if (isHovered) AccentGhost.copy(alpha = 0.40f) else Color.Transparent,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "headerIconBg"
+    )
+    val iconScale by animateFloatAsState(
+        targetValue = if (isHovered) 1.08f else 1f,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "headerIconScale"
     )
     IconButton(
         onClick = onClick,
-        modifier = Modifier.size(32.dp),
+        modifier = Modifier
+            .size(32.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(bgColor),
         interactionSource = interactionSource
     ) {
-        Icon(icon, desc, tint = tint, modifier = Modifier.size(18.dp))
+        Icon(icon, desc, tint = tint, modifier = Modifier.size(18.dp).scale(iconScale))
     }
 }
 
