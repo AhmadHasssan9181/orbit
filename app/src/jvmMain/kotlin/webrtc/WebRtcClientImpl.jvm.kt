@@ -378,7 +378,7 @@ class JvmWebRtcClient : WebRtcClient {
                 }
 
                 screenSource = VideoDesktopSource()
-                screenSource?.setSourceId(source.id, source.title.contains("Window"))
+                screenSource?.setSourceId(source.id, source.title?.contains("Window") == true)
                 screenSource?.start()
                 
                 val screenTrack = f.createVideoTrack("screenTrack_${System.currentTimeMillis()}", screenSource)
@@ -635,13 +635,15 @@ class JvmWebRtcClient : WebRtcClient {
     override fun getDesktopSources(): List<DesktopSourceModel> {
         val screenCapturer = ScreenCapturer()
         val sources = screenCapturer.desktopSources.map { 
-            DesktopSourceModel(it.id.toString(), it.title, it.title.contains("Window")) 
+            val title = it.title ?: "Screen ${it.id}"
+            DesktopSourceModel(it.id.toString(), title, title.contains("Window")) 
         }
         screenCapturer.dispose()
         
         val windowCapturer = dev.onvoid.webrtc.media.video.desktop.WindowCapturer()
         val windowSources = windowCapturer.desktopSources.map {
-            DesktopSourceModel(it.id.toString(), it.title, true)
+            val title = it.title ?: "Window ${it.id}"
+            DesktopSourceModel(it.id.toString(), title, true)
         }
         windowCapturer.dispose()
         
