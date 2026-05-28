@@ -1326,23 +1326,48 @@ private fun MessageInputBar(
                     enter = fadeIn() + expandHorizontally(),
                     exit = fadeOut() + shrinkHorizontally()
                 ) {
-                    IconButton(
+                    SendMessageIconButton(
                         onClick = {
                             onSend(text)
                             text = ""
-                        },
-                        modifier = Modifier.size(34.dp)
-                    ) {
-                        Icon(
-                            imageVector = OrbitIcons.Send,
-                            contentDescription = "Send",
-                            tint = Accent,
-                            modifier = Modifier.size(19.dp)
-                        )
-                    }
+                        }
+                    )
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SendMessageIconButton(onClick: () -> Unit) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isHovered by interactionSource.collectIsHoveredAsState()
+    val bgColor by animateColorAsState(
+        targetValue = if (isHovered) Accent.copy(alpha = 0.20f) else Color.Transparent,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "sendButtonBg"
+    )
+    val iconScale by animateFloatAsState(
+        targetValue = if (isHovered) 1.12f else 1f,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "sendButtonScale"
+    )
+
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier
+            .size(34.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(bgColor)
+            .hoverable(interactionSource),
+        interactionSource = interactionSource
+    ) {
+        Icon(
+            imageVector = OrbitIcons.Send,
+            contentDescription = "Send",
+            tint = Accent,
+            modifier = Modifier.size(19.dp).scale(iconScale)
+        )
     }
 }
 
