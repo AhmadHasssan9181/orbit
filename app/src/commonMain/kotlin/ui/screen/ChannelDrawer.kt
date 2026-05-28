@@ -1152,10 +1152,23 @@ private fun UserProfileBar(
 private fun VoiceControlPopover(onSettingsClick: () -> Unit) {
     val callManager = webrtc.LocalCallManager.current
     var inputVolume by remember { mutableStateOf(1f) }
-    val inputDevices = remember(callManager) {
-        runCatching { callManager?.webRtcClient?.getAudioInputDevices().orEmpty() }.getOrDefault(emptyList())
+    var showInputDevices by remember { mutableStateOf(false) }
+    var inputDevices by remember(callManager) { mutableStateOf(emptyList<String>()) }
+    var inputDeviceName by remember(callManager) { mutableStateOf("Windows Default (Internal Microphone)") }
+
+    fun refreshInputDevices() {
+        inputDevices =
+            runCatching { callManager?.webRtcClient?.getAudioInputDevices().orEmpty() }.getOrDefault(emptyList())
+        inputDeviceName = inputDevices.firstOrNull() ?: "Windows Default (Internal Microphone)"
     }
-    val inputDeviceName = inputDevices.firstOrNull() ?: "Windows Default (Internal Microphone)"
+
+    LaunchedEffect(callManager) {
+        refreshInputDevices()
+    }
+
+    LaunchedEffect(showInputDevices) {
+        if (showInputDevices) refreshInputDevices()
+    }
 
     Column(
         modifier = Modifier
@@ -1163,11 +1176,51 @@ private fun VoiceControlPopover(onSettingsClick: () -> Unit) {
             .padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        VoiceSettingRow(
-            title = "Input Device",
-            value = inputDeviceName,
-            onClick = {}
-        )
+        Box {
+            VoiceSettingRow(
+                title = "Input Device",
+                value = inputDeviceName,
+                onClick = { showInputDevices = true }
+            )
+            DropdownMenu(
+                expanded = showInputDevices,
+                onDismissRequest = { showInputDevices = false },
+                modifier = Modifier
+                    .width(250.dp)
+                    .background(UserBar_Bg)
+            ) {
+                if (inputDevices.isEmpty()) {
+                    DropdownMenuItem(
+                        text = { Text("No input devices found", color = Text_Muted, fontSize = 13.sp) },
+                        onClick = { showInputDevices = false }
+                    )
+                } else {
+                    inputDevices.forEach { device ->
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = device,
+                                    color = Text_White,
+                                    fontSize = 13.sp,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            },
+                            onClick = {
+                                inputDeviceName = device
+                                callManager?.setAudioInputDevice(device)
+                                showInputDevices = false
+                            },
+                            trailingIcon = {
+                                if (device == inputDeviceName) {
+                                    Icon(Icons.Default.Check, contentDescription = null, tint = Accent, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+        }
         VoiceSettingRow(
             title = "Input Profile",
             value = "Custom",
