@@ -13,22 +13,24 @@ object WebrtcNativeDepsLoader {
         loaded = true
         try {
             val dlls = listOf(
-                "abseil_dll.dll",
-                "aom.dll",
-                "jpeg62.dll",
-                "jsoncpp.dll",
-                "legacy.dll",
+                "z.dll",
                 "libcrypto-3-x64.dll",
                 "libssl-3-x64.dll",
+                "abseil_dll.dll",
+                "jsoncpp.dll",
+                "libprotobuf.dll",
+                "jpeg62.dll",
+                "turbojpeg.dll",
                 "libyuv.dll",
-                "z.dll",
-                "opencv_core4.dll",
-                "opencv_imgproc4.dll",
-                "opencv_dnn4.dll",
+                "aom.dll",
                 "opus.dll",
                 "pkgconf-7.dll",
                 "srtp2.dll",
-                "turbojpeg.dll"
+                "opencv_core4.dll",
+                "opencv_imgproc4.dll",
+                "opencv_dnn4.dll",
+                "legacy.dll",
+                "webrtc-java-orbit-windows-x86_64.dll"
             )
 
             val tempDir = Files.createTempDirectory("webrtc-deps").toFile()

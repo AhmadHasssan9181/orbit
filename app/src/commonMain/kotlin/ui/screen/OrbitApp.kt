@@ -551,6 +551,25 @@ private fun MainAppContent(
         return
     }
 
+    val handleChannelClick: (String) -> Unit = { id ->
+        selectedChannelId = id
+        compactOpenChannelId = id
+        val ch = channels.find { it.id == id }
+        if (ch?.type == ChannelType.VOICE) {
+            scope.launch {
+                val activeUrl = (repository as? MatrixOrbitRepository)?.observeActiveGroupCall(ch.matrixRoomId)?.first()
+                val callId = if (activeUrl != null && activeUrl.startsWith("matrix-call://")) {
+                    activeUrl.substringAfter("://")
+                } else {
+                    val newId = "orbit_call_${kotlin.random.Random.nextLong()}"
+                    (repository as? MatrixOrbitRepository)?.startGroupCall(ch.matrixRoomId, newId)
+                    newId
+                }
+                callManager.joinGroupCall(ch.matrixRoomId, callId, false)
+            }
+        }
+    }
+
     // ─── Settings screen ────────────────────────────────────────
     if (showSettings) {
         SettingsScreen(
@@ -584,10 +603,7 @@ private fun MainAppContent(
                         selectedServerId = id
                         selectedBottomTab = BottomNavTab.DMs
                     },
-                    onChannelClick = { id ->
-                        selectedChannelId = id
-                        compactOpenChannelId = id
-                    },
+                    onChannelClick = handleChannelClick,
                     onBackFromChat = { compactOpenChannelId = null },
                     onBottomTabSelect = { tab -> selectedBottomTab = tab },
                     onOpenSettings = { showSettings = true },
@@ -606,7 +622,7 @@ private fun MainAppContent(
                     isLoadingChannels = isLoadingChannels,
                     repository = repository,
                     onServerClick = { id -> selectedServerId = id },
-                    onChannelClick = { id -> selectedChannelId = id },
+                    onChannelClick = handleChannelClick,
                     onOpenSettings = { showSettings = true },
                     onAddServer = { showJoinServer = true },
                     onCreateRoom = { showCreateRoom = true },
@@ -623,7 +639,7 @@ private fun MainAppContent(
                     isLoadingChannels = isLoadingChannels,
                     repository = repository,
                     onServerClick = { id -> selectedServerId = id },
-                    onChannelClick = { id -> selectedChannelId = id },
+                    onChannelClick = handleChannelClick,
                     onOpenSettings = { showSettings = true },
                     onAddServer = { showJoinServer = true },
                     onCreateRoom = { showCreateRoom = true },
@@ -1313,7 +1329,11 @@ private fun MediumLayout(
                         )
 
                     selectedChannel.type == ChannelType.VOICE ->
-                        VoiceChannelPlaceholder(channel = selectedChannel)
+                        VoiceChannelScreen(
+                            callManager = callManager,
+                            matrixRepository = repository as MatrixOrbitRepository,
+                            channel = selectedChannel
+                        )
                 }
             }
         }
@@ -1405,8 +1425,11 @@ private fun ExpandedLayout(
                     )
 
                 selectedChannel.type == ChannelType.VOICE ->
-                    VoiceChannelPlaceholder(channel = selectedChannel)
-            }
+                    VoiceChannelScreen(
+                        callManager = callManager,
+                        matrixRepository = repository as MatrixOrbitRepository,
+                        channel = selectedChannel
+                    )            }
         } else {
             Box(
                 modifier = Modifier.weight(1f).fillMaxHeight().background(tokens.Bg),
