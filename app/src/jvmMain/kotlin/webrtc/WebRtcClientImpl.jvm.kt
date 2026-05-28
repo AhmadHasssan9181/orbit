@@ -537,6 +537,13 @@ class JvmWebRtcClient : WebRtcClient {
     override fun endCall() {
         try {
             stopLocalMedia()
+            
+            // Explicitly remove sinks to prevent native threads from calling back during shutdown
+            localVideoTrack?.removeSink(localRenderer)
+            cameraVideoTrack?.removeSink(localRenderer)
+            screenVideoTrack?.removeSink(localRenderer)
+            remoteVideoTrack?.removeSink(remoteRenderer)
+
             peerConnection?.close()
             peerConnection = null
             screenSource?.stop()
