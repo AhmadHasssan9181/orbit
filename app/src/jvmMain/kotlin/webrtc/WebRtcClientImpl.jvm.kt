@@ -56,6 +56,8 @@ class JvmWebRtcClient : WebRtcClient {
 
     private var localAudioSource: dev.onvoid.webrtc.media.audio.AudioTrackSource? = null
     private var localAudioTrack: AudioTrack? = null
+    
+    private var attenuationStrength = 0.8f
     private var localAudioSender: RTCRtpSender? = null
     
     private var cameraVideoTrack: VideoTrack? = null
@@ -101,6 +103,8 @@ class JvmWebRtcClient : WebRtcClient {
                 listOf(RTCIceServer().apply { urls = listOf("stun:stun.l.google.com:19302") })
             })
 
+            WindowsAudioDucker.duckVolumes(attenuationStrength)
+        
             peerConnection = factory?.createPeerConnection(rtcConfig, object : PeerConnectionObserver {
                 override fun onIceCandidate(candidate: RTCIceCandidate) {
                     _onIceCandidate.tryEmit(
@@ -171,7 +175,12 @@ class JvmWebRtcClient : WebRtcClient {
             val f = factory ?: return
 
             if (localAudioTrack == null) {
-                val audioSource = f.createAudioSource(AudioOptions())
+                val options = AudioOptions()
+                options.noiseSuppression = currentNs
+                options.echoCancellation = currentEc
+                options.autoGainControl = currentAgc
+                options.highpassFilter = currentNs
+                val audioSource = f.createAudioSource(options)
                 localAudioSource = audioSource
                 val audioTrack = f.createAudioTrack("audioTrack", audioSource)
                 audioTrack.setEnabled(true)
@@ -253,11 +262,12 @@ class JvmWebRtcClient : WebRtcClient {
     private fun createFactory(): PeerConnectionFactory {
         return runCatching {
             WebrtcNativeDepsLoader.load()
-            val audioModule = OrbitAudioDeviceModule()
+            WindowsAudioDucker.disableWindowsDucking()
             
             // JNI Injection hack removed because cross-ABI (vtable) mismatch causes 
             // EXCEPTION_ACCESS_VIOLATION during PeerConnectionFactory native init.
             
+            val audioModule = OrbitAudioDeviceModule()
             audioDeviceModule = audioModule
 
             val captureDevice = runCatching { MediaDevices.getDefaultAudioCaptureDevice() }.getOrNull()
@@ -428,7 +438,9 @@ class JvmWebRtcClient : WebRtcClient {
             
             // Stop sharing system audio
             runCatching { audioDeviceModule?.setSystemAudioShareEnabled(false) }
-            
+        
+            WindowsAudioDucker.unduckVolumes()
+        
             _isScreenSharing.tryEmit(false)
         } catch (e: Exception) {
             e.printStackTrace()
@@ -549,12 +561,52 @@ class JvmWebRtcClient : WebRtcClient {
         recreateLocalAudioTrack(enabled)
     }
     
-    override fun setOrbitZeroEnabled(enabled: Boolean) {
-        audioDeviceModule?.setOrbitZeroEnabled(enabled)
+    private var currentNs = true
+    private var currentEc = true
+    private var currentAgc = true
+
+    override fun setAudioOptions(noiseSuppression: Boolean, echoCancellation: Boolean, autoGainControl: Boolean) {
+        currentNs = noiseSuppression
+        currentEc = echoCancellation
+        currentAgc = autoGainControl
+        
+        try {
+            val pConn = peerConnection ?: return
+            val f = factory ?: return
+            
+            val options = dev.onvoid.webrtc.media.audio.AudioOptions()
+            options.noiseSuppression = noiseSuppression
+            options.echoCancellation = echoCancellation
+            options.autoGainControl = autoGainControl
+            options.highpassFilter = noiseSuppression
+            
+            val newAudioSource = f.createAudioSource(options)
+            val newAudioTrack = f.createAudioTrack("audioTrack_", newAudioSource)
+            newAudioTrack.setEnabled(true)
+            
+            if (localAudioSender != null) {
+                localAudioSender?.replaceTrack(newAudioTrack)
+            } else {
+                localAudioSender = pConn.addTrack(newAudioTrack, listOf("mediaStream"))
+            }
+            
+            // Clean up old track
+            kotlin.runCatching { localAudioTrack?.dispose() }
+            
+            localAudioSource = newAudioSource
+            localAudioTrack = newAudioTrack
+            
+            println("DEBUG: [WebRTC] AudioOptions updated. NS=, EC=")
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     override fun setAttenuationStrength(strength: Float) {
-        audioDeviceModule?.setAttenuationStrength(strength)
+        attenuationStrength = strength
+        if (peerConnection != null) {
+            WindowsAudioDucker.duckVolumes(strength)
+        }
     }
 
     override fun setRemoteVolume(volume: Float) {

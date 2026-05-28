@@ -9,7 +9,9 @@ data class OrbitChannel(
     val type: ChannelType = ChannelType.TEXT,
     val categoryId: String? = null,
     val topic: String = "",
-    val avatarUrl: String? = null
+    val avatarUrl: String? = null,
+    val activeCallUrl: String? = null,
+    val matrixRoomId: String = id
 )
 
 enum class ChannelType {
