@@ -618,12 +618,27 @@ private fun DmItem(
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
         label = "dmIndicator"
     )
+    val rowOffset by animateDpAsState(
+        targetValue = if (isSelected || isHovered) 3.dp else 0.dp,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "dmRowOffset"
+    )
+    val indicatorHeight by animateDpAsState(
+        targetValue = when {
+            isSelected -> if (isLiteMode) 34.dp else 24.dp
+            isHovered -> if (isLiteMode) 22.dp else 16.dp
+            else -> 0.dp
+        },
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "dmIndicatorHeight"
+    )
 
     if (isLiteMode) {
         Column {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .offset(x = rowOffset)
                     .padding(horizontal = 4.dp, vertical = 2.dp)
                     .clip(cardShape)
                     .background(bgColor)
@@ -636,7 +651,7 @@ private fun DmItem(
                 Box(
                     modifier = Modifier
                         .width(3.dp)
-                        .height(34.dp)
+                        .height(indicatorHeight)
                         .clip(RoundedCornerShape(99.dp))
                         .background(Accent.copy(alpha = indicatorAlpha))
                 )
@@ -694,6 +709,7 @@ private fun DmItem(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .offset(x = rowOffset)
                 .padding(horizontal = 1.dp, vertical = 1.dp)
                 .clip(cardShape)
                 .background(bgColor)
@@ -706,7 +722,7 @@ private fun DmItem(
             Box(
                 modifier = Modifier
                     .width(3.dp)
-                    .height(24.dp)
+                    .height(indicatorHeight)
                     .clip(RoundedCornerShape(99.dp))
                     .background(Accent.copy(alpha = indicatorAlpha))
             )
@@ -932,10 +948,26 @@ private fun ChannelItem(channel: OrbitChannel, isSelected: Boolean, onClick: () 
         },
         label = "chIcon"
     )
+    val rowOffset by animateDpAsState(
+        targetValue = if (isSelected || isHovered || isLive) 2.dp else 0.dp,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "chRowOffset"
+    )
+    val indicatorHeight by animateDpAsState(
+        targetValue = when {
+            isSelected -> 22.dp
+            isLive -> 18.dp
+            isHovered -> 12.dp
+            else -> 0.dp
+        },
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "chIndicatorHeight"
+    )
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .offset(x = rowOffset)
             .clip(RoundedCornerShape(4.dp))
             .background(bgColor)
             .hoverable(interactionSource)
@@ -946,7 +978,7 @@ private fun ChannelItem(channel: OrbitChannel, isSelected: Boolean, onClick: () 
         Box(
             modifier = Modifier
                 .width(3.dp)
-                .height(18.dp)
+                .height(indicatorHeight)
                 .clip(RoundedCornerShape(3.dp))
                 .background(
                     when {
