@@ -1042,6 +1042,10 @@ private fun UserProfileBar(
 ) {
     var showProfilePopover by remember { mutableStateOf(false) }
     var showVoicePopover by remember { mutableStateOf(false) }
+    val callManager = webrtc.LocalCallManager.current
+    val isAudioEnabledState = callManager?.isLocalAudioEnabled?.collectAsState(initial = true)
+        ?: remember { mutableStateOf(true) }
+    val isAudioEnabled by isAudioEnabledState
     val profileInteractionSource = remember { MutableInteractionSource() }
     val isProfileHovered by profileInteractionSource.collectIsHoveredAsState()
     val profileShape = RoundedCornerShape(10.dp)
@@ -1129,7 +1133,28 @@ private fun UserProfileBar(
         }
 
         Box {
-            BarIconBtn(icon = OrbitIcons.Mic, desc = "Mic", onClick = { showVoicePopover = true })
+            BarIconBtn(
+                icon = if (isAudioEnabled) OrbitIcons.Mic else OrbitIcons.MicOff,
+                desc = if (isAudioEnabled) "Mute" else "Unmute",
+                activeTint = if (isAudioEnabled) null else Color(0xFFF23F42),
+                onClick = {
+                    callManager?.toggleMute(isAudioEnabled)
+                    onMicToggle()
+                }
+            )
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = 4.dp, y = (-4).dp)
+                    .size(16.dp)
+                    .clip(CircleShape)
+                    .background(UserBar_Bg)
+                    .border(1.dp, Separator.copy(alpha = 0.55f), CircleShape)
+                    .clickable { showVoicePopover = true },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Voice controls", tint = Text_Muted, modifier = Modifier.size(12.dp))
+            }
             DropdownMenu(
                 expanded = showVoicePopover,
                 onDismissRequest = { showVoicePopover = false },
@@ -1424,12 +1449,13 @@ private fun ProfilePopoverAction(
 private fun BarIconBtn(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     desc: String,
+    activeTint: Color? = null,
     onClick: () -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
     val tint by animateColorAsState(
-        targetValue = if (isHovered) Text_White else Text_Muted,
+        targetValue = activeTint ?: if (isHovered) Text_White else Text_Muted,
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
         label = "barIconTint"
     )
