@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -1066,8 +1067,18 @@ private fun ChannelItem(channel: OrbitChannel, isSelected: Boolean, onClick: () 
         )
 
         if (channel.type == ChannelType.VOICE && isLive) {
+            val livePulse by rememberInfiniteTransition(label = "liveChipPulse").animateFloat(
+                initialValue = 0.97f,
+                targetValue = 1.04f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(durationMillis = 1100, easing = FastOutSlowInEasing),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "liveChipScale"
+            )
             Box(
                 modifier = Modifier
+                    .scale(livePulse)
                     .clip(RoundedCornerShape(999.dp))
                     .background(liveGreen.copy(alpha = 0.16f))
                     .padding(horizontal = 7.dp, vertical = 2.dp)
