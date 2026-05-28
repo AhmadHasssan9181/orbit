@@ -144,6 +144,9 @@ fun ChannelDrawer(
 
             if (server.isDM) {
                 val callManager = webrtc.LocalCallManager.current
+                DirectMessageSearchBar()
+                DirectMessageNav()
+                HorizontalDivider(color = Separator.copy(alpha = 0.3f), thickness = 1.dp)
                 DmListContent(
                     channels = channels,
                     selectedChannelId = selectedChannelId,
@@ -438,6 +441,86 @@ private fun ChannelListContent(
 }
 
 // â”€â”€â”€ DmListContent â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+@Composable
+private fun DirectMessageSearchBar() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 10.dp, vertical = 10.dp)
+            .height(38.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color(0xFF111214))
+            .border(1.dp, Separator.copy(alpha = 0.34f), RoundedCornerShape(8.dp))
+            .clickable {}
+            .padding(horizontal = 12.dp),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Text(
+            text = "Find or start a conversation",
+            style = MaterialTheme.typography.bodySmall.copy(
+                color = Text_Secondary,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold
+            ),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun DirectMessageNav() {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        DirectMessageNavItem(Icons.Default.People, "Friends")
+        DirectMessageNavItem(Icons.Default.Star, "Nitro")
+        DirectMessageNavItem(Icons.Default.Storefront, "Shop")
+        DirectMessageNavItem(Icons.Default.Explore, "Quests")
+    }
+}
+
+@Composable
+private fun DirectMessageNavItem(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isHovered by interactionSource.collectIsHoveredAsState()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(42.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(if (isHovered) ChannelHover_Bg else Color.Transparent)
+            .hoverable(interactionSource)
+            .clickable(interactionSource = interactionSource, indication = null, onClick = {})
+            .padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = if (isHovered) Text_White else Text_Muted,
+            modifier = Modifier.size(22.dp)
+        )
+        Spacer(Modifier.width(14.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium.copy(
+                color = if (isHovered) Text_White else Text_Secondary,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium
+            ),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
 
 @Composable
 private fun DmListContent(

@@ -82,6 +82,7 @@ fun ChatScreen(
     messages: List<OrbitMessage>,
     members: List<OrbitUser>,
     currentUser: OrbitUser?,
+    directProfile: OrbitUser? = null,
     typingUsers: List<String> = emptyList(),
     activeCall: repository.CallEvent? = null,
     activeGroupCallUrl: String? = null,
@@ -104,6 +105,7 @@ fun ChatScreen(
         Column(modifier = Modifier.weight(1f)) {
             ChatHeader(
                 channel = channel,
+                directProfile = directProfile,
                 onBack = onBack,
                 onVideoCall = { callManager?.startCall(channel.id, true) },
                 onVoiceCall = { callManager?.startCall(channel.id, false) }
@@ -188,13 +190,16 @@ fun ChatScreen(
                 }
             }
             MessageInputBar(
-                placeholder = "Message #${channel.name}",
+                placeholder = directProfile?.let { "Message @${it.displayName}" } ?: "Message #${channel.name}",
                 onSend = onSend,
                 onSendAttachment = onSendAttachment,
                 onTyping = onTyping
             )
         }
-        if (ui.theme.LocalShowMemberList.current && windowSize.isExpanded) MemberListPanel(members = members)
+        when {
+            directProfile != null && windowSize.isExpanded -> DirectProfilePanel(directProfile)
+            ui.theme.LocalShowMemberList.current && windowSize.isExpanded -> MemberListPanel(members = members)
+        }
     }
 }
 
@@ -203,6 +208,7 @@ fun ChatScreen(
 @Composable
 private fun ChatHeader(
     channel: OrbitChannel,
+    directProfile: OrbitUser? = null,
     onBack: (() -> Unit)? = null,
     onVideoCall: (() -> Unit)? = null,
     onVoiceCall: (() -> Unit)? = null
@@ -230,7 +236,9 @@ private fun ChatHeader(
                 }
             }
             val isLiteMode = ui.theme.LocalIsLiteMode.current
-            if (isLiteMode) {
+            if (directProfile != null) {
+                SmallUserAvatar(directProfile, size = 28.dp)
+            } else if (isLiteMode) {
                 Box(
                     modifier = Modifier.size(36.dp).clip(CircleShape).background(AccentGhost),
                     contentAlignment = Alignment.Center
@@ -260,7 +268,7 @@ private fun ChatHeader(
 
             Spacer(Modifier.width(8.dp))
             Text(
-                text = channel.name,
+                text = directProfile?.displayName ?: channel.name,
                 style = MaterialTheme.typography.titleSmall.copy(
                     fontWeight = FontWeight.Bold,
                     color = Text_White
@@ -1363,6 +1371,189 @@ private fun BasicTextField_Compat(
 }
 
 // ─── MemberListPanel — Discord/Revolt style ──────────────────────
+
+@Composable
+private fun SmallUserAvatar(user: OrbitUser, size: androidx.compose.ui.unit.Dp) {
+    Box(modifier = Modifier.size(size)) {
+        if (user.avatarUrl != null) {
+            coil3.compose.AsyncImage(
+                model = user.avatarUrl,
+                contentDescription = user.displayName,
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().clip(CircleShape)
+            )
+        } else {
+            OrbitDefaultAvatar(
+                label = user.displayName,
+                seed = user.id,
+                color = Color(user.avatarColor),
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+        Box(
+            modifier = Modifier
+                .size(if (size > 40.dp) 14.dp else 10.dp)
+                .align(Alignment.BottomEnd)
+                .border(2.dp, Members_Bg, CircleShape)
+                .clip(CircleShape)
+                .background(memberStatusColor(user.status))
+        )
+    }
+}
+
+@Composable
+private fun DirectProfilePanel(user: OrbitUser) {
+    Column(
+        modifier = Modifier
+            .width(320.dp)
+            .fillMaxHeight()
+            .background(Members_Bg)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(150.dp)
+                .background(
+                    Brush.linearGradient(
+                        listOf(
+                            Color(user.avatarColor).copy(alpha = 0.95f),
+                            Accent.copy(alpha = 0.85f),
+                            Color(0xFF36D7D7)
+                        )
+                    )
+                )
+        ) {
+            Row(
+                modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                ProfileCircleAction(Icons.Default.PersonAdd, "Add Friend")
+                ProfileCircleAction(Icons.Default.MoreHoriz, "More")
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp)
+        ) {
+            Box(modifier = Modifier.height(54.dp).fillMaxWidth()) {
+                Box(
+                    modifier = Modifier
+                        .offset(y = (-44).dp)
+                        .size(88.dp)
+                        .border(7.dp, Members_Bg, CircleShape)
+                ) {
+                    SmallUserAvatar(user, size = 88.dp)
+                }
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = user.displayName,
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        color = Text_White,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 22.sp
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                if (isOrbitVerifiedUser(user.username, user.displayName, user.id)) {
+                    Spacer(Modifier.width(6.dp))
+                    OrbitVerifiedBadge(modifier = Modifier.size(17.dp))
+                }
+            }
+
+            Text(
+                text = user.username.ifBlank { user.id },
+                style = MaterialTheme.typography.bodyMedium.copy(color = Text_Secondary, fontSize = 14.sp),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            Spacer(Modifier.height(18.dp))
+            ProfileInfoCard("Status", statusText(user.status))
+            Spacer(Modifier.height(10.dp))
+            ProfileInfoCard("Member Since", "Matrix direct message")
+            Spacer(Modifier.height(10.dp))
+            ProfileLinkRow("Mutual Servers")
+            ProfileLinkRow("Mutual Friends")
+
+            Spacer(Modifier.weight(1f))
+            TextButton(
+                onClick = {},
+                modifier = Modifier.fillMaxWidth().height(46.dp)
+            ) {
+                Text("View Full Profile", color = Text_White, fontWeight = FontWeight.SemiBold)
+            }
+            Spacer(Modifier.height(10.dp))
+        }
+    }
+}
+
+@Composable
+private fun ProfileCircleAction(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    desc: String
+) {
+    Box(
+        modifier = Modifier
+            .size(38.dp)
+            .clip(CircleShape)
+            .background(Color.Black.copy(alpha = 0.28f))
+            .clickable {},
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(icon, contentDescription = desc, tint = Color.White, modifier = Modifier.size(20.dp))
+    }
+}
+
+@Composable
+private fun ProfileInfoCard(title: String, value: String) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(CardBg)
+            .padding(horizontal = 14.dp, vertical = 12.dp)
+    ) {
+        Text(title, color = Text_Secondary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Text(value, color = Text_White, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun ProfileLinkRow(label: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(CardBg)
+            .clickable {}
+            .padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            color = Text_Secondary,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.weight(1f)
+        )
+        Icon(Icons.Default.ChevronRight, contentDescription = null, tint = Text_Muted, modifier = Modifier.size(20.dp))
+    }
+}
+
+private fun statusText(status: UserStatus) = when (status) {
+    UserStatus.ONLINE -> "Online"
+    UserStatus.IDLE -> "Idle"
+    UserStatus.DO_NOT_DISTURB -> "Do not disturb"
+    UserStatus.OFFLINE -> "Offline"
+}
 
 @Composable
 private fun MemberListPanel(members: List<OrbitUser>) {

@@ -748,6 +748,7 @@ private fun CompactLayout(
                     repository = repository,
                     channel = channel,
                     showMemberList = false,
+                    isDirectMessage = channel.categoryId == "dm",
                     onBack = onBackFromChat,
                     modifier = Modifier.weight(1f)
                 )
@@ -1313,7 +1314,8 @@ private fun MediumLayout(
                     ChatScreenWithRepo(
                         repository = repository,
                         channel = selectedChannel,
-                        showMemberList = false
+                        showMemberList = false,
+                        isDirectMessage = selectedServer?.isDM == true
                     )
 
                 selectedChannel.type == ChannelType.VOICE ->
@@ -1409,7 +1411,8 @@ private fun ExpandedLayout(
                     ChatScreenWithRepo(
                         repository = repository,
                         channel = selectedChannel,
-                        showMemberList = !isLiteMode
+                        showMemberList = !isLiteMode && !selectedServer.isDM,
+                        isDirectMessage = selectedServer.isDM
                     )
 
                 selectedChannel.type == ChannelType.VOICE ->
@@ -1441,6 +1444,7 @@ fun ChatScreenWithRepo(
     repository: OrbitRepository,
     channel: OrbitChannel,
     showMemberList: Boolean,
+    isDirectMessage: Boolean = false,
     onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -1459,7 +1463,7 @@ fun ChatScreenWithRepo(
             currentUser = repository.getCurrentUser()
             val loaded = repository.getMessagesForChannel(channel.id, limit = 50)
             messages = loaded
-            if (showMemberList) {
+            if (showMemberList || isDirectMessage) {
                 members = repository.getRoomMembers(channel.id)
             }
         } catch (e: Exception) {
@@ -1493,11 +1497,23 @@ fun ChatScreenWithRepo(
         repository.observeActiveGroupCall(channel.id).collect { activeGroupCallUrl = it }
     }
 
+    val directProfile = if (isDirectMessage) {
+        members.firstOrNull { it.id != currentUser?.id } ?: OrbitUser(
+            id = channel.id,
+            username = channel.name,
+            displayName = channel.name,
+            avatarColor = 0xFF7C6AF0.toInt(),
+            status = UserStatus.ONLINE,
+            avatarUrl = channel.avatarUrl
+        )
+    } else null
+
     ChatScreen(
         channel = channel,
         messages = messages,
         members = members,
         currentUser = currentUser,
+        directProfile = directProfile,
         typingUsers = typingUsers,
         activeCall = activeCall,
         activeGroupCallUrl = activeGroupCallUrl,
