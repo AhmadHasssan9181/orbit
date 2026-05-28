@@ -22,15 +22,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import ui.assets.OrbitBrandMark
+import ui.assets.OrbitDefaultAvatar
 import ui.icons.OrbitIcons
 import ui.theme.rememberCosmicTokens
 import webrtc.CallManager
@@ -51,6 +55,7 @@ fun CallScreen(
     val isVideoCall by callManager.isVideoCall.collectAsState()
     val isVideoEnabled by callManager.isLocalVideoEnabled.collectAsState()
     val isScreenSharing by callManager.isScreenSharing.collectAsState()
+    val hasRemoteStream by callManager.hasRemoteStream.collectAsState()
     val tokens = rememberCosmicTokens()
 
     var showScreenShareDialog by remember { mutableStateOf(false) }
@@ -105,61 +110,67 @@ fun CallScreen(
 
     if (isMinimized) {
         Box(
-            modifier = Modifier
-                .padding(16.dp)
-                .size(240.dp, 160.dp)
-                .shadow(16.dp, RoundedCornerShape(16.dp))
-                .clip(RoundedCornerShape(16.dp))
-                .background(Color(0xFF111214))
-                .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(16.dp))
-                .clickable { callManager.isMinimized.value = false }
+            modifier = modifier.wrapContentSize(Alignment.BottomEnd) // Allow it to shrink and align to bottom end
         ) {
-            if (isVideoCall && (isVideoEnabled || callState == CallState.CONNECTED)) {
-                val renderer = if (callState == CallState.CONNECTED) {
-                    callManager.webRtcClient.getRemoteVideoRenderer()
-                } else {
-                    callManager.webRtcClient.getLocalVideoRenderer()
-                }
-                Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-                    VideoRenderer(renderer = renderer, modifier = Modifier.fillMaxSize())
-                }
-            } else {
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = tokens.Accent.copy(alpha = 0.2f),
-                        modifier = Modifier.size(48.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(OrbitIcons.Call, contentDescription = null, tint = tokens.Accent, modifier = Modifier.size(24.dp))
-                        }
-                    }
-                    Spacer(Modifier.height(12.dp))
-                    Text(
-                        text = if (callState == CallState.RINGING) "Ringing..." else "In Call",
-                        color = Color.White,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-            }
-            
-            // Re-expand overlay
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.0f)) // Invisible trigger
-            )
-            Icon(
-                Icons.Default.OpenInFull,
-                contentDescription = "Expand",
-                tint = Color.White.copy(alpha = 0.8f),
-                modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(20.dp)
-            )
+                    .padding(32.dp)
+                    .size(320.dp, 200.dp)
+                    .shadow(16.dp, RoundedCornerShape(16.dp))
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0xFF111214))
+                    .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(16.dp))
+                    .clickable { callManager.isMinimized.value = false }
+            ) {
+                if (isVideoCall && (isVideoEnabled || callState == CallState.CONNECTED)) {
+                    val renderer = if (callState == CallState.CONNECTED) {
+                        callManager.webRtcClient.getRemoteVideoRenderer()
+                    } else {
+                        callManager.webRtcClient.getLocalVideoRenderer()
+                    }
+                    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+                        if (renderer != null) {
+                            VideoRenderer(renderer = renderer, modifier = Modifier.fillMaxSize())
+                        }
+                    }
+                } else {
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = tokens.Accent.copy(alpha = 0.2f),
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(OrbitIcons.Call, contentDescription = null, tint = tokens.Accent, modifier = Modifier.size(24.dp))
+                            }
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            text = if (callState == CallState.RINGING) "Ringing..." else "In Call",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+                
+                // Re-expand overlay
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.0f)) // Invisible trigger
+                )
+                Icon(
+                    Icons.Default.OpenInFull,
+                    contentDescription = "Expand",
+                    tint = Color.White.copy(alpha = 0.8f),
+                    modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(20.dp)
+                )
+            }
         }
         return
     }
@@ -167,7 +178,7 @@ fun CallScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color(0xFF000000)) // Pure black for video background
+            .background(Color(0xFF0D0E12)) // Deep dark gray/blue base
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -177,137 +188,83 @@ fun CallScreen(
         val remoteRenderer = callManager.webRtcClient.getRemoteVideoRenderer()
         val localRenderer = callManager.webRtcClient.getLocalVideoRenderer()
 
+        // Repeating background pattern
+        ui.assets.OrbitChatDoodleBackground(selectedId = "auto", modifier = Modifier.fillMaxSize().alpha(0.08f))
+
         // ── Video Grid (Main) ──
         if (callState == CallState.CONNECTED) {
-            Row(
+            // Aggregate all active feeds
+            val nodes = mutableListOf<RenderNode>()
+            
+            if (isScreenSharing) {
+                // If local user is screen sharing, the localRenderer is used for the screen share
+                nodes.add(RenderNode("screen", "Screen Share", localRenderer, isScreenShare = true))
+            }
+            if (remoteRenderer != null && hasRemoteStream) {
+                // If there's a remote stream, show it
+                nodes.add(RenderNode("remote", callerName, remoteRenderer, isScreenShare = false, avatarColor = 0xFFF23F42.toInt()))
+            }
+            if (isVideoEnabled && !isScreenSharing) {
+                nodes.add(RenderNode("local", "You", localRenderer, isScreenShare = false, isMuted = isMuted))
+            } else if (!isScreenSharing) {
+                // Add an audio-only placeholder for local user so grid still shows them
+                nodes.add(RenderNode("local", "You", null, isScreenShare = false, isMuted = isMuted))
+            }
+
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(horizontal = 24.dp, vertical = 24.dp)
-                    .padding(bottom = 100.dp), // Space for controls
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(bottom = 100.dp) // Space for controls
             ) {
-                // Remote Participant
-                var remoteVolume by remember { mutableStateOf(1.0f) }
-                var showVolumeMenu by remember { mutableStateOf(false) }
-
-                Box(
-                    modifier = Modifier
-                        .weight(if (isScreenSharing) 0.4f else 1f)
-                        .fillMaxHeight()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(Color(0xFF1E1F22))
-                        .border(2.dp, Color.Transparent, RoundedCornerShape(16.dp))
-                        .pointerInput(Unit) {
-                            detectDragGestures(
-                                onDrag = { _, _ -> },
-                                onDragStart = { },
-                                onDragEnd = { },
-                                onDragCancel = { }
-                            )
-                        }
-                        .pointerInput(Unit) {
-                            awaitPointerEventScope {
-                                while (true) {
-                                    val event = awaitPointerEvent()
-                                    if (event.type == androidx.compose.ui.input.pointer.PointerEventType.Press) {
-                                        val isSecondary = event.buttons.isSecondaryPressed
-                                        if (isSecondary) {
-                                            showVolumeMenu = true
-                                        } else {
-                                            showControls = !showControls
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                ) {
-                    if (remoteRenderer != null) {
-                        VideoRenderer(
-                            renderer = remoteRenderer,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    } else {
-                        // Fallback if remote has no camera
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Surface(shape = CircleShape, color = tokens.Accent, modifier = Modifier.size(100.dp)) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(Icons.Default.Person, contentDescription = null, tint = Color.White, modifier = Modifier.size(56.dp))
-                                    }
-                                }
-                            }
-                        }
+                if (nodes.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("Waiting for video...", color = Color.White.copy(alpha = 0.5f))
                     }
-                    Box(modifier = Modifier.align(Alignment.BottomStart).padding(12.dp).background(Color.Black.copy(alpha=0.6f), RoundedCornerShape(8.dp)).padding(horizontal=12.dp, vertical=6.dp)) {
-                        Text(callerName, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                    }
-
-                    DropdownMenu(
-                        expanded = showVolumeMenu,
-                        onDismissRequest = { showVolumeMenu = false },
-                        modifier = Modifier.background(Color(0xFF1E1F22)).border(1.dp, Color.White.copy(alpha=0.1f), RoundedCornerShape(8.dp))
+                } else if (nodes.size == 1) {
+                    val node = nodes.first()
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        Column(modifier = Modifier.padding(16.dp).width(200.dp)) {
-                            Text("User Volume", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                            Spacer(Modifier.height(12.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    if (remoteVolume > 0) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
-                                    contentDescription = null,
-                                    tint = Color.White.copy(alpha=0.7f),
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(Modifier.width(12.dp))
-                                Slider(
-                                    value = remoteVolume,
-                                    onValueChange = { 
-                                        remoteVolume = it
-                                        callManager.webRtcClient.setRemoteVolume(it)
-                                    },
-                                    valueRange = 0f..1.0f,
-                                    colors = SliderDefaults.colors(
-                                        thumbColor = tokens.Accent,
-                                        activeTrackColor = tokens.Accent,
-                                        inactiveTrackColor = Color.White.copy(alpha=0.1f)
-                                    )
-                                )
-                            }
-                            Spacer(Modifier.height(8.dp))
-                            Text("${(remoteVolume * 100).toInt()}%", color = tokens.Accent, fontSize = 12.sp, modifier = Modifier.align(Alignment.End))
-                        }
+                        VideoNodeCard(node, tokens, modifier = Modifier.weight(1f).fillMaxWidth())
+                        InviteActivityCard(tokens, modifier = Modifier.weight(1f).fillMaxWidth())
                     }
-                }
-
-                // Local Participant
-                Box(
-                    modifier = Modifier
-                        .weight(if (isScreenSharing) 1f else 1f)
-                        .fillMaxHeight()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(Color(0xFF1E1F22))
-                        .border(2.dp, if (!isMuted) Color(0xFF23A559) else Color.Transparent, RoundedCornerShape(16.dp))
-                ) {
-                    if ((isVideoEnabled || isScreenSharing) && localRenderer != null) {
-                        VideoRenderer(renderer = localRenderer, modifier = Modifier.fillMaxSize())
-                    } else {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Surface(shape = CircleShape, color = tokens.Accent.copy(alpha = 0.5f), modifier = Modifier.size(100.dp)) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(Icons.Default.Person, contentDescription = null, tint = Color.White, modifier = Modifier.size(56.dp))
-                                    }
+                } else if (nodes.size == 2) {
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        val weight0 = if (nodes[0].isScreenShare) 2f else 1f
+                        val weight1 = if (nodes[1].isScreenShare) 2f else 1f
+                        VideoNodeCard(nodes[0], tokens, modifier = Modifier.weight(weight0).fillMaxWidth())
+                        VideoNodeCard(nodes[1], tokens, modifier = Modifier.weight(weight1).fillMaxWidth())
+                    }
+                } else {
+                    // Masonry style (3+ items)
+                    val screenShareNode = nodes.find { it.isScreenShare }
+                    if (screenShareNode != null) {
+                        // Big screen share, small thumbnails below
+                        Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            VideoNodeCard(screenShareNode, tokens, modifier = Modifier.weight(2f).fillMaxWidth())
+                            Row(
+                                modifier = Modifier.weight(1f).fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                nodes.filter { !it.isScreenShare }.forEach { node ->
+                                    VideoNodeCard(node, tokens, modifier = Modifier.weight(1f).fillMaxHeight())
                                 }
                             }
                         }
-                    }
-                    Box(modifier = Modifier.align(Alignment.BottomStart).padding(12.dp).background(Color.Black.copy(alpha=0.6f), RoundedCornerShape(8.dp)).padding(horizontal=12.dp, vertical=6.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (isMuted) {
-                                Icon(OrbitIcons.MicOff, null, tint = Color(0xFFF23F42), modifier = Modifier.size(14.dp))
-                                Spacer(Modifier.width(6.dp))
+                    } else {
+                        // Equal grid
+                        Row(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            nodes.forEach { node ->
+                                VideoNodeCard(node, tokens, modifier = Modifier.weight(1f).fillMaxHeight())
                             }
-                            Text("You", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -326,10 +283,8 @@ fun CallScreen(
                         if (isPulsing) {
                             Box(modifier = Modifier.size(180.dp).scale(pulseScale).clip(CircleShape).background(tokens.Accent.copy(alpha = pulseAlpha)))
                         }
-                        Surface(shape = CircleShape, color = tokens.Accent, modifier = Modifier.size(120.dp), shadowElevation = 8.dp) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.Person, contentDescription = null, tint = Color.White, modifier = Modifier.size(64.dp))
-                            }
+                        Box(modifier = Modifier.size(120.dp).clip(CircleShape).background(Color(0xFFF23F42)), contentAlignment = Alignment.Center) {
+                            OrbitBrandMark(modifier = Modifier.size(70.dp), showGlow = false)
                         }
                     }
                     Spacer(Modifier.height(32.dp))
@@ -375,10 +330,8 @@ fun CallScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Surface(shape = CircleShape, color = tokens.Accent, modifier = Modifier.size(100.dp)) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(Icons.Default.Person, contentDescription = null, tint = Color.White, modifier = Modifier.size(50.dp))
-                        }
+                    Box(modifier = Modifier.size(100.dp).clip(CircleShape).background(Color(0xFFF23F42)), contentAlignment = Alignment.Center) {
+                        OrbitBrandMark(modifier = Modifier.size(60.dp), showGlow = false)
                     }
                     Spacer(Modifier.height(24.dp))
                     Text("$callerName is calling you...", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
@@ -420,42 +373,12 @@ fun CallScreen(
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     
-                    // Stream audio toggle pill
-                    if (callState == CallState.CONNECTED) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .padding(bottom = 16.dp)
-                                .background(Color(0xFF1E1F22).copy(alpha = 0.9f), RoundedCornerShape(16.dp))
-                                .padding(horizontal = 16.dp, vertical = 8.dp)
-                        ) {
-                            Icon(Icons.Default.VolumeUp, null, tint = Color.White.copy(alpha=0.8f), modifier=Modifier.size(16.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Stream Desktop Audio", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                            Spacer(Modifier.width(12.dp))
-                            Switch(
-                                checked = includeStreamAudio,
-                                onCheckedChange = { 
-                                    includeStreamAudio = it
-                                    callManager.webRtcClient.setStreamAudioEnabled(it)
-                                },
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = Color.White, 
-                                    checkedTrackColor = Color(0xFF23A559),
-                                    uncheckedThumbColor = Color(0xFFB5BAC1),
-                                    uncheckedTrackColor = Color(0xFF4E5058)
-                                ),
-                                modifier = Modifier.scale(0.8f)
-                            )
-                        }
-                    }
-                    
                     // Main Control Bar
                     Row(
                         modifier = Modifier
-                            .background(Color(0xFF1E1F22).copy(alpha = 0.95f), RoundedCornerShape(16.dp))
-                            .padding(horizontal = 24.dp, vertical = 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(20.dp),
+                            .background(Color(0xFF1E1F22).copy(alpha = 0.95f), CircleShape) // Pill shape
+                            .padding(horizontal = 24.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         ControlButton(
@@ -478,17 +401,17 @@ fun CallScreen(
                                 inactiveIconColor = Color(0xFF111214),
                                 onClick = { callManager.toggleMute(!isMuted) }
                             )
-                            // Small chevron for audio settings
+                            
+                            // Audio settings dropdown trigger next to mic
                             Box(
                                 modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .offset(x = 4.dp, y = (-4).dp)
-                                    .size(20.dp)
-                                    .background(Color(0xFF2B2D31), CircleShape)
+                                    .padding(start = 4.dp)
+                                    .size(width = 24.dp, height = 48.dp) // Taller, explicit button
+                                    .background(Color(0xFF2B2D31), RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp))
                                     .clickable { showAudioDeviceMenu = true },
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(Icons.Default.KeyboardArrowUp, null, tint = Color.White, modifier = Modifier.size(14.dp))
+                                Icon(Icons.Default.KeyboardArrowUp, null, tint = Color.White.copy(alpha=0.7f), modifier = Modifier.size(16.dp))
                             }
                             
                             AudioDeviceMenu(
@@ -514,10 +437,40 @@ fun CallScreen(
                             }
                         )
 
+                        ControlButton(
+                            icon = Icons.Default.GridView,
+                            isActive = false,
+                            activeColor = Color.White,
+                            activeIconColor = Color(0xFF111214),
+                            inactiveColor = Color(0xFF313338),
+                            inactiveIconColor = Color.White,
+                            onClick = { /* Grid Layout toggle */ }
+                        )
+
+                        ControlButton(
+                            icon = Icons.Default.MusicNote,
+                            isActive = false,
+                            activeColor = Color.White,
+                            activeIconColor = Color(0xFF111214),
+                            inactiveColor = Color(0xFF313338),
+                            inactiveIconColor = Color.White,
+                            onClick = { /* Soundboard */ }
+                        )
+
+                        ControlButton(
+                            icon = Icons.Default.MoreHoriz,
+                            isActive = false,
+                            activeColor = Color.White,
+                            activeIconColor = Color(0xFF111214),
+                            inactiveColor = Color(0xFF313338),
+                            inactiveIconColor = Color.White,
+                            onClick = { /* More Options */ }
+                        )
+
                         // Red Hangup Button
                         IconButton(
                             onClick = { callManager.endCall() },
-                            modifier = Modifier.size(56.dp).background(Color(0xFFF23F42), RoundedCornerShape(16.dp))
+                            modifier = Modifier.size(56.dp).background(Color(0xFFF23F42), CircleShape)
                         ) {
                             Icon(OrbitIcons.CallEnd, contentDescription = "Hang Up", tint = Color.White, modifier = Modifier.size(28.dp))
                         }
@@ -604,6 +557,162 @@ fun ScreenShareDialog(
     )
 }
 
+data class RenderNode(
+    val id: String,
+    val name: String,
+    val renderer: Any?,
+    val isScreenShare: Boolean,
+    val isMuted: Boolean = false,
+    val avatarUrl: String? = null,
+    val avatarColor: Int = 0xFF5865F2.toInt()
+)
+
+@Composable
+fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color(0xFF111214)) // Base background
+            .border(
+                width = if (node.id == "local" && !node.isMuted) 2.dp else 1.dp,
+                color = if (node.id == "local" && !node.isMuted) Color(0xFF23A559) else Color(0xFF1E1F22),
+                shape = RoundedCornerShape(16.dp)
+            )
+    ) {
+        if (node.renderer != null) {
+            VideoRenderer(renderer = node.renderer, modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)))
+        } else {
+            // Audio-only fallback with dark gradient
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Brush.radialGradient(listOf(Color(node.avatarColor).copy(alpha = 0.15f), Color.Transparent), radius = 400f)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (node.avatarUrl != null) {
+                    coil3.compose.AsyncImage(
+                        model = node.avatarUrl,
+                        contentDescription = "Avatar",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.size(80.dp).clip(CircleShape)
+                    )
+                } else {
+                    OrbitBrandMark(modifier = Modifier.size(100.dp), showGlow = false)
+                }
+            }
+        }
+        
+        // Name Overlay (Discord-style bottom left pill)
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(12.dp)
+                .background(Color(0xFF111214).copy(alpha = 0.7f), RoundedCornerShape(8.dp))
+                .padding(horizontal = 8.dp, vertical = 4.dp)
+        ) {
+            Text(node.name, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        }
+        
+        // Status Icons (Top Right corner)
+        if (node.isMuted) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(12.dp)
+                    .background(Color(0xFF111214).copy(alpha = 0.7f), CircleShape)
+                    .padding(6.dp)
+            ) {
+                Icon(OrbitIcons.MicOff, null, tint = Color(0xFFF23F42), modifier = Modifier.size(16.dp))
+            }
+        }
+        
+        // Screen Share Badge
+        if (node.isScreenShare) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp)
+                    .background(Color(0xFFF23F42), RoundedCornerShape(4.dp))
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+            ) {
+                Text("LIVE", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+fun InviteActivityCard(tokens: ui.theme.CosmicTokens, modifier: Modifier = Modifier) {
+    var showActivities by remember { mutableStateOf(false) }
+
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(Brush.linearGradient(listOf(Color(0xFF2A1B38), Color(0xFF111214))))
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                // Background visual for activities
+                Icon(Icons.Default.Star, contentDescription = null, tint = tokens.Accent.copy(alpha=0.5f), modifier = Modifier.size(100.dp))
+                Icon(Icons.Default.Face, contentDescription = null, tint = Color.White, modifier = Modifier.size(48.dp))
+            }
+            Spacer(Modifier.height(24.dp))
+            
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Button(
+                    onClick = { /* Invite */ },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E1F22)),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Icon(Icons.Default.PersonAdd, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Invite to Voice", color = Color.White, fontSize = 14.sp)
+                }
+                
+                Box {
+                    Button(
+                        onClick = { showActivities = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E1F22)),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Icon(Icons.Default.Games, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Choose Activity", color = Color.White, fontSize = 14.sp)
+                    }
+                    
+                    DropdownMenu(
+                        expanded = showActivities,
+                        onDismissRequest = { showActivities = false },
+                        modifier = Modifier.background(Color(0xFF2B2D31))
+                    ) {
+                        Text(
+                            "SUGGESTED ACTIVITIES", 
+                            color = Color.White.copy(alpha = 0.5f), 
+                            fontSize = 10.sp, 
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                        )
+                        DropdownMenuItem(
+                            text = { Text("White Board", color = Color.White) },
+                            onClick = { showActivities = false },
+                            leadingIcon = { Icon(Icons.Default.Create, null, tint = Color.White) }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Subway Game", color = Color.White) },
+                            onClick = { showActivities = false },
+                            leadingIcon = { Icon(Icons.Default.DirectionsRun, null, tint = Color.White) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun AudioDeviceMenu(
     callManager: CallManager,
@@ -613,6 +722,12 @@ fun AudioDeviceMenu(
     var inputs by remember { mutableStateOf<List<String>>(emptyList()) }
     var outputs by remember { mutableStateOf<List<String>>(emptyList()) }
     val tokens = rememberCosmicTokens()
+
+    val duckingStrength by callManager.duckingStrength.collectAsState()
+    val nsEnabled by callManager.noiseSuppression.collectAsState()
+    val ecEnabled by callManager.echoCancellation.collectAsState()
+    val agcEnabled by callManager.autoGainControl.collectAsState()
+    val vbEnabled by callManager.isVirtualBackgroundEnabled.collectAsState()
 
     LaunchedEffect(expanded) {
         if (expanded) {
@@ -660,6 +775,48 @@ fun AudioDeviceMenu(
                 }
             )
         }
+        
+        HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
+        
+        Text(
+            "AUDIO PROCESSING",
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            style = MaterialTheme.typography.labelSmall.copy(color = Color.White.copy(alpha = 0.5f), fontWeight = FontWeight.Bold)
+        )
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Noise Suppression", color = Color.White, fontSize = 13.sp, modifier = Modifier.weight(1f))
+            Switch(checked = nsEnabled, onCheckedChange = { callManager.setAudioOptions(it, ecEnabled, agcEnabled) }, modifier = Modifier.scale(0.7f))
+        }
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Echo Cancellation", color = Color.White, fontSize = 13.sp, modifier = Modifier.weight(1f))
+            Switch(checked = ecEnabled, onCheckedChange = { callManager.setAudioOptions(nsEnabled, it, agcEnabled) }, modifier = Modifier.scale(0.7f))
+        }
+        
+        HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
+        
+        Text(
+            "ATTENUATION (DUCKING)",
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            style = MaterialTheme.typography.labelSmall.copy(color = Color.White.copy(alpha = 0.5f), fontWeight = FontWeight.Bold)
+        )
+        Slider(
+            value = duckingStrength,
+            onValueChange = { callManager.setDuckingStrength(it) },
+            valueRange = 0f..1f,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 0.dp)
+        )
+        
+        HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
+        
+        Text(
+            "VIDEO PROCESSING",
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            style = MaterialTheme.typography.labelSmall.copy(color = Color.White.copy(alpha = 0.5f), fontWeight = FontWeight.Bold)
+        )
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Virtual Background", color = Color.White, fontSize = 13.sp, modifier = Modifier.weight(1f))
+            Switch(checked = vbEnabled, onCheckedChange = { callManager.toggleVirtualBackground() }, modifier = Modifier.scale(0.7f))
+        }
     }
 }
 
@@ -682,7 +839,7 @@ private fun ControlButton(
         onClick = onClick,
         modifier = Modifier
             .size(size)
-            .background(bgColor, RoundedCornerShape(16.dp))
+            .background(bgColor, CircleShape)
     ) {
         Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(iconSize))
     }

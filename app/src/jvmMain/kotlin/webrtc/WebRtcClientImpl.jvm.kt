@@ -63,6 +63,7 @@ class JvmWebRtcClient : WebRtcClient {
     private var cameraVideoTrack: VideoTrack? = null
     private var localVideoTrack: VideoTrack? = null
     private var localVideoSender: RTCRtpSender? = null
+    override var isVirtualBackgroundEnabled: Boolean = false
     private var localVideoSource: VideoDeviceSource? = null
     private var isVideoCaptureRunning = false
 
@@ -220,11 +221,13 @@ class JvmWebRtcClient : WebRtcClient {
                 videoSource.start()
                 isVideoCaptureRunning = true
                 
-                // Inject our custom video processor
-                val modelPath = extractModelToTempFile("selfie_segmentation.onnx")
-                if (modelPath != null) {
-                    println("DEBUG: [WebRTC] Injecting video processor with model: $modelPath")
-                    OrbitVideoEngine.injectVideoProcessor(videoSource, modelPath)
+                // Inject our custom video processor if enabled
+                if (isVirtualBackgroundEnabled) {
+                    val modelPath = extractModelToTempFile("selfie_segmentation.onnx")
+                    if (modelPath != null) {
+                        println("DEBUG: [WebRTC] Injecting video processor with model: $modelPath")
+                        OrbitVideoEngine.injectVideoProcessor(videoSource, modelPath)
+                    }
                 }
             }.onFailure {
                 runCatching { videoSource.dispose() }

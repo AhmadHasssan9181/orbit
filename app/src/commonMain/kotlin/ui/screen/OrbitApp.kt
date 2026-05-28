@@ -693,20 +693,30 @@ private fun MainAppContent(
             val activeCallChannel = channels.find { it.id == callManager.activeRoomId }
             val callerName = activeCallChannel?.name ?: "Friend"
 
-            CallScreen(
-                callManager = callManager,
-                callerName = callerName,
-                onStartScreenShare = {
-                    if (onStartScreenShare != null) {
-                        onStartScreenShare { data ->
-                            callManager.startScreenShare(data)
+            val isViewingActiveCall = windowSize == WindowSizeClass.Expanded && selectedChannelId == callManager.activeRoomId
+            
+            LaunchedEffect(selectedChannelId, callManager.activeRoomId) {
+                if (callManager.activeRoomId != null && selectedChannelId != callManager.activeRoomId) {
+                    callManager.isMinimized.value = true
+                }
+            }
+
+            if (!isViewingActiveCall) {
+                CallScreen(
+                    callManager = callManager,
+                    callerName = callerName,
+                    onStartScreenShare = {
+                        if (onStartScreenShare != null) {
+                            onStartScreenShare { data ->
+                                callManager.startScreenShare(data)
+                            }
+                        } else {
+                            callManager.startScreenShare()
                         }
-                    } else {
-                        callManager.startScreenShare()
-                    }
-                },
-                modifier = Modifier.fillMaxSize()
-            )
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
         }
     }
 }
@@ -779,6 +789,7 @@ private fun CompactLayout(
                             channels = channels.filter { it.categoryId == "dm" || it.type == ChannelType.TEXT },
                             selectedChannelId = selectedChannelId,
                             currentUser = currentUser,
+                            repository = repository,
                             onChannelClick = onChannelClick,
                             onOpenSettings = onOpenSettings,
                             isLoadingChannels = isLoadingChannels
@@ -801,6 +812,7 @@ private fun CompactLayout(
                             selectedChannelId = selectedChannelId,
                             currentUser = currentUser,
                             isLoadingChannels = isLoadingChannels,
+                            repository = repository,
                             onServerSelect = onServerSelect,
                             onChannelClick = onChannelClick,
                             onOpenSettings = onOpenSettings,
@@ -835,6 +847,7 @@ private fun CompactChannelList(
     channels: List<OrbitChannel>,
     selectedChannelId: String,
     currentUser: OrbitUser?,
+    repository: repository.OrbitRepository,
     onChannelClick: (String) -> Unit,
     onOpenSettings: () -> Unit,
     isLoadingChannels: Boolean
@@ -887,6 +900,7 @@ private fun CompactChannelList(
                     id = "me", username = "me", displayName = "Me",
                     avatarColor = 0xFF7C6AF0.toInt(), status = UserStatus.ONLINE
                 ),
+                repository = repository,
                 onChannelClick = onChannelClick,
                 onOpenSettings = onOpenSettings,
                 modifier = Modifier.weight(1f)
@@ -903,6 +917,7 @@ private fun CompactServerList(
     selectedChannelId: String,
     currentUser: OrbitUser?,
     isLoadingChannels: Boolean,
+    repository: repository.OrbitRepository,
     onServerSelect: (String) -> Unit,
     onChannelClick: (String) -> Unit,
     onOpenSettings: () -> Unit,
@@ -975,6 +990,7 @@ private fun CompactServerList(
                     id = "me", username = "me", displayName = "Me",
                     avatarColor = 0xFF7C6AF0.toInt(), status = UserStatus.ONLINE
                 ),
+                repository = repository,
                 onChannelClick = onChannelClick,
                 onOpenSettings = onOpenSettings,
                 onCreateRoomClick = onCreateRoom,
@@ -1288,6 +1304,7 @@ private fun MediumLayout(
                     id = "me", username = "me", displayName = "Me",
                     avatarColor = 0xFF7C6AF0.toInt(), status = UserStatus.ONLINE
                 ),
+                repository = repository,
                 onChannelClick = onChannelClick,
                 onOpenSettings = onOpenSettings,
                 onCreateRoomClick = onCreateRoom,
@@ -1310,19 +1327,12 @@ private fun MediumLayout(
                     onChannelClick = onChannelClick
                 )
 
-                selectedChannel.type == ChannelType.TEXT ->
+                selectedChannel.type == ChannelType.TEXT || selectedChannel.type == ChannelType.VOICE ->
                     ChatScreenWithRepo(
                         repository = repository,
                         channel = selectedChannel,
                         showMemberList = false,
                         isDirectMessage = selectedServer?.isDM == true
-                    )
-
-                selectedChannel.type == ChannelType.VOICE ->
-                    VoiceChannelScreen(
-                        callManager = callManager,
-                        matrixRepository = repository as MatrixOrbitRepository,
-                        channel = selectedChannel
                     )
             }
         }
@@ -1385,6 +1395,7 @@ private fun ExpandedLayout(
                     id = "me", username = "me", displayName = "Me",
                     avatarColor = 0xFF7C6AF0.toInt(), status = UserStatus.ONLINE
                 ),
+                repository = repository,
                 onChannelClick = onChannelClick,
                 onOpenSettings = onOpenSettings,
                 onCreateRoomClick = onCreateRoom,
@@ -1407,19 +1418,12 @@ private fun ExpandedLayout(
                         onChannelClick = onChannelClick
                     )
 
-                selectedChannel.type == ChannelType.TEXT ->
+                selectedChannel.type == ChannelType.TEXT || selectedChannel.type == ChannelType.VOICE ->
                     ChatScreenWithRepo(
                         repository = repository,
                         channel = selectedChannel,
                         showMemberList = !isLiteMode && !selectedServer.isDM,
                         isDirectMessage = selectedServer.isDM
-                    )
-
-                selectedChannel.type == ChannelType.VOICE ->
-                    VoiceChannelScreen(
-                        callManager = callManager,
-                        matrixRepository = repository as MatrixOrbitRepository,
-                        channel = selectedChannel
                     )            }
         } else {
             Box(
@@ -1509,6 +1513,7 @@ fun ChatScreenWithRepo(
     } else null
 
     ChatScreen(
+        repository = repository,
         channel = channel,
         messages = messages,
         members = members,

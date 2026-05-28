@@ -33,9 +33,16 @@ class CallManager(
     val isVideoCall = MutableStateFlow(false)
     val isLocalVideoEnabled = MutableStateFlow(false)
     val isLocalAudioEnabled = MutableStateFlow(true)
+    val hasRemoteStream = MutableStateFlow(false)
 
     private val _isScreenSharing = MutableStateFlow(false)
     val isScreenSharing: StateFlow<Boolean> = _isScreenSharing
+
+    val duckingStrength = MutableStateFlow(0.8f)
+    val noiseSuppression = MutableStateFlow(true)
+    val echoCancellation = MutableStateFlow(true)
+    val autoGainControl = MutableStateFlow(true)
+    val isVirtualBackgroundEnabled = MutableStateFlow(false)
 
     // Callbacks to send Matrix events
     var refreshIceServers: (suspend () -> List<TurnServer>)? = null
@@ -66,6 +73,11 @@ class CallManager(
         scope.launch {
             webRtcClient.isScreenSharing.collect { sharing ->
                 _isScreenSharing.value = sharing
+            }
+        }
+        scope.launch {
+            webRtcClient.onStreamAdded.collect { added ->
+                hasRemoteStream.value = added
             }
         }
     }
@@ -247,6 +259,29 @@ class CallManager(
         webRtcClient.addIceCandidate(candidate)
     }
 
+    fun setDuckingStrength(strength: Float) {
+        duckingStrength.value = strength
+        webRtcClient.setAttenuationStrength(strength)
+    }
+
+    fun setAudioOptions(ns: Boolean, ec: Boolean, agc: Boolean) {
+        noiseSuppression.value = ns
+        echoCancellation.value = ec
+        autoGainControl.value = agc
+        webRtcClient.setAudioOptions(ns, ec, agc)
+    }
+
+    fun toggleVirtualBackground() {
+        isVirtualBackgroundEnabled.value = !isVirtualBackgroundEnabled.value
+        webRtcClient.isVirtualBackgroundEnabled = isVirtualBackgroundEnabled.value
+        // WebRTC client will read this when video is re-enabled, or we can toggle video.
+        val wasVideoEnabled = isLocalVideoEnabled.value
+        if (wasVideoEnabled) {
+            webRtcClient.toggleVideo(false)
+            webRtcClient.toggleVideo(true)
+        }
+    }
+
     fun endCall(notifyRemote: Boolean = true) {
         val currentRoom = activeRoomId
         val currentCall = callId
@@ -272,6 +307,7 @@ class CallManager(
         candidatesAllowedForCallId = null
         pendingLocalCandidates.clear()
         pendingInviteSdp = null
+        hasRemoteStream.value = false
     }
 
     fun toggleMute(isMuted: Boolean) {
