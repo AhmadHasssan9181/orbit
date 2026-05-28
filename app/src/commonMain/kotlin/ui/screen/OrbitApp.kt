@@ -58,6 +58,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -621,6 +622,7 @@ private fun MainAppContent(
                     currentUser = currentUser,
                     isLoadingChannels = isLoadingChannels,
                     repository = repository,
+                    callManager = callManager,
                     onServerClick = { id -> selectedServerId = id },
                     onChannelClick = handleChannelClick,
                     onOpenSettings = { showSettings = true },
@@ -638,6 +640,7 @@ private fun MainAppContent(
                     currentUser = currentUser,
                     isLoadingChannels = isLoadingChannels,
                     repository = repository,
+                    callManager = callManager,
                     onServerClick = { id -> selectedServerId = id },
                     onChannelClick = handleChannelClick,
                     onOpenSettings = { showSettings = true },
@@ -1245,6 +1248,7 @@ private fun MediumLayout(
     currentUser: OrbitUser?,
     isLoadingChannels: Boolean,
     repository: OrbitRepository,
+    callManager: CallManager,
     onServerClick: (String) -> Unit,
     onChannelClick: (String) -> Unit,
     onOpenSettings: () -> Unit,
@@ -1354,6 +1358,7 @@ private fun ExpandedLayout(
     currentUser: OrbitUser?,
     isLoadingChannels: Boolean,
     repository: OrbitRepository,
+    callManager: CallManager,
     onServerClick: (String) -> Unit,
     onChannelClick: (String) -> Unit,
     onOpenSettings: () -> Unit,
