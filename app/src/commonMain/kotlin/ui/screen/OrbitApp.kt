@@ -29,18 +29,14 @@ import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalDrawerSheet
-import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -1258,87 +1254,74 @@ private fun MediumLayout(
     modifier: Modifier = Modifier
 ) {
     val tokens = rememberCosmicTokens()
-    val drawerState = rememberDrawerState(DrawerValue.Closed)
-    val scope = rememberCoroutineScope()
     val selectedServer = servers.find { it.id == selectedServerId }
     val isLiteMode = LocalIsLiteMode.current
+    var selectedWhatsAppTab by remember { mutableStateOf("Chats") }
 
-    ModalNavigationDrawer(
-        modifier = modifier,
-        drawerState = drawerState,
-        drawerContent = {
-            ModalDrawerSheet(
-                drawerContainerColor = tokens.Drawer_Bg,
-                drawerContentColor = tokens.Text_White
-            ) {
-                if (selectedServer != null) {
-                    val categories = channels.mapNotNull { it.categoryId }.distinct()
-                        .map { catId ->
-                            val firstCh = channels.firstOrNull { it.categoryId == catId }
-                            ChannelCategory(id = catId, name = catId.takeLast(8), channelId = firstCh?.id ?: "")
-                        }
-                    ChannelDrawer(
-                        server = selectedServer,
-                        categories = categories,
-                        channels = channels,
-                        selectedChannelId = selectedChannelId,
-                        currentUser = currentUser ?: OrbitUser(
-                            id = "me", username = "me", displayName = "Me",
-                            avatarColor = 0xFF7C6AF0.toInt(), status = UserStatus.ONLINE
-                        ),
-                        onChannelClick = { id ->
-                            onChannelClick(id)
-                            scope.launch { drawerState.close() }
-                        },
-                        onOpenSettings = onOpenSettings,
-                        onCreateRoomClick = onCreateRoom,
-                        onOpenRolesClick = onOpenRoles,
-                        selectedWhatsAppTab = if (isLiteMode) "Chats" else ""
-                    )
-                }
+    val categories = remember(channels) {
+        channels.mapNotNull { it.categoryId }.distinct()
+            .map { catId ->
+                val firstCh = channels.firstOrNull { it.categoryId == catId }
+                ChannelCategory(id = catId, name = catId.takeLast(8), channelId = firstCh?.id ?: "")
             }
-        }
-    ) {
-        Row(modifier = Modifier.fillMaxSize().background(tokens.Bg)) {
-            // ServerRail at 64dp (slimmer than desktop)
-            ServerRail(
-                servers = servers,
-                selectedServerId = selectedServerId,
-                onServerClick = onServerClick,
-                onAddServerClick = onAddServer,
-                modifier = Modifier.width(64.dp).fillMaxHeight()
+    }
+
+    Row(modifier = modifier.fillMaxSize().background(tokens.Bg)) {
+        ServerRail(
+            servers = servers,
+            selectedServerId = selectedServerId,
+            onServerClick = onServerClick,
+            onAddServerClick = onAddServer,
+            selectedWhatsAppTab = selectedWhatsAppTab,
+            onWhatsAppTabClick = { selectedWhatsAppTab = it },
+            modifier = Modifier.width(64.dp).fillMaxHeight()
+        )
+
+        if (selectedServer != null) {
+            ChannelDrawer(
+                server = selectedServer,
+                categories = categories,
+                channels = channels,
+                selectedChannelId = selectedChannelId,
+                currentUser = currentUser ?: OrbitUser(
+                    id = "me", username = "me", displayName = "Me",
+                    avatarColor = 0xFF7C6AF0.toInt(), status = UserStatus.ONLINE
+                ),
+                onChannelClick = onChannelClick,
+                onOpenSettings = onOpenSettings,
+                onCreateRoomClick = onCreateRoom,
+                onOpenRolesClick = onOpenRoles,
+                selectedWhatsAppTab = if (isLiteMode) selectedWhatsAppTab else ""
             )
+        }
 
-            // Main content
-            val selectedChannel = channels.find { it.id == selectedChannelId }
-            Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                when {
-                    isLoadingChannels -> Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) { CircularProgressIndicator(color = tokens.Accent) }
+        val selectedChannel = channels.find { it.id == selectedChannelId }
+        Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+            when {
+                isLoadingChannels -> Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) { CircularProgressIndicator(color = tokens.Accent) }
 
-                    selectedChannel == null -> ChatEmptyState(
-                        serverName = selectedServer?.name ?: "Orbit",
-                        channels = channels,
-                        onChannelClick = onChannelClick
+                selectedChannel == null -> ChatEmptyState(
+                    serverName = selectedServer?.name ?: "Orbit",
+                    channels = channels,
+                    onChannelClick = onChannelClick
+                )
+
+                selectedChannel.type == ChannelType.TEXT ->
+                    ChatScreenWithRepo(
+                        repository = repository,
+                        channel = selectedChannel,
+                        showMemberList = false
                     )
 
-                    selectedChannel.type == ChannelType.TEXT ->
-                        ChatScreenWithRepo(
-                            repository = repository,
-                            channel = selectedChannel,
-                            showMemberList = false,
-                            onBack = { scope.launch { drawerState.open() } }
-                        )
-
-                    selectedChannel.type == ChannelType.VOICE ->
-                        VoiceChannelScreen(
-                            callManager = callManager,
-                            matrixRepository = repository as MatrixOrbitRepository,
-                            channel = selectedChannel
-                        )
-                }
+                selectedChannel.type == ChannelType.VOICE ->
+                    VoiceChannelScreen(
+                        callManager = callManager,
+                        matrixRepository = repository as MatrixOrbitRepository,
+                        channel = selectedChannel
+                    )
             }
         }
     }
