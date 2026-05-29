@@ -80,39 +80,61 @@ private fun buildAnnotatedMessageText(body: String): androidx.compose.ui.text.An
 @Composable
 private fun ImageMessageCard(content: ui.model.MessageContent.Image) {
     val tokens = rememberCosmicTokens()
-    val url = content.thumbnailUrl ?: content.url
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(tokens.CardBg)
-            .widthIn(max = 360.dp)
-    ) {
-        coil3.compose.AsyncImage(
-            model = url,
-            onState = { state ->
-                if (state is coil3.compose.AsyncImagePainter.State.Error) {
-                    println("DEBUG: [Coil] Error loading image: ${state.result.throwable.message}")
-                    println("DEBUG: [Coil] URL was: $url")
-                }
-            },
-            contentDescription = content.body.ifBlank { "Image" },
-            contentScale = androidx.compose.ui.layout.ContentScale.Fit,
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 280.dp)
-                .clip(RoundedCornerShape(8.dp))
-        )
-        // Download button overlay
+    val url = content.thumbnailUrl?.ifBlank { null } ?: content.url
+    if (url.isBlank()) {
+        // Pending upload — show placeholder until the real mxc:// URL arrives via sync
         Box(
             modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(8.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .background(Color.Black.copy(alpha = 0.5f))
-                .clickable { openUrlInBrowser(content.url) }
-                .padding(6.dp)
+                .background(tokens.CardBg)
+                .widthIn(max = 360.dp)
+                .height(120.dp),
+            contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.Default.Download, contentDescription = "Download", tint = Color.White, modifier = Modifier.size(20.dp))
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                androidx.compose.material3.CircularProgressIndicator(
+                    color = tokens.Accent,
+                    modifier = Modifier.size(24.dp),
+                    strokeWidth = 2.dp
+                )
+                Spacer(Modifier.height(6.dp))
+                Text("Uploading\u2026", style = MaterialTheme.typography.labelSmall.copy(color = tokens.Text_Muted))
+            }
+        }
+    } else {
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .background(tokens.CardBg)
+                .widthIn(max = 360.dp)
+        ) {
+            coil3.compose.AsyncImage(
+                model = url,
+                onState = { state ->
+                    if (state is coil3.compose.AsyncImagePainter.State.Error) {
+                        println("DEBUG: [Coil] Error loading image: ${state.result.throwable.message}")
+                        println("DEBUG: [Coil] URL was: $url")
+                    }
+                },
+                contentDescription = content.body.ifBlank { "Image" },
+                contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 280.dp)
+                    .clip(RoundedCornerShape(8.dp))
+            )
+            // Download button overlay
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color.Black.copy(alpha = 0.5f))
+                    .clickable { openUrlInBrowser(content.url) }
+                    .padding(6.dp)
+            ) {
+                Icon(Icons.Default.Download, contentDescription = "Download", tint = Color.White, modifier = Modifier.size(20.dp))
+            }
         }
     }
     if (content.body.isNotBlank()) {
@@ -218,83 +240,105 @@ private fun VideoMessageCard(content: ui.model.MessageContent.Video) {
         } else null
     }
 
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(tokens.CardBg)
-            .widthIn(max = 360.dp)
-            .heightIn(min = 220.dp)
-    ) {
-        if (isPlaying) {
-            NativeVideoPlayer(url = content.url, modifier = Modifier.fillMaxWidth().height(220.dp).clip(RoundedCornerShape(8.dp)))
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(8.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color.Black.copy(alpha = 0.5f))
-                    .clickable { isPlaying = false }
-                    .padding(6.dp)
-            ) {
-                Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White, modifier = Modifier.size(20.dp))
-            }
-        } else {
-            if (content.thumbnailUrl != null) {
-                coil3.compose.AsyncImage(
-                    model = content.thumbnailUrl,
-                    contentDescription = content.body,
-                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(220.dp)
-                        .clip(RoundedCornerShape(8.dp))
+    if (content.url.isBlank()) {
+        // Pending upload placeholder
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .background(tokens.CardBg)
+                .widthIn(max = 360.dp)
+                .height(120.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                androidx.compose.material3.CircularProgressIndicator(
+                    color = tokens.Accent,
+                    modifier = Modifier.size(24.dp),
+                    strokeWidth = 2.dp
                 )
-            } else {
-                Box(
-                    modifier = Modifier.fillMaxWidth().height(220.dp).background(tokens.CardBg),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(Icons.Default.VideoFile, contentDescription = null, tint = tokens.Text_Muted,
-                        modifier = Modifier.size(48.dp))
-                }
+                Spacer(Modifier.height(6.dp))
+                Text("Uploading\u2026", style = MaterialTheme.typography.labelSmall.copy(color = tokens.Text_Muted))
             }
-            Box(
-                modifier = Modifier.matchParentSize().clickable { isPlaying = true },
-                contentAlignment = Alignment.Center
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(androidx.compose.foundation.shape.CircleShape)
-                        .background(Color.Black.copy(alpha = 0.6f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = "Play video",
-                        tint = Color.White, modifier = Modifier.size(28.dp))
-                }
-            }
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(8.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color.Black.copy(alpha = 0.5f))
-                    .clickable { openUrlInBrowser(content.url) }
-                    .padding(6.dp)
-            ) {
-                Icon(Icons.Default.Download, contentDescription = "Download", tint = Color.White, modifier = Modifier.size(20.dp))
-            }
-            if (durationText != null) {
+        }
+    } else {
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .background(tokens.CardBg)
+                .widthIn(max = 360.dp)
+                .heightIn(min = 220.dp)
+        ) {
+            if (isPlaying) {
+                NativeVideoPlayer(url = content.url, modifier = Modifier.fillMaxWidth().height(220.dp).clip(RoundedCornerShape(8.dp)))
                 Box(
                     modifier = Modifier
-                        .align(Alignment.BottomEnd)
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.Black.copy(alpha = 0.5f))
+                        .clickable { isPlaying = false }
                         .padding(6.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(Color.Black.copy(alpha = 0.7f))
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
                 ) {
-                    Text(durationText, style = MaterialTheme.typography.labelSmall.copy(
-                        color = Color.White, fontSize = 10.sp))
+                    Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White, modifier = Modifier.size(20.dp))
+                }
+            } else {
+                if (!content.thumbnailUrl.isNullOrBlank()) {
+                    coil3.compose.AsyncImage(
+                        model = content.thumbnailUrl,
+                        contentDescription = content.body,
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(220.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(220.dp).background(tokens.CardBg),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.VideoFile, contentDescription = null, tint = tokens.Text_Muted,
+                            modifier = Modifier.size(48.dp))
+                    }
+                }
+                Box(
+                    modifier = Modifier.matchParentSize().clickable { isPlaying = true },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(androidx.compose.foundation.shape.CircleShape)
+                            .background(Color.Black.copy(alpha = 0.6f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = "Play video",
+                            tint = Color.White, modifier = Modifier.size(28.dp))
+                    }
+                }
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.Black.copy(alpha = 0.5f))
+                        .clickable { openUrlInBrowser(content.url) }
+                        .padding(6.dp)
+                ) {
+                    Icon(Icons.Default.Download, contentDescription = "Download", tint = Color.White, modifier = Modifier.size(20.dp))
+                }
+                if (durationText != null) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(6.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color.Black.copy(alpha = 0.7f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(durationText, style = MaterialTheme.typography.labelSmall.copy(
+                            color = Color.White, fontSize = 10.sp))
+                    }
                 }
             }
         }
