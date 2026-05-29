@@ -281,7 +281,11 @@ class JvmWebRtcClient : WebRtcClient {
                     "render=${renderDevice?.getName() ?: "default"}"
             )
 
-            PeerConnectionFactory(audioModule)
+            // Always use the default PeerConnectionFactory (no custom ADM).
+            // OrbitAudioDeviceModule is used only for WASAPI loopback control during screen share,
+            // it is NOT passed to PeerConnectionFactory because OrbitAudioJNI.dll is a separate
+            // WebRTC build that conflicts with webrtc-java-windows-x86_64.dll's static state.
+            PeerConnectionFactory()
         }.getOrElse { error ->
             println("DEBUG: [WebRTC] Falling back to default desktop audio module: ${error.message}")
             runCatching { audioDeviceModule?.dispose() }

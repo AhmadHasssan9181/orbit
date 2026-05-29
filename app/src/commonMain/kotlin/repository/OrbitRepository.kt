@@ -135,6 +135,8 @@ interface OrbitRepository {
     fun observeCallMembers(channelId: String): Flow<List<OrbitUser>>
     suspend fun startGroupCall(roomId: String, callId: String)
     suspend fun endGroupCall(roomId: String, callId: String)
+    suspend fun joinGroupCall(roomId: String, callId: String)
+    suspend fun leaveGroupCall(roomId: String, callId: String)
     val activeCallsFlow: kotlinx.coroutines.flow.StateFlow<Map<String, String>>
 
     // Session Management ──────────────────────────────────

@@ -110,17 +110,28 @@ fun CallScreen(
     )
 
     if (isMinimized && !isEmbedded) {
+        var offsetX by remember { mutableStateOf(0f) }
+        var offsetY by remember { mutableStateOf(0f) }
+
         Box(
             modifier = modifier.wrapContentSize(Alignment.BottomEnd) // Allow it to shrink and align to bottom end
         ) {
             Box(
                 modifier = Modifier
                     .padding(32.dp)
+                    .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
                     .size(320.dp, 200.dp)
                     .shadow(16.dp, RoundedCornerShape(16.dp))
                     .clip(RoundedCornerShape(16.dp))
                     .background(Color(0xFF111214))
                     .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(16.dp))
+                    .pointerInput(Unit) {
+                        detectDragGestures { change, dragAmount ->
+                            change.consume()
+                            offsetX += dragAmount.x
+                            offsetY += dragAmount.y
+                        }
+                    }
                     .clickable { callManager.isMinimized.value = false }
             ) {
                 if (isVideoCall && (isVideoEnabled || callState == CallState.CONNECTED)) {
