@@ -287,31 +287,89 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
         context.repositoryScope.launch {
             val trixnity = context.trixnityClient ?: return@launch
             try {
+                val stateEvents = trixnity.api.room.getState(RoomId(channelId)).getOrThrow()
+                if (stateEvents != null) {
+                    for (event in stateEvents) {
+                        val content = event.content
+                        if (content is UnknownEventContent) {
+                            val typeStr = content.eventType
+                            val realContent = unwrapUnknownEventContent(content)
+                            if (typeStr == "org.matrix.msc3401.call" || typeStr == "m.call") {
+                                val isTerminated = realContent["m.intent"]?.jsonPrimitive?.content == "m.terminated" || realContent["m.terminated"] != null || realContent.isEmpty()
+                                if (!isTerminated) {
+                                    flow.value = "matrix-call://${event.stateKey}"
+                                    return@launch
+                                }
+                            } else if (typeStr == "org.orbit.group_call.state") {
+                                val status = realContent["status"]?.jsonPrimitive?.content
+                                val callId = realContent["call_id"]?.jsonPrimitive?.content
+                                if (status == "active" && !callId.isNullOrBlank()) {
+                                    println("DEBUG: [observeActiveGroupCall] FOUND FAST STATE CALL: $callId")
+                                    flow.value = "matrix-call://$callId"
+                                    return@launch
+                                } else if (status == "ended") {
+                                    // The call is explicitly ended, we can safely assume no active call
+                                }
+                            } else if (typeStr == "im.vector.modular.widgets" || typeStr == "m.widget") {
+                                val type = realContent["type"]?.jsonPrimitive?.content
+                                val url = realContent["url"]?.jsonPrimitive?.content
+                                if ((type == "jitsi" || type == "m.custom") && !url.isNullOrBlank()) {
+                                    flow.value = url
+                                    return@launch
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                println("DEBUG: Failed to get state for $channelId: ${e.message}")
+                e.printStackTrace()
+            }
+
+            try {
                 val lastEventId = trixnity.room.getById(RoomId(channelId)).first()?.lastEventId
                 if (lastEventId != null) {
-                    val events = trixnity.room.getTimelineEvents(RoomId(channelId), startFrom = lastEventId, direction = de.connect2x.trixnity.clientserverapi.model.room.GetEvents.Direction.BACKWARDS)
-                    events.take(100).collect { flowEvent ->
+                    val events = trixnity.room.getTimelineEvents(
+                        roomId = RoomId(channelId),
+                        startFrom = lastEventId,
+                        direction = de.connect2x.trixnity.clientserverapi.model.room.GetEvents.Direction.BACKWARDS
+                    )
+                    val seenStateKeys = mutableSetOf<String>()
+                    events.take(50).collect { flowEvent ->
                         val timelineEvent = flowEvent.first()
                         val content = timelineEvent.content?.getOrNull()
                         var typeStr = ""
+                        var callId: String? = null
                         var realContent: JsonObject? = null
 
                         if (content is UnknownEventContent) {
                             typeStr = content.eventType
                             realContent = unwrapUnknownEventContent(content)
+                            callId = realContent["call_id"]?.jsonPrimitive?.content
+                        } else if (content is de.connect2x.trixnity.core.model.events.m.call.CallEventContent) {
+                            callId = content.callId
+                            typeStr = when (content) {
+                                is de.connect2x.trixnity.core.model.events.m.call.CallEventContent.Answer -> "m.call.answer"
+                                is de.connect2x.trixnity.core.model.events.m.call.CallEventContent.Candidates -> "m.call.candidates"
+                                is de.connect2x.trixnity.core.model.events.m.call.CallEventContent.Hangup -> "m.call.hangup"
+                                is de.connect2x.trixnity.core.model.events.m.call.CallEventContent.Invite -> "m.call.invite"
+                                is de.connect2x.trixnity.core.model.events.m.call.CallEventContent.Negotiate -> "m.call.negotiate"
+                                is de.connect2x.trixnity.core.model.events.m.call.CallEventContent.Reject -> "m.call.reject"
+                                is de.connect2x.trixnity.core.model.events.m.call.CallEventContent.SelectAnswer -> "m.call.select_answer"
+                                else -> "m.call.unknown"
+                            }
                         }
 
-                        if (typeStr == "im.vector.modular.widgets" || typeStr == "m.widget" || typeStr == "org.matrix.msc3401.call") {
-                            if (realContent != null && realContent.isNotEmpty()) {
-                                var url: String? = null
-                                if (realContent["type"]?.jsonPrimitive?.content == "jitsi" || realContent["type"]?.jsonPrimitive?.content == "m.custom") {
-                                    url = realContent["url"]?.jsonPrimitive?.content
-                                } else if (typeStr == "org.matrix.msc3401.call") {
-                                    url = "matrix-call://$channelId"
-                                }
+                        val isTerminatingEvent = typeStr == "m.call.hangup" || typeStr == "m.call.reject" || typeStr == "m.call.ended"
+                        if (isTerminatingEvent && callId != null) {
+                            seenStateKeys.add("call:$callId")
+                        }
 
-                                if (url != null) {
-                                    flow.value = url
+                        if (typeStr == "m.call.invite" && callId != null) {
+                            if (!seenStateKeys.contains("call:$callId")) {
+                                if (!callId.startsWith("orbit_call_")) {
+                                    println("DEBUG: [observeActiveGroupCall] FOUND ACTIVE CALL VIA TIMELINE: $callId")
+                                    flow.value = "matrix-call://$callId"
                                     throw Exception("Break")
                                 }
                             }
@@ -319,8 +377,26 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                     }
                 }
             } catch (e: Exception) { /* Ignore break */ }
+
+            context.callEventsFlow.collect { event ->
+                if (event.roomId == channelId) {
+                    when (event) {
+                        is CallEvent.Invite -> {
+                            if (!event.callId.startsWith("orbit_call_")) {
+                                flow.value = "matrix-call://${event.callId}"
+                            }
+                        }
+                        is CallEvent.Hangup -> {
+                            if (flow.value == "matrix-call://${event.callId}") {
+                                flow.value = null
+                            }
+                        }
+                        else -> {}
+                    }
+                }
+            }
         }
-        return flow
+        return flow.asStateFlow()
     }
 
     override fun observeCallMembers(channelId: String): Flow<List<OrbitUser>> {
@@ -369,6 +445,9 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
             put("org.orbit.group_call", true)
         }
         sendCallEvent(roomId, "m.call.invite", content)
+        
+        // Optimistically update local state
+        context.activeGroupCalls.getOrPut(roomId) { MutableStateFlow(null) }.value = "matrix-call://$callId"
     }
 
     override suspend fun endGroupCall(roomId: String, callId: String) {
@@ -376,6 +455,11 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
             put("call_id", callId)
             put("version", "1")
         })
+        
+        // Optimistically update local state
+        if (context.activeGroupCalls[roomId]?.value == "matrix-call://$callId") {
+            context.activeGroupCalls[roomId]?.value = null
+        }
     }
 
     override suspend fun joinGroupCall(roomId: String, callId: String) {

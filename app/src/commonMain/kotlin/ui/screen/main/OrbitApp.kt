@@ -655,7 +655,7 @@ fun ChatScreenWithRepo(
     }
 
     LaunchedEffect(channel.id) {
-        repository.observeActiveGroupCall(channel.id).collect { activeGroupCallUrl = it }
+        repository.observeActiveGroupCall(channel.matrixRoomId).collect { activeGroupCallUrl = it }
     }
 
     val directProfile = if (isDirectMessage) {
