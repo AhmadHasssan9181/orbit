@@ -23,6 +23,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ui.assets.OrbitDefaultAvatar
 
+import ui.screen.auth.*
+import ui.screen.settings.*
+import ui.screen.drawer.*
+import ui.screen.server.*
+import ui.screen.call.*
+import ui.screen.media.*
+import ui.screen.main.*
+
 @Composable
 fun EmptyVoicePanel(modifier: Modifier = Modifier) {
     Box(

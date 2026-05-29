@@ -3,132 +3,68 @@ package repository
 import kotlinx.coroutines.flow.Flow
 import ui.model.*
 
-/**
- * Repository interface for all data operations in Orbit.
- *
- * The UI layer calls these methods; implementations translate to/from
- * whatever backend (Matrix, custom API, local DB) is configured.
- */
-interface OrbitRepository {
+import ui.screen.auth.*
+import ui.screen.settings.*
+import ui.screen.drawer.*
+import ui.screen.server.*
+import ui.screen.call.*
+import ui.screen.media.*
+import ui.screen.main.*
 
-    // ─── Authentication ──────────────────────────────────────
-    suspend fun login(
-        identifier: String,       // username / email / mxid
-        password: String,
-        deviceName: String = "Orbit"
-    ): AuthResult
-
-    suspend fun register(
-        username: String,
-        password: String,
-    ): RegisterResult
-
+interface OrbitAuthRepository {
+    val authStatus: Flow<AuthStatus>
+    val activeDeviceVerification: Flow<Any?>? get() = null
+    suspend fun loginWithSso(): AuthResult
+    suspend fun login(identifier: String, password: String, deviceName: String = "Orbit"): AuthResult
+    suspend fun register(username: String, password: String): RegisterResult
     suspend fun getCurrentUser(): OrbitUser?
+    suspend fun logout()
+}
 
-    // ─── Servers / Spaces ────────────────────────────────────
+interface OrbitSpacesRepository {
     suspend fun getSpaces(): List<OrbitServer>
     suspend fun joinSpace(roomIdOrAlias: String): Result<String>
-
     suspend fun createSpace(name: String): Result<String>
-
     suspend fun getSpaceHierarchy(spaceId: String): List<OrbitServer>
+    fun observeSpaces(): Flow<List<OrbitServer>>
+}
 
-    // ─── Channels / Rooms ────────────────────────────────────
+interface OrbitChannelsRepository {
     suspend fun getChannelsForSpace(spaceId: String): List<OrbitChannel>
-
-    val activeDeviceVerification: Flow<Any?>? get() = null
-
-    suspend fun createChannel(
-        spaceId: String,
-        name: String,
-        type: ChannelType,
-        topic: String = ""
-    ): Result<String> // returns channelId (room_id)
-
+    suspend fun createChannel(spaceId: String, name: String, type: ChannelType, topic: String = ""): Result<String>
     suspend fun getChannelById(channelId: String): OrbitChannel?
-    
     suspend fun getRoomMembers(roomId: String): List<OrbitUser>
-    
-    // WebRTC Signaling & Infrastructure
-    suspend fun getTurnServers(): Result<List<TurnServer>>
-    suspend fun sendCallEvent(channelId: String, eventType: String, content: kotlinx.serialization.json.JsonObject): Result<String>
+    fun observeChannelList(spaceId: String): Flow<List<OrbitChannel>>
+}
 
-    // ─── Messages ────────────────────────────────────────────
-    suspend fun getMessagesForChannel(
-        channelId: String,
-        limit: Int = 50,
-        fromToken: String? = null
-    ): List<OrbitMessage>
-
-    suspend fun sendMessage(
-        channelId: String,
-        body: String
-    ): Result<String> // returns eventId
-
-    suspend fun sendReaction(
-        channelId: String,
-        eventId: String,
-        key: String
-    ): Result<String>
-
+interface OrbitMessagesRepository {
+    suspend fun getMessagesForChannel(channelId: String, limit: Int = 50, fromToken: String? = null): List<OrbitMessage>
+    suspend fun sendMessage(channelId: String, body: String): Result<String>
+    suspend fun sendReaction(channelId: String, eventId: String, key: String): Result<String>
     suspend fun uploadMedia(bytes: ByteArray, mimeType: String, filename: String): Result<String>
-
-    suspend fun sendImageMessage(
-        channelId: String,
-        mxcUrl: String,
-        filename: String,
-        mimeType: String,
-        width: Int? = null,
-        height: Int? = null,
-        size: Long? = null
-    ): Result<String>
-
-    suspend fun sendFileMessage(
-        channelId: String,
-        mxcUrl: String,
-        filename: String,
-        mimeType: String,
-        size: Long? = null
-    ): Result<String>
-
-    suspend fun sendAudioMessage(
-        channelId: String,
-        mxcUrl: String,
-        filename: String,
-        mimeType: String,
-        durationMs: Int? = null,
-        size: Long? = null
-    ): Result<String>
-
-    suspend fun editMessage(
-        eventId: String,
-        newBody: String
-    ): Result<Unit>
-
-    suspend fun deleteMessage(
-        eventId: String
-    ): Result<Unit>
-
+    suspend fun sendImageMessage(channelId: String, mxcUrl: String, filename: String, mimeType: String, width: Int? = null, height: Int? = null, size: Long? = null): Result<String>
+    suspend fun sendFileMessage(channelId: String, mxcUrl: String, filename: String, mimeType: String, size: Long? = null): Result<String>
+    suspend fun sendAudioMessage(channelId: String, mxcUrl: String, filename: String, mimeType: String, durationMs: Int? = null, size: Long? = null): Result<String>
+    suspend fun editMessage(eventId: String, newBody: String): Result<Unit>
+    suspend fun deleteMessage(eventId: String): Result<Unit>
     suspend fun sendReadReceipt(roomId: String, eventId: String)
-
-    // Push Notifications
     suspend fun registerPusher(pushKey: String, appId: String, url: String)
+    fun observeMessages(channelId: String): Flow<List<OrbitMessage>>
+}
 
-    // ─── User Profile ────────────────────────────────────────
+interface OrbitUsersRepository {
     suspend fun updateDisplayName(name: String): Result<Unit>
-    suspend fun uploadAvatar(imageBytes: ByteArray): Result<String> // mxc:// URI
+    suspend fun uploadAvatar(imageBytes: ByteArray): Result<String>
     suspend fun getUserProfile(userId: String): OrbitUser?
-
-    // ─── Presence / Status ───────────────────────────────────
     suspend fun setPresence(status: UserStatus)
     suspend fun observePresence(userId: String): Flow<UserStatus>
-    
     suspend fun setTyping(roomId: String, isTyping: Boolean)
     fun observeTyping(roomId: String): Flow<List<String>>
+}
 
-    // Real-time Events ────────────────────────────────────
-    fun observeMessages(channelId: String): Flow<List<OrbitMessage>>
-    fun observeChannelList(spaceId: String): Flow<List<OrbitChannel>>
+interface OrbitCallsRepository {
+    suspend fun getTurnServers(): Result<List<TurnServer>>
+    suspend fun sendCallEvent(channelId: String, eventType: String, content: kotlinx.serialization.json.JsonObject): Result<String>
     fun observeCallEvents(): Flow<CallEvent>
     fun observeActiveCall(channelId: String): Flow<CallEvent.Invite?>
     fun observeActiveGroupCall(channelId: String): Flow<String?>
@@ -138,15 +74,23 @@ interface OrbitRepository {
     suspend fun joinGroupCall(roomId: String, callId: String)
     suspend fun leaveGroupCall(roomId: String, callId: String)
     val activeCallsFlow: kotlinx.coroutines.flow.StateFlow<Map<String, String>>
+}
 
-    // Session Management ──────────────────────────────────
-    val authStatus: Flow<AuthStatus>
-    suspend fun logout()
-
-    // ─── Account Data (Backend Sync) ─────────────────────────
+interface OrbitSyncRepository {
     suspend fun <T> setAccountData(eventType: String, data: T, serializer: kotlinx.serialization.KSerializer<T>): Result<Unit>
     fun <T> observeAccountData(eventType: String, deserializer: kotlinx.serialization.KSerializer<T>): Flow<T?>
+    fun startSync()
+    fun stopSync()
 }
+
+interface OrbitRepository :
+    OrbitAuthRepository,
+    OrbitSpacesRepository,
+    OrbitChannelsRepository,
+    OrbitMessagesRepository,
+    OrbitUsersRepository,
+    OrbitCallsRepository,
+    OrbitSyncRepository
 
 sealed class AuthStatus {
     object Authenticated : AuthStatus()
@@ -166,9 +110,6 @@ sealed class CallEvent {
     data class Hangup(override val roomId: String, override val callId: String, override val senderId: String, override val partyId: String? = null) : CallEvent()
 }
 
-/**
- * Result of a successful login.
- */
 data class AuthResult(
     val accessToken: String,
     val deviceId: String,
@@ -176,9 +117,6 @@ data class AuthResult(
     val userId: String
 )
 
-/**
- * Result of a registration attempt.
- */
 data class RegisterResult(
     val authFlow: AuthFlow,
     val nextEndpoint: String
@@ -193,3 +131,4 @@ data class TurnServer(
 sealed class AuthFlow {
     data class Password(val user: String, val password: String) : AuthFlow()
 }
+

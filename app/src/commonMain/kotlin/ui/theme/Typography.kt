@@ -6,6 +6,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.sp
 
+import ui.screen.auth.*
+import ui.screen.settings.*
+import ui.screen.drawer.*
+import ui.screen.server.*
+import ui.screen.call.*
+import ui.screen.media.*
+import ui.screen.main.*
+
 // Bypassing the K2 compiler bug by using standard system fonts
 val Inter = FontFamily.Default
 val GoogleSansFlex = FontFamily.Default
