@@ -133,6 +133,9 @@ android {
 compose.desktop {
     application {
         mainClass = "ui.screen.MainKt"
+        jvmArgs += listOf(
+            "--add-opens", "java.base/java.lang=ALL-UNNAMED"
+        )
     }
 }
 
