@@ -13,6 +13,10 @@ object WebrtcNativeDepsLoader {
         loaded = true
         try {
             val dlls = listOf(
+                "msvcp140.dll",
+                "vcruntime140.dll",
+                "vcruntime140_1.dll",
+                "concrt140.dll",
                 "z.dll",
                 "libcrypto-3-x64.dll",
                 "libssl-3-x64.dll",
