@@ -112,7 +112,10 @@ private val coilHttpClient = HttpClient(CIO) {
     // Dynamic header injection interceptor
     requestPipeline.intercept(io.ktor.client.request.HttpRequestPipeline.Before) {
         repository.CredentialManager.accessToken?.let { token ->
-            context.header("Authorization", "Bearer $token")
+            val host = context.url.host
+            if (host.contains("matrix", ignoreCase = true) || host.contains("localhost") || host.contains("127.0.0.1")) {
+                context.header("Authorization", "Bearer $token")
+            }
         }
     }
 }
@@ -407,6 +410,10 @@ private fun MainAppContent(
             }
         }
 
+        callManager.onLeaveGroupCall = { roomId, callId ->
+            repository.leaveGroupCall(roomId, callId)
+        }
+
         // --- ICE Candidate Batching Logic ---
         val candidateBatch = mutableListOf<webrtc.IceCandidateModel>()
         var batchJob: kotlinx.coroutines.Job? = null
@@ -549,21 +556,39 @@ private fun MainAppContent(
     }
 
     val handleChannelClick: (String) -> Unit = { id ->
-        selectedChannelId = id
-        compactOpenChannelId = id
         val ch = channels.find { it.id == id }
         if (ch?.type == ChannelType.VOICE) {
-            scope.launch {
-                val activeUrl = (repository as? MatrixOrbitRepository)?.observeActiveGroupCall(ch.matrixRoomId)?.first()
-                val callId = if (activeUrl != null && activeUrl.startsWith("matrix-call://")) {
-                    activeUrl.substringAfter("://")
-                } else {
-                    val newId = "orbit_call_${kotlin.random.Random.nextLong()}"
-                    (repository as? MatrixOrbitRepository)?.startGroupCall(ch.matrixRoomId, newId)
-                    newId
+            val isAlreadyActive = callManager.activeRoomId == ch.matrixRoomId || callManager.activeRoomId == ch.id
+            if (!isAlreadyActive) {
+                scope.launch {
+                    val activeUrl = (repository as? MatrixOrbitRepository)?.observeActiveGroupCall(ch.matrixRoomId)?.first()
+                    val callId = if (activeUrl != null && activeUrl.startsWith("matrix-call://")) {
+                        val urlContent = activeUrl.substringAfter("://")
+                        if (urlContent.contains("/")) {
+                            urlContent.substringAfterLast("/")
+                        } else {
+                            // Fallback: Use Room ID as Call ID if format is old
+                            urlContent
+                        }
+                    } else {
+                        val newId = "orbit_call_${kotlin.random.Random.nextLong()}"
+                        (repository as? MatrixOrbitRepository)?.startGroupCall(ch.matrixRoomId, newId)
+                        newId
+                    }
+                    
+                    // 1. Join call on backend (registration)
+                    (repository as? MatrixOrbitRepository)?.joinGroupCall(ch.matrixRoomId, callId)
+                    
+                    // 2. Start local media and connectivity
+                    callManager.joinGroupCall(ch.matrixRoomId, callId, false)
                 }
-                callManager.joinGroupCall(ch.matrixRoomId, callId, false)
+            } else {
+                selectedChannelId = id
+                compactOpenChannelId = id
             }
+        } else {
+            selectedChannelId = id
+            compactOpenChannelId = id
         }
     }
 

@@ -30,6 +30,7 @@ import de.connect2x.trixnity.clientserverapi.model.user.displayName
 import de.connect2x.trixnity.core.model.EventId
 import de.connect2x.trixnity.core.model.RoomId
 import de.connect2x.trixnity.core.model.UserId
+import de.connect2x.trixnity.core.model.events.EventType
 import de.connect2x.trixnity.core.model.events.ClientEvent.RoomEvent
 import de.connect2x.trixnity.core.model.events.UnknownEventContent
 import de.connect2x.trixnity.core.model.events.m.call.CallEventContent
@@ -57,6 +58,7 @@ import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.request.put
 import io.ktor.client.statement.bodyAsText
+import de.connect2x.trixnity.core.model.events.m.room.PowerLevelsEventContent
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.Url
@@ -80,6 +82,7 @@ import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -87,6 +90,8 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.encodeToJsonElement
@@ -528,13 +533,14 @@ class MatrixOrbitRepository(
 
                 // Discord-like: Always ensure a "General Voice" channel exists if it's a real space
                 if (channels.none { it.type == ChannelType.VOICE }) {
+                    val firstTextChannel = channels.firstOrNull { it.type == ChannelType.TEXT }
                     channels.add(0, OrbitChannel(
                         id = "general_voice_$spaceId",
                         name = "General Voice",
                         type = ChannelType.VOICE,
                         categoryId = spaceId,
                         topic = "Join here for voice and video",
-                        matrixRoomId = spaceId
+                        matrixRoomId = firstTextChannel?.matrixRoomId ?: spaceId
                     ))
                 }
             }
@@ -562,11 +568,19 @@ class MatrixOrbitRepository(
             val response = trixnity.api.room.createRoom(
                 name = roomName,
                 topic = topic.ifBlank { if (type == ChannelType.VOICE) "Voice channel" else "" },
-                preset = if (type == ChannelType.VOICE) {
-                    CreateRoom.Request.Preset.TRUSTED_PRIVATE
-                } else {
-                    CreateRoom.Request.Preset.TRUSTED_PRIVATE // Using TRUSTED_PRIVATE as fallback to PUBLIC_CHAT
-                }
+                preset = CreateRoom.Request.Preset.TRUSTED_PRIVATE,
+                powerLevelContentOverride = if (type == ChannelType.VOICE) {
+                    PowerLevelsEventContent(
+                        users = mapOf(trixnity.userId to 100L),
+                        usersDefault = 0L,
+                        eventsDefault = 0L,
+                        stateDefault = 0L,
+                        events = mapOf(
+                            EventType(UnknownEventContent::class, "m.call.member") to 0L,
+                            EventType(UnknownEventContent::class, "org.matrix.msc3401.call") to 0L
+                        )
+                    )
+                } else null
             ).getOrThrow()
 
             if (spaceId != "rooms" && spaceId != "dm") {
@@ -574,7 +588,7 @@ class MatrixOrbitRepository(
                     RoomId(spaceId),
                     ChildEventContent(via = setOf(trixnity.api.baseUrl.host)),
                     response.full
-                )
+                ).getOrThrow()
             }
 
             _roomListFlow.emit(getSpaces())
@@ -1227,37 +1241,58 @@ class MatrixOrbitRepository(
         return _roomListFlow.asSharedFlow()
     }
 
+    private fun encodeForUrl(value: String): String = value.replace("!", "%21").replace(":", "%3A")
+
     override suspend fun startGroupCall(roomId: String, callId: String) {
-        val token = _accessToken ?: return
-        val url = "$homeserverUrl/_matrix/client/v3/rooms/$roomId/state/org.matrix.msc3401.call/$callId"
-        val content = kotlinx.serialization.json.buildJsonObject {
-            put("m.intent", kotlinx.serialization.json.JsonPrimitive("m.room"))
-            put("m.type", kotlinx.serialization.json.JsonPrimitive("m.voice"))
-            put("m.name", kotlinx.serialization.json.JsonPrimitive("Voice Call"))
+        // Replicate 1:1 working logic: use sendCallEvent with m.call.invite
+        // We use a dummy SDP to satisfy the parser, but mark it as a group call
+        val content = buildJsonObject {
+            put("call_id", callId)
+            put("version", "1")
+            put("lifetime", 30000L)
+            put("offer", buildJsonObject {
+                put("sdp", "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=GroupCall\r\nt=0 0\r\nm=audio 0 UDP/TLS/RTP/SAVPF 111\r\nc=IN IP4 0.0.0.0")
+                put("type", "offer")
+            })
+            put("org.orbit.group_call", true)
         }
-        try {
-            client.put(url) {
-                header(io.ktor.http.HttpHeaders.Authorization, "Bearer $token")
-                contentType(io.ktor.http.ContentType.Application.Json)
-                setBody(content)
-            }
-        } catch (e: Exception) {
-            println("Failed to start group call: ${e.message}")
-        }
+        
+        sendCallEvent(roomId, "m.call.invite", content)
+            .onSuccess { println("Successfully started group call $callId via 1:1 signaling logic") }
+            .onFailure { println("Failed to start group call: ${it.message}") }
     }
 
     override suspend fun endGroupCall(roomId: String, callId: String) {
-        val token = _accessToken ?: return
-        val url = "$homeserverUrl/_matrix/client/v3/rooms/$roomId/state/org.matrix.msc3401.call/$callId"
-        try {
-            client.put(url) {
-                header(io.ktor.http.HttpHeaders.Authorization, "Bearer $token")
-                contentType(io.ktor.http.ContentType.Application.Json)
-                setBody(kotlinx.serialization.json.buildJsonObject {}) // empty state content removes it
-            }
-        } catch (e: Exception) {
-            println("Failed to end group call: ${e.message}")
+        sendCallEvent(roomId, "m.call.hangup", buildJsonObject { 
+            put("call_id", callId)
+            put("version", "1")
+        })
+    }
+
+    override suspend fun joinGroupCall(roomId: String, callId: String) {
+        // Use m.call.candidates as join signal to bypass PL restrictions
+        val content = buildJsonObject {
+            put("call_id", callId)
+            put("version", "1")
+            put("candidates", buildJsonArray {})
+            put("membership", "join") // Custom field for our app
+            put("org.orbit.group_call", true)
         }
+        
+        sendCallEvent(roomId, "m.call.candidates", content)
+            .onSuccess { println("Successfully joined group call $callId via 1:1 signaling logic") }
+            .onFailure { println("Failed to join group call: ${it.message}") }
+    }
+
+    override suspend fun leaveGroupCall(roomId: String, callId: String) {
+        val content = buildJsonObject {
+            put("call_id", callId)
+            put("version", "1")
+            put("candidates", buildJsonArray {})
+            put("membership", "leave")
+            put("org.orbit.group_call", true)
+        }
+        sendCallEvent(roomId, "m.call.candidates", content)
     }
 
     override fun observeCallEvents(): Flow<CallEvent> = _callEvents.asSharedFlow()
@@ -1594,7 +1629,7 @@ class MatrixOrbitRepository(
                                     }
                                 }
                                 
-                                if (typeStr == "m.call.member") {
+                                if (typeStr == "m.call.member" || realContent["membership"] != null) {
                                     val membership = realContent["membership"]?.jsonPrimitive?.content
                                     val membersFlow = activeCallMembers.getOrPut(roomId) { MutableStateFlow(emptyList()) }
                                     val currentMembers = membersFlow.value.toMutableList()
@@ -1614,7 +1649,8 @@ class MatrixOrbitRepository(
                                 }
                             }
 
-                            if (typeStr == "im.vector.modular.widgets" || typeStr == "m.widget" || typeStr == "org.matrix.msc3401.call") {
+                            if (typeStr == "im.vector.modular.widgets" || typeStr == "m.widget" || typeStr == "org.matrix.msc3401.call" || 
+                                (typeStr == "m.call.invite" && realContent["org.orbit.group_call"]?.jsonPrimitive?.booleanOrNull == true)) {
                                 if (realContent != null) {
                                     val groupFlow = activeGroupCalls[roomId]
                                     if (groupFlow != null) {
@@ -1627,8 +1663,9 @@ class MatrixOrbitRepository(
                                             var url: String? = null
                                             if (realContent["type"]?.jsonPrimitive?.content == "jitsi" || realContent["type"]?.jsonPrimitive?.content == "m.custom") {
                                                 url = realContent["url"]?.jsonPrimitive?.content
-                                            } else if (typeStr == "org.matrix.msc3401.call") {
-                                                url = "matrix-call://$roomId"
+                                            } else if (typeStr == "org.matrix.msc3401.call" || typeStr == "m.call.invite") {
+                                                val cId = realContent["call_id"]?.jsonPrimitive?.content
+                                                url = if (cId != null) "matrix-call://$roomId/$cId" else "matrix-call://$roomId"
                                             }
                                             if (url != null) {
                                                 groupFlow.value = url
@@ -1639,6 +1676,26 @@ class MatrixOrbitRepository(
                                         }
                                     }
                                 }
+                            }
+                            
+                            // Handle participant join/leave via m.call.candidates (our group join signal)
+                            if (typeStr == "m.call.candidates" && realContent["org.orbit.group_call"]?.jsonPrimitive?.booleanOrNull == true) {
+                                val membership = realContent["membership"]?.jsonPrimitive?.content
+                                val membersFlow = activeCallMembers.getOrPut(roomId) { MutableStateFlow(emptyList()) }
+                                val currentMembers = membersFlow.value.toMutableList()
+                                
+                                if (membership == "join") {
+                                    if (currentMembers.none { it.id == sender }) {
+                                        val user = getUserProfile(sender) ?: OrbitUser(
+                                            id = sender, username = sender.split(":").first().removePrefix("@"),
+                                            displayName = sender, avatarColor = hashToColor(sender), status = UserStatus.ONLINE, isBot = false, avatarUrl = null
+                                        )
+                                        currentMembers.add(user)
+                                    }
+                                } else if (membership == "leave") {
+                                    currentMembers.removeAll { it.id == sender }
+                                }
+                                membersFlow.value = currentMembers
                             }
                         }
                         else -> {

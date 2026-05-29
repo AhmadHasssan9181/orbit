@@ -98,10 +98,11 @@ fun ChatScreen(
 ) {
     val windowSize = LocalWindowSizeClass.current
     val callManager = webrtc.LocalCallManager.current
+    val scope = rememberCoroutineScope()
 
     val callState by callManager?.callState?.collectAsState(initial = webrtc.CallState.IDLE) ?: remember { mutableStateOf(webrtc.CallState.IDLE) }
     val isCallActiveInRoom = callManager?.activeRoomId == channel.id && callState != webrtc.CallState.IDLE && callState != webrtc.CallState.ENDED
-    val showVoiceChannelUi = (channel.type == ChannelType.VOICE || isCallActiveInRoom) && windowSize.isExpanded
+    val showVoiceChannelUi = channel.type == ChannelType.VOICE && windowSize.isExpanded
 
     Row(
         modifier = modifier
@@ -125,55 +126,9 @@ fun ChatScreen(
                     modifier = Modifier.weight(1f).fillMaxWidth()
                 )
             } else {
-                // Active Call Banner
-                (activeCall as? repository.CallEvent.Invite)?.let {
-                    Surface(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                        color = Accent.copy(alpha = 0.1f),
-                        shape = RoundedCornerShape(8.dp),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Accent.copy(alpha = 0.3f))
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(OrbitIcons.Call, contentDescription = null, tint = Accent, modifier = Modifier.size(24.dp))
-                                Spacer(Modifier.width(12.dp))
-                                Text(
-                                    "Ongoing Call",
-                                    style = MaterialTheme.typography.titleSmall.copy(color = Text_White, fontWeight = FontWeight.Bold)
-                                )
-                            }
-                            val isMyCall = currentUser?.id == activeCall.senderId
-                            if (isMyCall) {
-                                Button(
-                                    onClick = { callManager?.isMinimized?.value = false },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Accent)
-                                ) {
-                                    Text("Return to Call", color = Color.White)
-                                }
-                            } else {
-                                Button(
-                                    onClick = { callManager?.answerCallInvite(activeCall.roomId, activeCall.callId, activeCall.sdp) },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Accent)
-                                ) {
-                                    Text("Join Call", color = Color.White)
-                                }
-                            }
-                        }
-                    }
-                }
+
                 
-                // Group Call Banner
-                if (activeGroupCallUrl != null) {
-                    GroupCallBanner(
-                        url = activeGroupCallUrl,
-                        roomId = channel.id,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
-                    )
-                }
+
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     MessageList(
                         messages = messages,
@@ -315,8 +270,10 @@ private fun ChatHeader(
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            HeaderIconBtn(OrbitIcons.Call, "Voice Call", onClick = { onVoiceCall?.invoke() })
-            HeaderIconBtn(OrbitIcons.Video, "Video Call", onClick = { onVideoCall?.invoke() })
+            if (directProfile != null) {
+                HeaderIconBtn(OrbitIcons.Call, "Voice Call", onClick = { onVoiceCall?.invoke() })
+                HeaderIconBtn(OrbitIcons.Video, "Video Call", onClick = { onVideoCall?.invoke() })
+            }
             HeaderIconBtn(Icons.Default.Search, "Search")
             HeaderIconBtn(OrbitIcons.Notifications, "Notifications")
             HeaderIconBtn(OrbitIcons.Pin, "Pins")
@@ -2275,7 +2232,7 @@ fun EmojiPicker(onEmojiSelected: (String) -> Unit) {
 
 
 @Composable
-fun GroupCallBanner(url: String, roomId: String, modifier: Modifier = Modifier) {
+fun GroupCallBanner(url: String, roomId: String, onJoinCall: (String) -> Unit, modifier: Modifier = Modifier) {
     val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
     val callManager = webrtc.LocalCallManager.current
     Row(modifier = modifier.background(Accent.copy(alpha = 0.1f), RoundedCornerShape(12.dp)).border(1.dp, Accent.copy(alpha=0.3f), RoundedCornerShape(12.dp)).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -2286,7 +2243,7 @@ fun GroupCallBanner(url: String, roomId: String, modifier: Modifier = Modifier) 
         Button(
             onClick = { 
                 if (url.startsWith("matrix-call://")) {
-                    callManager?.startCall(roomId, true)
+                    onJoinCall(url)
                 } else {
                     uriHandler.openUri(url)
                 }

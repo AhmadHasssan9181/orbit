@@ -64,7 +64,9 @@ fun VoiceChannelScreen(
                                         matrixRepository.startGroupCall(channel.matrixRoomId, newId)
                                         newId
                                     }
-                                    // 2. Join the call
+                                    // 1. Join call on backend (registration)
+                                    matrixRepository.joinGroupCall(channel.matrixRoomId, callId)
+                                    // 2. Start local media
                                     callManager.joinGroupCall(channel.matrixRoomId, callId, true)
                                 }
                             },

@@ -35,6 +35,7 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
     
     private var screenCapturer: ScreenCapturerAndroid? = null
     private var videoSender: RtpSender? = null
+    override var isVirtualBackgroundEnabled: Boolean = false
 
     private var localRenderer: SurfaceViewRenderer? = SurfaceViewRenderer(context).apply {
         init(rootEglBase?.eglBaseContext, null)

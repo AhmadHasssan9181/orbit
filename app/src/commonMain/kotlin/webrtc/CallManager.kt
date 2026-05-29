@@ -36,6 +36,7 @@ class CallManager(
     var isIncomingCall = MutableStateFlow(false)
         private set
     val isVideoCall = MutableStateFlow(false)
+    val isGroupCall = MutableStateFlow(false)
     val isLocalVideoEnabled = MutableStateFlow(false)
     val isLocalAudioEnabled = MutableStateFlow(true)
     val hasRemoteStream = MutableStateFlow(false)
@@ -56,6 +57,7 @@ class CallManager(
     var sendNegotiate: (suspend (roomId: String, callId: String, type: String, sdp: String) -> Unit)? = null
     var sendCandidate: (suspend (roomId: String, callId: String, candidate: IceCandidateModel) -> Unit)? = null
     var sendHangup: (suspend (roomId: String, callId: String) -> Unit)? = null
+    var onLeaveGroupCall: (suspend (roomId: String, callId: String) -> Unit)? = null
 
     private val pendingLocalCandidates = mutableListOf<IceCandidateModel>()
     private var candidatesAllowedForCallId: String? = null
@@ -94,6 +96,7 @@ class CallManager(
         this.callId = callId
         isIncomingCall.value = false
         isVideoCall.value = isVideo
+        isGroupCall.value = true
         isLocalVideoEnabled.value = isVideo
         isLocalAudioEnabled.value = true
         candidatesAllowedForCallId = null
@@ -116,6 +119,7 @@ class CallManager(
         callId = newCallId
         isIncomingCall.value = false
         isVideoCall.value = isVideo
+        isGroupCall.value = false
         isLocalVideoEnabled.value = isVideo
         isLocalAudioEnabled.value = true
         candidatesAllowedForCallId = null
@@ -158,6 +162,7 @@ class CallManager(
         this.callId = incomingCallId
         isIncomingCall.value = true
         isVideoCall.value = sdpHasVideo(sdp)
+        isGroupCall.value = false
         isLocalVideoEnabled.value = false
         isLocalAudioEnabled.value = true
         candidatesAllowedForCallId = null
@@ -178,6 +183,7 @@ class CallManager(
         // Use explicitly passed SDP or fall back to the stored pending invite SDP
         val offerSdp = sdp ?: pendingInviteSdp
         isVideoCall.value = isVideo
+        isGroupCall.value = false
         isLocalVideoEnabled.value = isVideo
         isLocalAudioEnabled.value = true
         _callState.value = CallState.CONNECTING
@@ -222,6 +228,7 @@ class CallManager(
         activeRoomId = roomId
         callId = incomingCallId
         isIncomingCall.value = true
+        isGroupCall.value = false
         answerCall(isVideo = isVideo, sdp = sdp)
     }
 
@@ -290,6 +297,7 @@ class CallManager(
     fun endCall(notifyRemote: Boolean = true) {
         val currentRoom = activeRoomId
         val currentCall = callId
+        val wasGroupCall = isGroupCall.value
 
         _callState.value = CallState.ENDED
         webRtcClient.stopLocalMedia()
@@ -297,7 +305,11 @@ class CallManager(
 
         if (notifyRemote && currentRoom != null && currentCall != null) {
             scope.launch {
-                sendHangup?.invoke(currentRoom, currentCall)
+                if (wasGroupCall) {
+                    onLeaveGroupCall?.invoke(currentRoom, currentCall)
+                } else {
+                    sendHangup?.invoke(currentRoom, currentCall)
+                }
             }
         }
 
@@ -305,6 +317,7 @@ class CallManager(
         activeRoomId = null
         callId = null
         isIncomingCall.value = false
+        isGroupCall.value = false
         _isScreenSharing.value = false
         isVideoCall.value = false
         isLocalVideoEnabled.value = false
