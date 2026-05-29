@@ -149,6 +149,7 @@ fun WebRtcEffects(
         }
 
         callManager.onLeaveGroupCall = { roomId, callId ->
+            repository.endGroupCall(roomId, callId)
             repository.leaveGroupCall(roomId, callId)
         }
 
