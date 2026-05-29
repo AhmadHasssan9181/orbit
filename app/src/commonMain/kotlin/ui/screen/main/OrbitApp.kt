@@ -123,8 +123,15 @@ private val coilHttpClient = HttpClient(CIO) {
     // Dynamic header injection interceptor
     requestPipeline.intercept(io.ktor.client.request.HttpRequestPipeline.Before) {
         repository.CredentialManager.accessToken?.let { token ->
+            val url = context.url.buildString()
             val host = context.url.host
-            if (host.contains("matrix", ignoreCase = true) || host.contains("localhost") || host.contains("127.0.0.1")) {
+            val hsHost = repository.CredentialManager.homeserverUrl
+                ?.removePrefix("https://")?.removePrefix("http://")
+                ?.trimEnd('/')
+            // Attach auth for any Matrix API request (path-based) or matching homeserver host
+            val isMatrixApi = url.contains("/_matrix/")
+            val isHomeserver = hsHost != null && host.contains(hsHost, ignoreCase = true)
+            if (isMatrixApi || isHomeserver) {
                 context.header("Authorization", "Bearer $token")
             }
         }

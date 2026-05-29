@@ -177,7 +177,10 @@ class MatrixContext(val homeserverUrl: String) {
 
     fun convertMxcUrl(mxcUrl: String): String {
         if (mxcUrl.isBlank()) return ""
-        if (mxcUrl.startsWith("upload://")) return mxcUrl
+        // upload:// URIs are Trixnity internal cache references that haven't been
+        // uploaded to the server yet. Return empty so Coil shows nothing gracefully
+        // until the real mxc:// URL arrives via the next sync/timeline refresh.
+        if (mxcUrl.startsWith("upload://")) return ""
 
         val pathParts = if (mxcUrl.startsWith("mxc://")) {
             mxcUrl.removePrefix("mxc://").split("/")
