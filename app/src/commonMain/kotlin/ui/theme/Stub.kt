@@ -2,6 +2,14 @@ package ui.theme
 
 import androidx.compose.ui.graphics.Color
 
+import ui.screen.auth.*
+import ui.screen.settings.*
+import ui.screen.drawer.*
+import ui.screen.server.*
+import ui.screen.call.*
+import ui.screen.media.*
+import ui.screen.main.*
+
 
 data class OverridableColourScheme(
     val primary: Int? = null,

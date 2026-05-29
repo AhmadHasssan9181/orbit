@@ -4,6 +4,14 @@ import androidx.compose.material3.ColorScheme
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 
+import ui.screen.auth.*
+import ui.screen.settings.*
+import ui.screen.drawer.*
+import ui.screen.server.*
+import ui.screen.call.*
+import ui.screen.media.*
+import ui.screen.main.*
+
 
 fun OverridableColourScheme.applyTo(colorScheme: ColorScheme): ColorScheme {
     var newScheme = colorScheme.copy()

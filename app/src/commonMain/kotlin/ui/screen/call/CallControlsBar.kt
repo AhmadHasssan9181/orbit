@@ -25,6 +25,14 @@ import androidx.compose.ui.unit.dp
 import ui.icons.OrbitIcons
 import webrtc.CallManager
 
+import ui.screen.auth.*
+import ui.screen.settings.*
+import ui.screen.drawer.*
+import ui.screen.server.*
+import ui.screen.call.*
+import ui.screen.media.*
+import ui.screen.main.*
+
 @Composable
 fun CallControlsBar(
     callManager: CallManager,
@@ -75,7 +83,7 @@ fun CallControlsBar(
                 Icon(Icons.Default.KeyboardArrowUp, null, tint = Color.White.copy(alpha=0.7f), modifier = Modifier.size(16.dp))
             }
 
-            ui.screen.AudioDeviceMenu(
+            AudioDeviceMenu(
                 callManager = callManager,
                 expanded = showAudioDeviceMenu,
                 onDismiss = { showAudioDeviceMenu = false }

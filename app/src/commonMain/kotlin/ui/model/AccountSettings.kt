@@ -2,6 +2,14 @@ package ui.model
 
 import kotlinx.serialization.Serializable
 
+import ui.screen.auth.*
+import ui.screen.settings.*
+import ui.screen.drawer.*
+import ui.screen.server.*
+import ui.screen.call.*
+import ui.screen.media.*
+import ui.screen.main.*
+
 /**
  * Custom Matrix Account Data schemas used by Orbit to store 
  * user preferences that sync across devices.

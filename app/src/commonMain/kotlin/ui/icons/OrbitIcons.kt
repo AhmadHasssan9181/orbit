@@ -8,6 +8,14 @@ import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.graphics.vector.group
 import androidx.compose.ui.unit.dp
 
+import ui.screen.auth.*
+import ui.screen.settings.*
+import ui.screen.drawer.*
+import ui.screen.server.*
+import ui.screen.call.*
+import ui.screen.media.*
+import ui.screen.main.*
+
 object OrbitIcons {
     private var _textChannel: ImageVector? = null
     val TextChannel: ImageVector

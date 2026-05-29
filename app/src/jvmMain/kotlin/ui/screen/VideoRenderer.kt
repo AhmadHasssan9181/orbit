@@ -1,4 +1,4 @@
-package ui.screen
+package ui.screen.call
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box

@@ -20,6 +20,14 @@ import ui.theme.LocalActiveTheme
 import ui.theme.LocalIsLiteMode
 import ui.theme.Theme
 
+import ui.screen.auth.*
+import ui.screen.settings.*
+import ui.screen.drawer.*
+import ui.screen.server.*
+import ui.screen.call.*
+import ui.screen.media.*
+import ui.screen.main.*
+
 enum class OrbitDoodleWallpaper(
     val id: String,
     val label: String,
