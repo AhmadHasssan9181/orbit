@@ -19,7 +19,7 @@ interface WebRtcClient {
     fun stopScreenShare()
     fun createOffer(onSuccess: (SessionDescriptionModel) -> Unit, onError: (String) -> Unit)
     fun createAnswer(onSuccess: (SessionDescriptionModel) -> Unit, onError: (String) -> Unit)
-    fun setRemoteDescription(sessionDescription: SessionDescriptionModel)
+    fun setRemoteDescription(sessionDescription: SessionDescriptionModel, onSuccess: () -> Unit = {}, onError: (String) -> Unit = {})
     fun addIceCandidate(candidate: IceCandidateModel)
     fun endCall()
     

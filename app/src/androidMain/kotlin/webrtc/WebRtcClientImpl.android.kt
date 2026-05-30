@@ -303,15 +303,20 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
         }, MediaConstraints())
     }
 
-    override fun setRemoteDescription(sessionDescription: SessionDescriptionModel) {
+    override fun setRemoteDescription(sessionDescription: SessionDescriptionModel, onSuccess: () -> Unit, onError: (String) -> Unit) {
         val type = SessionDescription.Type.fromCanonicalForm(sessionDescription.type)
         val sdp = SessionDescription(type, sessionDescription.sdp)
-        peerConnection?.setRemoteDescription(object : SdpObserver {
+        val observer = object : SdpObserver {
             override fun onCreateSuccess(p0: SessionDescription?) {}
-            override fun onSetSuccess() {}
+            override fun onSetSuccess() { onSuccess() }
             override fun onCreateFailure(p0: String?) {}
-            override fun onSetFailure(p0: String?) {}
-        }, sdp)
+            override fun onSetFailure(p0: String?) { onError(p0 ?: "Unknown error") }
+        }
+        if (peerConnection != null) {
+            peerConnection?.setRemoteDescription(observer, sdp)
+        } else {
+            onError("PeerConnection is null")
+        }
     }
 
     override fun addIceCandidate(candidate: IceCandidateModel) {

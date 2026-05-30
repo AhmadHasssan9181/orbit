@@ -528,16 +528,22 @@ class JvmWebRtcClient : WebRtcClient {
         }
     }
 
-    override fun setRemoteDescription(sessionDescription: SessionDescriptionModel) {
+    override fun setRemoteDescription(sessionDescription: SessionDescriptionModel, onSuccess: () -> Unit, onError: (String) -> Unit) {
         try {
             val type = RTCSdpType.valueOf(sessionDescription.type.uppercase())
             val sdp = RTCSessionDescription(type, sessionDescription.sdp)
-            peerConnection?.setRemoteDescription(sdp, object : SetSessionDescriptionObserver {
-                override fun onSuccess() {}
-                override fun onFailure(error: String) {}
-            })
+            val observer = object : SetSessionDescriptionObserver {
+                override fun onSuccess() { onSuccess() }
+                override fun onFailure(error: String) { onError(error) }
+            }
+            if (peerConnection != null) {
+                peerConnection?.setRemoteDescription(sdp, observer)
+            } else {
+                onError("PeerConnection is null")
+            }
         } catch (e: Exception) {
             e.printStackTrace()
+            onError(e.message ?: "Unknown error")
         }
     }
 

@@ -122,14 +122,12 @@ import ui.screen.call.*
 import ui.screen.media.*
 import ui.screen.main.*
 
-
-
 class MatrixSpacesRepository(private val context: MatrixContext) : OrbitSpacesRepository {
 
     override suspend fun getSpaces(): List<OrbitServer> {
         val allRooms = context.getAllRoomsSnapshot()
         val servers = mutableListOf<OrbitServer>()
-        val dms = allRooms.filter { it.isDirect }
+        val dms = allRooms.filter { context.isDMRoom(it) }
 
         val trixnity = context.trixnityClient
         val spaces = allRooms.filter { room ->
@@ -154,7 +152,7 @@ class MatrixSpacesRepository(private val context: MatrixContext) : OrbitSpacesRe
             }
         }
         
-        val flatRooms = allRooms.filter { !it.isDirect && !spaces.contains(it) && !allChildren.contains(it.roomId.full) }
+        val flatRooms = allRooms.filter { !context.isDMRoom(it) && !spaces.contains(it) && !allChildren.contains(it.roomId.full) }
 
         if (dms.isNotEmpty()) {
             servers.add(OrbitServer(
@@ -223,4 +221,3 @@ class MatrixSpacesRepository(private val context: MatrixContext) : OrbitSpacesRe
         return context.roomListFlow.asSharedFlow()
     }
 }
-

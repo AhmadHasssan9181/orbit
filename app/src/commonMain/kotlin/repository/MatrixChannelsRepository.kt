@@ -123,14 +123,12 @@ import ui.screen.call.*
 import ui.screen.media.*
 import ui.screen.main.*
 
-
-
 class MatrixChannelsRepository(private val context: MatrixContext) : OrbitChannelsRepository {
 
     override suspend fun getChannelsForSpace(spaceId: String): List<OrbitChannel> {
         val allRooms = context.getAllRoomsSnapshot()
         if (spaceId == "dm") {
-            return allRooms.filter { it.isDirect }.map { room ->
+            return allRooms.filter { context.isDMRoom(it) }.map { room ->
                 val otherMember = context.directInviteeForRoom(room.roomId) ?: ""
                 val profile = context.fetchUserProfile(otherMember)
                 val explicitName = room.name?.explicitName ?: profile?.displayName ?: otherMember.takeLast(8)
@@ -158,7 +156,7 @@ class MatrixChannelsRepository(private val context: MatrixContext) : OrbitChanne
 
         val channels = mutableListOf<OrbitChannel>()
         for (room in allRooms) {
-            if (room.isDirect) continue
+            if (context.isDMRoom(room)) continue
 
             val isSpace = room.createEventContent?.type == CreateEventContent.RoomType.Space ||
                           room.createEventContent?.type?.toString()?.contains("space", ignoreCase=true) == true ||
@@ -300,4 +298,3 @@ class MatrixChannelsRepository(private val context: MatrixContext) : OrbitChanne
         }
     }
 }
-
