@@ -573,6 +573,8 @@ class JvmWebRtcClient : WebRtcClient {
             remoteVideoTrack = null
             remoteAudioTrack = null
             localVideoSender = null
+            
+            WindowsAudioDucker.unduckVolumes()
         } catch (e: Exception) {
             e.printStackTrace()
         }
