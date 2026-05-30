@@ -31,6 +31,9 @@ class IMMDevice(pvInstance: Pointer) : Unknown(pvInstance) {
 }
 
 class IAudioSessionManager2(pvInstance: Pointer) : Unknown(pvInstance) {
+    fun GetAudioSessionControl(audioSessionGuid: Pointer?, streamFlags: Int, ppSessionControl: PointerByReference): WinNT.HRESULT {
+        return _invokeNativeObject(3, arrayOf(this.pointer, audioSessionGuid, streamFlags, ppSessionControl), WinNT.HRESULT::class.java) as WinNT.HRESULT
+    }
     fun GetSessionEnumerator(ppSessionEnum: PointerByReference): WinNT.HRESULT {
         return _invokeNativeObject(5, arrayOf(this.pointer, ppSessionEnum), WinNT.HRESULT::class.java) as WinNT.HRESULT
     }
@@ -76,18 +79,42 @@ object WindowsAudioDucker {
         if (isWindowsDuckingDisabled) return
         try {
             Ole32.INSTANCE.CoInitializeEx(null, Ole32.COINIT_MULTITHREADED)
+            val currentPid = com.sun.jna.platform.win32.Kernel32.INSTANCE.GetCurrentProcessId()
             val ppEnumerator = PointerByReference()
             if (COMUtils.SUCCEEDED(Ole32.INSTANCE.CoCreateInstance(CLSID_MMDeviceEnumerator, null, com.sun.jna.platform.win32.WTypes.CLSCTX_INPROC_SERVER, IID_IMMDeviceEnumerator, ppEnumerator))) {
                 val enumerator = IMMDeviceEnumerator(ppEnumerator.value)
-                val ppDevice = PointerByReference()
-                if (COMUtils.SUCCEEDED(enumerator.GetDefaultAudioEndpoint(0 /* eRender */, 2 /* eCommunications */, ppDevice))) {
-                    val device = IMMDevice(ppDevice.value)
-                    val ppSessionManager = PointerByReference()
-                    if (COMUtils.SUCCEEDED(device.Activate(IID_IAudioSessionManager2, com.sun.jna.platform.win32.WTypes.CLSCTX_INPROC_SERVER, null, ppSessionManager))) {
-                        println("DEBUG: [Ducker] Found SessionManager2")
+                
+                // Helper to apply ducking preference to a specific endpoint
+                fun applyToEndpoint(dataFlow: Int, role: Int) {
+                    val ppDevice = PointerByReference()
+                    if (COMUtils.SUCCEEDED(enumerator.GetDefaultAudioEndpoint(dataFlow, role, ppDevice))) {
+                        val device = IMMDevice(ppDevice.value)
+                        val ppSessionManager = PointerByReference()
+                        if (COMUtils.SUCCEEDED(device.Activate(IID_IAudioSessionManager2, com.sun.jna.platform.win32.WTypes.CLSCTX_INPROC_SERVER, null, ppSessionManager))) {
+                            val sessionManager = IAudioSessionManager2(ppSessionManager.value)
+                            
+                            val ppSessionControl = PointerByReference()
+                            if (COMUtils.SUCCEEDED(sessionManager.GetAudioSessionControl(null, 0, ppSessionControl))) {
+                                val control = Unknown(ppSessionControl.value)
+                                val ppControl2 = PointerByReference()
+                                if (COMUtils.SUCCEEDED(control.QueryInterface(IID_IAudioSessionControl2, ppControl2))) {
+                                    val control2 = IAudioSessionControl2(ppControl2.value)
+                                    control2.SetDuckingPreference(true)
+                                    println("DEBUG: [Ducker] SetDuckingPreference(true) called on process default audio session (Flow: $dataFlow, Role: $role)")
+                                    control2.Release()
+                                }
+                                control.Release()
+                            }
+                            sessionManager.Release()
+                        }
+                        device.Release()
                     }
-                    device.Release()
                 }
+                
+                applyToEndpoint(0, 0) // eRender, eConsole
+                applyToEndpoint(0, 2) // eRender, eCommunications
+                applyToEndpoint(1, 2) // eCapture, eCommunications
+                
                 enumerator.Release()
             }
             isWindowsDuckingDisabled = true
