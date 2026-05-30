@@ -365,7 +365,6 @@ class JvmWebRtcClient : WebRtcClient {
         localAudioSender = null
         runCatching { localAudioTrack?.dispose() }
         localAudioTrack = null
-        runCatching { localAudioSource?.dispose() }
         localAudioSource = null
     }
 
@@ -623,7 +622,6 @@ class JvmWebRtcClient : WebRtcClient {
             
             // Clean up old track AND source
             kotlin.runCatching { localAudioTrack?.dispose() }
-            kotlin.runCatching { localAudioSource?.dispose() }
             
             localAudioSource = newAudioSource
             localAudioTrack = newAudioTrack
@@ -708,7 +706,6 @@ class JvmWebRtcClient : WebRtcClient {
             
             // Clean up old track AND source
             kotlin.runCatching { localAudioTrack?.dispose() }
-            kotlin.runCatching { localAudioSource?.dispose() }
             
             localAudioSource = newAudioSource
             localAudioTrack = newAudioTrack
