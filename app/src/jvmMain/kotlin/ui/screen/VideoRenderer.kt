@@ -37,7 +37,8 @@ actual fun VideoRenderer(renderer: Any?, modifier: Modifier) {
                         modifier = Modifier
                             .fillMaxSize()
                             .graphicsLayer {
-                                scaleX = if (renderer.mirror) -1f else 1f
+                                scaleX = if (renderer.mirror && !renderer.isScreenShare) -1f else 1f
+                                scaleY = if (renderer.isScreenShare) -1f else 1f
                             }
                     )
                 } else {

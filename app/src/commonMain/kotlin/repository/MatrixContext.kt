@@ -161,6 +161,7 @@ class MatrixContext(val homeserverUrl: String) {
     val activeGroupCalls = mutableMapOf<String, MutableStateFlow<String?>>()
     val activeCallMembers = mutableMapOf<String, MutableStateFlow<List<OrbitUser>>>()
     val accountDataCache = mutableMapOf<String, MutableStateFlow<Any?>>()
+    private val joinedMemberCountCache = mutableMapOf<String, Int>()
 
     fun fullUrl(path: String, v1: Boolean = false): String {
         val prefix = if (v1) "/_matrix/client/v1" else "/_matrix/client/v3"
@@ -257,6 +258,42 @@ class MatrixContext(val homeserverUrl: String) {
                 .filterNot { it in ownUserIds }
             joined.singleOrNull()
         }.getOrNull()
+    }
+
+    suspend fun isDMRoom(room: de.connect2x.trixnity.client.store.Room): Boolean {
+        if (room.isDirect) return true
+        
+        val typeStr = room.createEventContent?.type?.toString()
+        val isSpace = room.createEventContent?.type == CreateEventContent.RoomType.Space || typeStr?.contains("space", ignoreCase=true) == true
+        if (isSpace) return false
+
+        // Heuristic: No explicit name, but has heroes (other participants)
+        val hasHeroes = !room.name?.heroes.isNullOrEmpty()
+        val noExplicitName = room.name?.explicitName.isNullOrBlank()
+        
+        if (noExplicitName && hasHeroes) {
+            return true
+        }
+
+        // Another heuristic: If it has exactly 2 members
+        val trixnity = trixnityClient
+        if (trixnity != null) {
+            try {
+                // Check cache first to avoid UI lag
+                val cachedCount = joinedMemberCountCache[room.roomId.full]
+                if (cachedCount != null) {
+                    if (cachedCount == 2 && noExplicitName) return true
+                } else {
+                    val joined = trixnity.api.room.getJoinedMembers(room.roomId).getOrNull()?.joined?.size ?: 0
+                    if (joined > 0) {
+                        joinedMemberCountCache[room.roomId.full] = joined
+                    }
+                    if (joined == 2 && noExplicitName) return true
+                }
+            } catch (e: Exception) {}
+        }
+
+        return false
     }
 }
 

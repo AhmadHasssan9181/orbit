@@ -4,6 +4,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.runtime.staticCompositionLocalOf
 import repository.TurnServer
 
@@ -197,28 +199,51 @@ class CallManager(
             // Always initialize and set remote description here to avoid race with handleCallInvite's coroutine
             if (offerSdp != null) {
                 webRtcClient.initialize(iceServers)
-                webRtcClient.setRemoteDescription(SessionDescriptionModel("offer", offerSdp))
-                println("DEBUG: [CallMgr] Remote description set, creating answer...")
+                webRtcClient.setRemoteDescription(
+                    SessionDescriptionModel("offer", offerSdp),
+                    onSuccess = {
+                        println("DEBUG: [CallMgr] Remote description set, creating answer...")
+                        webRtcClient.startLocalMedia(isVideo)
+                        webRtcClient.createAnswer(
+                            onSuccess = { sessionDescription ->
+                                scope.launch {
+                                    sendAnswer?.invoke(currentRoom, currentCall, sessionDescription.sdp)
+                                    allowLocalCandidatesAndFlush(currentRoom, currentCall)
+                                    if (callId == currentCall) {
+                                        _callState.value = CallState.CONNECTED
+                                    }
+                                }
+                            },
+                            onError = { err ->
+                                println("ERROR: [WebRTC] createAnswer failed: $err")
+                                endCall()
+                            }
+                        )
+                    },
+                    onError = { err ->
+                        println("ERROR: [WebRTC] setRemoteDescription failed: $err")
+                        endCall()
+                    }
+                )
             } else {
                 println("ERROR: [CallMgr] answerCall called with no offer SDP! createAnswer will fail.")
-            }
-
-            webRtcClient.startLocalMedia(isVideo)
-            webRtcClient.createAnswer(
-                onSuccess = { sessionDescription ->
-                    scope.launch {
-                        sendAnswer?.invoke(currentRoom, currentCall, sessionDescription.sdp)
-                        allowLocalCandidatesAndFlush(currentRoom, currentCall)
-                        if (callId == currentCall) {
-                            _callState.value = CallState.CONNECTED
+                webRtcClient.startLocalMedia(isVideo)
+                webRtcClient.createAnswer(
+                    onSuccess = { sessionDescription ->
+                        scope.launch {
+                            sendAnswer?.invoke(currentRoom, currentCall, sessionDescription.sdp)
+                            allowLocalCandidatesAndFlush(currentRoom, currentCall)
+                            if (callId == currentCall) {
+                                _callState.value = CallState.CONNECTED
+                            }
                         }
+                    },
+                    onError = { err ->
+                        println("ERROR: [WebRTC] createAnswer failed: $err")
+                        endCall()
                     }
-                },
-                onError = { err ->
-                    println("ERROR: [WebRTC] createAnswer failed: $err")
-                    endCall()
-                }
-            )
+                )
+            }
         }
     }
 
@@ -234,8 +259,12 @@ class CallManager(
 
     fun handleCallAnswer(sdp: String) {
         println("DEBUG: [CallMgr] Received answer, setting remote description and going CONNECTED")
-        webRtcClient.setRemoteDescription(SessionDescriptionModel("answer", sdp))
-        _callState.value = CallState.CONNECTED
+        webRtcClient.setRemoteDescription(
+            SessionDescriptionModel("answer", sdp),
+            onSuccess = {
+                _callState.value = CallState.CONNECTED
+            }
+        )
     }
 
     fun handleCallNegotiate(roomId: String, incomingCallId: String, type: String, sdp: String) {
@@ -247,22 +276,33 @@ class CallManager(
                     isVideoCall.value = true
                 }
                 scope.launch {
-                    webRtcClient.setRemoteDescription(SessionDescriptionModel("offer", sdp))
-                    webRtcClient.createAnswer(
-                        onSuccess = { sessionDescription ->
-                            scope.launch {
-                                sendNegotiate?.invoke(roomId, incomingCallId, "answer", sessionDescription.sdp)
-                            }
+                    webRtcClient.setRemoteDescription(
+                        SessionDescriptionModel("offer", sdp),
+                        onSuccess = {
+                            webRtcClient.createAnswer(
+                                onSuccess = { sessionDescription ->
+                                    scope.launch {
+                                        sendNegotiate?.invoke(roomId, incomingCallId, "answer", sessionDescription.sdp)
+                                    }
+                                },
+                                onError = {
+                                    println("ERROR: [WebRTC] Failed to answer negotiate offer: $it")
+                                }
+                            )
                         },
                         onError = {
-                            println("ERROR: [WebRTC] Failed to answer negotiate offer: $it")
+                            println("ERROR: [WebRTC] Failed to set remote description for negotiate: $it")
                         }
                     )
                 }
             }
             "answer" -> {
-                webRtcClient.setRemoteDescription(SessionDescriptionModel("answer", sdp))
-                _callState.value = CallState.CONNECTED
+                webRtcClient.setRemoteDescription(
+                    SessionDescriptionModel("answer", sdp),
+                    onSuccess = {
+                        _callState.value = CallState.CONNECTED
+                    }
+                )
             }
         }
     }
@@ -376,17 +416,19 @@ class CallManager(
         webRtcClient.setVideoCaptureDevice(deviceName)
     }
 
-    fun getDesktopSources() = webRtcClient.getDesktopSources()
+    suspend fun getDesktopSources(): List<DesktopSourceModel> = withContext(Dispatchers.Default) {
+        webRtcClient.getDesktopSources()
+    }
 
     fun setStreamAudioEnabled(enabled: Boolean) {
         webRtcClient.setStreamAudioEnabled(enabled)
     }
 
     fun startScreenShare(data: Any? = null) {
-        webRtcClient.startScreenShare(data)
-        // Screen sharing often changes resolution/streams, trigger re-negotiation
-        if (_callState.value == CallState.CONNECTED) {
-            scope.launch {
+        scope.launch(Dispatchers.Default) {
+            webRtcClient.startScreenShare(data)
+            // Screen sharing often changes resolution/streams, trigger re-negotiation
+            if (_callState.value == CallState.CONNECTED) {
                 webRtcClient.createOffer(
                     onSuccess = { sessionDescription ->
                         scope.launch {
@@ -404,10 +446,10 @@ class CallManager(
     }
 
     fun stopScreenShare() {
-        webRtcClient.stopScreenShare()
-        // Trigger re-negotiation to go back to camera
-        if (_callState.value == CallState.CONNECTED) {
-            scope.launch {
+        scope.launch(Dispatchers.Default) {
+            webRtcClient.stopScreenShare()
+            // Trigger re-negotiation to go back to camera
+            if (_callState.value == CallState.CONNECTED) {
                 webRtcClient.createOffer(
                     onSuccess = { sessionDescription ->
                         scope.launch {
