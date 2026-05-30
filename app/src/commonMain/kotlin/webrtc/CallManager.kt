@@ -45,6 +45,7 @@ class CallManager(
 
     private val _isScreenSharing = MutableStateFlow(false)
     val isScreenSharing: StateFlow<Boolean> = _isScreenSharing
+    val isRemoteScreenSharing: StateFlow<Boolean> = webRtcClient.isRemoteScreenSharing
 
     val duckingStrength = MutableStateFlow(0.8f)
     val noiseSuppression = MutableStateFlow(true)
@@ -158,7 +159,10 @@ class CallManager(
             return
         }
         
-        if (_callState.value != CallState.IDLE) return // Already in a different call
+        if (_callState.value != CallState.IDLE) {
+            println("DEBUG: [WebRTC] Ignoring invite for $incomingCallId because already in call $callId")
+            return // Already in a different call
+        }
         
         this.activeRoomId = roomId
         this.callId = incomingCallId
@@ -184,6 +188,7 @@ class CallManager(
         val currentCall = callId ?: return
         // Use explicitly passed SDP or fall back to the stored pending invite SDP
         val offerSdp = sdp ?: pendingInviteSdp
+        
         isVideoCall.value = isVideo
         isGroupCall.value = false
         isLocalVideoEnabled.value = isVideo
@@ -268,6 +273,7 @@ class CallManager(
     }
 
     fun handleCallNegotiate(roomId: String, incomingCallId: String, type: String, sdp: String) {
+        println("DEBUG: [CallMgr] Received negotiate $type for callId=$incomingCallId")
         if (callId != incomingCallId || _callState.value == CallState.IDLE) return
 
         when (type) {

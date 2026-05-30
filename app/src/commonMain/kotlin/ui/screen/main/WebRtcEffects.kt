@@ -26,6 +26,9 @@ fun WebRtcEffects(
     val cameraDevice by settingsManager.cameraDevice.collectAsState("Default")
 
 
+    LaunchedEffect(orbitZeroEnabled) {
+        webRtcClient.setOrbitZeroEnabled(orbitZeroEnabled)
+    }
     LaunchedEffect(attenuation) {
         webRtcClient.setAttenuationStrength(attenuation / 100f)
     }
@@ -60,6 +63,7 @@ fun WebRtcEffects(
         // Listen for signaling events
         scope.launch {
             repository.observeCallEvents().collect { event ->
+                println("DEBUG: [WebRTC] observeCallEvents received: ${event::class.simpleName} (callId=${event.callId})")
                 val ownPartyId = CredentialManager.deviceId
                 if (ownPartyId != null && event.partyId == ownPartyId) return@collect
                 
@@ -100,7 +104,7 @@ fun WebRtcEffects(
                     put("type", "offer")
                     put("sdp", sdp)
                 })
-                put("version", 0)
+                put("version", "1")
 
                 put("lifetime", 30000)
             }).onFailure { error ->
@@ -115,7 +119,7 @@ fun WebRtcEffects(
                     put("type", "answer")
                     put("sdp", sdp)
                 })
-                put("version", 0)
+                put("version", "1")
 
             }).onFailure { error ->
                 println("DEBUG: [WebRTC] Failed to send call answer: ${error.message}")
@@ -129,7 +133,7 @@ fun WebRtcEffects(
                     put("type", type)
                     put("sdp", sdp)
                 })
-                put("version", 0)
+                put("version", "1")
 
                 put("lifetime", 30000)
             }).onFailure { error ->
@@ -140,7 +144,7 @@ fun WebRtcEffects(
         callManager.sendHangup = { roomId, callId ->
             repository.sendCallEvent(roomId, "m.call.hangup", buildJsonObject {
                 put("call_id", callId)
-                put("version", 0)
+                put("version", "1")
 
             }).onFailure { error ->
                 println("DEBUG: [WebRTC] Failed to send call hangup: ${error.message}")

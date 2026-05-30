@@ -34,6 +34,8 @@ import dev.onvoid.webrtc.media.video.desktop.ScreenCapturer
 import dev.onvoid.webrtc.media.video.VideoDesktopSource
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import repository.TurnServer
 import kotlin.math.abs
 
@@ -47,9 +49,6 @@ class JvmWebRtcClient : WebRtcClient {
     private val _onStreamAdded = MutableSharedFlow<Boolean>(extraBufferCapacity = 10)
     override val onStreamAdded: SharedFlow<Boolean> = _onStreamAdded
 
-    private val _isScreenSharing = MutableSharedFlow<Boolean>(extraBufferCapacity = 1)
-    override val isScreenSharing: SharedFlow<Boolean> = _isScreenSharing
-
     private var factory: PeerConnectionFactory? = null
     private var audioDeviceModule: OrbitAudioDeviceModule? = null
     private var peerConnection: RTCPeerConnection? = null
@@ -57,7 +56,7 @@ class JvmWebRtcClient : WebRtcClient {
     private var localAudioSource: dev.onvoid.webrtc.media.audio.AudioTrackSource? = null
     private var localAudioTrack: AudioTrack? = null
     
-    private var attenuationStrength = 0.8f
+    private var attenuationStrength = 0.0f
     private var localAudioSender: RTCRtpSender? = null
     
     private var cameraVideoTrack: VideoTrack? = null
@@ -68,16 +67,24 @@ class JvmWebRtcClient : WebRtcClient {
     private var isVideoCaptureRunning = false
 
     private var remoteVideoTrack: VideoTrack? = null
+    private var remoteScreenVideoTrack: VideoTrack? = null
     private var remoteAudioTrack: AudioTrack? = null
     private var screenSource: VideoDesktopSource? = null
     private var screenVideoTrack: VideoTrack? = null
 
     private var selectedAudioInput: String = "Default"
+    private val _isScreenSharing = MutableStateFlow(false)
+    override val isScreenSharing: StateFlow<Boolean> = _isScreenSharing
+
+    private val _isRemoteScreenSharing = MutableStateFlow(false)
+    override val isRemoteScreenSharing: StateFlow<Boolean> = _isRemoteScreenSharing
+
     private var selectedAudioOutput: String = "Default"
     private var selectedCamera: String = "Default"
 
     private var localRenderer: DesktopVideoRenderer? = DesktopVideoRenderer(mirror = true)
     private var remoteRenderer: DesktopVideoRenderer? = DesktopVideoRenderer()
+    private var remoteScreenRenderer: DesktopVideoRenderer? = DesktopVideoRenderer()
 
     override fun initialize(iceServers: List<TurnServer>) {
         try {
@@ -289,17 +296,42 @@ class JvmWebRtcClient : WebRtcClient {
         }
     }
 
+    private val activeRemoteVideoTracks = mutableSetOf<String>()
+
     private fun attachRemoteTrack(track: MediaStreamTrack?) {
         when (track) {
             is AudioTrack -> attachRemoteAudioTrack(track)
             is VideoTrack -> {
+                if (activeRemoteVideoTracks.contains(track.getId())) {
+                    println("DEBUG: [WebRTC] Ignoring duplicate attachRemoteTrack for VideoTrack ID: ${track.getId()}")
+                    return
+                }
+                activeRemoteVideoTracks.add(track.getId())
+
                 println("DEBUG: [WebRTC] Attaching VideoTrack sink! track ID: ${track.getId()}")
                 _onStreamAdded.tryEmit(true)
-                remoteVideoTrack = track
-                remoteRenderer?.let {
-                    it.isScreenShare = track.getId().contains("screen")
-                    track.addSink(it)
-                    println("DEBUG: [WebRTC] Sink successfully added to VideoTrack.")
+                
+                // Element and other Matrix clients often don't label screen share track IDs with "screen".
+                // If we already have a remote camera track, assume any subsequent video track is a screen share.
+                val isScreen = track.getId().contains("screen", ignoreCase = true) || 
+                               track.getId().contains("desktop", ignoreCase = true) ||
+                               remoteVideoTrack != null
+                
+                if (isScreen) {
+                    remoteScreenVideoTrack = track
+                    _isRemoteScreenSharing.value = true
+                    remoteScreenRenderer?.let {
+                        it.isScreenShare = true
+                        track.addSink(it)
+                        println("DEBUG: [WebRTC] Sink successfully added to Remote ScreenShare VideoTrack. ID: ${track.getId()}")
+                    }
+                } else {
+                    remoteVideoTrack = track
+                    remoteRenderer?.let {
+                        it.isScreenShare = false
+                        track.addSink(it)
+                        println("DEBUG: [WebRTC] Sink successfully added to Remote Camera VideoTrack. ID: ${track.getId()}")
+                    }
                 }
             }
         }
@@ -561,6 +593,7 @@ class JvmWebRtcClient : WebRtcClient {
             cameraVideoTrack?.removeSink(localRenderer)
             screenVideoTrack?.removeSink(localRenderer)
             remoteVideoTrack?.removeSink(remoteRenderer)
+            remoteScreenVideoTrack?.removeSink(remoteScreenRenderer)
 
             peerConnection?.close()
             peerConnection = null
@@ -571,6 +604,8 @@ class JvmWebRtcClient : WebRtcClient {
             cameraVideoTrack = null
             localAudioTrack = null
             remoteVideoTrack = null
+            remoteScreenVideoTrack = null
+            _isRemoteScreenSharing.value = false
             remoteAudioTrack = null
             localVideoSender = null
             
@@ -580,8 +615,13 @@ class JvmWebRtcClient : WebRtcClient {
         }
     }
 
+    override fun setOrbitZeroEnabled(enabled: Boolean) {
+        audioDeviceModule?.setOrbitZeroEnabled(enabled)
+    }
+
     override fun getLocalVideoRenderer(): Any? = localRenderer
     override fun getRemoteVideoRenderer(): Any? = remoteRenderer
+    override fun getRemoteScreenRenderer(): Any? = if (remoteScreenVideoTrack != null) remoteScreenRenderer else null
 
     override fun setStreamAudioEnabled(enabled: Boolean) {
         audioDeviceModule?.setSystemAudioShareEnabled(enabled)
