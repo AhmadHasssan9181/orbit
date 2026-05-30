@@ -62,10 +62,9 @@ fun WebRtcEffects(
             repository.observeCallEvents().collect { event ->
                 val ownPartyId = CredentialManager.deviceId
                 if (ownPartyId != null && event.partyId == ownPartyId) return@collect
-                if (event.partyId == null) {
-                    val user = repository.getCurrentUser()
-                    if (user != null && event.senderId == user.id) return@collect
-                }
+                
+                val user = repository.getCurrentUser()
+                if (user != null && event.senderId == user.id) return@collect
 
                 when (event) {
                     is repository.CallEvent.Invite -> callManager.handleCallInvite(event.roomId, event.callId, event.sdp)
