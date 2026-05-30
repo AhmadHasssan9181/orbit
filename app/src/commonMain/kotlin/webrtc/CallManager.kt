@@ -202,23 +202,25 @@ class CallManager(
                 webRtcClient.setRemoteDescription(
                     SessionDescriptionModel("offer", offerSdp),
                     onSuccess = {
-                        println("DEBUG: [CallMgr] Remote description set, creating answer...")
-                        webRtcClient.startLocalMedia(isVideo)
-                        webRtcClient.createAnswer(
-                            onSuccess = { sessionDescription ->
-                                scope.launch {
-                                    sendAnswer?.invoke(currentRoom, currentCall, sessionDescription.sdp)
-                                    allowLocalCandidatesAndFlush(currentRoom, currentCall)
-                                    if (callId == currentCall) {
-                                        _callState.value = CallState.CONNECTED
+                        scope.launch {
+                            println("DEBUG: [CallMgr] Remote description set, creating answer...")
+                            webRtcClient.startLocalMedia(isVideo)
+                            webRtcClient.createAnswer(
+                                onSuccess = { sessionDescription ->
+                                    scope.launch {
+                                        sendAnswer?.invoke(currentRoom, currentCall, sessionDescription.sdp)
+                                        allowLocalCandidatesAndFlush(currentRoom, currentCall)
+                                        if (callId == currentCall) {
+                                            _callState.value = CallState.CONNECTED
+                                        }
                                     }
+                                },
+                                onError = { err ->
+                                    println("ERROR: [WebRTC] createAnswer failed: $err")
+                                    endCall()
                                 }
-                            },
-                            onError = { err ->
-                                println("ERROR: [WebRTC] createAnswer failed: $err")
-                                endCall()
-                            }
-                        )
+                            )
+                        }
                     },
                     onError = { err ->
                         println("ERROR: [WebRTC] setRemoteDescription failed: $err")
@@ -279,16 +281,18 @@ class CallManager(
                     webRtcClient.setRemoteDescription(
                         SessionDescriptionModel("offer", sdp),
                         onSuccess = {
-                            webRtcClient.createAnswer(
-                                onSuccess = { sessionDescription ->
-                                    scope.launch {
-                                        sendNegotiate?.invoke(roomId, incomingCallId, "answer", sessionDescription.sdp)
+                            scope.launch {
+                                webRtcClient.createAnswer(
+                                    onSuccess = { sessionDescription ->
+                                        scope.launch {
+                                            sendNegotiate?.invoke(roomId, incomingCallId, "answer", sessionDescription.sdp)
+                                        }
+                                    },
+                                    onError = {
+                                        println("ERROR: [WebRTC] Failed to answer negotiate offer: $it")
                                     }
-                                },
-                                onError = {
-                                    println("ERROR: [WebRTC] Failed to answer negotiate offer: $it")
-                                }
-                            )
+                                )
+                            }
                         },
                         onError = {
                             println("ERROR: [WebRTC] Failed to set remote description for negotiate: $it")
