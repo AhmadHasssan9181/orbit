@@ -1,6 +1,7 @@
 package webrtc
 
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import repository.TurnServer
 
 data class IceCandidateModel(val sdp: String, val sdpMid: String, val sdpMLineIndex: Int)
@@ -9,8 +10,9 @@ data class SessionDescriptionModel(val type: String, val sdp: String)
 interface WebRtcClient {
     val onIceCandidate: SharedFlow<IceCandidateModel>
     val onRemoteDescription: SharedFlow<SessionDescriptionModel>
+    val isScreenSharing: StateFlow<Boolean>
+    val isRemoteScreenSharing: StateFlow<Boolean>
     val onStreamAdded: SharedFlow<Boolean>
-    val isScreenSharing: SharedFlow<Boolean>
     
     fun initialize(iceServers: List<TurnServer> = emptyList())
     fun startLocalMedia(isVideoEnabled: Boolean)
@@ -25,12 +27,14 @@ interface WebRtcClient {
     
     fun getLocalVideoRenderer(): Any?
     fun getRemoteVideoRenderer(): Any?
+    fun getRemoteScreenRenderer(): Any?
     
     fun toggleMute(isMuted: Boolean)
     fun toggleVideo(isVideoEnabled: Boolean)
     fun switchCamera()
     fun setStreamAudioEnabled(enabled: Boolean)
     fun setAudioOptions(noiseSuppression: Boolean, echoCancellation: Boolean, autoGainControl: Boolean)
+    fun setOrbitZeroEnabled(enabled: Boolean)
     fun setAttenuationStrength(strength: Float)
     var isVirtualBackgroundEnabled: Boolean
     fun setRemoteVolume(volume: Float)

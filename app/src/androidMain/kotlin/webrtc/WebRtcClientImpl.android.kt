@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import org.webrtc.*
 import repository.TurnServer
 
@@ -17,8 +19,10 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
     private val _onStreamAdded = MutableSharedFlow<Boolean>(extraBufferCapacity = 10)
     override val onStreamAdded: SharedFlow<Boolean> = _onStreamAdded
 
-    private val _isScreenSharing = MutableSharedFlow<Boolean>(extraBufferCapacity = 1)
-    override val isScreenSharing: SharedFlow<Boolean> = _isScreenSharing
+    private val _isScreenSharing = MutableStateFlow(false)
+    override val isScreenSharing: StateFlow<Boolean> = _isScreenSharing
+    private val _isRemoteScreenSharing = MutableStateFlow(false)
+    override val isRemoteScreenSharing: StateFlow<Boolean> = _isRemoteScreenSharing
 
     private var rootEglBase: EglBase? = EglBase.create()
     private var peerConnectionFactory: PeerConnectionFactory? = null
@@ -335,14 +339,14 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
 
     override fun getLocalVideoRenderer(): Any? = localRenderer
     override fun getRemoteVideoRenderer(): Any? = remoteRenderer
+    override fun getRemoteScreenRenderer(): Any? = null
 
     override fun setStreamAudioEnabled(enabled: Boolean) {
         // No-op for Android placeholder
     }
     
-    override fun setAudioOptions(noiseSuppression: Boolean, echoCancellation: Boolean, autoGainControl: Boolean) {
-        // No-op for Android placeholder
-    }
+    override fun setAudioOptions(noiseSuppression: Boolean, echoCancellation: Boolean, autoGainControl: Boolean) {}
+    override fun setOrbitZeroEnabled(enabled: Boolean) {}
 
     override fun getAudioInputDevices(): List<String> = listOf("Default Microphone")
     override fun getAudioOutputDevices(): List<String> = listOf("Default Speaker")

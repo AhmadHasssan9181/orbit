@@ -15,7 +15,14 @@ class DesktopVideoRenderer(
     val frameImage: StateFlow<BufferedImage?> = _frameImage
     private var lastFrameNanos = 0L
 
+    private var frameCount = 0
+
     override fun onVideoFrame(frame: VideoFrame) {
+        frameCount++
+        if (frameCount % 60 == 0) {
+            println("DEBUG: [WebRTC] DesktopVideoRenderer (isScreen=$isScreenShare) received frame: ${frame.buffer.width}x${frame.buffer.height}, format=${frame.buffer.javaClass.simpleName}")
+        }
+        
         val now = System.nanoTime()
         if (now - lastFrameNanos < 66_000_000L) {
             frame.release()
@@ -26,9 +33,13 @@ class DesktopVideoRenderer(
         var i420: I420Buffer? = null
         try {
             i420 = frame.buffer.toI420()
+            if (frameCount % 60 == 0 && i420 != null) {
+                println("DEBUG: [WebRTC] DesktopVideoRenderer I420Buffer size: ${i420.width}x${i420.height}, Y-stride: ${i420.strideY}")
+            }
             _frameImage.value = i420.toBufferedImage()
         } catch (error: Throwable) {
             println("DEBUG: [WebRTC] Desktop frame render failed: ${error.message}")
+            error.printStackTrace()
         } finally {
             if (i420 != null && i420 !== frame.buffer) {
                 i420.release()
@@ -40,7 +51,7 @@ class DesktopVideoRenderer(
     private fun I420Buffer.toBufferedImage(): BufferedImage {
         val frameWidth = this.width
         val frameHeight = this.height
-        val image = BufferedImage(frameWidth, frameHeight, BufferedImage.TYPE_INT_RGB)
+        val image = BufferedImage(frameWidth, frameHeight, BufferedImage.TYPE_INT_ARGB)
         val yPlane = getDataY()
         val uPlane = getDataU()
         val vPlane = getDataV()
@@ -60,8 +71,17 @@ class DesktopVideoRenderer(
                 val green = clamp(c - ((d * 88) shr 8) - ((e * 183) shr 8))
                 val blue = clamp(c + ((d * 454) shr 8))
 
-                image.setRGB(x, y, (red shl 16) or (green shl 8) or blue)
+                // Ensure alpha is 0xFF (fully opaque) to prevent Compose from treating it as transparent
+                image.setRGB(x, y, (0xFF shl 24) or (red shl 16) or (green shl 8) or blue)
             }
+        }
+
+        if (frameCount % 60 == 0) {
+            val centerPixel = image.getRGB(frameWidth / 2 + 5, frameHeight / 2 + 5)
+            val r = (centerPixel shr 16) and 0xFF
+            val g = (centerPixel shr 8) and 0xFF
+            val b = centerPixel and 0xFF
+            println("DEBUG: [WebRTC] DesktopVideoRenderer Frame ${frameWidth}x${frameHeight} generated. Sample pixel RGB: $r, $g, $b")
         }
 
         return image

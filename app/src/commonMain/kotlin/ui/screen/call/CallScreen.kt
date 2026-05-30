@@ -72,6 +72,7 @@ fun CallScreen(
     val isVideoCall by callManager.isVideoCall.collectAsState()
     val isVideoEnabled by callManager.isLocalVideoEnabled.collectAsState()
     val isScreenSharing by callManager.isScreenSharing.collectAsState()
+    val isRemoteScreenSharing by callManager.isRemoteScreenSharing.collectAsState()
     val hasRemoteStream by callManager.hasRemoteStream.collectAsState()
     val tokens = rememberCosmicTokens()
 
@@ -279,6 +280,12 @@ fun CallScreen(
             if (isScreenSharing) {
                 nodes.add(RenderNode("screen", "Screen Share", localRenderer, isScreenShare = true))
             }
+            
+            val remoteScreenRenderer = callManager.webRtcClient.getRemoteScreenRenderer()
+            if (isRemoteScreenSharing && remoteScreenRenderer != null) {
+                nodes.add(RenderNode("remote_screen", "$callerName's Screen", remoteScreenRenderer, isScreenShare = true))
+            }
+
             if (remoteRenderer != null && hasRemoteStream) {
                 nodes.add(RenderNode("remote", callerName, remoteRenderer, isScreenShare = false, avatarColor = 0xFFF23F42.toInt()))
             }
