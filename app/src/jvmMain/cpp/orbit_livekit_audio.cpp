@@ -279,6 +279,7 @@ constexpr jint kStatusStaleEvent = 23;
 constexpr jlong kRawSessionId = 1;
 jlong g_rawEpoch = 0;
 bool g_rawHasLastError = false;
+bool g_rawDisconnecting = false;
 std::string g_rawLastErrorJson =
     R"({"code":"NONE","message":"","operation":"native","recoverable":false})";
 
@@ -557,20 +558,13 @@ std::string rawReadinessJsonLocked(jlong sessionId) {
         "}";
 }
 
-} // namespace
-
-extern "C" JNIEXPORT jstring JNICALL
-Java_livekit_LiveKitNativeAudioBridge_nativeSdkVersion(JNIEnv* env, jclass) {
-    return env->NewStringUTF("livekit-cpp-sdk-0.4.1");
-}
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_livekit_LiveKitNativeAudioBridge_nativeConnect(JNIEnv* env, jclass, jstring url, jstring token) {
-    const std::string urlString = jStringToString(env, url);
-    const std::string tokenString = jStringToString(env, token);
+bool connectRoom(const std::string& urlString, const std::string& tokenString, std::string* errorMessage) {
     if (urlString.empty() || tokenString.empty()) {
+        if (errorMessage != nullptr) {
+            *errorMessage = "Missing LiveKit URL or token";
+        }
         std::cerr << "ERROR [OrbitLiveKitAudio] Missing LiveKit URL or token" << std::endl;
-        return JNI_FALSE;
+        return false;
     }
 
     try {
@@ -590,23 +584,47 @@ Java_livekit_LiveKitNativeAudioBridge_nativeConnect(JNIEnv* env, jclass, jstring
         g_connected = g_room->connect(urlString, tokenString, options);
         if (!g_connected) {
             resetRoomLocked();
+            if (errorMessage != nullptr) {
+                *errorMessage = "LiveKit C++ room connect failed";
+            }
             std::cerr << "ERROR [OrbitLiveKitAudio] LiveKit C++ room connect failed" << std::endl;
-            return JNI_FALSE;
+            return false;
         }
 
         std::cout << "DEBUG [OrbitLiveKitAudio] native connect succeeded" << std::endl;
-        return JNI_TRUE;
+        return true;
     } catch (const std::exception& error) {
         std::lock_guard<std::mutex> lock(g_sessionMutex);
         resetRoomLocked();
+        if (errorMessage != nullptr) {
+            *errorMessage = std::string("Connect threw: ") + error.what();
+        }
         std::cerr << "ERROR [OrbitLiveKitAudio] Connect threw: " << error.what() << std::endl;
-        return JNI_FALSE;
+        return false;
     } catch (...) {
         std::lock_guard<std::mutex> lock(g_sessionMutex);
         resetRoomLocked();
+        if (errorMessage != nullptr) {
+            *errorMessage = "Connect threw unknown error";
+        }
         std::cerr << "ERROR [OrbitLiveKitAudio] Connect threw unknown error" << std::endl;
-        return JNI_FALSE;
+        return false;
     }
+}
+
+} // namespace
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_livekit_LiveKitNativeAudioBridge_nativeSdkVersion(JNIEnv* env, jclass) {
+    return env->NewStringUTF("livekit-cpp-sdk-0.4.1");
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_livekit_LiveKitNativeAudioBridge_nativeConnect(JNIEnv* env, jclass, jstring url, jstring token) {
+    const std::string urlString = jStringToString(env, url);
+    const std::string tokenString = jStringToString(env, token);
+    std::string errorMessage;
+    return connectRoom(urlString, tokenString, &errorMessage) ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -800,6 +818,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeCreateSession(JNIEnv*, jclass) {
     initializeSdkOnce();
     std::lock_guard<std::mutex> lock(g_sessionMutex);
     g_rawEpoch += 1;
+    g_rawDisconnecting = false;
     clearRawErrorLocked();
     return kRawSessionId;
 }
@@ -813,6 +832,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeDestroySession(JNIEnv*, jclass, jlong s
     }
 
     std::lock_guard<std::mutex> lock(g_sessionMutex);
+    g_rawDisconnecting = true;
     g_acceptingFrames = false;
     resetRoomLocked();
     clearRawErrorLocked();
@@ -889,34 +909,84 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeConnectAsync(
         return kStatusStaleEvent;
     }
 
+    const std::string urlString = jStringToString(env, url);
+    const std::string tokenString = jStringToString(env, token);
+    if (urlString.empty() || tokenString.empty()) {
+        {
+            std::lock_guard<std::mutex> lock(g_sessionMutex);
+            g_rawEpoch = epoch;
+            setRawErrorLocked("CONNECT_FAILED", "Missing LiveKit URL or token", "nativeConnectAsync", false);
+        }
+        dispatchErrorNativeEvent(
+            env,
+            "livekit/NativeMediaEvent$ConnectFailed",
+            "CONNECT_FAILED",
+            sessionId,
+            epoch,
+            "Missing LiveKit URL or token",
+            "nativeConnectAsync",
+            false);
+        return kStatusConnectFailed;
+    }
+
     {
         std::lock_guard<std::mutex> lock(g_sessionMutex);
         g_rawEpoch = epoch;
+        g_rawDisconnecting = false;
         clearRawErrorLocked();
     }
 
     dispatchSimpleNativeEvent(env, "livekit/NativeMediaEvent$Connecting", sessionId, epoch);
-    const jboolean connected =
-        Java_livekit_LiveKitNativeAudioBridge_nativeConnect(env, nullptr, url, token);
-    if (connected == JNI_TRUE) {
-        dispatchSimpleNativeEvent(env, "livekit/NativeMediaEvent$Connected", sessionId, epoch);
-        return kStatusOk;
-    }
+    std::thread([sessionId, epoch, urlString, tokenString] {
+        JNIEnv* workerEnv = nullptr;
+        bool attached = false;
+        getJniEnv(&workerEnv, &attached);
 
-    {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
-        setRawErrorLocked("CONNECT_FAILED", "LiveKit C++ room connect failed", "nativeConnectAsync", true);
-    }
-    dispatchErrorNativeEvent(
-        env,
-        "livekit/NativeMediaEvent$ConnectFailed",
-        "CONNECT_FAILED",
-        sessionId,
-        epoch,
-        "LiveKit C++ room connect failed",
-        "nativeConnectAsync",
-        true);
-    return kStatusConnectFailed;
+        std::string errorMessage;
+        const bool connected = connectRoom(urlString, tokenString, &errorMessage);
+
+        bool shouldDispatch = false;
+        bool cleanupDisconnectedStaleConnect = false;
+        {
+            std::lock_guard<std::mutex> lock(g_sessionMutex);
+            shouldDispatch = isRawSessionValid(sessionId) && epoch == g_rawEpoch && !g_rawDisconnecting;
+            cleanupDisconnectedStaleConnect = connected && epoch == g_rawEpoch && g_rawDisconnecting;
+            if (!connected && shouldDispatch) {
+                setRawErrorLocked(
+                    "CONNECT_FAILED",
+                    errorMessage.empty() ? "LiveKit C++ room connect failed" : errorMessage,
+                    "nativeConnectAsync",
+                    true);
+            }
+        }
+
+        if (cleanupDisconnectedStaleConnect) {
+            std::lock_guard<std::mutex> lock(g_sessionMutex);
+            resetRoomLocked();
+        }
+
+        if (workerEnv != nullptr && shouldDispatch) {
+            if (connected) {
+                dispatchSimpleNativeEvent(workerEnv, "livekit/NativeMediaEvent$Connected", sessionId, epoch);
+            } else {
+                dispatchErrorNativeEvent(
+                    workerEnv,
+                    "livekit/NativeMediaEvent$ConnectFailed",
+                    "CONNECT_FAILED",
+                    sessionId,
+                    epoch,
+                    errorMessage.empty() ? "LiveKit C++ room connect failed" : errorMessage,
+                    "nativeConnectAsync",
+                    true);
+            }
+        }
+
+        if (attached && g_javaVm != nullptr) {
+            g_javaVm->DetachCurrentThread();
+        }
+    }).detach();
+
+    return kStatusOk;
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -953,6 +1023,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeDisconnect(
     {
         std::lock_guard<std::mutex> lock(g_sessionMutex);
         g_rawEpoch = epoch;
+        g_rawDisconnecting = true;
         g_acceptingFrames = false;
         resetRoomLocked();
         clearRawErrorLocked();
