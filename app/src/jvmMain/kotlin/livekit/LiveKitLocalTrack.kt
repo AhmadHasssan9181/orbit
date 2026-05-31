@@ -9,14 +9,9 @@ object LiveKitLocalTrack {
     private var sourceHandle: Long = 0
     private var isStarted = false
 
-    private var logCount = 0
     val sink = object : VideoTrackSink {
         override fun onVideoFrame(frame: WrtcVideoFrame) {
             if (!isStarted) return
-            
-            if (logCount++ % 100 == 0) {
-                println("DEBUG [LiveKitLocalTrack] Sending local frame #$logCount (${frame.buffer.width}x${frame.buffer.height})")
-            }
             
             val buffer = frame.buffer as? I420Buffer ?: return
             
@@ -31,6 +26,7 @@ object LiveKitLocalTrack {
                 .setType(livekit.proto.VideoFrame.VideoBufferType.I420)
                 .setWidth(buffer.width)
                 .setHeight(buffer.height)
+                .setDataPtr(yAddr) // REQUIRED FIELD
                 .addComponents(livekit.proto.VideoFrame.VideoBufferInfo.ComponentInfo.newBuilder()
                     .setDataPtr(yAddr)
                     .setStride(buffer.strideY)
