@@ -232,12 +232,28 @@ object LiveKitClient {
         }
     }
 
-    suspend fun connect(url: String, token: String): livekit.proto.Room.OwnedRoom {
+    suspend fun connect(url: String, token: String, iceServers: List<repository.TurnServer> = emptyList()): livekit.proto.Room.OwnedRoom {
         initialize()
         val asyncId = nextAsyncId.getAndIncrement()
+        
+        val rtcConfigBuilder = livekit.proto.Room.RtcConfig.newBuilder()
+        iceServers.forEach { server ->
+            server.uris.forEach { uri ->
+                val iceBuilder = livekit.proto.Room.IceServer.newBuilder().addUrls(uri)
+                server.username?.let { iceBuilder.setUsername(it) }
+                server.password?.let { iceBuilder.setPassword(it) }
+                rtcConfigBuilder.addIceServers(iceBuilder.build())
+            }
+        }
+        
+        val roomOptions = livekit.proto.Room.RoomOptions.newBuilder()
+            .setAutoSubscribe(true)
+            .setRtcConfig(rtcConfigBuilder.build())
+            .build()
+            
         val connectReq = livekit.proto.Room.ConnectRequest.newBuilder()
             .setUrl(url).setToken(token)
-            .setOptions(livekit.proto.Room.RoomOptions.newBuilder().setAutoSubscribe(true).build())
+            .setOptions(roomOptions)
             .setRequestAsyncId(asyncId).build()
 
         println("DEBUG [LiveKitClient] Sending ConnectRequest url=$url asyncId=$asyncId")

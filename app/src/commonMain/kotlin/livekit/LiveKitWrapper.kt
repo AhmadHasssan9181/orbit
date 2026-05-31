@@ -1,3 +1,3 @@
 package livekit
 
-expect suspend fun connectToLiveKit(url: String, token: String)
+expect suspend fun connectToLiveKit(url: String, token: String, iceServers: List<repository.TurnServer> = emptyList())

@@ -64,8 +64,12 @@ object LiveKitTokenProvider {
                 put("member", buildJsonObject {
                     put("id", identity) // Use the full MSC3401 identity here
                     put("claimed_user_id", cleanUserId)
-                    // Extract deviceId from identity if possible (_user_device_callId)
-                    val deviceId = identity.split("_").getOrNull(2) ?: "ORBIT_DESKTOP"
+                    // Extract deviceId: check for colon format first, then underscore fallback
+                    val deviceId = when {
+                        identity.count { it == ':' } >= 2 -> identity.split(":").last()
+                        identity.contains("_") -> identity.split("_").getOrNull(2)
+                        else -> null
+                    } ?: "ORBIT_DESKTOP"
                     put("claimed_device_id", deviceId)
                 })
                 put("openid_token", openIdToken)

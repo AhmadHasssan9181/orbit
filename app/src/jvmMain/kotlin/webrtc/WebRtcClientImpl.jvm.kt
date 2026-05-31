@@ -284,7 +284,7 @@ class JvmWebRtcClient : WebRtcClient {
                 }
             }
 
-            runCatching {
+            try {
                 videoSource.start()
                 isVideoCaptureRunning = true
                 println("DEBUG: [WebRTC] videoSource started")
@@ -297,10 +297,10 @@ class JvmWebRtcClient : WebRtcClient {
                         OrbitVideoEngine.injectVideoProcessor(videoSource, modelPath)
                     }
                 }
-            }.onFailure { e ->
-                println("ERROR: [WebRTC] Failed to start videoSource: ${e.message}")
-                e.printStackTrace()
-                runCatching { videoSource.dispose() }
+            } catch (t: Throwable) {
+                println("ERROR: [WebRTC] Failed to start videoSource: ${t.message}")
+                t.printStackTrace()
+                try { videoSource.dispose() } catch (e: Exception) {}
                 return
             }
 
