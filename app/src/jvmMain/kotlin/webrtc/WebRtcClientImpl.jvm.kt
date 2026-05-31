@@ -71,6 +71,7 @@ class JvmWebRtcClient : WebRtcClient {
     private var remoteAudioTrack: AudioTrack? = null
     private var screenSource: VideoDesktopSource? = null
     private var screenVideoTrack: VideoTrack? = null
+    override var isGroupCall: Boolean = false
 
     private var selectedAudioInput: String = "Default"
     private val _isScreenSharing = MutableStateFlow(false)
@@ -177,8 +178,36 @@ class JvmWebRtcClient : WebRtcClient {
         }
     }
 
+    private var isLiveKitMediaStarted = false
+
     override fun startLocalMedia(isVideoEnabled: Boolean) {
         try {
+            if (isGroupCall) {
+                if (isLiveKitMediaStarted) {
+                    println("DEBUG: [WebRTC] LiveKit media already started, ignoring redundant startLocalMedia")
+                    return
+                }
+                isLiveKitMediaStarted = true
+                println("DEBUG: [WebRTC] Redirecting local media to LiveKit Data Plane")
+                
+                // 1. Start standard camera capture but don't add to peer connection
+                startVideoCapture()
+                
+                // 2. Hook LiveKit sink into our camera track
+                cameraVideoTrack?.addSink(livekit.LiveKitLocalTrack.sink)
+                
+                // 3. Start the LiveKit native source and publish
+                livekit.LiveKitLocalTrack.startCapture(640, 480)
+                livekit.LiveKitClient.publishVideoTrack(livekit.LiveKitLocalTrack.getSourceHandle())
+                
+                // 4. Start audio capture and publish
+                livekit.LiveKitLocalAudioTrack.startCapture()
+                livekit.LiveKitClient.publishAudioTrack(livekit.LiveKitLocalAudioTrack.getSourceHandle())
+                
+                println("DEBUG: [WebRTC] Group call local media started and published to LiveKit")
+                return
+            }
+            
             val pConn = peerConnection ?: return
             val f = factory ?: return
 
@@ -206,8 +235,9 @@ class JvmWebRtcClient : WebRtcClient {
     }
 
     private fun startVideoCapture() {
-        val pConn = peerConnection ?: return
         val f = factory ?: return
+        // In group calls, peerConnection is null but we still need to capture video
+        if (!isGroupCall && peerConnection == null) return
 
         if (localVideoSource == null || cameraVideoTrack == null) {
             val devices = MediaDevices.getVideoCaptureDevices()
@@ -254,8 +284,8 @@ class JvmWebRtcClient : WebRtcClient {
                 }
                 if (localVideoSender != null) {
                     localVideoSender?.replaceTrack(videoTrack)
-                } else {
-                    localVideoSender = pConn.addTrack(videoTrack, listOf("mediaStream"))
+                } else if (peerConnection != null) {
+                    localVideoSender = peerConnection?.addTrack(videoTrack, listOf("mediaStream"))
                 }
             }
         }
@@ -587,6 +617,7 @@ class JvmWebRtcClient : WebRtcClient {
     override fun endCall() {
         try {
             stopLocalMedia()
+            isLiveKitMediaStarted = false // Reset LiveKit media guard
             
             // Explicitly remove sinks to prevent native threads from calling back during shutdown
             localVideoTrack?.removeSink(localRenderer)

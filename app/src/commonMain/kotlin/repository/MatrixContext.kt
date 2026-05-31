@@ -129,9 +129,21 @@ class LiveMessageState(
     val messages: MutableList<OrbitMessage> = mutableListOf()
 )
 
+data class RoomMetadata(
+    val id: String,
+    val name: String,
+    val topic: String,
+    val isDM: Boolean,
+    val isSpace: Boolean,
+    val spaceParent: String? = null,
+    val memberCount: Int = 0,
+    val avatarUrl: String? = null
+)
+
 class MatrixContext(val homeserverUrl: String) {
     var accessToken: String? = CredentialManager.accessToken
     var userId: String? = CredentialManager.userId
+    var deviceId: String? = CredentialManager.deviceId
     var trixnityClient: MatrixClient? = null
 
     val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -161,11 +173,15 @@ class MatrixContext(val homeserverUrl: String) {
     val activeGroupCalls = mutableMapOf<String, MutableStateFlow<String?>>()
     val activeCallMembers = mutableMapOf<String, MutableStateFlow<List<OrbitUser>>>()
     val accountDataCache = mutableMapOf<String, MutableStateFlow<Any?>>()
+    val roomMetadataCache = mutableMapOf<String, RoomMetadata>()
     private val joinedMemberCountCache = mutableMapOf<String, Int>()
 
+    val defaultLiveKitServiceUrl = "https://livekit-jwt.call.matrix.org"
+
     fun fullUrl(path: String, v1: Boolean = false): String {
-        val prefix = if (v1) "/_matrix/client/v1" else "/_matrix/client/v3"
-        return "${homeserverUrl.trimEnd('/')}${prefix}$path"
+        val version = if (v1) "v1" else "v3"
+        val cleanPath = if (path.startsWith("/")) path else "/$path"
+        return "${homeserverUrl.trimEnd('/')}/_matrix/client/$version$cleanPath"
     }
 
     fun hashToColor(input: String): Int {

@@ -127,6 +127,8 @@ class MatrixChannelsRepository(private val context: MatrixContext) : OrbitChanne
 
     override suspend fun getChannelsForSpace(spaceId: String): List<OrbitChannel> {
         val allRooms = context.getAllRoomsSnapshot()
+        
+        // 1. Handle DMs
         if (spaceId == "dm") {
             return allRooms.filter { context.isDMRoom(it) }.map { room ->
                 val otherMember = context.directInviteeForRoom(room.roomId) ?: ""
@@ -146,6 +148,7 @@ class MatrixChannelsRepository(private val context: MatrixContext) : OrbitChanne
             }
         }
 
+        // 2. Identify Children for Space
         val trixnity = context.trixnityClient
         var spaceChildren = setOf<String>()
         if (trixnity != null && spaceId != "rooms") {
@@ -154,17 +157,22 @@ class MatrixChannelsRepository(private val context: MatrixContext) : OrbitChanne
             } catch(e: Exception) {}
         }
 
+        // 3. Map Channels
         val channels = mutableListOf<OrbitChannel>()
         for (room in allRooms) {
+            val metadata = context.roomMetadataCache[room.roomId.full]
+            
+            // Skip DMs and Spaces in channel list
+            if (metadata?.isDM == true || metadata?.isSpace == true) continue
             if (context.isDMRoom(room)) continue
 
-            val isSpace = room.createEventContent?.type == CreateEventContent.RoomType.Space ||
-                          room.createEventContent?.type?.toString()?.contains("space", ignoreCase=true) == true ||
-                          (trixnity != null && try { trixnity.room.getAllState(room.roomId, ChildEventContent::class).first().isNotEmpty() } catch(e:Exception){false})
-            if (isSpace) continue
-
             val belongsToSpace = spaceChildren.contains(room.roomId.full)
-            if ((spaceId == "rooms" && !belongsToSpace) || (spaceId != "rooms" && belongsToSpace)) {
+            val shouldInclude = when (spaceId) {
+                "rooms" -> !belongsToSpace
+                else -> belongsToSpace
+            }
+
+            if (shouldInclude) {
                 val rawName = context.roomDisplayName(room)
                 val type = context.inferChannelType(rawName)
                 val cleanName = context.orbitChannelName(rawName, type)
@@ -180,7 +188,7 @@ class MatrixChannelsRepository(private val context: MatrixContext) : OrbitChanne
             }
         }
 
-        // Discord-like: Always ensure a "General Voice" channel exists if it's a real space
+        // 4. Discord-like: Always ensure a "General Voice" channel exists if it's a real space
         if (spaceId != "rooms" && spaceId != "dm" && channels.none { it.type == ChannelType.VOICE }) {
             val firstTextChannel = channels.firstOrNull { it.type == ChannelType.TEXT }
             channels.add(0, OrbitChannel(

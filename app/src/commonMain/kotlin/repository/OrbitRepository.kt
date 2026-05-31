@@ -73,6 +73,7 @@ interface OrbitCallsRepository {
     suspend fun endGroupCall(roomId: String, callId: String)
     suspend fun joinGroupCall(roomId: String, callId: String)
     suspend fun leaveGroupCall(roomId: String, callId: String)
+    suspend fun fetchLiveKitToken(roomId: String, livekitServiceUrl: String): livekit.LiveKitAuthResponse
     val activeCallsFlow: kotlinx.coroutines.flow.StateFlow<Map<String, String>>
 }
 

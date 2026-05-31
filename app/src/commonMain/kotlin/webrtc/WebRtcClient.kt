@@ -13,7 +13,8 @@ interface WebRtcClient {
     val isScreenSharing: StateFlow<Boolean>
     val isRemoteScreenSharing: StateFlow<Boolean>
     val onStreamAdded: SharedFlow<Boolean>
-    
+    var isGroupCall: Boolean
+
     fun initialize(iceServers: List<TurnServer> = emptyList())
     fun startLocalMedia(isVideoEnabled: Boolean)
     fun stopLocalMedia()

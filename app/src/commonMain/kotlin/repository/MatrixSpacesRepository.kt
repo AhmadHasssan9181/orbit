@@ -126,15 +126,19 @@ class MatrixSpacesRepository(private val context: MatrixContext) : OrbitSpacesRe
 
     override suspend fun getSpaces(): List<OrbitServer> {
         val allRooms = context.getAllRoomsSnapshot()
-        val servers = mutableListOf<OrbitServer>()
-        val dms = allRooms.filter { context.isDMRoom(it) }
+        if (allRooms.isEmpty()) return emptyList()
 
+        val servers = mutableListOf<OrbitServer>()
         val trixnity = context.trixnityClient
+
+        // 1. Identify Spaces
         val spaces = allRooms.filter { room ->
             val typeStr = room.createEventContent?.type?.toString()
-            var isSpace = room.createEventContent?.type == CreateEventContent.RoomType.Space || typeStr?.contains("space", ignoreCase=true) == true
+            var isSpace = room.createEventContent?.type == CreateEventContent.RoomType.Space || 
+                          typeStr?.contains("space", ignoreCase=true) == true
             if (!isSpace && trixnity != null) {
                 try {
+                    // Check for child events if type is not explicit
                     val children = trixnity.room.getAllState(room.roomId, ChildEventContent::class).first()
                     if (children.isNotEmpty()) isSpace = true
                 } catch(e: Exception) {}
@@ -142,18 +146,31 @@ class MatrixSpacesRepository(private val context: MatrixContext) : OrbitSpacesRe
             isSpace
         }
         
-        val allChildren = mutableSetOf<String>()
+        // 2. Map DMs and Categorize Flat Rooms
+        val dms = mutableListOf<de.connect2x.trixnity.client.store.Room>()
+        val flatRooms = mutableListOf<de.connect2x.trixnity.client.store.Room>()
+        val allChildrenIds = mutableSetOf<String>()
+
         if (trixnity != null) {
-            for (space in spaces) {
+            spaces.forEach { space ->
                 try {
                     val children = trixnity.room.getAllState(space.roomId, ChildEventContent::class).first()
-                    allChildren.addAll(children.keys)
+                    allChildrenIds.addAll(children.keys)
                 } catch(e: Exception) {}
             }
         }
-        
-        val flatRooms = allRooms.filter { !context.isDMRoom(it) && !spaces.contains(it) && !allChildren.contains(it.roomId.full) }
 
+        allRooms.forEach { room ->
+            if (spaces.any { it.roomId == room.roomId }) return@forEach
+            
+            if (context.isDMRoom(room)) {
+                dms.add(room)
+            } else if (!allChildrenIds.contains(room.roomId.full)) {
+                flatRooms.add(room)
+            }
+        }
+
+        // 3. Build OrbitServer objects
         if (dms.isNotEmpty()) {
             servers.add(OrbitServer(
                 id = "dm",
@@ -167,9 +184,9 @@ class MatrixSpacesRepository(private val context: MatrixContext) : OrbitSpacesRe
         spaces.forEach { space ->
             servers.add(OrbitServer(
                 id = space.roomId.full,
-                name = space.name?.explicitName ?: space.roomId.full.takeLast(8),
+                name = context.roomDisplayName(space),
                 iconColor = context.hashToColor(space.roomId.full),
-                description = "",
+                description = space.name?.explicitName ?: "",
                 isDM = false,
                 avatarUrl = space.avatarUrl?.let { context.convertMxcUrl(it) }
             ))
@@ -181,9 +198,22 @@ class MatrixSpacesRepository(private val context: MatrixContext) : OrbitSpacesRe
                 name = "Rooms",
                 iconColor = 0xFF34D399.toInt(),
                 description = "General rooms",
-                isDM = false,
-                bannerUrl = "file:///C:/Users/Ahmad/.gemini/antigravity-ide/brain/06a7c3ed-9cc1-4f7e-82b0-2c46bc319bcd/space_nebula_banner_1779904255274.png"
+                isDM = false
             ))
+        }
+
+        // Update Metadata Cache for other repositories to use
+        allRooms.forEach { room ->
+            val isSpace = spaces.any { it.roomId == room.roomId }
+            val isDM = dms.any { it.roomId == room.roomId }
+            context.roomMetadataCache[room.roomId.full] = RoomMetadata(
+                id = room.roomId.full,
+                name = context.roomDisplayName(room),
+                topic = "", // Topic requires extra state fetch if not in snapshot
+                isDM = isDM,
+                isSpace = isSpace,
+                avatarUrl = room.avatarUrl?.let { context.convertMxcUrl(it) }
+            )
         }
 
         return servers
@@ -214,7 +244,28 @@ class MatrixSpacesRepository(private val context: MatrixContext) : OrbitSpacesRe
     }
 
     override suspend fun getSpaceHierarchy(spaceId: String): List<OrbitServer> {
-        return emptyList()
+        return try {
+            val response = context.httpClient.get(context.fullUrl("/hierarchy/$spaceId", v1 = true)) {
+                header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
+            }
+            if (response.status.value == 200) {
+                val body = response.body<JsonObject>()
+                val rooms = body["rooms"]?.jsonArray ?: return emptyList()
+                rooms.map { it.jsonObject }.map { room ->
+                    val roomId = room["room_id"]?.jsonPrimitive?.content ?: ""
+                    OrbitServer(
+                        id = roomId,
+                        name = room["name"]?.jsonPrimitive?.content ?: roomId.takeLast(8),
+                        iconColor = context.hashToColor(roomId),
+                        description = room["topic"]?.jsonPrimitive?.content ?: "",
+                        isDM = false,
+                        avatarUrl = room["avatar_url"]?.jsonPrimitive?.content?.let { context.convertMxcUrl(it) }
+                    )
+                }
+            } else emptyList()
+        } catch (e: Exception) {
+            emptyList()
+        }
     }
 
     override fun observeSpaces(): Flow<List<OrbitServer>> {

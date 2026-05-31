@@ -125,7 +125,7 @@ import ui.screen.main.*
 
 
 class MatrixOrbitRepository private constructor(
-    private val context: MatrixContext,
+    val context: MatrixContext,
     private val auth: MatrixAuthRepository,
     private val spaces: MatrixSpacesRepository,
     private val channels: MatrixChannelsRepository,
