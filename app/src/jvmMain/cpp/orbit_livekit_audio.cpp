@@ -3,10 +3,13 @@
 #include "livekit/livekit.h"
 
 #include <exception>
+#include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -147,8 +150,56 @@ Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_livekit_LiveKitNativeAudioBridge_nativePushAudioFrame(
-    JNIEnv*, jclass, jobject, jint, jint, jint, jint) {
-    return JNI_FALSE;
+    JNIEnv* env,
+    jclass,
+    jobject pcm,
+    jint byteLength,
+    jint sampleRate,
+    jint channels,
+    jint samplesPerChannel) {
+    if (pcm == nullptr || byteLength <= 0 || sampleRate <= 0 || channels <= 0 || samplesPerChannel <= 0) {
+        return JNI_FALSE;
+    }
+
+    void* data = env->GetDirectBufferAddress(pcm);
+    if (data == nullptr) {
+        std::cerr << "ERROR [OrbitLiveKitAudio] Audio frame buffer must be direct" << std::endl;
+        return JNI_FALSE;
+    }
+
+    const int expectedBytes = samplesPerChannel * channels * static_cast<jint>(sizeof(std::int16_t));
+    if (byteLength < expectedBytes || byteLength % static_cast<jint>(sizeof(std::int16_t)) != 0) {
+        std::cerr << "ERROR [OrbitLiveKitAudio] Invalid audio frame byte length" << std::endl;
+        return JNI_FALSE;
+    }
+
+    std::shared_ptr<livekit::AudioSource> source;
+    {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        source = g_audioSource;
+    }
+    if (source == nullptr) {
+        return JNI_FALSE;
+    }
+
+    try {
+        std::vector<std::int16_t> samples(static_cast<std::size_t>(expectedBytes / sizeof(std::int16_t)));
+        std::memcpy(samples.data(), data, static_cast<std::size_t>(expectedBytes));
+
+        livekit::AudioFrame frame(
+            std::move(samples),
+            static_cast<int>(sampleRate),
+            static_cast<int>(channels),
+            static_cast<int>(samplesPerChannel));
+        source->captureFrame(frame, 20);
+        return JNI_TRUE;
+    } catch (const std::exception& error) {
+        std::cerr << "ERROR [OrbitLiveKitAudio] Push audio frame threw: " << error.what() << std::endl;
+        return JNI_FALSE;
+    } catch (...) {
+        std::cerr << "ERROR [OrbitLiveKitAudio] Push audio frame threw unknown error" << std::endl;
+        return JNI_FALSE;
+    }
 }
 
 extern "C" JNIEXPORT void JNICALL
