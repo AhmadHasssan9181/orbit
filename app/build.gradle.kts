@@ -158,20 +158,31 @@ tasks.register("compileJniBridge") {
             commandLine("cmake", "--build", buildDir.absolutePath, "--config", "Release")
         }
         
-        // Copy the resulting DLL to the resources folder where loadLibrary can find it
-        val dllName = "orbit_livekit_video.dll"
-        val outputDll = file("build/jni/Release/$dllName")
+        // Copy native bridge DLLs to the resources folder where the JVM loader can find them.
         val targetDir = file("src/jvmMain/resources/webrtc-deps")
         targetDir.mkdirs()
 
-        if (!outputDll.exists()) {
-            // Fallback for non-Release builds or different generators
-            file("build/jni").walkTopDown().find { it.name == dllName }?.let {
-                it.copyTo(targetDir.resolve(dllName), overwrite = true)
+        fun copyBuiltDll(dllName: String) {
+            val outputDll = file("build/jni/Release/$dllName")
+            if (!outputDll.exists()) {
+                // Fallback for non-Release builds or different generators.
+                file("build/jni").walkTopDown().find { it.name == dllName }?.let {
+                    it.copyTo(targetDir.resolve(dllName), overwrite = true)
+                }
+            } else {
+                outputDll.copyTo(targetDir.resolve(dllName), overwrite = true)
             }
-        } else {
-            outputDll.copyTo(targetDir.resolve(dllName), overwrite = true)
         }
+
+        copyBuiltDll("orbit_livekit_video.dll")
+        copyBuiltDll("orbit_livekit_audio.dll")
+
+        // The prebuilt LiveKit C++ SDK ships runtime DLLs next to its package.
+        file("build/jni/_deps/livekit-sdk").walkTopDown()
+            .filter { it.isFile && it.extension.equals("dll", ignoreCase = true) }
+            .forEach { sdkDll ->
+                sdkDll.copyTo(targetDir.resolve(sdkDll.name), overwrite = true)
+            }
     }
 }
 
