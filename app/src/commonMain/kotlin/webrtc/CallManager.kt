@@ -132,22 +132,35 @@ class CallManager(
                         _callState.value = CallState.CONNECTED
                         println("DEBUG [CallManager] LiveKit call state set to CONNECTED after MediaReady")
                     } else {
-                        _callState.value = CallState.IDLE
+                        failGroupJoin()
                     }
                     return@launch
                 }
 
-                loadIceServers()
-                webRtcClient.initialize(iceServers)
-                webRtcClient.startLocalMedia(isVideo)
-
-                // For group calls, we don't send an invite. We send a m.call.member event via repository.
-                // This is usually handled by the repository when we call joinGroupCall there.
-                _callState.value = CallState.CONNECTED
+                val error = livekit.NativeError(
+                    code = livekit.NativeErrorCode.CONNECT_FAILED,
+                    message = "MatrixRTC group call requires LiveKit URL and token fetcher",
+                    operation = "joinGroupCall",
+                    recoverable = false
+                )
+                println("ERROR [CallManager] ${error.code} ${error.operation}: ${error.message}")
+                failGroupJoin()
             } finally {
                 isJoiningGroupCall = false
             }
         }
+    }
+
+    private fun failGroupJoin() {
+        _callState.value = CallState.IDLE
+        activeRoomId = null
+        callId = null
+        isGroupCall.value = false
+        webRtcClient.isGroupCall = false
+        isVideoCall.value = false
+        isLocalVideoEnabled.value = false
+        candidatesAllowedForCallId = null
+        pendingLocalCandidates.clear()
     }
 
     private fun ensureNativeMediaSessionStarted(
@@ -168,7 +181,14 @@ class CallManager(
             }
 
             if (livekitUrl == null || livekitTokenFetcher == null) {
-                println("DEBUG [CallManager] Native media not ready and no LiveKit token fetcher is available")
+                val error = livekit.NativeError(
+                    code = livekit.NativeErrorCode.CONNECT_FAILED,
+                    message = "MatrixRTC group call requires LiveKit URL and token fetcher",
+                    operation = "ensureNativeMediaSessionStarted",
+                    recoverable = false
+                )
+                println("ERROR [CallManager] ${error.code} ${error.operation}: ${error.message}")
+                failGroupJoin()
                 return@launch
             }
 
