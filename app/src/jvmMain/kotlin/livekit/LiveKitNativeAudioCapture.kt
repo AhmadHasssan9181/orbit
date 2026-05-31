@@ -23,6 +23,7 @@ object LiveKitNativeAudioCapture {
     private var captureJob: Job? = null
     @Volatile private var activeLine: TargetDataLine? = null
     @Volatile private var started = false
+    @Volatile private var muted = false
 
     fun start(sampleRate: Int = DEFAULT_SAMPLE_RATE, channels: Int = DEFAULT_CHANNELS): Boolean {
         if (started) return true
@@ -47,6 +48,10 @@ object LiveKitNativeAudioCapture {
         }
         captureJob?.cancel()
         captureJob = null
+    }
+
+    fun setMuted(isMuted: Boolean) {
+        muted = isMuted
     }
 
     suspend fun stopAndJoin() {
@@ -80,6 +85,9 @@ object LiveKitNativeAudioCapture {
                 if (read <= 0) continue
                 if (read % (Short.SIZE_BYTES * channels) != 0) continue
                 val samplesPerChannel = read / (Short.SIZE_BYTES * channels)
+                if (muted) {
+                    heapBuffer.fill(0, 0, read)
+                }
 
                 directBuffer.clear()
                 directBuffer.put(heapBuffer, 0, read)

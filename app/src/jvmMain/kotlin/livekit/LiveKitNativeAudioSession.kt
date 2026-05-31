@@ -39,6 +39,10 @@ object LiveKitNativeAudioSession {
         LiveKitNativeAudioCapture.stop()
     }
 
+    fun setMuted(isMuted: Boolean) {
+        LiveKitNativeAudioCapture.setMuted(isMuted)
+    }
+
     fun disconnect() {
         runCatching { LiveKitNativeAudioCapture.stop() }
         runCatching { LiveKitNativeAudioPlayer.stop() }
