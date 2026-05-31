@@ -157,6 +157,28 @@ object LiveKitClient {
                     }
                 }
             }
+            FfiEvent.MessageCase.AUDIO_STREAM_EVENT -> {
+                val streamEvent = event.audioStreamEvent
+                if (streamEvent.messageCase == livekit.proto.AudioFrame.AudioStreamEvent.MessageCase.FRAME_RECEIVED) {
+                    val received = streamEvent.frameReceived
+                    val info = received.frame.info
+                    val dataPtr = info.dataPtr
+                    val sampleRate = info.sampleRate
+                    val numChannels = info.numChannels
+                    val samplesPerChannel = info.samplesPerChannel
+                    
+                    // We don't have trackSid natively mapped in this exact event right now, 
+                    // but we can use the stream handle to identify the track.
+                    val streamId = streamEvent.streamHandle.toString()
+                    LiveKitAudioSink.pushFrame(
+                        streamId,
+                        sampleRate,
+                        numChannels,
+                        samplesPerChannel,
+                        dataPtr
+                    )
+                }
+            }
             FfiEvent.MessageCase.ROOM_EVENT -> {
                 val roomEvent = event.roomEvent
                 if (!isFrequent) {

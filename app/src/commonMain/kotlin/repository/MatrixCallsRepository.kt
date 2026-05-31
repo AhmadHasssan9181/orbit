@@ -281,7 +281,10 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
     }
 
     override fun observeActiveGroupCall(channelId: String): Flow<String?> {
+        val didExist = context.activeGroupCalls.containsKey(channelId)
         val flow = context.activeGroupCalls.getOrPut(channelId) { MutableStateFlow(null) }
+
+        if (didExist) return flow.asStateFlow()
 
         context.repositoryScope.launch {
             val trixnity = context.trixnityClient ?: return@launch
@@ -565,7 +568,7 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
         return flow.asStateFlow()
     }
 
-    override suspend fun startGroupCall(roomId: String, callId: String) {
+    override suspend fun startGroupCall(roomId: String, callId: String, isVideo: Boolean) {
         println("DEBUG [MatrixCallsRepository] STARTING MSC3401 Creator Flow for $roomId")
         
         // 1. Cleanup ALL known ghost keys
@@ -617,7 +620,7 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
         }
 
         // 3. Join as member (will publish the member event)
-        joinGroupCall(roomId, "m.call")
+        joinGroupCall(roomId, "m.call", isVideo)
         
         // Optimistically update local state
         context.activeGroupCalls.getOrPut(roomId) { MutableStateFlow(null) }.value = "${context.defaultLiveKitServiceUrl}?callId="
@@ -640,10 +643,15 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
             }
         } catch (e: Exception) {}
         
+        context.activeGroupCalls[roomId]?.value = null
+        val currentGlobal = context.globalActiveCalls.value.toMutableMap()
+        currentGlobal.remove(roomId)
+        context.globalActiveCalls.value = currentGlobal
+
         leaveGroupCall(roomId, callId)
     }
 
-    override suspend fun joinGroupCall(roomId: String, callId: String) {
+    override suspend fun joinGroupCall(roomId: String, callId: String, isVideo: Boolean) {
         println("DEBUG [MatrixCallsRepository] JOINING MSC3401 Call for $roomId (callId=$callId)")
         
         val userId = context.userId ?: return
@@ -684,7 +692,7 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                 put("membershipID", "$userId:$deviceId") 
                 // MSC3401 strictly requires created_ts for focus selection
                 put("created_ts", getTimeMillis())
-                put("m.call.intent", "video")
+                put("m.call.intent", if (isVideo) "video" else "audio")
                 put("scope", "m.room")
                 put("expires", 14400000)
                 put("foci_preferred", buildJsonArray {
@@ -709,7 +717,7 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                 })
                 put("capabilities", buildJsonObject {
                     put("audio", true)
-                    put("video", true)
+                    put("video", isVideo)
                 })
             }
             println("DEBUG [MatrixCallsRepository] Sending m.call.member payload: $payload")

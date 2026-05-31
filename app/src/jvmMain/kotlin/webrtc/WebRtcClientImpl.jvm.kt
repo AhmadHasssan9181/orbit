@@ -193,19 +193,21 @@ class JvmWebRtcClient : WebRtcClient {
                 isLiveKitMediaStarted = true
                 println("DEBUG: [WebRTC] Redirecting local media to LiveKit Data Plane")
                 
-                // 1. Start standard camera capture but don't add to peer connection
-                startVideoCapture()
+                if (isVideoEnabled) {
+                    // 1. Start standard camera capture but don't add to peer connection
+                    startVideoCapture()
 
-                if (cameraVideoTrack == null) {
-                    println("ERROR: [WebRTC] cameraVideoTrack is NULL after startVideoCapture()!")
-                } else {
-                    println("DEBUG: [WebRTC] cameraVideoTrack is initialized, adding LiveKit sink")
-                    cameraVideoTrack?.addSink(livekit.LiveKitLocalTrack.sink)
+                    if (cameraVideoTrack == null) {
+                        println("ERROR: [WebRTC] cameraVideoTrack is NULL after startVideoCapture()!")
+                    } else {
+                        println("DEBUG: [WebRTC] cameraVideoTrack is initialized, adding LiveKit sink")
+                        cameraVideoTrack?.addSink(livekit.LiveKitLocalTrack.sink)
+                    }
+
+                    // 3. Start the LiveKit native source and publish
+                    livekit.LiveKitLocalTrack.startCapture(captureWidth, captureHeight)
+                    livekit.LiveKitClient.publishVideoTrack(livekit.LiveKitLocalTrack.getSourceHandle())
                 }
-
-                // 3. Start the LiveKit native source and publish
-                livekit.LiveKitLocalTrack.startCapture(captureWidth, captureHeight)
-                livekit.LiveKitClient.publishVideoTrack(livekit.LiveKitLocalTrack.getSourceHandle())
                 
                 // 4. Start audio capture and publish
                 livekit.LiveKitLocalAudioTrack.startCapture()

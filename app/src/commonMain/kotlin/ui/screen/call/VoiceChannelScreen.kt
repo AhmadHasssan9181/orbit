@@ -81,7 +81,7 @@ fun VoiceChannelScreen(
                                                 (matrixRepository as? MatrixOrbitRepository)?.context?.defaultLiveKitServiceUrl
                                             }
 
-                                            callManager.joinGroupCall(channel.matrixRoomId, callId, true, livekitUrl) {
+                                            callManager.joinGroupCall(channel.matrixRoomId, callId, false, livekitUrl) {
                                                 matrixRepository.fetchLiveKitToken(channel.matrixRoomId, callId, livekitUrl ?: "")
                                             }
                                         } catch (e: Exception) {

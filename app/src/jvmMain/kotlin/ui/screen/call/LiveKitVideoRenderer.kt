@@ -58,7 +58,8 @@ actual fun LiveKitVideoRenderer(modifier: Modifier) {
                 modifier = Modifier.fillMaxSize()
             )
         } else {
-            Text("Starting group video", color = Color.White)
+            // Either waiting for video to start, or the remote participants have their cameras off.
+            Text("Voice Call Connected (No Video)", color = Color.White)
         }
     }
 }
