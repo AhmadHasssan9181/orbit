@@ -6,13 +6,14 @@ object LiveKitNativeAudioSession {
     @Volatile private var acceptingFrames = false
 
     val isConnected: Boolean
-        get() = connected
+        get() = connected || LiveKitNativeMediaSession.isConnected
 
     val isMicPublished: Boolean
-        get() = micPublished
+        get() = micPublished || LiveKitNativeMediaSession.isAudioPublished
 
     val isAcceptingFrames: Boolean
-        get() = acceptingFrames && LiveKitNativeAudioBridge.acceptingFrames
+        get() = (acceptingFrames && LiveKitNativeAudioBridge.acceptingFrames) ||
+            LiveKitNativeMediaSession.isAcceptingAudioFrames
 
     fun connect(url: String, token: String): Boolean {
         if (!LiveKitNativeAudioBridge.enabled) return false
