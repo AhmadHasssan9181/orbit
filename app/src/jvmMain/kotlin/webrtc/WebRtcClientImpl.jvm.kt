@@ -192,10 +192,14 @@ class JvmWebRtcClient : WebRtcClient {
                 
                 // 1. Start standard camera capture but don't add to peer connection
                 startVideoCapture()
-                
-                // 2. Hook LiveKit sink into our camera track
-                cameraVideoTrack?.addSink(livekit.LiveKitLocalTrack.sink)
-                
+
+                if (cameraVideoTrack == null) {
+                    println("ERROR: [WebRTC] cameraVideoTrack is NULL after startVideoCapture()!")
+                } else {
+                    println("DEBUG: [WebRTC] cameraVideoTrack is initialized, adding LiveKit sink")
+                    cameraVideoTrack?.addSink(livekit.LiveKitLocalTrack.sink)
+                }
+
                 // 3. Start the LiveKit native source and publish
                 livekit.LiveKitLocalTrack.startCapture(640, 480)
                 livekit.LiveKitClient.publishVideoTrack(livekit.LiveKitLocalTrack.getSourceHandle())
@@ -235,17 +239,35 @@ class JvmWebRtcClient : WebRtcClient {
     }
 
     private fun startVideoCapture() {
-        val f = factory ?: return
-        // In group calls, peerConnection is null but we still need to capture video
-        if (!isGroupCall && peerConnection == null) return
+        if (factory == null) {
+            println("DEBUG: [WebRTC] factory is NULL in startVideoCapture, attempting lazy init")
+            factory = createFactory()
+        }
+        val f = factory
+        if (f == null) {
+            println("ERROR: [WebRTC] factory is STILL NULL after lazy init!")
+            return
+        }
+        
+        if (!isGroupCall && peerConnection == null) {
+            println("DEBUG: [WebRTC] Not a group call and peerConnection is null, skipping capture")
+            return
+        }
 
         if (localVideoSource == null || cameraVideoTrack == null) {
+            println("DEBUG: [WebRTC] Initializing video source and track")
             val devices = MediaDevices.getVideoCaptureDevices()
-            if (devices.isEmpty()) return
+            if (devices.isEmpty()) {
+                println("ERROR: [WebRTC] No video capture devices found!")
+                return
+            }
 
             val device = devices.find { it.name == selectedCamera } ?: devices.first()
+            println("DEBUG: [WebRTC] Using camera device: ${device.name}")
+            
             val capabilities = MediaDevices.getVideoCaptureCapabilities(device)
             val capability = chooseVideoCapability(capabilities)
+            println("DEBUG: [WebRTC] Chosen capability: ${capability?.width}x${capability?.height}@${capability?.frameRate}")
 
             val videoSource = VideoDeviceSource().apply {
                 setVideoCaptureDevice(device)
@@ -257,6 +279,7 @@ class JvmWebRtcClient : WebRtcClient {
             runCatching {
                 videoSource.start()
                 isVideoCaptureRunning = true
+                println("DEBUG: [WebRTC] videoSource started")
                 
                 // Inject our custom video processor if enabled
                 if (isVirtualBackgroundEnabled) {
@@ -266,7 +289,9 @@ class JvmWebRtcClient : WebRtcClient {
                         OrbitVideoEngine.injectVideoProcessor(videoSource, modelPath)
                     }
                 }
-            }.onFailure {
+            }.onFailure { e ->
+                println("ERROR: [WebRTC] Failed to start videoSource: ${e.message}")
+                e.printStackTrace()
                 runCatching { videoSource.dispose() }
                 return
             }
@@ -274,6 +299,7 @@ class JvmWebRtcClient : WebRtcClient {
             val videoTrack = f.createVideoTrack("videoTrack", videoSource)
             localVideoSource = videoSource
             cameraVideoTrack = videoTrack
+            println("DEBUG: [WebRTC] cameraVideoTrack created: ${videoTrack.getId()}")
             
             // If we are screen sharing, don't set this as localVideoTrack yet
             if (screenVideoTrack == null) {
@@ -292,6 +318,7 @@ class JvmWebRtcClient : WebRtcClient {
 
         cameraVideoTrack?.setEnabled(true)
         if (!isVideoCaptureRunning && localVideoSource != null) {
+            println("DEBUG: [WebRTC] Resuming videoSource")
             runCatching {
                 localVideoSource?.start()
                 isVideoCaptureRunning = true
