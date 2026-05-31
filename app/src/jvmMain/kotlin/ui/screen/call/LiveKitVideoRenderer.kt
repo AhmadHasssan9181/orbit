@@ -40,7 +40,10 @@ actual fun LiveKitVideoRenderer(modifier: Modifier) {
         val width = LiveKitVideoSink.currentWidth
         val height = LiveKitVideoSink.currentHeight
         
-        if (buffer != null && width > 0 && height > 0 && frameCount > 0) {
+        // Ensure buffer capacity matches width and height to prevent race conditions during resolution changes
+        val expectedCapacity = width * height * 4
+        
+        if (buffer != null && width > 0 && height > 0 && frameCount > 0 && buffer.capacity() >= expectedCapacity) {
             // Read the ARGB data from the direct buffer
             val argbArray = IntArray(width * height)
             synchronized(buffer) {
@@ -58,6 +61,7 @@ actual fun LiveKitVideoRenderer(modifier: Modifier) {
                 modifier = Modifier.fillMaxSize()
             )
         } else {
+            println("DEBUG [LiveKitVideoRenderer] Showing empty state! buffer=${buffer != null}, width=$width, height=$height, frameCount=$frameCount")
             // Either waiting for video to start, or the remote participants have their cameras off.
             Text("Voice Call Connected (No Video)", color = Color.White)
         }

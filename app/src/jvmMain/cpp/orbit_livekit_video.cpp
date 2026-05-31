@@ -40,10 +40,21 @@ Java_livekit_LiveKitVideoSink_nativePushFrame(
             int g = Y - (0.337633 * U) - (0.698001 * V);
             int b = Y + (1.732446 * U);
 
-            // Pack into ARGB (Little Endian: BGRA, Big Endian: ARGB)
-            // BufferedImage.TYPE_INT_ARGB is 0xAARRGGBB in Java (Big Endian)
-            // On x64 (Little Endian), uint32_t 0xAARRGGBB is stored as [BB, GG, RR, AA]
-            dst[y * width + x] = (0xFF << 24) | (clamp(r) << 16) | (clamp(g) << 8) | clamp(b);
+            // Java's IntBuffer (Big Endian) reads 4 bytes as: (Byte0 << 24) | (Byte1 << 16) | (Byte2 << 8) | Byte3
+            // So to get 0xAARRGGBB in Java, we must write:
+            // Byte0 = A, Byte1 = R, Byte2 = G, Byte3 = B
+            // On Little Endian C++, a uint32_t cast to bytes is [Byte3, Byte2, Byte1, Byte0].
+            // But we are accessing via uint32_t*, so writing 0xAARRGGBB directly to dst[i] in C++
+            // will write [BB, GG, RR, AA] in memory.
+            // When Java reads it via Big-Endian IntBuffer, it reads [BB, GG, RR, AA] as 0xBBGGRRAA.
+            // To make Java see 0xAARRGGBB, we must write 0xAARRGGBB in memory as [AA, RR, GG, BB].
+            // To write [AA, RR, GG, BB] in Little Endian C++, we construct the uint32_t as:
+            // (BB << 24) | (GG << 16) | (RR << 8) | AA
+            uint8_t A = 0xFF;
+            uint8_t R = clamp(r);
+            uint8_t G = clamp(g);
+            uint8_t B = clamp(b);
+            dst[y * width + x] = (B << 24) | (G << 16) | (R << 8) | A;
         }
     }
 }

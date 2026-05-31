@@ -33,10 +33,7 @@ object LiveKitClient {
                     val eventData = dataPtr.getByteArray(0, len.toInt())
                     queue.offer(eventData)
                 } catch (t: Throwable) {
-                } finally {
-                    // KEEP ATTACHED: On Windows, re-attaching high-frequency threads is unstable.
-                    // We let JNA keep them attached until process exit.
-                    com.sun.jna.Native.detach(false)
+                    println("DEBUG [LiveKitClient] Callback error: ${t.message}")
                 }
             }
         }
