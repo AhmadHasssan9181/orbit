@@ -19,7 +19,7 @@ This branch moves the MatrixRTC/LiveKit audio path away from direct Kotlin/JNA F
 ## Milestones
 
 1. Add native bridge build scaffolding.
-2. Add Kotlin JNI facade and feature flag.
+2. Add Kotlin JNI facade and feature flag (`orbit.livekit.cppAudio`).
 3. Move LiveKit connect/disconnect lifecycle to native.
 4. Route local microphone frames to native audio source.
 5. Route remote audio frames back to JVM playback.
