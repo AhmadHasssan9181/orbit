@@ -33,6 +33,10 @@ std::mutex g_sinkMutex;
 jobject g_remoteAudioSink = nullptr;
 jmethodID g_remoteAudioSinkMethod = nullptr;
 
+std::mutex g_eventSinkMutex;
+jobject g_eventSink = nullptr;
+jmethodID g_eventSinkMethod = nullptr;
+
 struct RemoteAudioReader {
     std::string trackSid;
     std::shared_ptr<livekit::AudioStream> stream;
@@ -323,6 +327,197 @@ void setRawErrorLocked(
         "\",\"message\":\"" + escapeJson(message) +
         "\",\"operation\":\"" + escapeJson(operation) +
         "\",\"recoverable\":" + (recoverable ? "true" : "false") + "}";
+}
+
+void dispatchNativeEvent(JNIEnv* env, jobject event) {
+    if (env == nullptr || event == nullptr) {
+        return;
+    }
+
+    jobject sink = nullptr;
+    jmethodID method = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_eventSinkMutex);
+        if (g_eventSink != nullptr && g_eventSinkMethod != nullptr) {
+            sink = env->NewLocalRef(g_eventSink);
+            method = g_eventSinkMethod;
+        }
+    }
+
+    if (sink == nullptr || method == nullptr) {
+        return;
+    }
+
+    env->CallVoidMethod(sink, method, event);
+    if (env->ExceptionCheck()) {
+        env->ExceptionDescribe();
+        env->ExceptionClear();
+    }
+    env->DeleteLocalRef(sink);
+}
+
+void dispatchSimpleNativeEvent(JNIEnv* env, const char* className, jlong sessionId, jlong epoch) {
+    if (env == nullptr) {
+        return;
+    }
+
+    jclass eventClass = env->FindClass(className);
+    if (eventClass == nullptr) {
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        return;
+    }
+
+    jmethodID ctor = env->GetMethodID(eventClass, "<init>", "(JJ)V");
+    if (ctor == nullptr) {
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        env->DeleteLocalRef(eventClass);
+        return;
+    }
+
+    jobject event = env->NewObject(eventClass, ctor, sessionId, epoch);
+    if (event != nullptr) {
+        dispatchNativeEvent(env, event);
+        env->DeleteLocalRef(event);
+    }
+    env->DeleteLocalRef(eventClass);
+}
+
+jobject createNativeError(
+    JNIEnv* env,
+    const char* codeName,
+    const std::string& message,
+    const std::string& operation,
+    bool recoverable) {
+    if (env == nullptr) {
+        return nullptr;
+    }
+
+    jclass errorCodeClass = env->FindClass("livekit/NativeErrorCode");
+    jclass errorClass = env->FindClass("livekit/NativeError");
+    if (errorCodeClass == nullptr || errorClass == nullptr) {
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        return nullptr;
+    }
+
+    jfieldID codeField = env->GetStaticFieldID(errorCodeClass, codeName, "Llivekit/NativeErrorCode;");
+    jmethodID ctor = env->GetMethodID(errorClass, "<init>", "(Llivekit/NativeErrorCode;Ljava/lang/String;Ljava/lang/String;Z)V");
+    if (codeField == nullptr || ctor == nullptr) {
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        env->DeleteLocalRef(errorCodeClass);
+        env->DeleteLocalRef(errorClass);
+        return nullptr;
+    }
+
+    jobject code = env->GetStaticObjectField(errorCodeClass, codeField);
+    jstring jMessage = env->NewStringUTF(message.c_str());
+    jstring jOperation = env->NewStringUTF(operation.c_str());
+    jobject error = env->NewObject(errorClass, ctor, code, jMessage, jOperation, recoverable ? JNI_TRUE : JNI_FALSE);
+
+    if (code != nullptr) env->DeleteLocalRef(code);
+    if (jMessage != nullptr) env->DeleteLocalRef(jMessage);
+    if (jOperation != nullptr) env->DeleteLocalRef(jOperation);
+    env->DeleteLocalRef(errorCodeClass);
+    env->DeleteLocalRef(errorClass);
+    return error;
+}
+
+void dispatchErrorNativeEvent(
+    JNIEnv* env,
+    const char* eventClassName,
+    const char* errorCodeName,
+    jlong sessionId,
+    jlong epoch,
+    const std::string& message,
+    const std::string& operation,
+    bool recoverable) {
+    if (env == nullptr) {
+        return;
+    }
+
+    jobject error = createNativeError(env, errorCodeName, message, operation, recoverable);
+    if (error == nullptr) {
+        return;
+    }
+
+    jclass eventClass = env->FindClass(eventClassName);
+    if (eventClass == nullptr) {
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        env->DeleteLocalRef(error);
+        return;
+    }
+
+    jmethodID ctor = env->GetMethodID(eventClass, "<init>", "(JJLlivekit/NativeError;)V");
+    if (ctor == nullptr) {
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        env->DeleteLocalRef(error);
+        env->DeleteLocalRef(eventClass);
+        return;
+    }
+
+    jobject event = env->NewObject(eventClass, ctor, sessionId, epoch, error);
+    if (event != nullptr) {
+        dispatchNativeEvent(env, event);
+        env->DeleteLocalRef(event);
+    }
+    env->DeleteLocalRef(error);
+    env->DeleteLocalRef(eventClass);
+}
+
+void dispatchDisconnectedEvent(
+    JNIEnv* env,
+    jlong sessionId,
+    jlong epoch,
+    const std::string& reason,
+    bool recoverable) {
+    if (env == nullptr) {
+        return;
+    }
+
+    jclass eventClass = env->FindClass("livekit/NativeMediaEvent$Disconnected");
+    if (eventClass == nullptr) {
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        return;
+    }
+
+    jmethodID ctor = env->GetMethodID(eventClass, "<init>", "(JJLjava/lang/String;Z)V");
+    if (ctor == nullptr) {
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        env->DeleteLocalRef(eventClass);
+        return;
+    }
+
+    jstring jReason = env->NewStringUTF(reason.c_str());
+    jobject event = env->NewObject(eventClass, ctor, sessionId, epoch, jReason, recoverable ? JNI_TRUE : JNI_FALSE);
+    if (event != nullptr) {
+        dispatchNativeEvent(env, event);
+        env->DeleteLocalRef(event);
+    }
+    if (jReason != nullptr) env->DeleteLocalRef(jReason);
+    env->DeleteLocalRef(eventClass);
 }
 
 bool isRawSessionValid(jlong sessionId) {
@@ -625,7 +820,41 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeDestroySession(JNIEnv*, jclass, jlong s
 }
 
 extern "C" JNIEXPORT jint JNICALL
-Java_livekit_OrbitLiveKitNativeRaw_nativeSetEventSink(JNIEnv*, jclass, jobject) {
+Java_livekit_OrbitLiveKitNativeRaw_nativeSetEventSink(JNIEnv* env, jclass, jobject sink) {
+    if (g_javaVm == nullptr) {
+        env->GetJavaVM(&g_javaVm);
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_eventSinkMutex);
+        if (g_eventSink != nullptr) {
+            env->DeleteGlobalRef(g_eventSink);
+            g_eventSink = nullptr;
+            g_eventSinkMethod = nullptr;
+        }
+
+        if (sink != nullptr) {
+            jobject newSink = env->NewGlobalRef(sink);
+            jclass sinkClass = env->GetObjectClass(sink);
+            jmethodID method = env->GetMethodID(sinkClass, "onNativeEvent", "(Llivekit/NativeMediaEvent;)V");
+            env->DeleteLocalRef(sinkClass);
+
+            if (method == nullptr) {
+                if (env->ExceptionCheck()) {
+                    env->ExceptionDescribe();
+                    env->ExceptionClear();
+                }
+                env->DeleteGlobalRef(newSink);
+                std::lock_guard<std::mutex> sessionLock(g_sessionMutex);
+                setRawErrorLocked("NATIVE_EXCEPTION", "NativeMediaEventSink.onNativeEvent not found", "nativeSetEventSink", false);
+                return kStatusNativeException;
+            }
+
+            g_eventSink = newSink;
+            g_eventSinkMethod = method;
+        }
+    }
+
     std::lock_guard<std::mutex> lock(g_sessionMutex);
     clearRawErrorLocked();
     return kStatusOk;
@@ -666,14 +895,27 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeConnectAsync(
         clearRawErrorLocked();
     }
 
+    dispatchSimpleNativeEvent(env, "livekit/NativeMediaEvent$Connecting", sessionId, epoch);
     const jboolean connected =
         Java_livekit_LiveKitNativeAudioBridge_nativeConnect(env, nullptr, url, token);
     if (connected == JNI_TRUE) {
+        dispatchSimpleNativeEvent(env, "livekit/NativeMediaEvent$Connected", sessionId, epoch);
         return kStatusOk;
     }
 
-    std::lock_guard<std::mutex> lock(g_sessionMutex);
-    setRawErrorLocked("CONNECT_FAILED", "LiveKit C++ room connect failed", "nativeConnectAsync", true);
+    {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        setRawErrorLocked("CONNECT_FAILED", "LiveKit C++ room connect failed", "nativeConnectAsync", true);
+    }
+    dispatchErrorNativeEvent(
+        env,
+        "livekit/NativeMediaEvent$ConnectFailed",
+        "CONNECT_FAILED",
+        sessionId,
+        epoch,
+        "LiveKit C++ room connect failed",
+        "nativeConnectAsync",
+        true);
     return kStatusConnectFailed;
 }
 
@@ -697,23 +939,31 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeReconnectAsync(
 
 extern "C" JNIEXPORT jint JNICALL
 Java_livekit_OrbitLiveKitNativeRaw_nativeDisconnect(
-    JNIEnv*,
+    JNIEnv* env,
     jclass,
     jlong sessionId,
     jlong epoch,
-    jboolean) {
+    jboolean userInitiated) {
     if (!isRawSessionValid(sessionId)) {
         std::lock_guard<std::mutex> lock(g_sessionMutex);
         setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativeDisconnect", false);
         return kStatusStaleEvent;
     }
 
-    std::lock_guard<std::mutex> lock(g_sessionMutex);
-    g_rawEpoch = epoch;
-    g_acceptingFrames = false;
-    resetRoomLocked();
-    clearRawErrorLocked();
-    std::cout << "DEBUG [OrbitLiveKitAudio] disconnect cleanup completed" << std::endl;
+    {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        g_rawEpoch = epoch;
+        g_acceptingFrames = false;
+        resetRoomLocked();
+        clearRawErrorLocked();
+        std::cout << "DEBUG [OrbitLiveKitAudio] disconnect cleanup completed" << std::endl;
+    }
+    dispatchDisconnectedEvent(
+        env,
+        sessionId,
+        epoch,
+        userInitiated == JNI_TRUE ? "user-left" : "native-disconnect",
+        userInitiated != JNI_TRUE);
     return kStatusOk;
 }
 
@@ -740,6 +990,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePublishAudio(
     const jboolean published =
         Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(env, nullptr, sampleRate, channels, kFrameMs);
     if (published == JNI_TRUE) {
+        dispatchSimpleNativeEvent(env, "livekit/NativeMediaEvent$AudioPublished", sessionId, epoch);
         return kStatusOk;
     }
 
