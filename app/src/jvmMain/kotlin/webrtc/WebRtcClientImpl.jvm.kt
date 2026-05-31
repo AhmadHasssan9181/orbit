@@ -194,8 +194,10 @@ class JvmWebRtcClient : WebRtcClient {
                 println("DEBUG: [WebRTC] Redirecting local media to LiveKit Data Plane")
 
                 val usingNativeAudio = livekit.LiveKitNativeAudioSession.isConnected
+                val allowFfiAudio = livekit.LiveKitFeatureFlags.ffiFallback && livekit.LiveKitFeatureFlags.ffiAudio
+                val allowFfiVideo = livekit.LiveKitFeatureFlags.ffiFallback && livekit.LiveKitFeatureFlags.ffiVideo
 
-                if (isVideoEnabled && !usingNativeAudio) {
+                if (isVideoEnabled && !usingNativeAudio && allowFfiVideo) {
                     startVideoCapture()
 
                     if (cameraVideoTrack == null) {
@@ -207,8 +209,10 @@ class JvmWebRtcClient : WebRtcClient {
 
                     livekit.LiveKitLocalTrack.startCapture(captureWidth, captureHeight)
                     livekit.LiveKitClient.publishVideoTrack(livekit.LiveKitLocalTrack.getSourceHandle())
-                } else if (isVideoEnabled) {
+                } else if (isVideoEnabled && usingNativeAudio) {
                     println("DEBUG: [WebRTC] Native C++ audio mode active; LiveKit video publish stays disabled for now")
+                } else if (isVideoEnabled && !allowFfiVideo) {
+                    println("DEBUG: [WebRTC] Raw FFI LiveKit video is disabled by feature flag")
                 }
 
                 if (usingNativeAudio) {
@@ -217,9 +221,11 @@ class JvmWebRtcClient : WebRtcClient {
                     } else {
                         println("ERROR: [WebRTC] Failed to start native C++ LiveKit audio")
                     }
-                } else {
+                } else if (allowFfiAudio) {
                     livekit.LiveKitLocalAudioTrack.startCapture()
                     livekit.LiveKitClient.publishAudioTrack(livekit.LiveKitLocalAudioTrack.getSourceHandle())
+                } else {
+                    println("DEBUG: [WebRTC] Raw FFI LiveKit audio is disabled by feature flag")
                 }
                 
                 println("DEBUG: [WebRTC] Group call local media started and published to LiveKit")
