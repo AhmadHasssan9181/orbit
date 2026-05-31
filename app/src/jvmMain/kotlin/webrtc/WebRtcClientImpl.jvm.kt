@@ -573,6 +573,10 @@ class JvmWebRtcClient : WebRtcClient {
     }
 
     override fun toggleMute(isMuted: Boolean) {
+        if (isGroupCall && livekit.LiveKitNativeAudioSession.isConnected) {
+            livekit.LiveKitNativeAudioSession.setMuted(isMuted)
+            return
+        }
         localAudioTrack?.setEnabled(!isMuted)
     }
 
