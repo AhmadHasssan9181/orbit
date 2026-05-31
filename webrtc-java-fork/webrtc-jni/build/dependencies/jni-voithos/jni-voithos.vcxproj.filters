@@ -1,0 +1,67 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\src\Exception.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\src\JavaArrayList.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\src\JavaBigInteger.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\src\JavaClassLoader.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\src\JavaClassUtils.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\src\JavaContext.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\src\JavaDimension.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\src\JavaHashMap.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\src\JavaIterable.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\src\JavaList.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\src\JavaMapIterator.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\src\JavaObject.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\src\JavaRectangle.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\src\JavaString.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\src\JavaThreadEnv.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\src\JavaThrowable.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\src\JavaUtils.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\src\JavaWrappedException.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{67AB15CE-953A-3597-89A5-5D93A93869FA}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

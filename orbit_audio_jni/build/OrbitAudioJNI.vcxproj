@@ -1,0 +1,405 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <PreferredToolArchitecture>x64</PreferredToolArchitecture>
+  </PropertyGroup>
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="MinSizeRel|x64">
+      <Configuration>MinSizeRel</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="RelWithDebInfo|x64">
+      <Configuration>RelWithDebInfo</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{E40A559E-1468-393B-A6FF-0903C8567D20}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <VcpkgEnabled>false</VcpkgEnabled>
+    <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
+    <Platform>x64</Platform>
+    <ProjectName>OrbitAudioJNI</ProjectName>
+    <VCProjectUpgraderObjectName>NoUpgrade</VCProjectUpgraderObjectName>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets">
+    <Import Project="do_not_import_user.props" Condition="exists('do_not_import_user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <_ProjectFileVersion>10.0.20506.1</_ProjectFileVersion>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">D:\Onichat\orbit_audio_jni\build\Debug\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">OrbitAudioJNI.dir\Debug\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">OrbitAudioJNI</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">.dll</TargetExt>
+    <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</LinkIncremental>
+    <GenerateManifest Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</GenerateManifest>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">D:\Onichat\orbit_audio_jni\build\Release\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">OrbitAudioJNI.dir\Release\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">OrbitAudioJNI</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='Release|x64'">.dll</TargetExt>
+    <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</LinkIncremental>
+    <GenerateManifest Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</GenerateManifest>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">D:\Onichat\orbit_audio_jni\build\MinSizeRel\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">OrbitAudioJNI.dir\MinSizeRel\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">OrbitAudioJNI</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">.dll</TargetExt>
+    <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">false</LinkIncremental>
+    <GenerateManifest Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">true</GenerateManifest>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">D:\Onichat\orbit_audio_jni\build\RelWithDebInfo\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">OrbitAudioJNI.dir\RelWithDebInfo\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">OrbitAudioJNI</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">.dll</TargetExt>
+    <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">true</LinkIncremental>
+    <GenerateManifest Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">true</GenerateManifest>
+  </PropertyGroup>
+  <PropertyGroup />
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>C:\Program Files\Java\jdk-24\include;C:\Program Files\Java\jdk-24\include\win32;D:\vcpkg\installed\x64-windows\include;D:\vcpkg\installed\x64-windows\include\webrtc;D:\Onichat\orbit_audio_jni\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /external:I "D:/vcpkg/installed/x64-windows/include/opencv4"</AdditionalOptions>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
+      <InlineFunctionExpansion>Disabled</InlineFunctionExpansion>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <MinimalRebuild></MinimalRebuild>
+      <Optimization>Disabled</Optimization>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+      <RuntimeTypeInfo>true</RuntimeTypeInfo>
+      <SupportJustMyCode></SupportJustMyCode>
+      <UseFullPaths>false</UseFullPaths>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;WEBRTC_WIN;NOMINMAX;_WINSOCKAPI_;CMAKE_INTDIR="Debug";OrbitAudioJNI_EXPORTS</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_DEBUG;_WINDOWS;WEBRTC_WIN;NOMINMAX;_WINSOCKAPI_;CMAKE_INTDIR=\"Debug\";OrbitAudioJNI_EXPORTS</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>C:\Program Files\Java\jdk-24\include;C:\Program Files\Java\jdk-24\include\win32;D:\vcpkg\installed\x64-windows\include;D:\vcpkg\installed\x64-windows\include\webrtc;D:\Onichat\orbit_audio_jni\src;D:\vcpkg\installed\x64-windows\include\opencv4;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Midl>
+      <AdditionalIncludeDirectories>C:\Program Files\Java\jdk-24\include;C:\Program Files\Java\jdk-24\include\win32;D:\vcpkg\installed\x64-windows\include;D:\vcpkg\installed\x64-windows\include\webrtc;D:\Onichat\orbit_audio_jni\src;D:\vcpkg\installed\x64-windows\include\opencv4;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <PostBuildEvent>
+      <Message></Message>
+      <Command>setlocal
+C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -noprofile -executionpolicy Bypass -file D:/vcpkg/scripts/buildsystems/msbuild/applocal.ps1 -targetBinary D:/Onichat/orbit_audio_jni/build/Debug/OrbitAudioJNI.dll -installedDir D:/vcpkg/installed/x64-windows/debug/bin -OutVariable out
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+    </PostBuildEvent>
+    <Link>
+      <AdditionalDependencies>webrtc.lib;libyuv.lib;Winmm.lib;Mmdevapi.lib;Ole32.lib;D:\vcpkg\installed\x64-windows\debug\lib\opencv_highgui4d.lib;D:\vcpkg\installed\x64-windows\debug\lib\opencv_ml4d.lib;D:\vcpkg\installed\x64-windows\debug\lib\opencv_objdetect4d.lib;D:\vcpkg\installed\x64-windows\debug\lib\opencv_photo4d.lib;D:\vcpkg\installed\x64-windows\debug\lib\opencv_stitching4d.lib;D:\vcpkg\installed\x64-windows\debug\lib\opencv_video4d.lib;D:\vcpkg\installed\x64-windows\debug\lib\opencv_videoio4d.lib;D:\vcpkg\installed\x64-windows\lib\absl_borrowed_fixup_buffer.lib;D:\vcpkg\installed\x64-windows\lib\absl_decode_rust_punycode.lib;D:\vcpkg\installed\x64-windows\lib\absl_demangle_rust.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_commandlineflag.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_commandlineflag_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_config.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_marshalling.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_parse.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_private_handle_accessor.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_program_name.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_reflection.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_usage.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_usage_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_generic_printer_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_hashtable_profiler.lib;D:\vcpkg\installed\x64-windows\lib\absl_log_flags.lib;D:\vcpkg\installed\x64-windows\lib\absl_log_internal_structured_proto.lib;D:\vcpkg\installed\x64-windows\lib\absl_poison.lib;D:\vcpkg\installed\x64-windows\lib\absl_profile_builder.lib;D:\vcpkg\installed\x64-windows\lib\absl_random_internal_entropy_pool.lib;D:\vcpkg\installed\x64-windows\lib\absl_tracing_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_utf8_for_code_point.lib;D:\vcpkg\installed\x64-windows\lib\abseil_dll.lib;D:\vcpkg\installed\x64-windows\debug\lib\opencv_imgcodecs4d.lib;D:\vcpkg\installed\x64-windows\debug\lib\opencv_calib3d4d.lib;D:\vcpkg\installed\x64-windows\debug\lib\opencv_dnn4d.lib;D:\vcpkg\installed\x64-windows\debug\lib\opencv_features2d4d.lib;D:\vcpkg\installed\x64-windows\debug\lib\opencv_flann4d.lib;D:\vcpkg\installed\x64-windows\debug\lib\opencv_imgproc4d.lib;D:\vcpkg\installed\x64-windows\debug\lib\opencv_core4d.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalLibraryDirectories>D:/vcpkg/installed/x64-windows/lib;D:/vcpkg/installed/x64-windows/lib/$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <IgnoreSpecificDefaultLibraries>%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
+      <ImportLibrary>D:/Onichat/orbit_audio_jni/build/Debug/OrbitAudioJNI.lib</ImportLibrary>
+      <ProgramDataBaseFile>D:/Onichat/orbit_audio_jni/build/Debug/OrbitAudioJNI.pdb</ProgramDataBaseFile>
+      <SubSystem>Console</SubSystem>
+    </Link>
+    <ProjectReference>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>C:\Program Files\Java\jdk-24\include;C:\Program Files\Java\jdk-24\include\win32;D:\vcpkg\installed\x64-windows\include;D:\vcpkg\installed\x64-windows\include\webrtc;D:\Onichat\orbit_audio_jni\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /external:I "D:/vcpkg/installed/x64-windows/include/opencv4"</AdditionalOptions>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
+      <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <MinimalRebuild></MinimalRebuild>
+      <Optimization>MaxSpeed</Optimization>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <RuntimeTypeInfo>true</RuntimeTypeInfo>
+      <SupportJustMyCode></SupportJustMyCode>
+      <UseFullPaths>false</UseFullPaths>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;WEBRTC_WIN;NOMINMAX;_WINSOCKAPI_;CMAKE_INTDIR="Release";OrbitAudioJNI_EXPORTS</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <DebugInformationFormat>
+      </DebugInformationFormat>
+      <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;WEBRTC_WIN;NOMINMAX;_WINSOCKAPI_;CMAKE_INTDIR=\"Release\";OrbitAudioJNI_EXPORTS</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>C:\Program Files\Java\jdk-24\include;C:\Program Files\Java\jdk-24\include\win32;D:\vcpkg\installed\x64-windows\include;D:\vcpkg\installed\x64-windows\include\webrtc;D:\Onichat\orbit_audio_jni\src;D:\vcpkg\installed\x64-windows\include\opencv4;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Midl>
+      <AdditionalIncludeDirectories>C:\Program Files\Java\jdk-24\include;C:\Program Files\Java\jdk-24\include\win32;D:\vcpkg\installed\x64-windows\include;D:\vcpkg\installed\x64-windows\include\webrtc;D:\Onichat\orbit_audio_jni\src;D:\vcpkg\installed\x64-windows\include\opencv4;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <PostBuildEvent>
+      <Message></Message>
+      <Command>setlocal
+C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -noprofile -executionpolicy Bypass -file D:/vcpkg/scripts/buildsystems/msbuild/applocal.ps1 -targetBinary D:/Onichat/orbit_audio_jni/build/Release/OrbitAudioJNI.dll -installedDir D:/vcpkg/installed/x64-windows/bin -OutVariable out
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+    </PostBuildEvent>
+    <Link>
+      <AdditionalDependencies>webrtc.lib;libyuv.lib;Winmm.lib;Mmdevapi.lib;Ole32.lib;D:\vcpkg\installed\x64-windows\lib\opencv_highgui4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_ml4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_objdetect4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_photo4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_stitching4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_video4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_videoio4.lib;D:\vcpkg\installed\x64-windows\lib\absl_borrowed_fixup_buffer.lib;D:\vcpkg\installed\x64-windows\lib\absl_decode_rust_punycode.lib;D:\vcpkg\installed\x64-windows\lib\absl_demangle_rust.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_commandlineflag.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_commandlineflag_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_config.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_marshalling.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_parse.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_private_handle_accessor.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_program_name.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_reflection.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_usage.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_usage_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_generic_printer_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_hashtable_profiler.lib;D:\vcpkg\installed\x64-windows\lib\absl_log_flags.lib;D:\vcpkg\installed\x64-windows\lib\absl_log_internal_structured_proto.lib;D:\vcpkg\installed\x64-windows\lib\absl_poison.lib;D:\vcpkg\installed\x64-windows\lib\absl_profile_builder.lib;D:\vcpkg\installed\x64-windows\lib\absl_random_internal_entropy_pool.lib;D:\vcpkg\installed\x64-windows\lib\absl_tracing_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_utf8_for_code_point.lib;D:\vcpkg\installed\x64-windows\lib\abseil_dll.lib;D:\vcpkg\installed\x64-windows\lib\opencv_imgcodecs4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_calib3d4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_dnn4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_features2d4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_flann4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_imgproc4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_core4.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalLibraryDirectories>D:/vcpkg/installed/x64-windows/lib;D:/vcpkg/installed/x64-windows/lib/$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+      <GenerateDebugInformation>false</GenerateDebugInformation>
+      <IgnoreSpecificDefaultLibraries>%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
+      <ImportLibrary>D:/Onichat/orbit_audio_jni/build/Release/OrbitAudioJNI.lib</ImportLibrary>
+      <ProgramDataBaseFile>D:/Onichat/orbit_audio_jni/build/Release/OrbitAudioJNI.pdb</ProgramDataBaseFile>
+      <SubSystem>Console</SubSystem>
+    </Link>
+    <ProjectReference>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>C:\Program Files\Java\jdk-24\include;C:\Program Files\Java\jdk-24\include\win32;D:\vcpkg\installed\x64-windows\include;D:\vcpkg\installed\x64-windows\include\webrtc;D:\Onichat\orbit_audio_jni\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /external:I "D:/vcpkg/installed/x64-windows/include/opencv4"</AdditionalOptions>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
+      <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <MinimalRebuild></MinimalRebuild>
+      <Optimization>MinSpace</Optimization>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <RuntimeTypeInfo>true</RuntimeTypeInfo>
+      <SupportJustMyCode></SupportJustMyCode>
+      <UseFullPaths>false</UseFullPaths>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;WEBRTC_WIN;NOMINMAX;_WINSOCKAPI_;CMAKE_INTDIR="MinSizeRel";OrbitAudioJNI_EXPORTS</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <DebugInformationFormat>
+      </DebugInformationFormat>
+      <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;WEBRTC_WIN;NOMINMAX;_WINSOCKAPI_;CMAKE_INTDIR=\"MinSizeRel\";OrbitAudioJNI_EXPORTS</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>C:\Program Files\Java\jdk-24\include;C:\Program Files\Java\jdk-24\include\win32;D:\vcpkg\installed\x64-windows\include;D:\vcpkg\installed\x64-windows\include\webrtc;D:\Onichat\orbit_audio_jni\src;D:\vcpkg\installed\x64-windows\include\opencv4;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Midl>
+      <AdditionalIncludeDirectories>C:\Program Files\Java\jdk-24\include;C:\Program Files\Java\jdk-24\include\win32;D:\vcpkg\installed\x64-windows\include;D:\vcpkg\installed\x64-windows\include\webrtc;D:\Onichat\orbit_audio_jni\src;D:\vcpkg\installed\x64-windows\include\opencv4;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <PostBuildEvent>
+      <Message></Message>
+      <Command>setlocal
+C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -noprofile -executionpolicy Bypass -file D:/vcpkg/scripts/buildsystems/msbuild/applocal.ps1 -targetBinary D:/Onichat/orbit_audio_jni/build/MinSizeRel/OrbitAudioJNI.dll -installedDir D:/vcpkg/installed/x64-windows/bin -OutVariable out
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+    </PostBuildEvent>
+    <Link>
+      <AdditionalDependencies>webrtc.lib;libyuv.lib;Winmm.lib;Mmdevapi.lib;Ole32.lib;D:\vcpkg\installed\x64-windows\lib\opencv_highgui4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_ml4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_objdetect4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_photo4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_stitching4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_video4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_videoio4.lib;D:\vcpkg\installed\x64-windows\lib\absl_borrowed_fixup_buffer.lib;D:\vcpkg\installed\x64-windows\lib\absl_decode_rust_punycode.lib;D:\vcpkg\installed\x64-windows\lib\absl_demangle_rust.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_commandlineflag.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_commandlineflag_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_config.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_marshalling.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_parse.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_private_handle_accessor.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_program_name.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_reflection.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_usage.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_usage_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_generic_printer_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_hashtable_profiler.lib;D:\vcpkg\installed\x64-windows\lib\absl_log_flags.lib;D:\vcpkg\installed\x64-windows\lib\absl_log_internal_structured_proto.lib;D:\vcpkg\installed\x64-windows\lib\absl_poison.lib;D:\vcpkg\installed\x64-windows\lib\absl_profile_builder.lib;D:\vcpkg\installed\x64-windows\lib\absl_random_internal_entropy_pool.lib;D:\vcpkg\installed\x64-windows\lib\absl_tracing_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_utf8_for_code_point.lib;D:\vcpkg\installed\x64-windows\lib\abseil_dll.lib;D:\vcpkg\installed\x64-windows\lib\opencv_imgcodecs4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_calib3d4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_dnn4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_features2d4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_flann4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_imgproc4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_core4.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalLibraryDirectories>D:/vcpkg/installed/x64-windows/lib;D:/vcpkg/installed/x64-windows/lib/$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+      <GenerateDebugInformation>false</GenerateDebugInformation>
+      <IgnoreSpecificDefaultLibraries>%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
+      <ImportLibrary>D:/Onichat/orbit_audio_jni/build/MinSizeRel/OrbitAudioJNI.lib</ImportLibrary>
+      <ProgramDataBaseFile>D:/Onichat/orbit_audio_jni/build/MinSizeRel/OrbitAudioJNI.pdb</ProgramDataBaseFile>
+      <SubSystem>Console</SubSystem>
+    </Link>
+    <ProjectReference>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>C:\Program Files\Java\jdk-24\include;C:\Program Files\Java\jdk-24\include\win32;D:\vcpkg\installed\x64-windows\include;D:\vcpkg\installed\x64-windows\include\webrtc;D:\Onichat\orbit_audio_jni\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /external:I "D:/vcpkg/installed/x64-windows/include/opencv4"</AdditionalOptions>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
+      <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <MinimalRebuild></MinimalRebuild>
+      <Optimization>MaxSpeed</Optimization>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <RuntimeTypeInfo>true</RuntimeTypeInfo>
+      <SupportJustMyCode></SupportJustMyCode>
+      <UseFullPaths>false</UseFullPaths>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;WEBRTC_WIN;NOMINMAX;_WINSOCKAPI_;CMAKE_INTDIR="RelWithDebInfo";OrbitAudioJNI_EXPORTS</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;WEBRTC_WIN;NOMINMAX;_WINSOCKAPI_;CMAKE_INTDIR=\"RelWithDebInfo\";OrbitAudioJNI_EXPORTS</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>C:\Program Files\Java\jdk-24\include;C:\Program Files\Java\jdk-24\include\win32;D:\vcpkg\installed\x64-windows\include;D:\vcpkg\installed\x64-windows\include\webrtc;D:\Onichat\orbit_audio_jni\src;D:\vcpkg\installed\x64-windows\include\opencv4;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Midl>
+      <AdditionalIncludeDirectories>C:\Program Files\Java\jdk-24\include;C:\Program Files\Java\jdk-24\include\win32;D:\vcpkg\installed\x64-windows\include;D:\vcpkg\installed\x64-windows\include\webrtc;D:\Onichat\orbit_audio_jni\src;D:\vcpkg\installed\x64-windows\include\opencv4;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <PostBuildEvent>
+      <Message></Message>
+      <Command>setlocal
+C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -noprofile -executionpolicy Bypass -file D:/vcpkg/scripts/buildsystems/msbuild/applocal.ps1 -targetBinary D:/Onichat/orbit_audio_jni/build/RelWithDebInfo/OrbitAudioJNI.dll -installedDir D:/vcpkg/installed/x64-windows/bin -OutVariable out
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+    </PostBuildEvent>
+    <Link>
+      <AdditionalDependencies>webrtc.lib;libyuv.lib;Winmm.lib;Mmdevapi.lib;Ole32.lib;D:\vcpkg\installed\x64-windows\lib\opencv_highgui4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_ml4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_objdetect4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_photo4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_stitching4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_video4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_videoio4.lib;D:\vcpkg\installed\x64-windows\lib\absl_borrowed_fixup_buffer.lib;D:\vcpkg\installed\x64-windows\lib\absl_decode_rust_punycode.lib;D:\vcpkg\installed\x64-windows\lib\absl_demangle_rust.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_commandlineflag.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_commandlineflag_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_config.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_marshalling.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_parse.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_private_handle_accessor.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_program_name.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_reflection.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_usage.lib;D:\vcpkg\installed\x64-windows\lib\absl_flags_usage_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_generic_printer_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_hashtable_profiler.lib;D:\vcpkg\installed\x64-windows\lib\absl_log_flags.lib;D:\vcpkg\installed\x64-windows\lib\absl_log_internal_structured_proto.lib;D:\vcpkg\installed\x64-windows\lib\absl_poison.lib;D:\vcpkg\installed\x64-windows\lib\absl_profile_builder.lib;D:\vcpkg\installed\x64-windows\lib\absl_random_internal_entropy_pool.lib;D:\vcpkg\installed\x64-windows\lib\absl_tracing_internal.lib;D:\vcpkg\installed\x64-windows\lib\absl_utf8_for_code_point.lib;D:\vcpkg\installed\x64-windows\lib\abseil_dll.lib;D:\vcpkg\installed\x64-windows\lib\opencv_imgcodecs4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_calib3d4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_dnn4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_features2d4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_flann4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_imgproc4.lib;D:\vcpkg\installed\x64-windows\lib\opencv_core4.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalLibraryDirectories>D:/vcpkg/installed/x64-windows/lib;D:/vcpkg/installed/x64-windows/lib/$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <IgnoreSpecificDefaultLibraries>%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
+      <ImportLibrary>D:/Onichat/orbit_audio_jni/build/RelWithDebInfo/OrbitAudioJNI.lib</ImportLibrary>
+      <ProgramDataBaseFile>D:/Onichat/orbit_audio_jni/build/RelWithDebInfo/OrbitAudioJNI.pdb</ProgramDataBaseFile>
+      <SubSystem>Console</SubSystem>
+    </Link>
+    <ProjectReference>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <CustomBuild Include="D:\Onichat\orbit_audio_jni\CMakeLists.txt">
+      <UseUtf8Encoding>Always</UseUtf8Encoding>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Building Custom Rule D:/Onichat/orbit_audio_jni/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SD:/Onichat/orbit_audio_jni -BD:/Onichat/orbit_audio_jni/build --check-stamp-file D:/Onichat/orbit_audio_jni/build/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeCInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeCXXInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeCommonLanguageInclude.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeDependentOption.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeFindDependencyMacro.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeFindJavaCommon.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeGenericSystem.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeInitializeConfigs.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeLanguageInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakePushCheckState.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeRCInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeSystemSpecificInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeSystemSpecificInitialize.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CheckCSourceCompiles.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CheckIncludeFile.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CheckLibraryExists.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CheckSourceCompiles.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\CMakeCommonCompilerMacros.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\MSVC-C.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\MSVC.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindJNI.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindPackageHandleStandardArgs.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindPackageMessage.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindTIFF.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindThreads.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CMakeCLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CMakeCXXLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CMakeCommonLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CheckSourceCompiles.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Linker\Windows-MSVC-C.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Linker\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Linker\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-Initialize.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-MSVC-C.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\WindowsPaths.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\SelectLibraryConfigurations.cmake;C:\Users\Ahmad\anaconda3\Library\lib\cmake\tiff\TiffConfig.cmake;C:\Users\Ahmad\anaconda3\Library\lib\cmake\tiff\TiffConfigVersion.cmake;C:\Users\Ahmad\anaconda3\Library\lib\cmake\tiff\TiffTargets-release.cmake;C:\Users\Ahmad\anaconda3\Library\lib\cmake\tiff\TiffTargets.cmake;D:\Onichat\orbit_audio_jni\build\CMakeFiles\3.31.4\CMakeCCompiler.cmake;D:\Onichat\orbit_audio_jni\build\CMakeFiles\3.31.4\CMakeCXXCompiler.cmake;D:\Onichat\orbit_audio_jni\build\CMakeFiles\3.31.4\CMakeRCCompiler.cmake;D:\Onichat\orbit_audio_jni\build\CMakeFiles\3.31.4\CMakeSystem.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslConfig.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslConfigVersion.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslTargets-debug.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslTargets-release.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslTargets.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\BuildFlatBuffers.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\FlatBuffersTargets-debug.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\FlatBuffersTargets-release.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\FlatBuffersTargets.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\FlatcTargets-release.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\FlatcTargets.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\flatbuffers-config-version.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\flatbuffers-config.cmake;D:\vcpkg\installed\x64-windows\share\opencv4\OpenCVConfig-version.cmake;D:\vcpkg\installed\x64-windows\share\opencv4\OpenCVConfig.cmake;D:\vcpkg\installed\x64-windows\share\opencv4\OpenCVModules-debug.cmake;D:\vcpkg\installed\x64-windows\share\opencv4\OpenCVModules-release.cmake;D:\vcpkg\installed\x64-windows\share\opencv4\OpenCVModules.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-config-version.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-config.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-generate.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-module.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-options.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-targets-debug.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-targets-release.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-targets.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\vcpkg-cmake-wrapper.cmake;D:\vcpkg\installed\x64-windows\share\quirc\quirc-config-debug.cmake;D:\vcpkg\installed\x64-windows\share\quirc\quirc-config-release.cmake;D:\vcpkg\installed\x64-windows\share\quirc\quirc-config.cmake;D:\vcpkg\installed\x64-windows\share\tiff\vcpkg-cmake-wrapper.cmake;D:\vcpkg\installed\x64-windows\share\utf8_range\utf8_range-config.cmake;D:\vcpkg\installed\x64-windows\share\utf8_range\utf8_range-targets-debug.cmake;D:\vcpkg\installed\x64-windows\share\utf8_range\utf8_range-targets-release.cmake;D:\vcpkg\installed\x64-windows\share\utf8_range\utf8_range-targets.cmake;D:\vcpkg\scripts\buildsystems\vcpkg.cmake;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">D:\Onichat\orbit_audio_jni\build\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Building Custom Rule D:/Onichat/orbit_audio_jni/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SD:/Onichat/orbit_audio_jni -BD:/Onichat/orbit_audio_jni/build --check-stamp-file D:/Onichat/orbit_audio_jni/build/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeCInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeCXXInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeCommonLanguageInclude.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeDependentOption.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeFindDependencyMacro.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeFindJavaCommon.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeGenericSystem.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeInitializeConfigs.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeLanguageInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakePushCheckState.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeRCInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeSystemSpecificInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeSystemSpecificInitialize.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CheckCSourceCompiles.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CheckIncludeFile.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CheckLibraryExists.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CheckSourceCompiles.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\CMakeCommonCompilerMacros.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\MSVC-C.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\MSVC.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindJNI.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindPackageHandleStandardArgs.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindPackageMessage.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindTIFF.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindThreads.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CMakeCLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CMakeCXXLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CMakeCommonLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CheckSourceCompiles.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Linker\Windows-MSVC-C.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Linker\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Linker\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-Initialize.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-MSVC-C.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\WindowsPaths.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\SelectLibraryConfigurations.cmake;C:\Users\Ahmad\anaconda3\Library\lib\cmake\tiff\TiffConfig.cmake;C:\Users\Ahmad\anaconda3\Library\lib\cmake\tiff\TiffConfigVersion.cmake;C:\Users\Ahmad\anaconda3\Library\lib\cmake\tiff\TiffTargets-release.cmake;C:\Users\Ahmad\anaconda3\Library\lib\cmake\tiff\TiffTargets.cmake;D:\Onichat\orbit_audio_jni\build\CMakeFiles\3.31.4\CMakeCCompiler.cmake;D:\Onichat\orbit_audio_jni\build\CMakeFiles\3.31.4\CMakeCXXCompiler.cmake;D:\Onichat\orbit_audio_jni\build\CMakeFiles\3.31.4\CMakeRCCompiler.cmake;D:\Onichat\orbit_audio_jni\build\CMakeFiles\3.31.4\CMakeSystem.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslConfig.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslConfigVersion.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslTargets-debug.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslTargets-release.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslTargets.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\BuildFlatBuffers.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\FlatBuffersTargets-debug.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\FlatBuffersTargets-release.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\FlatBuffersTargets.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\FlatcTargets-release.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\FlatcTargets.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\flatbuffers-config-version.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\flatbuffers-config.cmake;D:\vcpkg\installed\x64-windows\share\opencv4\OpenCVConfig-version.cmake;D:\vcpkg\installed\x64-windows\share\opencv4\OpenCVConfig.cmake;D:\vcpkg\installed\x64-windows\share\opencv4\OpenCVModules-debug.cmake;D:\vcpkg\installed\x64-windows\share\opencv4\OpenCVModules-release.cmake;D:\vcpkg\installed\x64-windows\share\opencv4\OpenCVModules.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-config-version.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-config.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-generate.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-module.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-options.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-targets-debug.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-targets-release.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-targets.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\vcpkg-cmake-wrapper.cmake;D:\vcpkg\installed\x64-windows\share\quirc\quirc-config-debug.cmake;D:\vcpkg\installed\x64-windows\share\quirc\quirc-config-release.cmake;D:\vcpkg\installed\x64-windows\share\quirc\quirc-config.cmake;D:\vcpkg\installed\x64-windows\share\tiff\vcpkg-cmake-wrapper.cmake;D:\vcpkg\installed\x64-windows\share\utf8_range\utf8_range-config.cmake;D:\vcpkg\installed\x64-windows\share\utf8_range\utf8_range-targets-debug.cmake;D:\vcpkg\installed\x64-windows\share\utf8_range\utf8_range-targets-release.cmake;D:\vcpkg\installed\x64-windows\share\utf8_range\utf8_range-targets.cmake;D:\vcpkg\scripts\buildsystems\vcpkg.cmake;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">D:\Onichat\orbit_audio_jni\build\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">Building Custom Rule D:/Onichat/orbit_audio_jni/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SD:/Onichat/orbit_audio_jni -BD:/Onichat/orbit_audio_jni/build --check-stamp-file D:/Onichat/orbit_audio_jni/build/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeCInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeCXXInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeCommonLanguageInclude.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeDependentOption.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeFindDependencyMacro.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeFindJavaCommon.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeGenericSystem.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeInitializeConfigs.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeLanguageInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakePushCheckState.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeRCInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeSystemSpecificInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeSystemSpecificInitialize.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CheckCSourceCompiles.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CheckIncludeFile.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CheckLibraryExists.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CheckSourceCompiles.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\CMakeCommonCompilerMacros.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\MSVC-C.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\MSVC.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindJNI.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindPackageHandleStandardArgs.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindPackageMessage.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindTIFF.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindThreads.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CMakeCLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CMakeCXXLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CMakeCommonLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CheckSourceCompiles.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Linker\Windows-MSVC-C.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Linker\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Linker\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-Initialize.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-MSVC-C.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\WindowsPaths.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\SelectLibraryConfigurations.cmake;C:\Users\Ahmad\anaconda3\Library\lib\cmake\tiff\TiffConfig.cmake;C:\Users\Ahmad\anaconda3\Library\lib\cmake\tiff\TiffConfigVersion.cmake;C:\Users\Ahmad\anaconda3\Library\lib\cmake\tiff\TiffTargets-release.cmake;C:\Users\Ahmad\anaconda3\Library\lib\cmake\tiff\TiffTargets.cmake;D:\Onichat\orbit_audio_jni\build\CMakeFiles\3.31.4\CMakeCCompiler.cmake;D:\Onichat\orbit_audio_jni\build\CMakeFiles\3.31.4\CMakeCXXCompiler.cmake;D:\Onichat\orbit_audio_jni\build\CMakeFiles\3.31.4\CMakeRCCompiler.cmake;D:\Onichat\orbit_audio_jni\build\CMakeFiles\3.31.4\CMakeSystem.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslConfig.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslConfigVersion.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslTargets-debug.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslTargets-release.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslTargets.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\BuildFlatBuffers.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\FlatBuffersTargets-debug.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\FlatBuffersTargets-release.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\FlatBuffersTargets.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\FlatcTargets-release.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\FlatcTargets.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\flatbuffers-config-version.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\flatbuffers-config.cmake;D:\vcpkg\installed\x64-windows\share\opencv4\OpenCVConfig-version.cmake;D:\vcpkg\installed\x64-windows\share\opencv4\OpenCVConfig.cmake;D:\vcpkg\installed\x64-windows\share\opencv4\OpenCVModules-debug.cmake;D:\vcpkg\installed\x64-windows\share\opencv4\OpenCVModules-release.cmake;D:\vcpkg\installed\x64-windows\share\opencv4\OpenCVModules.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-config-version.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-config.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-generate.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-module.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-options.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-targets-debug.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-targets-release.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-targets.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\vcpkg-cmake-wrapper.cmake;D:\vcpkg\installed\x64-windows\share\quirc\quirc-config-debug.cmake;D:\vcpkg\installed\x64-windows\share\quirc\quirc-config-release.cmake;D:\vcpkg\installed\x64-windows\share\quirc\quirc-config.cmake;D:\vcpkg\installed\x64-windows\share\tiff\vcpkg-cmake-wrapper.cmake;D:\vcpkg\installed\x64-windows\share\utf8_range\utf8_range-config.cmake;D:\vcpkg\installed\x64-windows\share\utf8_range\utf8_range-targets-debug.cmake;D:\vcpkg\installed\x64-windows\share\utf8_range\utf8_range-targets-release.cmake;D:\vcpkg\installed\x64-windows\share\utf8_range\utf8_range-targets.cmake;D:\vcpkg\scripts\buildsystems\vcpkg.cmake;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">D:\Onichat\orbit_audio_jni\build\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">Building Custom Rule D:/Onichat/orbit_audio_jni/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SD:/Onichat/orbit_audio_jni -BD:/Onichat/orbit_audio_jni/build --check-stamp-file D:/Onichat/orbit_audio_jni/build/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeCInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeCXXInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeCommonLanguageInclude.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeDependentOption.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeFindDependencyMacro.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeFindJavaCommon.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeGenericSystem.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeInitializeConfigs.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeLanguageInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakePushCheckState.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeRCInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeSystemSpecificInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CMakeSystemSpecificInitialize.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CheckCSourceCompiles.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CheckIncludeFile.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CheckLibraryExists.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\CheckSourceCompiles.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\CMakeCommonCompilerMacros.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\MSVC-C.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Compiler\MSVC.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindJNI.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindPackageHandleStandardArgs.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindPackageMessage.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindTIFF.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\FindThreads.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CMakeCLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CMakeCXXLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CMakeCommonLinkerInformation.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Internal\CheckSourceCompiles.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Linker\Windows-MSVC-C.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Linker\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Linker\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-Initialize.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-MSVC-C.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-MSVC-CXX.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows-MSVC.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\Windows.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\Platform\WindowsPaths.cmake;C:\Program Files\CMake\share\cmake-3.31\Modules\SelectLibraryConfigurations.cmake;C:\Users\Ahmad\anaconda3\Library\lib\cmake\tiff\TiffConfig.cmake;C:\Users\Ahmad\anaconda3\Library\lib\cmake\tiff\TiffConfigVersion.cmake;C:\Users\Ahmad\anaconda3\Library\lib\cmake\tiff\TiffTargets-release.cmake;C:\Users\Ahmad\anaconda3\Library\lib\cmake\tiff\TiffTargets.cmake;D:\Onichat\orbit_audio_jni\build\CMakeFiles\3.31.4\CMakeCCompiler.cmake;D:\Onichat\orbit_audio_jni\build\CMakeFiles\3.31.4\CMakeCXXCompiler.cmake;D:\Onichat\orbit_audio_jni\build\CMakeFiles\3.31.4\CMakeRCCompiler.cmake;D:\Onichat\orbit_audio_jni\build\CMakeFiles\3.31.4\CMakeSystem.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslConfig.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslConfigVersion.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslTargets-debug.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslTargets-release.cmake;D:\vcpkg\installed\x64-windows\share\absl\abslTargets.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\BuildFlatBuffers.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\FlatBuffersTargets-debug.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\FlatBuffersTargets-release.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\FlatBuffersTargets.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\FlatcTargets-release.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\FlatcTargets.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\flatbuffers-config-version.cmake;D:\vcpkg\installed\x64-windows\share\flatbuffers\flatbuffers-config.cmake;D:\vcpkg\installed\x64-windows\share\opencv4\OpenCVConfig-version.cmake;D:\vcpkg\installed\x64-windows\share\opencv4\OpenCVConfig.cmake;D:\vcpkg\installed\x64-windows\share\opencv4\OpenCVModules-debug.cmake;D:\vcpkg\installed\x64-windows\share\opencv4\OpenCVModules-release.cmake;D:\vcpkg\installed\x64-windows\share\opencv4\OpenCVModules.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-config-version.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-config.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-generate.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-module.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-options.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-targets-debug.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-targets-release.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\protobuf-targets.cmake;D:\vcpkg\installed\x64-windows\share\protobuf\vcpkg-cmake-wrapper.cmake;D:\vcpkg\installed\x64-windows\share\quirc\quirc-config-debug.cmake;D:\vcpkg\installed\x64-windows\share\quirc\quirc-config-release.cmake;D:\vcpkg\installed\x64-windows\share\quirc\quirc-config.cmake;D:\vcpkg\installed\x64-windows\share\tiff\vcpkg-cmake-wrapper.cmake;D:\vcpkg\installed\x64-windows\share\utf8_range\utf8_range-config.cmake;D:\vcpkg\installed\x64-windows\share\utf8_range\utf8_range-targets-debug.cmake;D:\vcpkg\installed\x64-windows\share\utf8_range\utf8_range-targets-release.cmake;D:\vcpkg\installed\x64-windows\share\utf8_range\utf8_range-targets.cmake;D:\vcpkg\scripts\buildsystems\vcpkg.cmake;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">D:\Onichat\orbit_audio_jni\build\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">false</LinkObjects>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="D:\Onichat\orbit_audio_jni\src\OrbitAudioDeviceModule.cc" />
+    <ClCompile Include="D:\Onichat\orbit_audio_jni\src\OrbitVideoProcessor.cc" />
+    <ClCompile Include="D:\Onichat\orbit_audio_jni\src\OrbitJNI.cc" />
+  </ItemGroup>
+  <ItemGroup />
+  <ItemGroup>
+    <ProjectReference Include="D:\Onichat\orbit_audio_jni\build\ZERO_CHECK.vcxproj">
+      <Project>{1B9C3125-8EC6-3959-AE9F-09FBEE96C2DF}</Project>
+      <Name>ZERO_CHECK</Name>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

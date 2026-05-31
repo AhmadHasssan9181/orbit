@@ -1,0 +1,3 @@
+D:/Onichat/orbit_audio_jni/build/CMakeFiles/OrbitAudioJNI.dir
+D:/Onichat/orbit_audio_jni/build/CMakeFiles/ALL_BUILD.dir
+D:/Onichat/orbit_audio_jni/build/CMakeFiles/ZERO_CHECK.dir

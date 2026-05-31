@@ -1,0 +1,575 @@
+
+---
+events:
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeDetermineSystem.cmake:205 (message)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      The system is: Windows - 10.0.26200 - AMD64
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeDetermineCCompiler.cmake:123 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Compiling the C compiler identification source file "CMakeCCompilerId.c" succeeded.
+      Compiler:  
+      Build flags: 
+      Id flags:  
+      
+      The output was:
+      0
+      MSBuild version 17.14.40+3e7442088 for .NET Framework
+      Build started 5/27/2026 7:26:49 PM.
+      
+      Project "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\3.31.4\\CompilerIdC\\CompilerIdC.vcxproj" on node 1 (default targets).
+      PrepareForBuild:
+        Creating directory "Debug\\".
+        Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+        Creating directory "Debug\\CompilerIdC.tlog\\".
+      InitializeBuildStatus:
+        Creating "Debug\\CompilerIdC.tlog\\unsuccessfulbuild" because "AlwaysCreate" was specified.
+        Touching "Debug\\CompilerIdC.tlog\\unsuccessfulbuild".
+      ClCompile:
+        H:\\vs studio\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\CL.exe /c /nologo /W0 /WX- /diagnostics:column /Od /D _MBCS /Gm- /EHsc /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /Fo"Debug\\\\" /Fd"Debug\\vc143.pdb" /external:W0 /Gd /TC /FC /errorReport:queue CMakeCCompilerId.c
+        CMakeCCompilerId.c
+      Link:
+        H:\\vs studio\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\link.exe /ERRORREPORT:QUEUE /OUT:".\\CompilerIdC.exe" /INCREMENTAL:NO /NOLOGO kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /PDB:".\\CompilerIdC.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:".\\CompilerIdC.lib" /MACHINE:X64 Debug\\CMakeCCompilerId.obj
+        CompilerIdC.vcxproj -> D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\3.31.4\\CompilerIdC\\CompilerIdC.exe
+      PostBuildEvent:
+        for %%i in (cl.exe) do @echo CMAKE_C_COMPILER=%%~$PATH:i
+        :VCEnd
+        CMAKE_C_COMPILER=H:\\vs studio\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe
+      FinalizeBuildStatus:
+        Deleting file "Debug\\CompilerIdC.tlog\\unsuccessfulbuild".
+        Touching "Debug\\CompilerIdC.tlog\\CompilerIdC.lastbuildstate".
+      Done Building Project "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\3.31.4\\CompilerIdC\\CompilerIdC.vcxproj" (default targets).
+      
+      Build succeeded.
+          0 Warning(s)
+          0 Error(s)
+      
+      Time Elapsed 00:00:00.84
+      
+      
+      Compilation of the C compiler identification source "CMakeCCompilerId.c" produced "CompilerIdC.exe"
+      
+      Compilation of the C compiler identification source "CMakeCCompilerId.c" produced "CompilerIdC.vcxproj"
+      
+      The C compiler identification is MSVC, found in:
+        D:/Onichat/orbit_audio_jni/build/CMakeFiles/3.31.4/CompilerIdC/CompilerIdC.exe
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeDetermineCXXCompiler.cmake:126 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Compiling the CXX compiler identification source file "CMakeCXXCompilerId.cpp" succeeded.
+      Compiler:  
+      Build flags: 
+      Id flags:  
+      
+      The output was:
+      0
+      MSBuild version 17.14.40+3e7442088 for .NET Framework
+      Build started 5/27/2026 7:26:50 PM.
+      
+      Project "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\3.31.4\\CompilerIdCXX\\CompilerIdCXX.vcxproj" on node 1 (default targets).
+      PrepareForBuild:
+        Creating directory "Debug\\".
+        Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+        Creating directory "Debug\\CompilerIdCXX.tlog\\".
+      InitializeBuildStatus:
+        Creating "Debug\\CompilerIdCXX.tlog\\unsuccessfulbuild" because "AlwaysCreate" was specified.
+        Touching "Debug\\CompilerIdCXX.tlog\\unsuccessfulbuild".
+      ClCompile:
+        H:\\vs studio\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\CL.exe /c /nologo /W0 /WX- /diagnostics:column /Od /D _MBCS /Gm- /EHsc /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /Fo"Debug\\\\" /Fd"Debug\\vc143.pdb" /external:W0 /Gd /TP /FC /errorReport:queue CMakeCXXCompilerId.cpp
+        CMakeCXXCompilerId.cpp
+      Link:
+        H:\\vs studio\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\link.exe /ERRORREPORT:QUEUE /OUT:".\\CompilerIdCXX.exe" /INCREMENTAL:NO /NOLOGO kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /PDB:".\\CompilerIdCXX.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:".\\CompilerIdCXX.lib" /MACHINE:X64 Debug\\CMakeCXXCompilerId.obj
+        CompilerIdCXX.vcxproj -> D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\3.31.4\\CompilerIdCXX\\CompilerIdCXX.exe
+      PostBuildEvent:
+        for %%i in (cl.exe) do @echo CMAKE_CXX_COMPILER=%%~$PATH:i
+        :VCEnd
+        CMAKE_CXX_COMPILER=H:\\vs studio\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe
+      FinalizeBuildStatus:
+        Deleting file "Debug\\CompilerIdCXX.tlog\\unsuccessfulbuild".
+        Touching "Debug\\CompilerIdCXX.tlog\\CompilerIdCXX.lastbuildstate".
+      Done Building Project "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\3.31.4\\CompilerIdCXX\\CompilerIdCXX.vcxproj" (default targets).
+      
+      Build succeeded.
+          0 Warning(s)
+          0 Error(s)
+      
+      Time Elapsed 00:00:00.58
+      
+      
+      Compilation of the CXX compiler identification source "CMakeCXXCompilerId.cpp" produced "CompilerIdCXX.exe"
+      
+      Compilation of the CXX compiler identification source "CMakeCXXCompilerId.cpp" produced "CompilerIdCXX.vcxproj"
+      
+      The CXX compiler identification is MSVC, found in:
+        D:/Onichat/orbit_audio_jni/build/CMakeFiles/3.31.4/CompilerIdCXX/CompilerIdCXX.exe
+      
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeDetermineCompilerABI.cmake:74 (try_compile)"
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeTestCCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    checks:
+      - "Detecting C compiler ABI info"
+    directories:
+      source: "D:/Onichat/orbit_audio_jni/build/CMakeFiles/CMakeScratch/TryCompile-u8g72u"
+      binary: "D:/Onichat/orbit_audio_jni/build/CMakeFiles/CMakeScratch/TryCompile-u8g72u"
+    cmakeVariables:
+      CMAKE_C_FLAGS: "/DWIN32 /D_WINDOWS"
+      CMAKE_C_FLAGS_DEBUG: "/Zi /Ob0 /Od /RTC1"
+      CMAKE_EXE_LINKER_FLAGS: "/machine:x64"
+      VCPKG_INSTALLED_DIR: "D:/vcpkg/installed"
+      VCPKG_PREFER_SYSTEM_LIBS: "OFF"
+      VCPKG_TARGET_TRIPLET: "x64-windows"
+      Z_VCPKG_ROOT_DIR: "D:/vcpkg"
+    buildResult:
+      variable: "CMAKE_C_ABI_COMPILED"
+      cached: true
+      stdout: |
+        Change Dir: 'D:/Onichat/orbit_audio_jni/build/CMakeFiles/CMakeScratch/TryCompile-u8g72u'
+        
+        Run Build Command(s): "H:/vs studio/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_d219d.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
+        MSBuild version 17.14.40+3e7442088 for .NET Framework
+        Build started 5/27/2026 7:26:51 PM.
+        
+        Project "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-u8g72u\\cmTC_d219d.vcxproj" on node 1 (default targets).
+        PrepareForBuild:
+          Creating directory "cmTC_d219d.dir\\Debug\\".
+          Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+          Creating directory "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-u8g72u\\Debug\\".
+          Creating directory "cmTC_d219d.dir\\Debug\\cmTC_d219d.tlog\\".
+        InitializeBuildStatus:
+          Creating "cmTC_d219d.dir\\Debug\\cmTC_d219d.tlog\\unsuccessfulbuild" because "AlwaysCreate" was specified.
+          Touching "cmTC_d219d.dir\\Debug\\cmTC_d219d.tlog\\unsuccessfulbuild".
+        ClCompile:
+          H:\\vs studio\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\CL.exe /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /Fo"cmTC_d219d.dir\\Debug\\\\" /Fd"cmTC_d219d.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "C:\\Program Files\\CMake\\share\\cmake-3.31\\Modules\\CMakeCCompilerABI.c"
+          Microsoft (R) C/C++ Optimizing Compiler Version 19.44.35225 for x64
+          Copyright (C) Microsoft Corporation.  All rights reserved.
+          cl /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /Fo"cmTC_d219d.dir\\Debug\\\\" /Fd"cmTC_d219d.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "C:\\Program Files\\CMake\\share\\cmake-3.31\\Modules\\CMakeCCompilerABI.c"
+          CMakeCCompilerABI.c
+        Link:
+          H:\\vs studio\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\link.exe /ERRORREPORT:QUEUE /OUT:"D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-u8g72u\\Debug\\cmTC_d219d.exe" /INCREMENTAL /ILK:"cmTC_d219d.dir\\Debug\\cmTC_d219d.ilk" /NOLOGO kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"D:/Onichat/orbit_audio_jni/build/CMakeFiles/CMakeScratch/TryCompile-u8g72u/Debug/cmTC_d219d.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:"D:/Onichat/orbit_audio_jni/build/CMakeFiles/CMakeScratch/TryCompile-u8g72u/Debug/cmTC_d219d.lib" /MACHINE:X64  /machine:x64 cmTC_d219d.dir\\Debug\\CMakeCCompilerABI.obj
+          cmTC_d219d.vcxproj -> D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-u8g72u\\Debug\\cmTC_d219d.exe
+        FinalizeBuildStatus:
+          Deleting file "cmTC_d219d.dir\\Debug\\cmTC_d219d.tlog\\unsuccessfulbuild".
+          Touching "cmTC_d219d.dir\\Debug\\cmTC_d219d.tlog\\cmTC_d219d.lastbuildstate".
+        Done Building Project "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-u8g72u\\cmTC_d219d.vcxproj" (default targets).
+        
+        Build succeeded.
+            0 Warning(s)
+            0 Error(s)
+        
+        Time Elapsed 00:00:00.57
+        
+      exitCode: 0
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeDetermineCompilerABI.cmake:218 (message)"
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeTestCCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Parsed C implicit link information:
+        link line regex: [^( *|.*[/\\])(ld[0-9]*(\\.[a-z]+)?|link\\.exe|lld-link(\\.exe)?|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\\]+-)?ld|collect2)[^/\\]*( |$)]
+        linker tool regex: [^[ 	]*(->|")?[ 	]*(([^"]*[/\\])?(ld[0-9]*(\\.[a-z]+)?|link\\.exe|lld-link(\\.exe)?))("|,| |$)]
+        linker tool for 'C': H:/vs studio/VC/Tools/MSVC/14.44.35207/bin/HostX64/x64/link.exe
+        implicit libs: []
+        implicit objs: []
+        implicit dirs: []
+        implicit fwks: []
+      
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/Internal/CMakeDetermineLinkerId.cmake:40 (message)"
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeDetermineCompilerABI.cmake:255 (cmake_determine_linker_id)"
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeTestCCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Running the C compiler's linker: "H:/vs studio/VC/Tools/MSVC/14.44.35207/bin/HostX64/x64/link.exe" "-v"
+      Microsoft (R) Incremental Linker Version 14.44.35225.0
+      Copyright (C) Microsoft Corporation.  All rights reserved.
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeDetermineCompilerABI.cmake:74 (try_compile)"
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeTestCXXCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    checks:
+      - "Detecting CXX compiler ABI info"
+    directories:
+      source: "D:/Onichat/orbit_audio_jni/build/CMakeFiles/CMakeScratch/TryCompile-dia3i5"
+      binary: "D:/Onichat/orbit_audio_jni/build/CMakeFiles/CMakeScratch/TryCompile-dia3i5"
+    cmakeVariables:
+      CMAKE_CXX_FLAGS: "/DWIN32 /D_WINDOWS /GR /EHsc"
+      CMAKE_CXX_FLAGS_DEBUG: "/Zi /Ob0 /Od /RTC1"
+      CMAKE_CXX_SCAN_FOR_MODULES: "OFF"
+      CMAKE_EXE_LINKER_FLAGS: "/machine:x64"
+      VCPKG_INSTALLED_DIR: "D:/vcpkg/installed"
+      VCPKG_PREFER_SYSTEM_LIBS: "OFF"
+      VCPKG_TARGET_TRIPLET: "x64-windows"
+      Z_VCPKG_ROOT_DIR: "D:/vcpkg"
+    buildResult:
+      variable: "CMAKE_CXX_ABI_COMPILED"
+      cached: true
+      stdout: |
+        Change Dir: 'D:/Onichat/orbit_audio_jni/build/CMakeFiles/CMakeScratch/TryCompile-dia3i5'
+        
+        Run Build Command(s): "H:/vs studio/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_6dfb1.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
+        MSBuild version 17.14.40+3e7442088 for .NET Framework
+        Build started 5/27/2026 7:26:52 PM.
+        
+        Project "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-dia3i5\\cmTC_6dfb1.vcxproj" on node 1 (default targets).
+        PrepareForBuild:
+          Creating directory "cmTC_6dfb1.dir\\Debug\\".
+          Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+          Creating directory "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-dia3i5\\Debug\\".
+          Creating directory "cmTC_6dfb1.dir\\Debug\\cmTC_6dfb1.tlog\\".
+        InitializeBuildStatus:
+          Creating "cmTC_6dfb1.dir\\Debug\\cmTC_6dfb1.tlog\\unsuccessfulbuild" because "AlwaysCreate" was specified.
+          Touching "cmTC_6dfb1.dir\\Debug\\cmTC_6dfb1.tlog\\unsuccessfulbuild".
+        ClCompile:
+          H:\\vs studio\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\CL.exe /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /EHsc /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /GR /Fo"cmTC_6dfb1.dir\\Debug\\\\" /Fd"cmTC_6dfb1.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TP /errorReport:queue "C:\\Program Files\\CMake\\share\\cmake-3.31\\Modules\\CMakeCXXCompilerABI.cpp"
+          Microsoft (R) C/C++ Optimizing Compiler Version 19.44.35225 for x64
+          Copyright (C) Microsoft Corporation.  All rights reserved.
+          cl /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /EHsc /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /GR /Fo"cmTC_6dfb1.dir\\Debug\\\\" /Fd"cmTC_6dfb1.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TP /errorReport:queue "C:\\Program Files\\CMake\\share\\cmake-3.31\\Modules\\CMakeCXXCompilerABI.cpp"
+          CMakeCXXCompilerABI.cpp
+        Link:
+          H:\\vs studio\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\link.exe /ERRORREPORT:QUEUE /OUT:"D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-dia3i5\\Debug\\cmTC_6dfb1.exe" /INCREMENTAL /ILK:"cmTC_6dfb1.dir\\Debug\\cmTC_6dfb1.ilk" /NOLOGO kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"D:/Onichat/orbit_audio_jni/build/CMakeFiles/CMakeScratch/TryCompile-dia3i5/Debug/cmTC_6dfb1.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:"D:/Onichat/orbit_audio_jni/build/CMakeFiles/CMakeScratch/TryCompile-dia3i5/Debug/cmTC_6dfb1.lib" /MACHINE:X64  /machine:x64 cmTC_6dfb1.dir\\Debug\\CMakeCXXCompilerABI.obj
+          cmTC_6dfb1.vcxproj -> D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-dia3i5\\Debug\\cmTC_6dfb1.exe
+        FinalizeBuildStatus:
+          Deleting file "cmTC_6dfb1.dir\\Debug\\cmTC_6dfb1.tlog\\unsuccessfulbuild".
+          Touching "cmTC_6dfb1.dir\\Debug\\cmTC_6dfb1.tlog\\cmTC_6dfb1.lastbuildstate".
+        Done Building Project "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-dia3i5\\cmTC_6dfb1.vcxproj" (default targets).
+        
+        Build succeeded.
+            0 Warning(s)
+            0 Error(s)
+        
+        Time Elapsed 00:00:00.55
+        
+      exitCode: 0
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeDetermineCompilerABI.cmake:218 (message)"
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeTestCXXCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Parsed CXX implicit link information:
+        link line regex: [^( *|.*[/\\])(ld[0-9]*(\\.[a-z]+)?|link\\.exe|lld-link(\\.exe)?|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\\]+-)?ld|collect2)[^/\\]*( |$)]
+        linker tool regex: [^[ 	]*(->|")?[ 	]*(([^"]*[/\\])?(ld[0-9]*(\\.[a-z]+)?|link\\.exe|lld-link(\\.exe)?))("|,| |$)]
+        linker tool for 'CXX': H:/vs studio/VC/Tools/MSVC/14.44.35207/bin/HostX64/x64/link.exe
+        implicit libs: []
+        implicit objs: []
+        implicit dirs: []
+        implicit fwks: []
+      
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/Internal/CMakeDetermineLinkerId.cmake:40 (message)"
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeDetermineCompilerABI.cmake:255 (cmake_determine_linker_id)"
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeTestCXXCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Running the CXX compiler's linker: "H:/vs studio/VC/Tools/MSVC/14.44.35207/bin/HostX64/x64/link.exe" "-v"
+      Microsoft (R) Incremental Linker Version 14.44.35225.0
+      Copyright (C) Microsoft Corporation.  All rights reserved.
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/Internal/CheckSourceCompiles.cmake:108 (try_compile)"
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CheckSourceCompiles.cmake:89 (cmake_check_source_compiles)"
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/FindJNI.cmake:489 (check_source_compiles)"
+      - "D:/vcpkg/scripts/buildsystems/vcpkg.cmake:910 (_find_package)"
+      - "CMakeLists.txt:8 (find_package)"
+    directories:
+      source: "D:/Onichat/orbit_audio_jni/build/CMakeFiles/CMakeScratch/TryCompile-m6l4m7"
+      binary: "D:/Onichat/orbit_audio_jni/build/CMakeFiles/CMakeScratch/TryCompile-m6l4m7"
+    cmakeVariables:
+      CMAKE_C_FLAGS: "/DWIN32 /D_WINDOWS"
+      CMAKE_C_FLAGS_DEBUG: "/Zi /Ob0 /Od /RTC1"
+      CMAKE_EXE_LINKER_FLAGS: "/machine:x64"
+      VCPKG_INSTALLED_DIR: "D:/vcpkg/installed"
+      VCPKG_PREFER_SYSTEM_LIBS: "OFF"
+      VCPKG_TARGET_TRIPLET: "x64-windows"
+      Z_VCPKG_ROOT_DIR: "D:/vcpkg"
+    buildResult:
+      variable: "JNI_INCLUDE_PATH2_OPTIONAL"
+      cached: true
+      stdout: |
+        Change Dir: 'D:/Onichat/orbit_audio_jni/build/CMakeFiles/CMakeScratch/TryCompile-m6l4m7'
+        
+        Run Build Command(s): "H:/vs studio/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_a57b9.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
+        MSBuild version 17.14.40+3e7442088 for .NET Framework
+        Build started 5/27/2026 7:26:53 PM.
+        
+        Project "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-m6l4m7\\cmTC_a57b9.vcxproj" on node 1 (default targets).
+        PrepareForBuild:
+          Creating directory "cmTC_a57b9.dir\\Debug\\".
+          Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+          Creating directory "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-m6l4m7\\Debug\\".
+          Creating directory "cmTC_a57b9.dir\\Debug\\cmTC_a57b9.tlog\\".
+        InitializeBuildStatus:
+          Creating "cmTC_a57b9.dir\\Debug\\cmTC_a57b9.tlog\\unsuccessfulbuild" because "AlwaysCreate" was specified.
+          Touching "cmTC_a57b9.dir\\Debug\\cmTC_a57b9.tlog\\unsuccessfulbuild".
+        ClCompile:
+          H:\\vs studio\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\CL.exe /c /I"C:\\Program Files\\Java\\jdk-24\\include" /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D JNI_INCLUDE_PATH2_OPTIONAL /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /Fo"cmTC_a57b9.dir\\Debug\\\\" /Fd"cmTC_a57b9.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-m6l4m7\\src.c"
+          Microsoft (R) C/C++ Optimizing Compiler Version 19.44.35225 for x64
+          Copyright (C) Microsoft Corporation.  All rights reserved.
+          cl /c /I"C:\\Program Files\\Java\\jdk-24\\include" /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D JNI_INCLUDE_PATH2_OPTIONAL /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /Fo"cmTC_a57b9.dir\\Debug\\\\" /Fd"cmTC_a57b9.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-m6l4m7\\src.c"
+          src.c
+        C:\\Program Files\\Java\\jdk-24\\include\\jni.h(45,10): error C1083: Cannot open include file: 'jni_md.h': No such file or directory [D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-m6l4m7\\cmTC_a57b9.vcxproj]
+          (compiling source file 'src.c')
+          
+        Done Building Project "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-m6l4m7\\cmTC_a57b9.vcxproj" (default targets) -- FAILED.
+        
+        Build FAILED.
+        
+        "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-m6l4m7\\cmTC_a57b9.vcxproj" (default target) (1) ->
+        (ClCompile target) -> 
+          C:\\Program Files\\Java\\jdk-24\\include\\jni.h(45,10): error C1083: Cannot open include file: 'jni_md.h': No such file or directory [D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-m6l4m7\\cmTC_a57b9.vcxproj]
+        
+            0 Warning(s)
+            1 Error(s)
+        
+        Time Elapsed 00:00:00.49
+        
+      exitCode: 1
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/Internal/CheckSourceCompiles.cmake:108 (try_compile)"
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CheckCSourceCompiles.cmake:58 (cmake_check_source_compiles)"
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/FindThreads.cmake:97 (CHECK_C_SOURCE_COMPILES)"
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/FindThreads.cmake:163 (_threads_check_libc)"
+      - "D:/vcpkg/scripts/buildsystems/vcpkg.cmake:910 (_find_package)"
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeFindDependencyMacro.cmake:76 (find_package)"
+      - "D:/vcpkg/installed/x64-windows/share/absl/abslConfig.cmake:4 (find_dependency)"
+      - "D:/vcpkg/scripts/buildsystems/vcpkg.cmake:910 (_find_package)"
+      - "D:/vcpkg/installed/x64-windows/share/protobuf/protobuf-config.cmake:7 (find_package)"
+      - "D:/vcpkg/installed/x64-windows/share/protobuf/vcpkg-cmake-wrapper.cmake:3 (_find_package)"
+      - "D:/vcpkg/scripts/buildsystems/vcpkg.cmake:864 (include)"
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeFindDependencyMacro.cmake:76 (find_package)"
+      - "D:/vcpkg/installed/x64-windows/share/opencv4/OpenCVModules.cmake:19 (find_dependency)"
+      - "D:/vcpkg/installed/x64-windows/share/opencv4/OpenCVConfig.cmake:128 (include)"
+      - "D:/vcpkg/scripts/buildsystems/vcpkg.cmake:910 (_find_package)"
+      - "CMakeLists.txt:9 (find_package)"
+    checks:
+      - "Performing Test CMAKE_HAVE_LIBC_PTHREAD"
+    directories:
+      source: "D:/Onichat/orbit_audio_jni/build/CMakeFiles/CMakeScratch/TryCompile-juc7i2"
+      binary: "D:/Onichat/orbit_audio_jni/build/CMakeFiles/CMakeScratch/TryCompile-juc7i2"
+    cmakeVariables:
+      CMAKE_C_FLAGS: "/DWIN32 /D_WINDOWS"
+      CMAKE_C_FLAGS_DEBUG: "/Zi /Ob0 /Od /RTC1"
+      CMAKE_EXE_LINKER_FLAGS: "/machine:x64"
+      VCPKG_INSTALLED_DIR: "D:/vcpkg/installed"
+      VCPKG_PREFER_SYSTEM_LIBS: "OFF"
+      VCPKG_TARGET_TRIPLET: "x64-windows"
+      Z_VCPKG_ROOT_DIR: "D:/vcpkg"
+    buildResult:
+      variable: "CMAKE_HAVE_LIBC_PTHREAD"
+      cached: true
+      stdout: |
+        Change Dir: 'D:/Onichat/orbit_audio_jni/build/CMakeFiles/CMakeScratch/TryCompile-juc7i2'
+        
+        Run Build Command(s): "H:/vs studio/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_13219.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
+        MSBuild version 17.14.40+3e7442088 for .NET Framework
+        Build started 5/27/2026 7:26:54 PM.
+        
+        Project "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-juc7i2\\cmTC_13219.vcxproj" on node 1 (default targets).
+        PrepareForBuild:
+          Creating directory "cmTC_13219.dir\\Debug\\".
+          Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+          Creating directory "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-juc7i2\\Debug\\".
+          Creating directory "cmTC_13219.dir\\Debug\\cmTC_13219.tlog\\".
+        InitializeBuildStatus:
+          Creating "cmTC_13219.dir\\Debug\\cmTC_13219.tlog\\unsuccessfulbuild" because "AlwaysCreate" was specified.
+          Touching "cmTC_13219.dir\\Debug\\cmTC_13219.tlog\\unsuccessfulbuild".
+        ClCompile:
+          H:\\vs studio\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\CL.exe /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D CMAKE_HAVE_LIBC_PTHREAD /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /Fo"cmTC_13219.dir\\Debug\\\\" /Fd"cmTC_13219.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-juc7i2\\src.c"
+          Microsoft (R) C/C++ Optimizing Compiler Version 19.44.35225 for x64
+          Copyright (C) Microsoft Corporation.  All rights reserved.
+          cl /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D CMAKE_HAVE_LIBC_PTHREAD /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /Fo"cmTC_13219.dir\\Debug\\\\" /Fd"cmTC_13219.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-juc7i2\\src.c"
+          src.c
+        D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-juc7i2\\src.c(1,10): error C1083: Cannot open include file: 'pthread.h': No such file or directory [D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-juc7i2\\cmTC_13219.vcxproj]
+        Done Building Project "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-juc7i2\\cmTC_13219.vcxproj" (default targets) -- FAILED.
+        
+        Build FAILED.
+        
+        "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-juc7i2\\cmTC_13219.vcxproj" (default target) (1) ->
+        (ClCompile target) -> 
+          D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-juc7i2\\src.c(1,10): error C1083: Cannot open include file: 'pthread.h': No such file or directory [D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-juc7i2\\cmTC_13219.vcxproj]
+        
+            0 Warning(s)
+            1 Error(s)
+        
+        Time Elapsed 00:00:00.34
+        
+      exitCode: 1
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CheckLibraryExists.cmake:78 (try_compile)"
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/FindThreads.cmake:112 (CHECK_LIBRARY_EXISTS)"
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/FindThreads.cmake:175 (_threads_check_lib)"
+      - "D:/vcpkg/scripts/buildsystems/vcpkg.cmake:910 (_find_package)"
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeFindDependencyMacro.cmake:76 (find_package)"
+      - "D:/vcpkg/installed/x64-windows/share/absl/abslConfig.cmake:4 (find_dependency)"
+      - "D:/vcpkg/scripts/buildsystems/vcpkg.cmake:910 (_find_package)"
+      - "D:/vcpkg/installed/x64-windows/share/protobuf/protobuf-config.cmake:7 (find_package)"
+      - "D:/vcpkg/installed/x64-windows/share/protobuf/vcpkg-cmake-wrapper.cmake:3 (_find_package)"
+      - "D:/vcpkg/scripts/buildsystems/vcpkg.cmake:864 (include)"
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeFindDependencyMacro.cmake:76 (find_package)"
+      - "D:/vcpkg/installed/x64-windows/share/opencv4/OpenCVModules.cmake:19 (find_dependency)"
+      - "D:/vcpkg/installed/x64-windows/share/opencv4/OpenCVConfig.cmake:128 (include)"
+      - "D:/vcpkg/scripts/buildsystems/vcpkg.cmake:910 (_find_package)"
+      - "CMakeLists.txt:9 (find_package)"
+    checks:
+      - "Looking for pthread_create in pthreads"
+    directories:
+      source: "D:/Onichat/orbit_audio_jni/build/CMakeFiles/CMakeScratch/TryCompile-ptg8o9"
+      binary: "D:/Onichat/orbit_audio_jni/build/CMakeFiles/CMakeScratch/TryCompile-ptg8o9"
+    cmakeVariables:
+      CMAKE_C_FLAGS: "/DWIN32 /D_WINDOWS"
+      CMAKE_C_FLAGS_DEBUG: "/Zi /Ob0 /Od /RTC1"
+      CMAKE_EXE_LINKER_FLAGS: "/machine:x64"
+      VCPKG_INSTALLED_DIR: "D:/vcpkg/installed"
+      VCPKG_PREFER_SYSTEM_LIBS: "OFF"
+      VCPKG_TARGET_TRIPLET: "x64-windows"
+      Z_VCPKG_ROOT_DIR: "D:/vcpkg"
+    buildResult:
+      variable: "CMAKE_HAVE_PTHREADS_CREATE"
+      cached: true
+      stdout: |
+        Change Dir: 'D:/Onichat/orbit_audio_jni/build/CMakeFiles/CMakeScratch/TryCompile-ptg8o9'
+        
+        Run Build Command(s): "H:/vs studio/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_6394f.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
+        MSBuild version 17.14.40+3e7442088 for .NET Framework
+        Build started 5/27/2026 7:26:54 PM.
+        
+        Project "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-ptg8o9\\cmTC_6394f.vcxproj" on node 1 (default targets).
+        PrepareForBuild:
+          Creating directory "cmTC_6394f.dir\\Debug\\".
+          Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+          Creating directory "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-ptg8o9\\Debug\\".
+          Creating directory "cmTC_6394f.dir\\Debug\\cmTC_6394f.tlog\\".
+        InitializeBuildStatus:
+          Creating "cmTC_6394f.dir\\Debug\\cmTC_6394f.tlog\\unsuccessfulbuild" because "AlwaysCreate" was specified.
+          Touching "cmTC_6394f.dir\\Debug\\cmTC_6394f.tlog\\unsuccessfulbuild".
+        ClCompile:
+          H:\\vs studio\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\CL.exe /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D CHECK_FUNCTION_EXISTS=pthread_create /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /Fo"cmTC_6394f.dir\\Debug\\\\" /Fd"cmTC_6394f.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-ptg8o9\\CheckFunctionExists.c"
+          Microsoft (R) C/C++ Optimizing Compiler Version 19.44.35225 for x64
+          Copyright (C) Microsoft Corporation.  All rights reserved.
+          cl /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D CHECK_FUNCTION_EXISTS=pthread_create /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /Fo"cmTC_6394f.dir\\Debug\\\\" /Fd"cmTC_6394f.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-ptg8o9\\CheckFunctionExists.c"
+          CheckFunctionExists.c
+        Link:
+          H:\\vs studio\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\link.exe /ERRORREPORT:QUEUE /OUT:"D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-ptg8o9\\Debug\\cmTC_6394f.exe" /INCREMENTAL /ILK:"cmTC_6394f.dir\\Debug\\cmTC_6394f.ilk" /NOLOGO pthreads.lib kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"D:/Onichat/orbit_audio_jni/build/CMakeFiles/CMakeScratch/TryCompile-ptg8o9/Debug/cmTC_6394f.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:"D:/Onichat/orbit_audio_jni/build/CMakeFiles/CMakeScratch/TryCompile-ptg8o9/Debug/cmTC_6394f.lib" /MACHINE:X64  /machine:x64 cmTC_6394f.dir\\Debug\\CheckFunctionExists.obj
+        LINK : fatal error LNK1104: cannot open file 'pthreads.lib' [D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-ptg8o9\\cmTC_6394f.vcxproj]
+        Done Building Project "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-ptg8o9\\cmTC_6394f.vcxproj" (default targets) -- FAILED.
+        
+        Build FAILED.
+        
+        "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-ptg8o9\\cmTC_6394f.vcxproj" (default target) (1) ->
+        (Link target) -> 
+          LINK : fatal error LNK1104: cannot open file 'pthreads.lib' [D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-ptg8o9\\cmTC_6394f.vcxproj]
+        
+            0 Warning(s)
+            1 Error(s)
+        
+        Time Elapsed 00:00:00.43
+        
+      exitCode: 1
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CheckLibraryExists.cmake:78 (try_compile)"
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/FindThreads.cmake:112 (CHECK_LIBRARY_EXISTS)"
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/FindThreads.cmake:176 (_threads_check_lib)"
+      - "D:/vcpkg/scripts/buildsystems/vcpkg.cmake:910 (_find_package)"
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeFindDependencyMacro.cmake:76 (find_package)"
+      - "D:/vcpkg/installed/x64-windows/share/absl/abslConfig.cmake:4 (find_dependency)"
+      - "D:/vcpkg/scripts/buildsystems/vcpkg.cmake:910 (_find_package)"
+      - "D:/vcpkg/installed/x64-windows/share/protobuf/protobuf-config.cmake:7 (find_package)"
+      - "D:/vcpkg/installed/x64-windows/share/protobuf/vcpkg-cmake-wrapper.cmake:3 (_find_package)"
+      - "D:/vcpkg/scripts/buildsystems/vcpkg.cmake:864 (include)"
+      - "C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeFindDependencyMacro.cmake:76 (find_package)"
+      - "D:/vcpkg/installed/x64-windows/share/opencv4/OpenCVModules.cmake:19 (find_dependency)"
+      - "D:/vcpkg/installed/x64-windows/share/opencv4/OpenCVConfig.cmake:128 (include)"
+      - "D:/vcpkg/scripts/buildsystems/vcpkg.cmake:910 (_find_package)"
+      - "CMakeLists.txt:9 (find_package)"
+    checks:
+      - "Looking for pthread_create in pthread"
+    directories:
+      source: "D:/Onichat/orbit_audio_jni/build/CMakeFiles/CMakeScratch/TryCompile-l2xsik"
+      binary: "D:/Onichat/orbit_audio_jni/build/CMakeFiles/CMakeScratch/TryCompile-l2xsik"
+    cmakeVariables:
+      CMAKE_C_FLAGS: "/DWIN32 /D_WINDOWS"
+      CMAKE_C_FLAGS_DEBUG: "/Zi /Ob0 /Od /RTC1"
+      CMAKE_EXE_LINKER_FLAGS: "/machine:x64"
+      VCPKG_INSTALLED_DIR: "D:/vcpkg/installed"
+      VCPKG_PREFER_SYSTEM_LIBS: "OFF"
+      VCPKG_TARGET_TRIPLET: "x64-windows"
+      Z_VCPKG_ROOT_DIR: "D:/vcpkg"
+    buildResult:
+      variable: "CMAKE_HAVE_PTHREAD_CREATE"
+      cached: true
+      stdout: |
+        Change Dir: 'D:/Onichat/orbit_audio_jni/build/CMakeFiles/CMakeScratch/TryCompile-l2xsik'
+        
+        Run Build Command(s): "H:/vs studio/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_5115d.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
+        MSBuild version 17.14.40+3e7442088 for .NET Framework
+        Build started 5/27/2026 7:26:55 PM.
+        
+        Project "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-l2xsik\\cmTC_5115d.vcxproj" on node 1 (default targets).
+        PrepareForBuild:
+          Creating directory "cmTC_5115d.dir\\Debug\\".
+          Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+          Creating directory "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-l2xsik\\Debug\\".
+          Creating directory "cmTC_5115d.dir\\Debug\\cmTC_5115d.tlog\\".
+        InitializeBuildStatus:
+          Creating "cmTC_5115d.dir\\Debug\\cmTC_5115d.tlog\\unsuccessfulbuild" because "AlwaysCreate" was specified.
+          Touching "cmTC_5115d.dir\\Debug\\cmTC_5115d.tlog\\unsuccessfulbuild".
+        ClCompile:
+          H:\\vs studio\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\CL.exe /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D CHECK_FUNCTION_EXISTS=pthread_create /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /Fo"cmTC_5115d.dir\\Debug\\\\" /Fd"cmTC_5115d.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-l2xsik\\CheckFunctionExists.c"
+          Microsoft (R) C/C++ Optimizing Compiler Version 19.44.35225 for x64
+          Copyright (C) Microsoft Corporation.  All rights reserved.
+          cl /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D CHECK_FUNCTION_EXISTS=pthread_create /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /Fo"cmTC_5115d.dir\\Debug\\\\" /Fd"cmTC_5115d.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-l2xsik\\CheckFunctionExists.c"
+          CheckFunctionExists.c
+        Link:
+          H:\\vs studio\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\link.exe /ERRORREPORT:QUEUE /OUT:"D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-l2xsik\\Debug\\cmTC_5115d.exe" /INCREMENTAL /ILK:"cmTC_5115d.dir\\Debug\\cmTC_5115d.ilk" /NOLOGO pthread.lib kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"D:/Onichat/orbit_audio_jni/build/CMakeFiles/CMakeScratch/TryCompile-l2xsik/Debug/cmTC_5115d.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:"D:/Onichat/orbit_audio_jni/build/CMakeFiles/CMakeScratch/TryCompile-l2xsik/Debug/cmTC_5115d.lib" /MACHINE:X64  /machine:x64 cmTC_5115d.dir\\Debug\\CheckFunctionExists.obj
+        LINK : fatal error LNK1104: cannot open file 'pthread.lib' [D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-l2xsik\\cmTC_5115d.vcxproj]
+        Done Building Project "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-l2xsik\\cmTC_5115d.vcxproj" (default targets) -- FAILED.
+        
+        Build FAILED.
+        
+        "D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-l2xsik\\cmTC_5115d.vcxproj" (default target) (1) ->
+        (Link target) -> 
+          LINK : fatal error LNK1104: cannot open file 'pthread.lib' [D:\\Onichat\\orbit_audio_jni\\build\\CMakeFiles\\CMakeScratch\\TryCompile-l2xsik\\cmTC_5115d.vcxproj]
+        
+            0 Warning(s)
+            1 Error(s)
+        
+        Time Elapsed 00:00:00.44
+        
+      exitCode: 1
+...
