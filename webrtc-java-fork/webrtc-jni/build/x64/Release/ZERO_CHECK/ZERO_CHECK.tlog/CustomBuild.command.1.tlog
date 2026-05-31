@@ -1,0 +1,10 @@
+^D:\ONICHAT\WEBRTC-JAVA-FORK\WEBRTC-JNI\BUILD\CMAKEFILES\16662E05207ED9F46F20DC56E3F63675\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SD:/Onichat/webrtc-java-fork/webrtc-jni/src/main/cpp -BD:/Onichat/webrtc-java-fork/webrtc-jni/build --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file D:/Onichat/webrtc-java-fork/webrtc-jni/build/webrtc-java-orbit.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

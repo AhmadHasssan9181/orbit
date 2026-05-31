@@ -1,0 +1,477 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_AudioDeviceModule.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_AudioDeviceModuleBase.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_AudioProcessing.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_AudioResampler.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_AudioTrack.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_CustomAudioSource.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_CustomVideoSource.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_DesktopCapturer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_Logging.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_MediaDevices.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_MediaSource.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_MediaStream.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_MediaStreamTrack.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_NativeI420Buffer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_PeerConnectionFactory.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_PowerManagement.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_RTCDataChannel.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_RTCDtlsTransport.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_RTCDtmfSender.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_RTCPeerConnection.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_RTCRtpReceiver.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_RTCRtpSender.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_RTCRtpTransceiver.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_RefCountedObject.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_ScreenCapturer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_SyncClock.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_VideoBufferConverter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_VideoCapture.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_VideoDesktopSource.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_VideoDeviceSource.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_VideoTrack.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_WebRTC.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\JNI_WindowCapturer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\WebRTCContext.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\AudioOptions.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\AudioTrackSink.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\CreateSessionDescriptionObserver.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\DataBufferFactory.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\PeerConnectionObserver.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\PortAllocatorConfig.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCAnswerOptions.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCConfiguration.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCDataChannelInit.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCDataChannelObserver.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCDtlsTransportObserver.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCDtmfSender.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCDtmfSenderObserver.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCIceCandidate.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCIceServer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCOfferOptions.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCPeerConnectionIceErrorEvent.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCRtcpParameters.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCRtpCapabilities.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCRtpCodecCapability.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCRtpCodecParameters.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCRtpContributingSource.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCRtpEncodingParameters.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCRtpHeaderExtension.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCRtpHeaderExtensionCapability.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCRtpParameters.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCRtpSendParameters.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCRtpSynchronizationSource.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCRtpTransceiverInit.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCSessionDescription.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCStats.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCStatsCollectorCallback.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\RTCStatsReport.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\SetSessionDescriptionObserver.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\VideoFrame.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\VideoTrackSink.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\api\WebRTCUtils.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\Device.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\DeviceChangeListener.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\DeviceManager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\MediaStreamTrackObserver.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\SyncClock.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\audio\AudioDevice.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\audio\AudioDeviceManager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\audio\AudioProcessing.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\audio\AudioProcessingConfig.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\audio\AudioProcessingStats.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\audio\AudioProcessingStreamConfig.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\audio\AudioTransportSink.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\audio\AudioTransportSource.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\audio\CustomAudioSource.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\audio\RawAudioFileSink.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\audio\RawAudioFileSource.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\audio\windows\OrbitAudioDeviceModule.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\audio\windows\WindowsAudioDeviceManager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\CustomVideoSource.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\RawVideoFileSink.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\VideoCapture.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\VideoCaptureBase.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\VideoCaptureCapability.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\VideoDevice.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\VideoDeviceManager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\VideoTrackDesktopSource.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\VideoTrackDeviceSource.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\VideoTrackDeviceSourceBase.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\desktop\DesktopCaptureCallback.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\desktop\DesktopCapturer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\desktop\DesktopFrame.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\desktop\DesktopSource.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\desktop\windows\WindowsPowerManagement.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\media\video\windows\WindowsVideoDeviceManager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\platform\windows\ComInitializer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\platform\windows\MFInitializer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\platform\windows\MFUtils.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\platform\windows\WinHotplugNotifier.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\rtc\LogSink.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\src\rtc\RTCCertificatePEM.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\rnnoise\src\celt_lpc.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\rnnoise\src\denoise.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\rnnoise\src\kiss_fft.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\rnnoise\src\nnet.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\rnnoise\src\nnet_default.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\rnnoise\src\parse_lpcnet_weights.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\rnnoise\src\pitch.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\rnnoise\src\rnn.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\rnnoise\src\rnnoise_data.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\rnnoise\src\rnnoise_tables.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\jni\jni.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\Exception.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaArray.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaArrayList.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaBigInteger.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaClasses.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaClass.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaClassLoader.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaClassUtils.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaContext.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaDimension.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaEnum.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaEnums.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaError.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaFactories.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaFactory.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaHashMap.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaIOException.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaIterable.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaList.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaMapIterator.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaNullPointerException.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaObject.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaPrimitive.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaRectangle.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaRef.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaRuntimeException.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaString.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaThreadEnv.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaThrowable.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaUtils.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\dependencies\jni-voithos\include\JavaWrappedException.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="D:\Onichat\webrtc-java-fork\webrtc-jni\src\main\cpp\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{0C5FD62F-152D-3C81-BCCD-22BB8A5E0667}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{67AB15CE-953A-3597-89A5-5D93A93869FA}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

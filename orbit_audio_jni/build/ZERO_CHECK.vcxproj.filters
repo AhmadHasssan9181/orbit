@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="D:\Onichat\orbit_audio_jni\build\CMakeFiles\6d25cf6cf13eb093fe34b4be89768d79\generate.stamp.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{3EA296B8-C851-380F-94E2-FA496A4BEDBE}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

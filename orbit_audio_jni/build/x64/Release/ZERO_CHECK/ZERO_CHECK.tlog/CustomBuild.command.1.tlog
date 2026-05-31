@@ -1,0 +1,10 @@
+^D:\ONICHAT\ORBIT_AUDIO_JNI\BUILD\CMAKEFILES\6D25CF6CF13EB093FE34B4BE89768D79\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SD:/Onichat/orbit_audio_jni -BD:/Onichat/orbit_audio_jni/build --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file D:/Onichat/orbit_audio_jni/build/OrbitAudioJNI.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

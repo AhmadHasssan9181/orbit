@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="D:\Onichat\webrtc-java-fork\webrtc-jni\build\CMakeFiles\16662e05207ed9f46f20dc56e3f63675\generate.stamp.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{47BAF8A6-F719-332D-9A38-1ABBFA2A5A7E}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>
