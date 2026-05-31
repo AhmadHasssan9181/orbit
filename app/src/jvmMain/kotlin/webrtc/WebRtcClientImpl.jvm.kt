@@ -212,7 +212,9 @@ class JvmWebRtcClient : WebRtcClient {
                 }
 
                 if (usingNativeAudio) {
-                    if (!livekit.LiveKitNativeAudioSession.startPublishing()) {
+                    if (livekit.LiveKitNativeAudioSession.startPublishing()) {
+                        _onStreamAdded.tryEmit(true)
+                    } else {
                         println("ERROR: [WebRTC] Failed to start native C++ LiveKit audio")
                     }
                 } else {
