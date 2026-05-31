@@ -8,6 +8,7 @@ import java.nio.ByteBuffer
 object LiveKitLocalTrack {
     private var sourceHandle: Long = 0
     private var isStarted = false
+    private var startTimeNs: Long = 0
 
     val sink = object : VideoTrackSink {
         override fun onVideoFrame(frame: WrtcVideoFrame) {
@@ -26,7 +27,7 @@ object LiveKitLocalTrack {
                 .setType(livekit.proto.VideoFrame.VideoBufferType.I420)
                 .setWidth(buffer.width)
                 .setHeight(buffer.height)
-                .setDataPtr(yAddr) // REQUIRED FIELD
+                .setDataPtr(yAddr) // RESTORED: Required field in proto
                 .addComponents(livekit.proto.VideoFrame.VideoBufferInfo.ComponentInfo.newBuilder()
                     .setDataPtr(yAddr)
                     .setStride(buffer.strideY)
@@ -52,11 +53,21 @@ object LiveKitLocalTrack {
                 else -> 0
             }
 
+            // CRITICAL: Normalize timestamp to start from 0
+            // Force using System.nanoTime() to ensure consistent epoch
+            val rawTsNs = System.nanoTime()
+            if (startTimeNs == 0L) startTimeNs = rawTsNs
+            val tsUs = (rawTsNs - startTimeNs) / 1000
+
+            if (tsUs % 1_000_000 < 50_000) { // Log roughly once per second
+                println("DEBUG [LiveKitLocalTrack] Sending frame tsUs=$tsUs size=${buffer.width}x${buffer.height}")
+            }
+
             val captureReq = livekit.proto.VideoFrame.CaptureVideoFrameRequest.newBuilder()
                 .setSourceHandle(sourceHandle)
                 .setBuffer(videoBufferInfo)
                 .setRotation(livekit.proto.VideoFrame.VideoRotation.forNumber(rotNum))
-                .setTimestampUs(frame.timestampNs / 1000)
+                .setTimestampUs(tsUs)
                 .build()
                 
             val request = livekit.proto.Ffi.FfiRequest.newBuilder()
@@ -69,6 +80,7 @@ object LiveKitLocalTrack {
 
     fun startCapture(width: Int, height: Int) {
         if (isStarted) return
+        startTimeNs = 0 // Reset for new session
         
         // 1. Create native source in LiveKit FFI
         val sourceReq = livekit.proto.VideoFrame.NewVideoSourceRequest.newBuilder()

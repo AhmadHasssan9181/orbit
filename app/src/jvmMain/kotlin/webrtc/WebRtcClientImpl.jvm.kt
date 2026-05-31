@@ -180,6 +180,9 @@ class JvmWebRtcClient : WebRtcClient {
 
     private var isLiveKitMediaStarted = false
 
+    private var captureWidth = 640
+    private var captureHeight = 480
+
     override fun startLocalMedia(isVideoEnabled: Boolean) {
         try {
             if (isGroupCall) {
@@ -201,7 +204,7 @@ class JvmWebRtcClient : WebRtcClient {
                 }
 
                 // 3. Start the LiveKit native source and publish
-                livekit.LiveKitLocalTrack.startCapture(640, 480)
+                livekit.LiveKitLocalTrack.startCapture(captureWidth, captureHeight)
                 livekit.LiveKitClient.publishVideoTrack(livekit.LiveKitLocalTrack.getSourceHandle())
                 
                 // 4. Start audio capture and publish
@@ -268,6 +271,11 @@ class JvmWebRtcClient : WebRtcClient {
             val capabilities = MediaDevices.getVideoCaptureCapabilities(device)
             val capability = chooseVideoCapability(capabilities)
             println("DEBUG: [WebRTC] Chosen capability: ${capability?.width}x${capability?.height}@${capability?.frameRate}")
+
+            if (capability != null) {
+                captureWidth = capability.width
+                captureHeight = capability.height
+            }
 
             val videoSource = VideoDeviceSource().apply {
                 setVideoCaptureDevice(device)

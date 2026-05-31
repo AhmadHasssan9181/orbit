@@ -22,8 +22,8 @@ data class LiveKitAuthResponse(
 object LiveKitTokenProvider {
     suspend fun fetchToken(
         roomId: String,
+        identity: String,
         userId: String,
-        deviceId: String,
         homeserverUrl: String,
         accessToken: String,
         livekitServiceUrl: String,
@@ -32,7 +32,10 @@ object LiveKitTokenProvider {
         println("DEBUG [LiveKitTokenProvider] Starting handshake for room: $roomId")
 
         // 1. Request Matrix OpenID Token
-        val openIdUrl = "${homeserverUrl.trimEnd('/')}/_matrix/client/v3/user/${userId}/openid/request_token"
+        // Ensure userId is just @user:domain (strip any :deviceId suffix if present)
+        val cleanUserId = userId.split(":").take(2).joinToString(":")
+        
+        val openIdUrl = "${homeserverUrl.trimEnd('/')}/_matrix/client/v3/user/${cleanUserId}/openid/request_token"
         println("DEBUG [LiveKitTokenProvider] Requesting OpenID token from $openIdUrl")
         
         val openIdResponse = httpClient.post(openIdUrl) {
@@ -50,7 +53,6 @@ object LiveKitTokenProvider {
         println("DEBUG [LiveKitTokenProvider] Received OpenID token")
 
         // 2. Exchange OpenID for LiveKit JWT
-        // Note: We use /get_token. Some servers might use /sfu/get
         val lkAuthUrl = "${livekitServiceUrl.trimEnd('/')}/get_token"
         println("DEBUG [LiveKitTokenProvider] Exchanging for LiveKit JWT at $lkAuthUrl")
         
@@ -60,8 +62,10 @@ object LiveKitTokenProvider {
                 put("room_id", roomId)
                 put("slot_id", "m.call#ROOM")
                 put("member", buildJsonObject {
-                    put("id", "$userId:$deviceId")
-                    put("claimed_user_id", userId)
+                    put("id", identity) // Use the full MSC3401 identity here
+                    put("claimed_user_id", cleanUserId)
+                    // Extract deviceId from identity if possible (_user_device_callId)
+                    val deviceId = identity.split("_").getOrNull(2) ?: "ORBIT_DESKTOP"
                     put("claimed_device_id", deviceId)
                 })
                 put("openid_token", openIdToken)
@@ -74,7 +78,7 @@ object LiveKitTokenProvider {
             val errBody = lkResponse.bodyAsText()
             // Fallback for older deployments
             if (lkResponse.status.value == 404) {
-                return fetchTokenLegacy(roomId, userId, deviceId, openIdToken, livekitServiceUrl, httpClient)
+                return fetchTokenLegacy(roomId, identity, cleanUserId, openIdToken, livekitServiceUrl, httpClient)
             }
             throw Exception("Failed to fetch LiveKit JWT (status ${lkResponse.status.value}): $errBody")
         }
@@ -93,8 +97,8 @@ object LiveKitTokenProvider {
 
     private suspend fun fetchTokenLegacy(
         roomId: String,
+        identity: String,
         userId: String,
-        deviceId: String,
         openIdToken: JsonObject,
         livekitServiceUrl: String,
         httpClient: HttpClient
@@ -108,8 +112,9 @@ object LiveKitTokenProvider {
                 put("room_id", roomId)
                 put("slot_id", "m.call#ROOM")
                 put("member", buildJsonObject {
-                    put("id", "$userId:$deviceId")
+                    put("id", identity)
                     put("claimed_user_id", userId)
+                    val deviceId = identity.split("_").getOrNull(2) ?: "ORBIT_DESKTOP"
                     put("claimed_device_id", deviceId)
                 })
                 put("openid_token", openIdToken)

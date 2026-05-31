@@ -82,7 +82,7 @@ fun VoiceChannelScreen(
                                             }
 
                                             callManager.joinGroupCall(channel.matrixRoomId, callId, true, livekitUrl) {
-                                                matrixRepository.fetchLiveKitToken(channel.matrixRoomId, livekitUrl ?: "")
+                                                matrixRepository.fetchLiveKitToken(channel.matrixRoomId, callId, livekitUrl ?: "")
                                             }
                                         } catch (e: Exception) {
                                             println("ERROR [VoiceChannelScreen] Uncaught exception during join: ${e.message}")
