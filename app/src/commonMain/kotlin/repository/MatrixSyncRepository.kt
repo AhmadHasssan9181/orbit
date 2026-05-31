@@ -247,9 +247,9 @@ class MatrixSyncRepository(
                             val realContent = raw["value"]?.jsonObject ?: raw
                             val partyId = realContent["party_id"]?.jsonPrimitive?.content ?: realContent["partyId"]?.jsonPrimitive?.content
 
-                            if (typeStr.startsWith("m.call.")) {
-                                val callId = realContent["call_id"]?.jsonPrimitive?.content ?: ""
-                                if (callId.isNotBlank()) {
+                            if (typeStr.startsWith("m.call.") || typeStr.startsWith("org.matrix.msc3401.call")) {
+                                val callId = realContent["call_id"]?.jsonPrimitive?.content ?: (timelineEvent.event as? RoomEvent.StateEvent<*>)?.stateKey ?: ""
+                                if (callId.isNotBlank() && typeStr.startsWith("m.call.")) {
                                     when (typeStr) {
                                         "m.call.invite" -> context.callEventsFlow.emit(CallEvent.Invite(roomId, callId, realContent["offer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: "", sender, partyId))
                                         "m.call.answer" -> context.callEventsFlow.emit(CallEvent.Answer(roomId, callId, realContent["answer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: "", sender, partyId))
@@ -270,7 +270,7 @@ class MatrixSyncRepository(
                                     }
                                 }
                                 
-                                if (typeStr == "m.call.member" || realContent["membership"] != null) {
+                                if (typeStr == "m.call.member" || typeStr == "org.matrix.msc3401.call.member" || realContent["membership"] != null) {
                                     val membership = realContent["membership"]?.jsonPrimitive?.content
                                     val membersFlow = context.activeCallMembers.getOrPut(roomId) { MutableStateFlow(emptyList()) }
                                     val currentMembers = membersFlow.value.toMutableList()

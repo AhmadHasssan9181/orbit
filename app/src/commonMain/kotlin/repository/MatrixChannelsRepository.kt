@@ -225,8 +225,10 @@ class MatrixChannelsRepository(private val context: MatrixContext) : OrbitChanne
                         eventsDefault = 0L,
                         stateDefault = 0L,
                         events = mapOf<de.connect2x.trixnity.core.model.events.EventType, Long>(
+                            de.connect2x.trixnity.core.model.events.EventType(de.connect2x.trixnity.core.model.events.UnknownEventContent::class, "m.call") to 0L,
                             de.connect2x.trixnity.core.model.events.EventType(de.connect2x.trixnity.core.model.events.UnknownEventContent::class, "m.call.member") to 0L,
-                            de.connect2x.trixnity.core.model.events.EventType(de.connect2x.trixnity.core.model.events.UnknownEventContent::class, "org.matrix.msc3401.call") to 0L
+                            de.connect2x.trixnity.core.model.events.EventType(de.connect2x.trixnity.core.model.events.UnknownEventContent::class, "org.matrix.msc3401.call") to 0L,
+                            de.connect2x.trixnity.core.model.events.EventType(de.connect2x.trixnity.core.model.events.UnknownEventContent::class, "org.matrix.msc3401.call.member") to 0L
                         )
                     )
                 } else null

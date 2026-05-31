@@ -267,11 +267,23 @@ object LiveKitClient {
 
     fun publishVideoTrack(sourceHandle: Long) {
         val localParticipantHandle = activeLocalParticipantHandle ?: return
+        
+        println("DEBUG [LiveKitClient] Creating video track from source: $sourceHandle")
+        val trackReq = livekit.proto.Track.CreateVideoTrackRequest.newBuilder()
+            .setName("camera")
+            .setSourceHandle(sourceHandle)
+            .build()
+        val trackRes = request(FfiRequest.newBuilder().setCreateVideoTrack(trackReq).build())
+        val trackHandle = trackRes?.createVideoTrack?.track?.handle?.id ?: run {
+            println("ERROR [LiveKitClient] Failed to create video track from source")
+            return
+        }
+        
+        println("DEBUG [LiveKitClient] Publishing video track: $trackHandle (LocalParticipant: $localParticipantHandle)")
         val publishReq = livekit.proto.Room.PublishTrackRequest.newBuilder()
             .setLocalParticipantHandle(localParticipantHandle)
-            .setTrackHandle(sourceHandle)
+            .setTrackHandle(trackHandle)
             .setOptions(livekit.proto.Room.TrackPublishOptions.newBuilder()
-                .setVideoCodec(livekit.proto.VideoFrame.VideoCodec.H264)
                 .setSource(livekit.proto.Track.TrackSource.SOURCE_CAMERA)
                 .build())
             .build()
@@ -280,9 +292,22 @@ object LiveKitClient {
 
     fun publishAudioTrack(sourceHandle: Long) {
         val localParticipantHandle = activeLocalParticipantHandle ?: return
+        
+        println("DEBUG [LiveKitClient] Creating audio track from source: $sourceHandle")
+        val trackReq = livekit.proto.Track.CreateAudioTrackRequest.newBuilder()
+            .setName("microphone")
+            .setSourceHandle(sourceHandle)
+            .build()
+        val trackRes = request(FfiRequest.newBuilder().setCreateAudioTrack(trackReq).build())
+        val trackHandle = trackRes?.createAudioTrack?.track?.handle?.id ?: run {
+            println("ERROR [LiveKitClient] Failed to create audio track from source")
+            return
+        }
+        
+        println("DEBUG [LiveKitClient] Publishing audio track: $trackHandle (LocalParticipant: $localParticipantHandle)")
         val publishReq = livekit.proto.Room.PublishTrackRequest.newBuilder()
             .setLocalParticipantHandle(localParticipantHandle)
-            .setTrackHandle(sourceHandle)
+            .setTrackHandle(trackHandle)
             .setOptions(livekit.proto.Room.TrackPublishOptions.newBuilder()
                 .setSource(livekit.proto.Track.TrackSource.SOURCE_MICROPHONE)
                 .build())
