@@ -63,7 +63,6 @@ object LiveKitLocalAudioTrack {
                     if (read > 0) {
                         pushAudioFrame(buffer, read, sampleRate, numChannels)
                     }
-                    delay(10) // Small delay to avoid flooding native bridge
                 }
             } finally {
                 line.stop()

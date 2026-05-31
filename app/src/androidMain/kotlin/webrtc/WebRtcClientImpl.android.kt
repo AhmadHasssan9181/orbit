@@ -18,6 +18,7 @@ class AndroidWebRtcClient(private val context: Context) : WebRtcClient {
     
     private val _onStreamAdded = MutableSharedFlow<Boolean>(extraBufferCapacity = 10)
     override val onStreamAdded: SharedFlow<Boolean> = _onStreamAdded
+    override var isGroupCall: Boolean = false
 
     private val _isScreenSharing = MutableStateFlow(false)
     override val isScreenSharing: StateFlow<Boolean> = _isScreenSharing
