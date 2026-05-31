@@ -4,7 +4,7 @@ import java.nio.ByteBuffer
 
 object LiveKitNativeAudioBridge {
     val enabled: Boolean
-        get() = System.getProperty("orbit.livekit.cppAudio", "true").toBoolean()
+        get() = LiveKitFeatureFlags.cppMedia
 
     val acceptingFrames: Boolean
         get() = runCatching { nativeIsAcceptingFrames() }.getOrDefault(false)

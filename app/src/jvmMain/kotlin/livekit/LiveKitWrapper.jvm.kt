@@ -1,11 +1,20 @@
 package livekit
 
 actual suspend fun connectToLiveKit(url: String, token: String, iceServers: List<repository.TurnServer>) {
-    if (LiveKitNativeAudioBridge.enabled) {
+    if (LiveKitFeatureFlags.cppMedia) {
         if (LiveKitNativeAudioSession.connect(url, token)) {
             return
         }
-        println("DEBUG [LiveKitWrapper] Native C++ audio connect failed; falling back to raw FFI")
+        if (!LiveKitFeatureFlags.ffiFallback) {
+            throw IllegalStateException(
+                "Native C++ LiveKit media connect failed and raw FFI fallback is disabled"
+            )
+        }
+        println("DEBUG [LiveKitWrapper] Native C++ media connect failed; raw FFI fallback is explicitly enabled")
+    }
+
+    if (!LiveKitFeatureFlags.ffiFallback) {
+        throw IllegalStateException("Raw FFI LiveKit media owner is disabled for MatrixRTC group calls")
     }
 
     LiveKitClient.connect(url, token, iceServers)
