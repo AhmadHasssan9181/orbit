@@ -89,6 +89,7 @@ kotlin {
                 implementation(project(":webrtc-java-lib"))
                 implementation("net.java.dev.jna:jna:5.14.0")
                 implementation("net.java.dev.jna:jna-platform:5.14.0")
+                implementation("com.google.protobuf:protobuf-java:4.29.3")
                 
                 // VLCJ for Native Video Playback
                 implementation("uk.co.caprica:vlcj:4.8.2")
@@ -141,4 +142,40 @@ compose.desktop {
 
 room {
     schemaDirectory("$projectDir/schemas")
+}
+
+// Custom task to compile the C++ JNI bridge for the JVM target
+tasks.register("compileJniBridge") {
+    doLast {
+        val cppDir = file("src/jvmMain/cpp")
+        val buildDir = file("build/jni")
+        buildDir.mkdirs()
+        
+        exec {
+            commandLine("cmake", "-S", cppDir.absolutePath, "-B", buildDir.absolutePath)
+        }
+        exec {
+            commandLine("cmake", "--build", buildDir.absolutePath, "--config", "Release")
+        }
+        
+        // Copy the resulting DLL to the resources folder where loadLibrary can find it
+        val dllName = "orbit_livekit_video.dll"
+        val outputDll = file("build/jni/Release/$dllName")
+        val targetDir = file("src/jvmMain/resources/webrtc-deps")
+        targetDir.mkdirs()
+
+        if (!outputDll.exists()) {
+            // Fallback for non-Release builds or different generators
+            file("build/jni").walkTopDown().find { it.name == dllName }?.let {
+                it.copyTo(targetDir.resolve(dllName), overwrite = true)
+            }
+        } else {
+            outputDll.copyTo(targetDir.resolve(dllName), overwrite = true)
+        }
+    }
+}
+
+// Ensure JNI bridge is compiled before running or assembling
+tasks.named("jvmProcessResources") {
+    dependsOn("compileJniBridge")
 }

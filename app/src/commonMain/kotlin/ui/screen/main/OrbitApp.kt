@@ -401,40 +401,8 @@ private fun MainAppContent(
     }
 
     val handleChannelClick: (String) -> Unit = { id ->
-        val ch = channels.find { it.id == id }
-        if (ch?.type == ChannelType.VOICE) {
-            val isAlreadyActive = callManager.activeRoomId == ch.matrixRoomId || callManager.activeRoomId == ch.id
-            if (!isAlreadyActive) {
-                scope.launch {
-                    val activeUrl = (repository as? MatrixOrbitRepository)?.observeActiveGroupCall(ch.matrixRoomId)?.first()
-                    val callId = if (activeUrl != null && activeUrl.startsWith("matrix-call://")) {
-                        val urlContent = activeUrl.substringAfter("://")
-                        if (urlContent.contains("/")) {
-                            urlContent.substringAfterLast("/")
-                        } else {
-                            // Fallback: Use Room ID as Call ID if format is old
-                            urlContent
-                        }
-                    } else {
-                        val newId = "orbit_call_${kotlin.random.Random.nextLong()}"
-                        (repository as? MatrixOrbitRepository)?.startGroupCall(ch.matrixRoomId, newId)
-                        newId
-                    }
-                    
-                    // 1. Join call on backend (registration)
-                    (repository as? MatrixOrbitRepository)?.joinGroupCall(ch.matrixRoomId, callId)
-                    
-                    // 2. Start local media and connectivity
-                    callManager.joinGroupCall(ch.matrixRoomId, callId, false)
-                }
-            } else {
-                selectedChannelId = id
-                compactOpenChannelId = id
-            }
-        } else {
-            selectedChannelId = id
-            compactOpenChannelId = id
-        }
+        selectedChannelId = id
+        compactOpenChannelId = id
     }
 
     // ─── Settings screen ────────────────────────────────────────
@@ -576,20 +544,24 @@ private fun MainAppContent(
             }
 
             if (shouldShowPopup) {
-                CallScreen(
-                    callManager = callManager,
-                    callerName = callerName,
-                    onStartScreenShare = {
-                        if (onStartScreenShare != null) {
-                            onStartScreenShare { data ->
-                                callManager.startScreenShare(data)
+                if (callManager.isGroupCall.value) {
+                    LiveKitVideoRenderer(modifier = Modifier.fillMaxSize())
+                } else {
+                    CallScreen(
+                        callManager = callManager,
+                        callerName = callerName,
+                        onStartScreenShare = {
+                            if (onStartScreenShare != null) {
+                                onStartScreenShare { data ->
+                                    callManager.startScreenShare(data)
+                                }
+                            } else {
+                                callManager.startScreenShare()
                             }
-                        } else {
-                            callManager.startScreenShare()
-                        }
-                    },
-                    modifier = Modifier.fillMaxSize()
-                )
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             }
         }
     }

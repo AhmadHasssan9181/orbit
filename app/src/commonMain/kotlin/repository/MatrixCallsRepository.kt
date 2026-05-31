@@ -92,7 +92,6 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
-import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.intOrNull
@@ -286,37 +285,152 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
 
         context.repositoryScope.launch {
             val trixnity = context.trixnityClient ?: return@launch
+            
+            // 1. Try to fetch the room-wide call definition directly via Ktor to bypass Trixnity's aggressive filtering
+            try {
+                val url = context.fullUrl("/rooms/$channelId/state/org.matrix.msc3401.call/m.call")
+                println("DEBUG: [observeActiveGroupCall] Attempting direct fetch: $url")
+                val response = context.httpClient.get(url) {
+                    header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
+                }
+                println("DEBUG: [observeActiveGroupCall] Direct m.call fetch status: ${response.status.value}")
+                if (response.status.value == 200) {
+                    val body = response.body<JsonObject>()
+                    println("DEBUG: [observeActiveGroupCall] Direct m.call body keys: ${body.keys}")
+                    val livekitUrl = body["m.foci_preferred"]?.jsonArray?.firstOrNull()?.jsonObject?.get("livekit_service_url")?.jsonPrimitive?.content
+                    if (livekitUrl != null) {
+                        flow.value = "$livekitUrl?callId=m.call"
+                        println("DEBUG: [observeActiveGroupCall] FOUND LIVEKIT CALL VIA DIRECT FETCH: $livekitUrl")
+                        return@launch
+                    }
+                }
+            } catch (e: Exception) {
+                println("DEBUG: [observeActiveGroupCall] Direct m.call fetch exception: ${e.message}")
+            }
+
+            try {
+                val url = context.fullUrl("/rooms/$channelId/state")
+                println("DEBUG: [observeActiveGroupCall] Attempting direct all-state fetch: $url")
+                val response = context.httpClient.get(url) {
+                    header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
+                }
+                println("DEBUG: [observeActiveGroupCall] Direct all-state status: ${response.status.value}")
+                if (response.status.value == 200) {
+                    val stateEvents = response.body<JsonArray>()
+                    println("DEBUG: [observeActiveGroupCall] Direct all-state found ${stateEvents.size} events")
+                    for (event in stateEvents) {
+                        val obj = event.jsonObject
+                        val type = obj["type"]?.jsonPrimitive?.content ?: continue
+                        val stateKey = obj["state_key"]?.jsonPrimitive?.content ?: ""
+                        
+                        if (type == "org.matrix.msc3401.call.member") {
+                            val content = obj["content"]?.jsonObject ?: continue
+                            println("DEBUG: [observeActiveGroupCall] Found member event in direct fetch, skey=$stateKey content keys: ${content.keys}")
+                            println("DEBUG: [observeActiveGroupCall] FULL MEMBER EVENT CONTENT: $content")
+                            
+                            val livekitUrl = content["foci_preferred"]?.jsonArray?.firstOrNull()?.jsonObject?.get("livekit_service_url")?.jsonPrimitive?.content
+                                ?: content["m.foci_preferred"]?.jsonArray?.firstOrNull()?.jsonObject?.get("livekit_service_url")?.jsonPrimitive?.content
+                                ?: content["foci_active"]?.jsonArray?.firstOrNull()?.jsonObject?.get("livekit_service_url")?.jsonPrimitive?.content
+                            
+                            if (livekitUrl != null) {
+                                val callId = content["call_id"]?.jsonPrimitive?.content ?: ""
+                                // Skip "ghost" events from older Orbit versions if possible
+                                if (callId == "m.call") {
+                                    println("DEBUG: [observeActiveGroupCall] Skipping old 'm.call' ID event")
+                                    continue
+                                }
+                                flow.value = "$livekitUrl?callId=$callId"
+                                println("DEBUG: [observeActiveGroupCall] FOUND LIVEKIT CALL INSIDE DIRECT MEMBER FETCH: $livekitUrl (callId=$callId)")
+                                return@launch
+                            }
+                        }
+                    }
+                }
+            } catch(e: Exception) {
+                println("DEBUG: [observeActiveGroupCall] Direct all-state fetch exception: ${e.message}")
+            }
+
+            // 2. Fallback to Trixnity and timeline
             try {
                 val stateEvents = trixnity.api.room.getState(RoomId(channelId)).getOrThrow()
                 if (stateEvents != null) {
+                    println("DEBUG: [observeActiveGroupCall] Checking state for $channelId, found ${stateEvents.size} events")
                     for (event in stateEvents) {
                         val content = event.content
-                        if (content is UnknownEventContent) {
-                            val typeStr = content.eventType
-                            val realContent = unwrapUnknownEventContent(content)
-                            if (typeStr == "org.matrix.msc3401.call" || typeStr == "m.call") {
-                                val isTerminated = realContent["m.intent"]?.jsonPrimitive?.content == "m.terminated" || realContent["m.terminated"] != null || realContent.isEmpty()
-                                if (!isTerminated) {
+                        val typeStr = if (content is UnknownEventContent) content.eventType else content::class.simpleName ?: "unknown"
+                        
+                        if (typeStr.contains("msc3401") || typeStr.contains("call")) {
+                            println("DEBUG: [observeActiveGroupCall]   - Call-related State Event: $typeStr (key: ${event.stateKey})")
+                            println("DEBUG: [observeActiveGroupCall]     FULL EVENT: $event")
+                            if (content is UnknownEventContent) {
+                                println("DEBUG: [observeActiveGroupCall]     RAW JSON: ${content.raw}")
+                            }
+                        }
+
+                        val realContent = if (content is UnknownEventContent) unwrapUnknownEventContent(content) else null
+                        
+                        if (typeStr == "org.matrix.msc3401.call" || typeStr == "m.call") {
+                            val contentToParse = realContent ?: JsonObject(emptyMap()) 
+
+                            println("DEBUG: [observeActiveGroupCall] Processing MSC3401 content: ${contentToParse.keys}")
+                            val isTerminated = contentToParse["m.intent"]?.jsonPrimitive?.content == "m.terminated" || contentToParse["m.terminated"] != null || contentToParse.isEmpty()
+                            if (!isTerminated) {
+                                val fociPreferred = contentToParse["m.foci_preferred"]?.jsonArray
+                                val livekitUrl = fociPreferred?.firstOrNull()?.jsonObject?.get("livekit_service_url")?.jsonPrimitive?.content
+                                if (livekitUrl != null) {
+                                    flow.value = "$livekitUrl?callId=${event.stateKey}"
+                                    println("DEBUG: [observeActiveGroupCall] FOUND LIVEKIT CALL: $livekitUrl for ${event.stateKey}")
+                                    return@launch
+                                } else {
                                     flow.value = "matrix-call://${event.stateKey}"
+                                    println("DEBUG: [observeActiveGroupCall] FOUND NON-LIVEKIT CALL: ${event.stateKey}")
                                     return@launch
                                 }
-                            } else if (typeStr == "org.orbit.group_call.state") {
-                                val status = realContent["status"]?.jsonPrimitive?.content
-                                val callId = realContent["call_id"]?.jsonPrimitive?.content
-                                if (status == "active" && !callId.isNullOrBlank()) {
-                                    println("DEBUG: [observeActiveGroupCall] FOUND FAST STATE CALL: $callId")
-                                    flow.value = "matrix-call://$callId"
-                                    return@launch
-                                } else if (status == "ended") {
-                                    // The call is explicitly ended, we can safely assume no active call
-                                }
-                            } else if (typeStr == "im.vector.modular.widgets" || typeStr == "m.widget") {
-                                val type = realContent["type"]?.jsonPrimitive?.content
-                                val url = realContent["url"]?.jsonPrimitive?.content
-                                if ((type == "jitsi" || type == "m.custom") && !url.isNullOrBlank()) {
-                                    flow.value = url
-                                    return@launch
-                                }
+                            }
+                        } else if (typeStr == "org.matrix.msc3401.call.member" && flow.value == null) {
+                            val contentToParse = realContent ?: JsonObject(emptyMap())
+                            
+                            // CRITICAL FIX: Skip 'leave' events or empty tombstones to avoid "ghost" calls
+                            if (contentToParse.isEmpty() || contentToParse["membership"]?.jsonPrimitive?.content == "leave") {
+                                continue
+                            }
+
+                            val fociPreferred = contentToParse["m.foci_preferred"]?.jsonArray ?: contentToParse["foci_preferred"]?.jsonArray
+                                ?: contentToParse["foci_active"]?.jsonArray
+                            val livekitUrl = fociPreferred?.firstOrNull()?.jsonObject?.get("livekit_service_url")?.jsonPrimitive?.content
+                            
+                            if (livekitUrl != null) {
+                                val callId = contentToParse["call_id"]?.jsonPrimitive?.content ?: "m.call"
+                                flow.value = "$livekitUrl?callId=$callId"
+                                println("DEBUG: [observeActiveGroupCall] FOUND LIVEKIT CALL INSIDE ACTIVE MEMBER EVENT: $livekitUrl")
+                                return@launch
+                            }
+
+                            // Legacy/Other Member Key Extraction Logic
+                            val callIdFromKey = event.stateKey.split("_").getOrNull(2)
+                            if (callIdFromKey != null && callIdFromKey.length > 5) {
+                                try {
+                                    val defEvent = trixnity.api.room.getStateEvent("org.matrix.msc3401.call", RoomId(channelId), callIdFromKey).getOrNull()
+                                    if (defEvent != null) {
+                                        val defContent = if (defEvent.content is UnknownEventContent) unwrapUnknownEventContent(defEvent.content as UnknownEventContent) else null
+                                        val lkUrl = defContent?.get("m.foci_preferred")?.jsonArray?.firstOrNull()?.jsonObject?.get("livekit_service_url")?.jsonPrimitive?.content
+                                        if (lkUrl != null) {
+                                            flow.value = "$lkUrl?callId=$callIdFromKey"
+                                            println("DEBUG: [observeActiveGroupCall] FOUND LIVEKIT CALL VIA MEMBER REF: $lkUrl")
+                                            return@launch
+                                        }
+                                    }
+                                } catch (e: Exception) {}
+                            }
+                        } else if (typeStr == "org.orbit.group_call.state") {
+
+                            val contentToParse = realContent ?: JsonObject(emptyMap())
+                            val status = contentToParse["status"]?.jsonPrimitive?.content
+                            val callId = contentToParse["call_id"]?.jsonPrimitive?.content
+                            if (status == "active" && !callId.isNullOrBlank()) {
+                                println("DEBUG: [observeActiveGroupCall] FOUND FAST STATE CALL: $callId")
+                                flow.value = "matrix-call://$callId"
+                                return@launch
                             }
                         }
                     }
@@ -345,7 +459,7 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                         if (content is UnknownEventContent) {
                             typeStr = content.eventType
                             realContent = unwrapUnknownEventContent(content)
-                            callId = realContent["call_id"]?.jsonPrimitive?.content
+                            callId = realContent["call_id"]?.jsonPrimitive?.content ?: (timelineEvent.event as? de.connect2x.trixnity.core.model.events.ClientEvent.RoomEvent.StateEvent<*>)?.stateKey
                         } else if (content is de.connect2x.trixnity.core.model.events.m.call.CallEventContent) {
                             callId = content.callId
                             typeStr = when (content) {
@@ -360,10 +474,25 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                             }
                         }
 
+                        if (typeStr == "org.matrix.msc3401.call" && realContent != null) {
+                             val isTerminated = realContent["m.intent"]?.jsonPrimitive?.content == "m.terminated" || realContent["m.terminated"] != null || realContent.isEmpty()
+                             if (!isTerminated) {
+                                 val fociPreferred = realContent["m.foci_preferred"]?.jsonArray
+                                 val livekitUrl = fociPreferred?.firstOrNull()?.jsonObject?.get("livekit_service_url")?.jsonPrimitive?.content
+                                 if (livekitUrl != null) {
+                                     val stateKey = (timelineEvent.event as? de.connect2x.trixnity.core.model.events.ClientEvent.RoomEvent.StateEvent<*>)?.stateKey ?: "unknown"
+                                     flow.value = "$livekitUrl?callId=$stateKey"
+                                     println("DEBUG: [observeActiveGroupCall] FOUND LIVEKIT CALL IN TIMELINE: $livekitUrl")
+                                     throw Exception("Break")
+                                 }
+                             }
+                        }
+
                         val isTerminatingEvent = typeStr == "m.call.hangup" || typeStr == "m.call.reject" || typeStr == "m.call.ended"
                         if (isTerminatingEvent && callId != null) {
                             seenStateKeys.add("call:$callId")
                         }
+
 
                         if (typeStr == "m.call.invite" && callId != null) {
                             if (!seenStateKeys.contains("call:$callId")) {
@@ -434,59 +563,178 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
     }
 
     override suspend fun startGroupCall(roomId: String, callId: String) {
-        val content = buildJsonObject {
-            put("call_id", callId)
-            put("version", "1")
-            put("lifetime", 30000L)
-            put("offer", buildJsonObject {
-                put("sdp", "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=GroupCall\r\nt=0 0\r\nm=audio 0 UDP/TLS/RTP/SAVPF 111\r\nc=IN IP4 0.0.0.0")
-                put("type", "offer")
-            })
-            put("org.orbit.group_call", true)
+        println("DEBUG [MatrixCallsRepository] STARTING MSC3401 Creator Flow for $roomId")
+        
+        // 1. Cleanup ALL known ghost keys
+        val userId = context.userId ?: return
+        val deviceId = context.deviceId ?: "ORBIT_DESKTOP"
+        try {
+            val keysToClear = listOf(
+                userId, // The one found in logs!
+                "_${userId}_${deviceId}",
+                deviceId
+            )
+            for (key in keysToClear) {
+                context.httpClient.put(context.fullUrl("/rooms/$roomId/state/org.matrix.msc3401.call.member/$key")) {
+                    header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
+                    contentType(ContentType.Application.Json)
+                    setBody(buildJsonObject { put("membership", "leave") })
+                }
+            }
+        } catch (e: Exception) {}
+
+        // 2. Publish Call Definition (The Blueprint) to 'm.call' state key for "seamless" support
+        try {
+            val callUrl = context.fullUrl("/rooms/$roomId/state/org.matrix.msc3401.call/m.call")
+            val response = context.httpClient.put(callUrl) {
+                header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
+                contentType(ContentType.Application.Json)
+                setBody(buildJsonObject {
+                    put("m.intent", "m.room")
+                    put("m.foci_preferred", buildJsonArray {
+                        add(buildJsonObject {
+                            put("livekit_service_url", context.defaultLiveKitServiceUrl)
+                            put("livekit_alias", roomId)
+                            put("type", "livekit")
+                        })
+                    })
+                })
+            }
+            println("DEBUG [MatrixCallsRepository] Published seamless m.call definition with focus, status: ${response.status.value}")
+        } catch (e: Exception) {
+            println("ERROR [MatrixCallsRepository] Failed to publish m.call: ${e.message}")
         }
-        sendCallEvent(roomId, "m.call.invite", content)
+
+        // 3. Join as member (will publish the member event)
+        joinGroupCall(roomId, "m.call")
         
         // Optimistically update local state
-        context.activeGroupCalls.getOrPut(roomId) { MutableStateFlow(null) }.value = "matrix-call://$callId"
+        context.activeGroupCalls.getOrPut(roomId) { MutableStateFlow(null) }.value = "${context.defaultLiveKitServiceUrl}?callId="
     }
 
     override suspend fun endGroupCall(roomId: String, callId: String) {
-        sendCallEvent(roomId, "m.call.hangup", buildJsonObject { 
-            put("call_id", callId)
-            put("version", "1")
-        })
+        // MSC3401 calls don't really "end" via a single event, everyone just leaves.
+        // But we can terminate the call definition if we are the owner.
+        try {
+            val callUrl = context.fullUrl("/rooms/$roomId/state/org.matrix.msc3401.call/m.call")
+            context.httpClient.put(callUrl) {
+                header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
+                contentType(ContentType.Application.Json)
+                setBody(buildJsonObject {
+                    put("m.intent", "m.room")
+                    put("m.terminated", "m.user_hangup")
+                })
+            }
+        } catch (e: Exception) {}
         
-        // Optimistically update local state
-        if (context.activeGroupCalls[roomId]?.value == "matrix-call://$callId") {
-            context.activeGroupCalls[roomId]?.value = null
-        }
+        leaveGroupCall(roomId, callId)
     }
 
     override suspend fun joinGroupCall(roomId: String, callId: String) {
-        val content = buildJsonObject {
-            put("call_id", callId)
-            put("version", "1")
-            put("candidates", buildJsonArray {})
-            put("membership", "join")
-            put("org.orbit.group_call", true)
+        println("DEBUG [MatrixCallsRepository] JOINING MSC3401 Call for $roomId (callId=$callId)")
+        
+        val userId = context.userId ?: return
+        val deviceId = context.deviceId ?: "ORBIT_DESKTOP"
+        val stateKey = deviceId
+
+        // Cleanup: Remove old malformed state events from previous versions
+        try {
+            val keysToClear = listOf(userId, "_${userId}_${deviceId}")
+            for (key in keysToClear) {
+                context.httpClient.put(context.fullUrl("/rooms/$roomId/state/org.matrix.msc3401.call.member/$key")) {
+                    header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
+                    contentType(ContentType.Application.Json)
+                    setBody(buildJsonObject { put("membership", "leave") })
+                }
+            }
+        } catch (e: Exception) {}
+        
+        try {
+            val memberUrl = context.fullUrl("/rooms/$roomId/state/org.matrix.msc3401.call.member/$stateKey")
+            val payload = buildJsonObject {
+                put("application", "m.call")
+                put("call_id", "") // Match Element's empty call_id seen in logs
+                put("device_id", deviceId)
+                put("membershipID", "$userId:$deviceId") 
+                put("m.call.intent", "video")
+                put("scope", "m.room")
+                put("expires", 14400000)
+                put("foci_preferred", buildJsonArray {
+                    add(buildJsonObject {
+                        put("livekit_service_url", context.defaultLiveKitServiceUrl)
+                        put("livekit_alias", roomId)
+                        put("type", "livekit")
+                    })
+                })
+                put("focus_active", buildJsonObject {
+                    put("type", "livekit")
+                    put("focus_selection", "oldest_membership")
+                })
+                // Add modern foci_active for newer clients too
+                put("foci_active", buildJsonArray {
+                    add(buildJsonObject {
+                        put("foci_id", "livekit")
+                        put("type", "livekit")
+                        put("livekit_service_url", context.defaultLiveKitServiceUrl)
+                        put("livekit_alias", roomId)
+                    })
+                })
+                put("capabilities", buildJsonObject {
+                    put("audio", true)
+                    put("video", true)
+                })
+            }
+            println("DEBUG [MatrixCallsRepository] Sending m.call.member payload: $payload")
+            
+            val response = context.httpClient.put(memberUrl) {
+                header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
+                contentType(ContentType.Application.Json)
+                setBody(payload)
+            }
+            println("DEBUG [MatrixCallsRepository] Published legacy m.call.member join event, status: ${response.status.value}")
+        } catch (e: Exception) {
+            println("ERROR [MatrixCallsRepository] Failed to publish member join: ${e.message}")
         }
-        sendCallEvent(roomId, "m.call.candidates", content)
     }
 
     override suspend fun leaveGroupCall(roomId: String, callId: String) {
-        val content = buildJsonObject {
-            put("call_id", callId)
-            put("version", "1")
-            put("candidates", buildJsonArray {})
-            put("membership", "leave")
-            put("org.orbit.group_call", true)
-        }
-        sendCallEvent(roomId, "m.call.candidates", content)
+        println("DEBUG [MatrixCallsRepository] LEAVING MSC3401 Call for $roomId")
+        val userId = context.userId ?: return
+        val deviceId = context.deviceId ?: "ORBIT_DESKTOP"
+        val stateKey = deviceId
+
+        try {
+            val memberUrl = context.fullUrl("/rooms/$roomId/state/org.matrix.msc3401.call.member/$stateKey")
+            context.httpClient.put(memberUrl) {
+                header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
+                contentType(ContentType.Application.Json)
+                setBody(buildJsonObject {
+                    put("membership", "leave")
+                })
+            }
+        } catch (e: Exception) {}
+
+        // Optimistically update local state
+        context.activeGroupCalls[roomId]?.value = null
+    }
+
+    override suspend fun fetchLiveKitToken(roomId: String, livekitServiceUrl: String): livekit.LiveKitAuthResponse {
+        return livekit.LiveKitTokenProvider.fetchToken(
+            roomId = roomId,
+            userId = context.userId ?: throw Exception("No user ID"),
+            deviceId = context.deviceId ?: "ORBIT_DESKTOP",
+            homeserverUrl = context.homeserverUrl,
+            accessToken = context.accessToken ?: throw Exception("No access token"),
+            livekitServiceUrl = livekitServiceUrl,
+            httpClient = context.httpClient
+        )
     }
 
     private fun unwrapUnknownEventContent(content: UnknownEventContent): JsonObject {
         val raw = content.raw.jsonObject
-        return raw["value"]?.jsonObject ?: raw
+        val valueObj = raw["value"]?.jsonObject
+        // If "value" is present and not empty, use it. Otherwise, assume the raw object IS the content.
+        return if (valueObj != null && valueObj.isNotEmpty()) valueObj else raw
     }
 
     private fun partyIdFrom(content: JsonObject): String? {

@@ -7,6 +7,7 @@ import java.nio.file.StandardCopyOption
 
 object WebrtcNativeDepsLoader {
     private var loaded = false
+    var livekitFfiPath: String? = null
 
     // VC++ runtime DLLs that are already loaded by the JVM process.
     // Loading a second (different-version) copy causes DllMain init failures
@@ -46,7 +47,9 @@ object WebrtcNativeDepsLoader {
                 "opencv_imgproc4.dll",
                 "opencv_dnn4.dll",
                 "legacy.dll",
-                "webrtc-java-orbit-windows-x86_64.dll"
+                "webrtc-java-orbit-windows-x86_64.dll",
+                "livekit_ffi.dll",
+                "orbit_livekit_video.dll"
             )
 
             val tempDir = Files.createTempDirectory("webrtc-deps").toFile()
@@ -60,6 +63,9 @@ object WebrtcNativeDepsLoader {
                     val file = File(tempDir, dll)
                     file.deleteOnExit()
                     Files.copy(stream, file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                    if (dll == "livekit_ffi.dll") {
+                        livekitFfiPath = file.absolutePath
+                    }
                 } else {
                     println("DEBUG: Resource /webrtc-deps/$dll not found")
                 }

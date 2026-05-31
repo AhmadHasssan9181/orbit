@@ -92,14 +92,31 @@ class CallManager(
         }
     }
 
-    fun joinGroupCall(roomId: String, callId: String, isVideo: Boolean) {
-        if (callState.value != CallState.IDLE && this.callId == callId) return
+    private var isJoiningGroupCall = false
 
+    fun joinGroupCall(
+        roomId: String, 
+        callId: String, 
+        isVideo: Boolean, 
+        livekitUrl: String? = null, 
+        livekitTokenFetcher: (suspend () -> livekit.LiveKitAuthResponse)? = null
+    ) {
+        if (callState.value != CallState.IDLE && this.callId == callId) {
+            println("DEBUG [CallManager] Already in call $callId, ignoring join request")
+            return
+        }
+        if (isJoiningGroupCall) {
+            println("DEBUG [CallManager] Join already in progress for $callId, ignoring redundant request")
+            return
+        }
+
+        isJoiningGroupCall = true
         activeRoomId = roomId
         this.callId = callId
         isIncomingCall.value = false
         isVideoCall.value = isVideo
         isGroupCall.value = true
+        webRtcClient.isGroupCall = true
         isLocalVideoEnabled.value = isVideo
         isLocalAudioEnabled.value = true
         candidatesAllowedForCallId = null
@@ -107,13 +124,38 @@ class CallManager(
         _callState.value = CallState.CONNECTING
 
         scope.launch {
-            loadIceServers()
-            webRtcClient.initialize(iceServers)
-            webRtcClient.startLocalMedia(isVideo)
+            try {
+                if (livekitUrl != null && livekitTokenFetcher != null) {
+                    try {
+                        println("DEBUG [CallManager] Fetching LiveKit token for url: $livekitUrl")
+                        val authResponse = livekitTokenFetcher()
+                        println("DEBUG [CallManager] Token and SFU URL fetched. Connecting to LiveKit at ${authResponse.serverUrl}...")
+                        livekit.connectToLiveKit(authResponse.serverUrl, authResponse.token)
+                        
+                        // Trigger local media capture (diverted to LiveKit in WebRtcClientImpl)
+                        webRtcClient.startLocalMedia(isVideo)
+                        
+                        _callState.value = CallState.CONNECTED
+                        println("DEBUG [CallManager] LiveKit call state set to CONNECTED")
+                        return@launch
+                    } catch (e: Exception) {
+                        println("DEBUG [CallManager] Failed to connect to LiveKit: ${e.message}")
+                        e.printStackTrace()
+                        _callState.value = CallState.IDLE
+                        return@launch
+                    }
+                }
 
-            // For group calls, we don't send an invite. We send a m.call.member event via repository.
-            // This is usually handled by the repository when we call joinGroupCall there.
-            _callState.value = CallState.CONNECTED
+                loadIceServers()
+                webRtcClient.initialize(iceServers)
+                webRtcClient.startLocalMedia(isVideo)
+
+                // For group calls, we don't send an invite. We send a m.call.member event via repository.
+                // This is usually handled by the repository when we call joinGroupCall there.
+                _callState.value = CallState.CONNECTED
+            } finally {
+                isJoiningGroupCall = false
+            }
         }
     }
     fun startCall(roomId: String, isVideo: Boolean) {
