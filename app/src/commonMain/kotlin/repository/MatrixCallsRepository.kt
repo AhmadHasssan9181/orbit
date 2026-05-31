@@ -679,8 +679,9 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                 put("application", "m.call")
                 put("call_id", jsonCallId) 
                 put("device_id", deviceId)
-                // MSC3401: membershipID MUST match the state key exactly
-                put("membershipID", stateKey) 
+                // MSC3401: membershipID MUST match the LiveKit identity (COLONS)
+                // This is critical for Element to link the media tracks to the user.
+                put("membershipID", "$userId:$deviceId") 
                 // MSC3401 strictly requires created_ts for focus selection
                 put("created_ts", getTimeMillis())
                 put("m.call.intent", "video")
@@ -697,6 +698,7 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                     put("type", "livekit")
                     put("focus_selection", "oldest_membership")
                 })
+                // Add modern foci_active for newer clients too
                 put("foci_active", buildJsonArray {
                     add(buildJsonObject {
                         put("foci_id", "livekit")
@@ -770,8 +772,8 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
     override suspend fun fetchLiveKitToken(roomId: String, callId: String, livekitServiceUrl: String): livekit.LiveKitAuthResponse {
         val userId = context.userId ?: throw Exception("No user ID")
         val deviceId = context.deviceId ?: "ORBIT_DESKTOP"
-        // MSC3401: Identity MUST match membershipID exactly (underscored format)
-        val identity = "_${userId}_${deviceId}_$callId"
+        // MSC3401: LiveKit Identity MUST match membershipID in payload (COLONS)
+        val identity = "$userId:$deviceId"
         
         return livekit.LiveKitTokenProvider.fetchToken(
             roomId = roomId,

@@ -127,11 +127,18 @@ class CallManager(
             try {
                 if (livekitUrl != null && livekitTokenFetcher != null) {
                     try {
+                        loadIceServers()
+                        var effectiveIceServers = iceServers
+                        if (effectiveIceServers.isEmpty()) {
+                            println("DEBUG [CallManager] No Matrix ICE servers found, injecting fallback STUN")
+                            effectiveIceServers = listOf(repository.TurnServer(listOf("stun:stun.l.google.com:19302"), null, null))
+                        }
+
                         println("DEBUG [CallManager] Fetching LiveKit token for url: $livekitUrl")
                         val authResponse = livekitTokenFetcher()
                         println("DEBUG [CallManager] Token and SFU URL fetched. Connecting to LiveKit at ${authResponse.serverUrl}...")
-                        livekit.connectToLiveKit(authResponse.serverUrl, authResponse.token)
-                        
+                        livekit.connectToLiveKit(authResponse.serverUrl, authResponse.token, effectiveIceServers)
+
                         // Trigger local media capture (diverted to LiveKit in WebRtcClientImpl)
                         webRtcClient.startLocalMedia(isVideo)
                         
