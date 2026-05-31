@@ -10,14 +10,19 @@ object LiveKitNativeAudioBridge {
         webrtc.WebrtcNativeDepsLoader.load()
     }
 
+    @JvmStatic
     external fun nativeSdkVersion(): String
 
+    @JvmStatic
     external fun nativeConnect(url: String, token: String): Boolean
 
+    @JvmStatic
     external fun nativeDisconnect()
 
+    @JvmStatic
     external fun nativePublishAudio(sampleRate: Int, channels: Int, frameMs: Int): Boolean
 
+    @JvmStatic
     external fun nativePushAudioFrame(
         pcm: ByteBuffer,
         byteLength: Int,
@@ -26,6 +31,7 @@ object LiveKitNativeAudioBridge {
         samplesPerChannel: Int
     ): Boolean
 
+    @JvmStatic
     external fun nativeSetRemoteAudioSink(sink: RemoteAudioSink?)
 
     interface RemoteAudioSink {
