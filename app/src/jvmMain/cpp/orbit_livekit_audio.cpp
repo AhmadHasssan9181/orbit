@@ -40,7 +40,7 @@ std::vector<std::shared_ptr<RemoteAudioReader>> g_remoteAudioReaders;
 
 void initializeSdkOnce() {
     std::call_once(g_initializeOnce, [] {
-        livekit::initialize(livekit::LogSink::kConsole);
+        livekit::initialize(livekit::LogLevel::Info, livekit::LogSink::kConsole);
         std::cout << "DEBUG [OrbitLiveKitAudio] LiveKit C++ SDK initialized" << std::endl;
     });
 }
@@ -113,9 +113,9 @@ void dispatchRemoteAudioFrame(const livekit::AudioFrame& frame) {
                 sink,
                 method,
                 pcm,
-                static_cast<jint>(frame.sample_rate()),
-                static_cast<jint>(frame.num_channels()),
-                static_cast<jint>(frame.samples_per_channel()));
+                static_cast<jint>(frame.sampleRate()),
+                static_cast<jint>(frame.numChannels()),
+                static_cast<jint>(frame.samplesPerChannel()));
             if (env->ExceptionCheck()) {
                 env->ExceptionDescribe();
                 env->ExceptionClear();
@@ -260,7 +260,7 @@ Java_livekit_LiveKitNativeAudioBridge_nativeConnect(JNIEnv* env, jclass, jstring
         options.auto_subscribe = true;
         options.dynacast = false;
 
-        g_connected = g_room->Connect(urlString, tokenString, options);
+        g_connected = g_room->connect(urlString, tokenString, options);
         if (!g_connected) {
             resetRoomLocked();
             std::cerr << "ERROR [OrbitLiveKitAudio] LiveKit C++ room connect failed" << std::endl;
