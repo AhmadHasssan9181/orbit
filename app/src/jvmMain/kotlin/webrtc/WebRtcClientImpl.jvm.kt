@@ -192,24 +192,33 @@ class JvmWebRtcClient : WebRtcClient {
                 }
                 isLiveKitMediaStarted = true
                 println("DEBUG: [WebRTC] Redirecting local media to LiveKit Data Plane")
-                
-                // 1. Start standard camera capture but don't add to peer connection
-                startVideoCapture()
 
-                if (cameraVideoTrack == null) {
-                    println("ERROR: [WebRTC] cameraVideoTrack is NULL after startVideoCapture()!")
-                } else {
-                    println("DEBUG: [WebRTC] cameraVideoTrack is initialized, adding LiveKit sink")
-                    cameraVideoTrack?.addSink(livekit.LiveKitLocalTrack.sink)
+                val usingNativeAudio = livekit.LiveKitNativeAudioSession.isConnected
+
+                if (isVideoEnabled && !usingNativeAudio) {
+                    startVideoCapture()
+
+                    if (cameraVideoTrack == null) {
+                        println("ERROR: [WebRTC] cameraVideoTrack is NULL after startVideoCapture()!")
+                    } else {
+                        println("DEBUG: [WebRTC] cameraVideoTrack is initialized, adding LiveKit sink")
+                        cameraVideoTrack?.addSink(livekit.LiveKitLocalTrack.sink)
+                    }
+
+                    livekit.LiveKitLocalTrack.startCapture(captureWidth, captureHeight)
+                    livekit.LiveKitClient.publishVideoTrack(livekit.LiveKitLocalTrack.getSourceHandle())
+                } else if (isVideoEnabled) {
+                    println("DEBUG: [WebRTC] Native C++ audio mode active; LiveKit video publish stays disabled for now")
                 }
 
-                // 3. Start the LiveKit native source and publish
-                livekit.LiveKitLocalTrack.startCapture(captureWidth, captureHeight)
-                livekit.LiveKitClient.publishVideoTrack(livekit.LiveKitLocalTrack.getSourceHandle())
-                
-                // 4. Start audio capture and publish
-                livekit.LiveKitLocalAudioTrack.startCapture()
-                livekit.LiveKitClient.publishAudioTrack(livekit.LiveKitLocalAudioTrack.getSourceHandle())
+                if (usingNativeAudio) {
+                    if (!livekit.LiveKitNativeAudioSession.startPublishing()) {
+                        println("ERROR: [WebRTC] Failed to start native C++ LiveKit audio")
+                    }
+                } else {
+                    livekit.LiveKitLocalAudioTrack.startCapture()
+                    livekit.LiveKitClient.publishAudioTrack(livekit.LiveKitLocalAudioTrack.getSourceHandle())
+                }
                 
                 println("DEBUG: [WebRTC] Group call local media started and published to LiveKit")
                 return
@@ -448,6 +457,13 @@ class JvmWebRtcClient : WebRtcClient {
     }
 
     override fun stopLocalMedia() {
+        if (isGroupCall) {
+            runCatching { livekit.LiveKitNativeAudioSession.stopPublishing() }
+            runCatching { livekit.LiveKitLocalAudioTrack.stopCapture() }
+            runCatching { cameraVideoTrack?.removeSink(livekit.LiveKitLocalTrack.sink) }
+            isLiveKitMediaStarted = false
+        }
+
         stopVideoCapture(disposeTrack = true)
         stopScreenShare()
 
@@ -652,6 +668,7 @@ class JvmWebRtcClient : WebRtcClient {
     override fun endCall() {
         try {
             stopLocalMedia()
+            runCatching { livekit.LiveKitNativeAudioSession.disconnect() }
             isLiveKitMediaStarted = false // Reset LiveKit media guard
             
             // Explicitly remove sinks to prevent native threads from calling back during shutdown
