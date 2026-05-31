@@ -102,7 +102,8 @@ class CallManager(
         livekitTokenFetcher: (suspend () -> livekit.LiveKitAuthResponse)? = null
     ) {
         if (callState.value != CallState.IDLE && this.callId == callId) {
-            println("DEBUG [CallManager] Already in call $callId, ignoring join request")
+            println("DEBUG [CallManager] Already in call $callId, ensuring native media session is ready")
+            ensureNativeMediaSessionStarted(roomId, callId, isVideo, livekitUrl, livekitTokenFetcher)
             return
         }
         if (isJoiningGroupCall) {
@@ -126,31 +127,14 @@ class CallManager(
         scope.launch {
             try {
                 if (livekitUrl != null && livekitTokenFetcher != null) {
-                    try {
-                        loadIceServers()
-                        var effectiveIceServers = iceServers
-                        if (effectiveIceServers.isEmpty()) {
-                            println("DEBUG [CallManager] No Matrix ICE servers found, injecting fallback STUN")
-                            effectiveIceServers = listOf(repository.TurnServer(listOf("stun:stun.l.google.com:19302"), null, null))
-                        }
-
-                        println("DEBUG [CallManager] Fetching LiveKit token for url: $livekitUrl")
-                        val authResponse = livekitTokenFetcher()
-                        println("DEBUG [CallManager] Token and SFU URL fetched. Connecting to LiveKit at ${authResponse.serverUrl}...")
-                        livekit.connectToLiveKit(authResponse.serverUrl, authResponse.token, effectiveIceServers)
-
-                        // Trigger local media capture (diverted to LiveKit in WebRtcClientImpl)
-                        webRtcClient.startLocalMedia(isVideo)
-                        
+                    val mediaReady = connectNativeGroupMedia(roomId, callId, isVideo, livekitUrl, livekitTokenFetcher)
+                    if (mediaReady) {
                         _callState.value = CallState.CONNECTED
-                        println("DEBUG [CallManager] LiveKit call state set to CONNECTED")
-                        return@launch
-                    } catch (e: Exception) {
-                        println("DEBUG [CallManager] Failed to connect to LiveKit: ${e.message}")
-                        e.printStackTrace()
+                        println("DEBUG [CallManager] LiveKit call state set to CONNECTED after MediaReady")
+                    } else {
                         _callState.value = CallState.IDLE
-                        return@launch
                     }
+                    return@launch
                 }
 
                 loadIceServers()
@@ -165,6 +149,85 @@ class CallManager(
             }
         }
     }
+
+    private fun ensureNativeMediaSessionStarted(
+        roomId: String,
+        callId: String,
+        isVideo: Boolean,
+        livekitUrl: String?,
+        livekitTokenFetcher: (suspend () -> livekit.LiveKitAuthResponse)?
+    ) {
+        if (isJoiningGroupCall) return
+        scope.launch {
+            val ready = livekit.ensureLiveKitMediaReady()
+            if (ready.ok) {
+                if (_callState.value != CallState.CONNECTED) {
+                    _callState.value = CallState.CONNECTED
+                }
+                return@launch
+            }
+
+            if (livekitUrl == null || livekitTokenFetcher == null) {
+                println("DEBUG [CallManager] Native media not ready and no LiveKit token fetcher is available")
+                return@launch
+            }
+
+            isJoiningGroupCall = true
+            try {
+                if (connectNativeGroupMedia(roomId, callId, isVideo, livekitUrl, livekitTokenFetcher)) {
+                    _callState.value = CallState.CONNECTED
+                }
+            } finally {
+                isJoiningGroupCall = false
+            }
+        }
+    }
+
+    private suspend fun connectNativeGroupMedia(
+        roomId: String,
+        callId: String,
+        isVideo: Boolean,
+        livekitUrl: String,
+        livekitTokenFetcher: suspend () -> livekit.LiveKitAuthResponse
+    ): Boolean {
+        return try {
+            loadIceServers()
+            var effectiveIceServers = iceServers
+            if (effectiveIceServers.isEmpty()) {
+                println("DEBUG [CallManager] No Matrix ICE servers found, injecting fallback STUN")
+                effectiveIceServers = listOf(repository.TurnServer(listOf("stun:stun.l.google.com:19302"), null, null))
+            }
+
+            println("DEBUG [CallManager] Fetching LiveKit token for url: $livekitUrl")
+            val authResponse = livekitTokenFetcher()
+            println("DEBUG [CallManager] Token and SFU URL fetched. Connecting native media at ${authResponse.serverUrl}...")
+            val readiness = livekit.connectAndPublishToLiveKit(
+                authResponse = authResponse,
+                isVideo = isVideo,
+                iceServers = effectiveIceServers,
+                refreshTokenFetcher = livekitTokenFetcher
+            )
+
+            if (!readiness.ok || readiness.value == null) {
+                println("DEBUG [CallManager] Native media failed: ${readiness.error?.code} ${readiness.error?.message}")
+                false
+            } else {
+                val value = readiness.value
+                val ready = value.state == livekit.NativeMediaState.MediaReady &&
+                    value.audioPublished &&
+                    value.acceptingAudioFrames
+                if (!ready) {
+                    println("DEBUG [CallManager] Native media not ready after join: $value")
+                }
+                ready
+            }
+        } catch (e: Exception) {
+            println("DEBUG [CallManager] Failed to connect native LiveKit media: ${e.message}")
+            e.printStackTrace()
+            false
+        }
+    }
+
     fun startCall(roomId: String, isVideo: Boolean) {
         val newCallId = "call_${System.currentTimeMillis()}"
         activeRoomId = roomId
@@ -396,6 +459,9 @@ class CallManager(
         val wasGroupCall = isGroupCall.value
 
         _callState.value = CallState.ENDED
+        if (wasGroupCall) {
+            livekit.disconnectFromLiveKit(userInitiated = true)
+        }
         webRtcClient.stopLocalMedia()
         webRtcClient.endCall()
 
