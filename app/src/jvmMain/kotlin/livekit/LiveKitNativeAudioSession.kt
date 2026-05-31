@@ -3,6 +3,9 @@ package livekit
 object LiveKitNativeAudioSession {
     @Volatile private var connected = false
 
+    val isConnected: Boolean
+        get() = connected
+
     fun connect(url: String, token: String): Boolean {
         if (!LiveKitNativeAudioBridge.enabled) return false
         if (connected) return true
