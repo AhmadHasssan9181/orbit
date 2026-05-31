@@ -434,8 +434,8 @@ class CallManager(
         isVideoCall.value = isVideoCall.value || isVideoEnabled
         isLocalVideoEnabled.value = isVideoEnabled
         
-        if (isVideoEnabled && !wasVideo && _callState.value == CallState.CONNECTED) {
-            // Transition from voice to video requires re-negotiation
+        if (!isGroupCall.value && isVideoEnabled && !wasVideo && _callState.value == CallState.CONNECTED) {
+            // Transition from voice to video requires re-negotiation ONLY for P2P
             scope.launch {
                 webRtcClient.startLocalMedia(true)
                 webRtcClient.createOffer(

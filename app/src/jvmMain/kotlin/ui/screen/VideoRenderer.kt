@@ -46,6 +46,9 @@ actual fun VideoRenderer(renderer: Any?, modifier: Modifier) {
                 }
             }
         }
+        "livekit_remote" -> {
+            LiveKitVideoRenderer(modifier)
+        }
         else -> {
             Box(
                 modifier = modifier.background(Color.Black),
