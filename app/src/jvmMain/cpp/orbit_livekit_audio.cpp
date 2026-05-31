@@ -23,6 +23,10 @@ std::unique_ptr<livekit::RoomDelegate> g_delegate;
 std::shared_ptr<livekit::AudioSource> g_audioSource;
 std::shared_ptr<livekit::LocalAudioTrack> g_audioTrack;
 bool g_connected = false;
+bool g_micPublished = false;
+bool g_acceptingFrames = false;
+bool g_firstAudioFrameAccepted = false;
+bool g_frameDroppedNotReadyLogged = false;
 
 JavaVM* g_javaVm = nullptr;
 std::mutex g_sinkMutex;
@@ -37,6 +41,12 @@ struct RemoteAudioReader {
 };
 
 std::vector<std::shared_ptr<RemoteAudioReader>> g_remoteAudioReaders;
+
+constexpr jint kSampleRate = 48000;
+constexpr jint kChannels = 1;
+constexpr jint kFrameMs = 10;
+constexpr jint kSamplesPerChannel = 480;
+constexpr jint kFrameBytes = 960;
 
 void initializeSdkOnce() {
     std::call_once(g_initializeOnce, [] {
@@ -214,12 +224,15 @@ public:
 
     void onDisconnected(livekit::Room&, const livekit::DisconnectedEvent&) override {
         std::lock_guard<std::mutex> lock(g_sessionMutex);
+        g_acceptingFrames = false;
+        g_micPublished = false;
         stopAllRemoteReadersLocked();
         g_connected = false;
     }
 };
 
 void resetRoomLocked() {
+    g_acceptingFrames = false;
     stopAllRemoteReadersLocked();
     g_audioTrack.reset();
     g_audioSource.reset();
@@ -229,6 +242,25 @@ void resetRoomLocked() {
     g_delegate.reset();
     g_room.reset();
     g_connected = false;
+    g_micPublished = false;
+    g_firstAudioFrameAccepted = false;
+    g_frameDroppedNotReadyLogged = false;
+}
+
+bool hasReadyMicLocked() {
+    return g_connected &&
+        g_micPublished &&
+        g_acceptingFrames &&
+        g_room != nullptr &&
+        g_audioSource != nullptr &&
+        g_audioTrack != nullptr;
+}
+
+void logFrameDroppedNotReadyLocked() {
+    if (!g_frameDroppedNotReadyLogged) {
+        g_frameDroppedNotReadyLogged = true;
+        std::cout << "DEBUG [OrbitLiveKitAudio] frame dropped because native audio not ready" << std::endl;
+    }
 }
 
 } // namespace
@@ -252,6 +284,7 @@ Java_livekit_LiveKitNativeAudioBridge_nativeConnect(JNIEnv* env, jclass, jstring
 
         std::lock_guard<std::mutex> lock(g_sessionMutex);
         resetRoomLocked();
+        std::cout << "DEBUG [OrbitLiveKitAudio] native connect started" << std::endl;
 
         g_room = std::make_unique<livekit::Room>();
         g_delegate = std::make_unique<OrbitAudioRoomDelegate>();
@@ -267,7 +300,7 @@ Java_livekit_LiveKitNativeAudioBridge_nativeConnect(JNIEnv* env, jclass, jstring
             return JNI_FALSE;
         }
 
-        std::cout << "DEBUG [OrbitLiveKitAudio] Connected LiveKit C++ room" << std::endl;
+        std::cout << "DEBUG [OrbitLiveKitAudio] native connect succeeded" << std::endl;
         return JNI_TRUE;
     } catch (const std::exception& error) {
         std::lock_guard<std::mutex> lock(g_sessionMutex);
@@ -285,20 +318,30 @@ Java_livekit_LiveKitNativeAudioBridge_nativeConnect(JNIEnv* env, jclass, jstring
 extern "C" JNIEXPORT void JNICALL
 Java_livekit_LiveKitNativeAudioBridge_nativeDisconnect(JNIEnv*, jclass) {
     std::lock_guard<std::mutex> lock(g_sessionMutex);
+    g_acceptingFrames = false;
     resetRoomLocked();
-    std::cout << "DEBUG [OrbitLiveKitAudio] Disconnected LiveKit C++ room" << std::endl;
+    std::cout << "DEBUG [OrbitLiveKitAudio] disconnect cleanup completed" << std::endl;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(
     JNIEnv*, jclass, jint sampleRate, jint channels, jint frameMs) {
-    if (sampleRate <= 0 || channels <= 0 || frameMs <= 0) {
-        std::cerr << "ERROR [OrbitLiveKitAudio] Invalid audio publish format" << std::endl;
+    std::cout << "DEBUG [OrbitLiveKitAudio] mic publish started" << std::endl;
+    if (sampleRate != kSampleRate || channels != kChannels || frameMs != kFrameMs) {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        g_acceptingFrames = false;
+        g_micPublished = false;
+        std::cerr << "ERROR [OrbitLiveKitAudio] Invalid audio publish format; expected 48000 Hz mono 10 ms" << std::endl;
         return JNI_FALSE;
     }
 
     try {
         std::lock_guard<std::mutex> lock(g_sessionMutex);
+        g_acceptingFrames = false;
+        g_micPublished = false;
+        g_firstAudioFrameAccepted = false;
+        g_frameDroppedNotReadyLogged = false;
+
         if (!g_connected || g_room == nullptr || g_room->localParticipant() == nullptr) {
             std::cerr << "ERROR [OrbitLiveKitAudio] Cannot publish audio before room connect" << std::endl;
             return JNI_FALSE;
@@ -314,14 +357,30 @@ Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(
             g_audioSource,
             livekit::TrackSource::SOURCE_MICROPHONE);
 
-        std::cout << "DEBUG [OrbitLiveKitAudio] Published C++ microphone audio track" << std::endl;
+        if (g_audioSource == nullptr || g_audioTrack == nullptr) {
+            g_audioTrack.reset();
+            g_audioSource.reset();
+            std::cerr << "ERROR [OrbitLiveKitAudio] Native C++ microphone publish returned no track" << std::endl;
+            return JNI_FALSE;
+        }
+
+        g_micPublished = true;
+        g_acceptingFrames = true;
+        std::cout << "DEBUG [OrbitLiveKitAudio] mic publish succeeded" << std::endl;
+        std::cout << "DEBUG [OrbitLiveKitAudio] acceptingFrames=true" << std::endl;
         return JNI_TRUE;
     } catch (const std::exception& error) {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        g_acceptingFrames = false;
+        g_micPublished = false;
         g_audioTrack.reset();
         g_audioSource.reset();
         std::cerr << "ERROR [OrbitLiveKitAudio] Publish audio threw: " << error.what() << std::endl;
         return JNI_FALSE;
     } catch (...) {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        g_acceptingFrames = false;
+        g_micPublished = false;
         g_audioTrack.reset();
         g_audioSource.reset();
         std::cerr << "ERROR [OrbitLiveKitAudio] Publish audio threw unknown error" << std::endl;
@@ -338,8 +397,25 @@ Java_livekit_LiveKitNativeAudioBridge_nativePushAudioFrame(
     jint sampleRate,
     jint channels,
     jint samplesPerChannel) {
-    if (pcm == nullptr || byteLength <= 0 || sampleRate <= 0 || channels <= 0 || samplesPerChannel <= 0) {
+    if (pcm == nullptr) {
         return JNI_FALSE;
+    }
+
+    if (byteLength != kFrameBytes ||
+        sampleRate != kSampleRate ||
+        channels != kChannels ||
+        samplesPerChannel != kSamplesPerChannel) {
+        return JNI_FALSE;
+    }
+
+    std::shared_ptr<livekit::AudioSource> source;
+    {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        if (!hasReadyMicLocked()) {
+            logFrameDroppedNotReadyLocked();
+            return JNI_FALSE;
+        }
+        source = g_audioSource;
     }
 
     void* data = env->GetDirectBufferAddress(pcm);
@@ -349,19 +425,6 @@ Java_livekit_LiveKitNativeAudioBridge_nativePushAudioFrame(
     }
 
     const int expectedBytes = samplesPerChannel * channels * static_cast<jint>(sizeof(std::int16_t));
-    if (byteLength < expectedBytes || byteLength % static_cast<jint>(sizeof(std::int16_t)) != 0) {
-        std::cerr << "ERROR [OrbitLiveKitAudio] Invalid audio frame byte length" << std::endl;
-        return JNI_FALSE;
-    }
-
-    std::shared_ptr<livekit::AudioSource> source;
-    {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
-        source = g_audioSource;
-    }
-    if (source == nullptr) {
-        return JNI_FALSE;
-    }
 
     try {
         std::vector<std::int16_t> samples(static_cast<std::size_t>(expectedBytes / sizeof(std::int16_t)));
@@ -373,6 +436,13 @@ Java_livekit_LiveKitNativeAudioBridge_nativePushAudioFrame(
             static_cast<int>(channels),
             static_cast<int>(samplesPerChannel));
         source->captureFrame(frame, 20);
+        {
+            std::lock_guard<std::mutex> lock(g_sessionMutex);
+            if (!g_firstAudioFrameAccepted) {
+                g_firstAudioFrameAccepted = true;
+                std::cout << "DEBUG [OrbitLiveKitAudio] first audio frame accepted" << std::endl;
+            }
+        }
         return JNI_TRUE;
     } catch (const std::exception& error) {
         std::cerr << "ERROR [OrbitLiveKitAudio] Push audio frame threw: " << error.what() << std::endl;
@@ -381,6 +451,18 @@ Java_livekit_LiveKitNativeAudioBridge_nativePushAudioFrame(
         std::cerr << "ERROR [OrbitLiveKitAudio] Push audio frame threw unknown error" << std::endl;
         return JNI_FALSE;
     }
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_livekit_LiveKitNativeAudioBridge_nativeIsAcceptingFrames(JNIEnv*, jclass) {
+    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    return hasReadyMicLocked() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_livekit_LiveKitNativeAudioBridge_nativeSetAcceptingFrames(JNIEnv*, jclass, jboolean accepting) {
+    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    g_acceptingFrames = accepting == JNI_TRUE && g_connected && g_micPublished && g_audioSource != nullptr && g_audioTrack != nullptr;
 }
 
 extern "C" JNIEXPORT void JNICALL

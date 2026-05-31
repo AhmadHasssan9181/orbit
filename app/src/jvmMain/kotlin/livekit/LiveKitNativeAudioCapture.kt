@@ -13,11 +13,14 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 object LiveKitNativeAudioCapture {
-    private const val DEFAULT_SAMPLE_RATE = 48000
-    private const val DEFAULT_CHANNELS = 1
-    private const val FRAME_MS = 10
+    const val SAMPLE_RATE = 48000
+    const val CHANNELS = 1
+    const val FRAME_MS = 10
+    const val SAMPLES_PER_CHANNEL = 480
+    const val FRAME_BYTES = 960
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var captureJob: Job? = null
@@ -25,43 +28,53 @@ object LiveKitNativeAudioCapture {
     @Volatile private var started = false
     @Volatile private var muted = false
 
-    fun start(sampleRate: Int = DEFAULT_SAMPLE_RATE, channels: Int = DEFAULT_CHANNELS): Boolean {
+    fun start(): Boolean {
         if (started) return true
 
-        if (!LiveKitNativeAudioBridge.nativePublishAudio(sampleRate, channels, FRAME_MS)) {
-            println("ERROR [LiveKitNativeAudioCapture] Failed to publish native C++ audio source")
+        LiveKitNativeAudioBridge.resetFrameDropLog()
+        if (!LiveKitNativeAudioBridge.acceptingFrames) {
+            println("ERROR [LiveKitNativeAudioCapture] Native C++ audio is not accepting frames")
             return false
         }
 
         started = true
         captureJob = scope.launch {
-            runCaptureLoop(sampleRate, channels)
+            runCaptureLoop()
         }
         return true
     }
 
-    fun stop() {
+    private fun requestStop(): Job? {
+        val job = captureJob
         started = false
         activeLine?.let { line ->
             runCatching { line.stop() }
             runCatching { line.close() }
         }
-        captureJob?.cancel()
+        job?.cancel()
         captureJob = null
+        return job
+    }
+
+    fun stop() {
+        requestStop()
     }
 
     fun setMuted(isMuted: Boolean) {
         muted = isMuted
     }
 
-    suspend fun stopAndJoin() {
-        val job = captureJob
-        stop()
-        job?.cancelAndJoin()
+    fun stopAndJoin() {
+        val job = requestStop()
+        if (job != null) {
+            runBlocking {
+                job.cancelAndJoin()
+            }
+        }
     }
 
-    private suspend fun runCaptureLoop(sampleRate: Int, channels: Int) {
-        val format = AudioFormat(sampleRate.toFloat(), 16, channels, true, false)
+    private suspend fun runCaptureLoop() {
+        val format = AudioFormat(SAMPLE_RATE.toFloat(), 16, CHANNELS, true, false)
         val info = DataLine.Info(TargetDataLine::class.java, format)
         if (!AudioSystem.isLineSupported(info)) {
             println("ERROR [LiveKitNativeAudioCapture] Audio line not supported")
@@ -69,9 +82,8 @@ object LiveKitNativeAudioCapture {
             return
         }
 
-        val frameBytes = (sampleRate * FRAME_MS / 1000) * channels * Short.SIZE_BYTES
-        val heapBuffer = ByteArray(frameBytes)
-        val directBuffer = ByteBuffer.allocateDirect(frameBytes).order(ByteOrder.nativeOrder())
+        val heapBuffer = ByteArray(FRAME_BYTES)
+        val directBuffer = ByteBuffer.allocateDirect(FRAME_BYTES).order(ByteOrder.LITTLE_ENDIAN)
 
         val line = AudioSystem.getLine(info) as TargetDataLine
         activeLine = line
@@ -82,9 +94,7 @@ object LiveKitNativeAudioCapture {
 
             while (started && kotlinx.coroutines.currentCoroutineContext().isActive) {
                 val read = line.read(heapBuffer, 0, heapBuffer.size)
-                if (read <= 0) continue
-                if (read % (Short.SIZE_BYTES * channels) != 0) continue
-                val samplesPerChannel = read / (Short.SIZE_BYTES * channels)
+                if (read != FRAME_BYTES) continue
                 if (muted) {
                     heapBuffer.fill(0, 0, read)
                 }
@@ -93,12 +103,12 @@ object LiveKitNativeAudioCapture {
                 directBuffer.put(heapBuffer, 0, read)
                 directBuffer.flip()
 
-                LiveKitNativeAudioBridge.nativePushAudioFrame(
+                LiveKitNativeAudioBridge.pushAudioFrame(
                     directBuffer,
                     read,
-                    sampleRate,
-                    channels,
-                    samplesPerChannel
+                    SAMPLE_RATE,
+                    CHANNELS,
+                    SAMPLES_PER_CHANNEL
                 )
             }
         } catch (error: Throwable) {
