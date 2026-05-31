@@ -21,8 +21,9 @@ object LiveKitClient {
     private val initialized = AtomicBoolean(false)
     private val nextAsyncId = AtomicLong(1)
     private val pendingConnects = ConcurrentHashMap<Long, CancellableContinuation<livekit.proto.Room.OwnedRoom>>()
+    private val pendingPublishes = ConcurrentHashMap<Long, CancellableContinuation<livekit.proto.Track.OwnedTrackPublication>>()
     private val eventScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    
+
     private val eventQueue = java.util.concurrent.LinkedBlockingQueue<ByteArray>(200)
     private var eventProcessorJob: Job? = null
 
@@ -47,7 +48,6 @@ object LiveKitClient {
         println("DEBUG [LiveKitClient] Initializing FFI bridge...")
         webrtc.WebrtcNativeDepsLoader.load()
 
-        // Configure JNA to attach as daemon but DO NOT detach - this is often more stable for long-lived worker threads
         com.sun.jna.Native.setCallbackThreadInitializer(PINNED_CALLBACK, com.sun.jna.CallbackThreadInitializer(true, false))
 
         eventProcessorJob = eventScope.launch(Dispatchers.IO) {
@@ -67,7 +67,7 @@ object LiveKitClient {
 
         LiveKitFfiLibrary.INSTANCE.livekit_ffi_initialize(
             PINNED_CALLBACK,
-            false, 
+            false,
             "orbit-kotlin",
             "1.0.0"
         )
@@ -76,7 +76,7 @@ object LiveKitClient {
 
     var activeRoomHandle: Long? = null
     var activeLocalParticipantHandle: Long? = null
-    
+
     private val activeVideoStreamHandles = ConcurrentHashMap.newKeySet<Long>()
     private val activeAudioStreamHandles = ConcurrentHashMap.newKeySet<Long>()
     private val activeTrackPublicationHandles = ConcurrentHashMap.newKeySet<Long>()
@@ -96,11 +96,11 @@ object LiveKitClient {
 
     private fun handleFfiEvent(event: FfiEvent) {
         val now = System.currentTimeMillis()
-        
-        val isFrequent = event.messageCase == FfiEvent.MessageCase.LOGS || 
+
+        val isFrequent = event.messageCase == FfiEvent.MessageCase.LOGS ||
                         event.messageCase == FfiEvent.MessageCase.CAPTURE_AUDIO_FRAME ||
                         event.messageCase == FfiEvent.MessageCase.AUDIO_STREAM_EVENT
-        
+
         if (!isFrequent) {
             println("DEBUG [LiveKitClient] [$now] Received FfiEvent: ${event.messageCase} (id=${event.messageCase.number})")
         }
@@ -117,7 +117,7 @@ object LiveKitClient {
                         val result = connectCb.result
                         activeRoomHandle = result.room.handle.id
                         activeLocalParticipantHandle = result.localParticipant.handle.id
-                        
+
                         println("DEBUG [LiveKitClient] [$now] Connect SUCCESS! roomHandle=$activeRoomHandle")
 
                         val initialParticipants = mutableMapOf<String, LkParticipant>()
@@ -128,12 +128,12 @@ object LiveKitClient {
                             )
                         }
                         _participants.value = initialParticipants
-                        
+
                         val readyReq = livekit.proto.Room.ReadyForRoomEventRequest.newBuilder()
                             .setRoomHandle(activeRoomHandle!!)
                             .build()
                         request(FfiRequest.newBuilder().setReadyForRoomEvent(readyReq).build())
-                        
+
                         continuation.resume(result.room)
                     }
                 }
@@ -163,9 +163,7 @@ object LiveKitClient {
                     val sampleRate = info.sampleRate
                     val numChannels = info.numChannels
                     val samplesPerChannel = info.samplesPerChannel
-                    
-                    // We don't have trackSid natively mapped in this exact event right now, 
-                    // but we can use the stream handle to identify the track.
+
                     val streamId = streamEvent.streamHandle.toString()
                     LiveKitAudioSink.pushFrame(
                         streamId,
@@ -174,6 +172,26 @@ object LiveKitClient {
                         samplesPerChannel,
                         dataPtr
                     )
+                }
+            }
+            // *** PUBLISH_TRACK must be at the outer FfiEvent level - NOT inside RoomEvent ***
+            FfiEvent.MessageCase.PUBLISH_TRACK -> {
+                val cb = event.publishTrack
+                val continuation = pendingPublishes.remove(cb.asyncId)
+                if (continuation != null) {
+                    if (cb.error.isNotEmpty()) {
+                        println("ERROR [LiveKitClient] PublishTrackCallback failed: ${cb.error}")
+                        continuation.resumeWithException(Exception("Publish failed: ${cb.error}"))
+                    } else {
+                        println("DEBUG [LiveKitClient] PublishTrackCallback SUCCESS! Publication SID: ${cb.publication.info.sid}")
+                        continuation.resume(cb.publication)
+                    }
+                } else {
+                    if (cb.error.isNotEmpty()) {
+                        println("ERROR [LiveKitClient] PublishTrackCallback failed (no continuation): ${cb.error}")
+                    } else {
+                        println("DEBUG [LiveKitClient] PublishTrackCallback SUCCESS (no continuation)! SID: ${cb.publication.info.sid}")
+                    }
                 }
             }
             FfiEvent.MessageCase.ROOM_EVENT -> {
@@ -198,7 +216,10 @@ object LiveKitClient {
                     }
                     livekit.proto.Room.RoomEvent.MessageCase.ACTIVE_SPEAKERS_CHANGED -> {
                         val identities = roomEvent.activeSpeakersChanged.participantIdentitiesList
-                        _activeSpeakers.value = _participants.value.values.filter { it.identity in identities }.map { it.sid }.toSet()
+                        _activeSpeakers.value = _participants.value.values
+                            .filter { it.identity in identities }
+                            .map { it.sid }
+                            .toSet()
                     }
                     livekit.proto.Room.RoomEvent.MessageCase.TRACK_SUBSCRIBED -> {
                         val track = roomEvent.trackSubscribed.track
@@ -254,7 +275,7 @@ object LiveKitClient {
     suspend fun connect(url: String, token: String, iceServers: List<repository.TurnServer> = emptyList()): livekit.proto.Room.OwnedRoom {
         initialize()
         val asyncId = nextAsyncId.getAndIncrement()
-        
+
         val rtcConfigBuilder = livekit.proto.Room.RtcConfig.newBuilder()
         iceServers.forEach { server ->
             server.uris.forEach { uri ->
@@ -264,12 +285,12 @@ object LiveKitClient {
                 rtcConfigBuilder.addIceServers(iceBuilder.build())
             }
         }
-        
+
         val roomOptions = livekit.proto.Room.RoomOptions.newBuilder()
             .setAutoSubscribe(true)
             .setRtcConfig(rtcConfigBuilder.build())
             .build()
-            
+
         val connectReq = livekit.proto.Room.ConnectRequest.newBuilder()
             .setUrl(url).setToken(token)
             .setOptions(roomOptions)
@@ -300,10 +321,12 @@ object LiveKitClient {
         return ffiResponse
     }
 
-    fun publishVideoTrack(sourceHandle: Long) {
-        val localParticipantHandle = activeLocalParticipantHandle ?: return
-        
-        println("DEBUG [LiveKitClient] Creating video track from source: $sourceHandle")
+    suspend fun publishVideoTrack(sourceHandle: Long): livekit.proto.Track.OwnedTrackPublication? {
+        val localParticipantHandle = activeLocalParticipantHandle ?: run {
+            println("ERROR [LiveKitClient] No active local participant to publish video track")
+            return null
+        }
+
         val trackReq = livekit.proto.Track.CreateVideoTrackRequest.newBuilder()
             .setName("camera")
             .setSourceHandle(sourceHandle)
@@ -311,24 +334,38 @@ object LiveKitClient {
         val trackRes = request(FfiRequest.newBuilder().setCreateVideoTrack(trackReq).build())
         val trackHandle = trackRes?.createVideoTrack?.track?.handle?.id ?: run {
             println("ERROR [LiveKitClient] Failed to create video track from source")
-            return
+            return null
         }
-        
+
         println("DEBUG [LiveKitClient] Publishing video track: $trackHandle (LocalParticipant: $localParticipantHandle)")
-        val publishReq = livekit.proto.Room.PublishTrackRequest.newBuilder()
-            .setLocalParticipantHandle(localParticipantHandle)
-            .setTrackHandle(trackHandle)
-            .setOptions(livekit.proto.Room.TrackPublishOptions.newBuilder()
-                .setSource(livekit.proto.Track.TrackSource.SOURCE_CAMERA)
-                .build())
-            .build()
-        request(FfiRequest.newBuilder().setPublishTrack(publishReq).build())
+        return suspendCancellableCoroutine { cont ->
+            try {
+                val publishReq = livekit.proto.Room.PublishTrackRequest.newBuilder()
+                    .setLocalParticipantHandle(localParticipantHandle)
+                    .setTrackHandle(trackHandle)
+                    .setOptions(livekit.proto.Room.TrackPublishOptions.newBuilder()
+                        .setSource(livekit.proto.Track.TrackSource.SOURCE_CAMERA)
+                        .build())
+                    .build()
+                val res = request(FfiRequest.newBuilder().setPublishTrack(publishReq).build())
+                val asyncId = res?.publishTrack?.asyncId ?: return@suspendCancellableCoroutine
+                println("DEBUG [LiveKitClient] PublishVideoTrack response: hasRes=${res.hasPublishTrack()} asyncId=$asyncId")
+                pendingPublishes[asyncId] = cont
+                cont.invokeOnCancellation { pendingPublishes.remove(asyncId) }
+            } catch (e: Exception) {
+                println("ERROR [LiveKitClient] Exception in publishVideoTrack: ${e.message}")
+                e.printStackTrace()
+                cont.resumeWithException(e)
+            }
+        }
     }
 
-    fun publishAudioTrack(sourceHandle: Long) {
-        val localParticipantHandle = activeLocalParticipantHandle ?: return
-        
-        println("DEBUG [LiveKitClient] Creating audio track from source: $sourceHandle")
+    suspend fun publishAudioTrack(sourceHandle: Long): livekit.proto.Track.OwnedTrackPublication? {
+        val localParticipantHandle = activeLocalParticipantHandle ?: run {
+            println("ERROR [LiveKitClient] No active local participant to publish audio track")
+            return null
+        }
+
         val trackReq = livekit.proto.Track.CreateAudioTrackRequest.newBuilder()
             .setName("microphone")
             .setSourceHandle(sourceHandle)
@@ -336,17 +373,29 @@ object LiveKitClient {
         val trackRes = request(FfiRequest.newBuilder().setCreateAudioTrack(trackReq).build())
         val trackHandle = trackRes?.createAudioTrack?.track?.handle?.id ?: run {
             println("ERROR [LiveKitClient] Failed to create audio track from source")
-            return
+            return null
         }
-        
+
         println("DEBUG [LiveKitClient] Publishing audio track: $trackHandle (LocalParticipant: $localParticipantHandle)")
-        val publishReq = livekit.proto.Room.PublishTrackRequest.newBuilder()
-            .setLocalParticipantHandle(localParticipantHandle)
-            .setTrackHandle(trackHandle)
-            .setOptions(livekit.proto.Room.TrackPublishOptions.newBuilder()
-                .setSource(livekit.proto.Track.TrackSource.SOURCE_MICROPHONE)
-                .build())
-            .build()
-        request(FfiRequest.newBuilder().setPublishTrack(publishReq).build())
+        return suspendCancellableCoroutine { cont ->
+            try {
+                val publishReq = livekit.proto.Room.PublishTrackRequest.newBuilder()
+                    .setLocalParticipantHandle(localParticipantHandle)
+                    .setTrackHandle(trackHandle)
+                    .setOptions(livekit.proto.Room.TrackPublishOptions.newBuilder()
+                        .setSource(livekit.proto.Track.TrackSource.SOURCE_MICROPHONE)
+                        .build())
+                    .build()
+                val res = request(FfiRequest.newBuilder().setPublishTrack(publishReq).build())
+                val asyncId = res?.publishTrack?.asyncId ?: return@suspendCancellableCoroutine
+                println("DEBUG [LiveKitClient] PublishAudioTrack response: hasRes=${res.hasPublishTrack()} asyncId=$asyncId")
+                pendingPublishes[asyncId] = cont
+                cont.invokeOnCancellation { pendingPublishes.remove(asyncId) }
+            } catch (e: Exception) {
+                println("ERROR [LiveKitClient] Exception in publishAudioTrack: ${e.message}")
+                e.printStackTrace()
+                cont.resumeWithException(e)
+            }
+        }
     }
 }

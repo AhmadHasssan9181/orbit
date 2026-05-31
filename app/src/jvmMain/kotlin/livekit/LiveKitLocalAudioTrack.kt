@@ -8,6 +8,7 @@ import kotlinx.coroutines.*
 object LiveKitLocalAudioTrack {
     private var sourceHandle: Long = 0
     private var isStarted = false
+    var isMuted = false
     private var captureJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -58,10 +59,34 @@ object LiveKitLocalAudioTrack {
             println("DEBUG [LiveKitLocalAudioTrack] Recording loop started")
             
             try {
+                val silentBuffer = ByteArray(frameSize)
                 while (isActive && isStarted) {
-                    val read = line.read(buffer, 0, buffer.size)
-                    if (read > 0) {
-                        pushAudioFrame(buffer, read, sampleRate, numChannels)
+                    val available = line.available()
+                    if (available >= frameSize) {
+                        val read = line.read(buffer, 0, frameSize)
+                        if (read > 0 && !isMuted) {
+                            // Add tiny dither noise to prevent WebRTC DTX from dropping packets
+                            for (i in 0 until read step 2) {
+                                var sample = (buffer[i].toInt() and 0xFF) or (buffer[i+1].toInt() shl 8)
+                                sample += kotlin.random.Random.nextInt(-50, 50)
+                                if (sample > 32767) sample = 32767
+                                if (sample < -32768) sample = -32768
+                                buffer[i] = sample.toByte()
+                                buffer[i+1] = (sample shr 8).toByte()
+                            }
+                            pushAudioFrame(buffer, read, sampleRate, numChannels)
+                        }
+                    } else {
+                        if (!isMuted) {
+                            // Inject noise to keep connection alive when no audio is coming from line
+                            for (i in 0 until frameSize step 2) {
+                                val noise = kotlin.random.Random.nextInt(-50, 50)
+                                silentBuffer[i] = noise.toByte()
+                                silentBuffer[i+1] = (noise shr 8).toByte()
+                            }
+                            pushAudioFrame(silentBuffer, frameSize, sampleRate, numChannels)
+                        }
+                        delay(10)
                     }
                 }
             } finally {
