@@ -16,10 +16,62 @@ import kotlinx.serialization.json.put
 
 data class LiveKitAuthResponse(
     val token: String,
-    val serverUrl: String
+    val serverUrl: String,
+    val expiresAtEpochSeconds: Long? = null,
+    val roomName: String? = null,
+    val identity: String? = null,
+    val grants: LiveKitVideoGrant? = null
 )
 
 object LiveKitTokenProvider {
+    suspend fun fetchLiveKitToken(
+        roomId: String,
+        callId: String,
+        focus: RtcFocus.LiveKit,
+        identity: String,
+        userId: String,
+        homeserverUrl: String,
+        accessToken: String,
+        httpClient: HttpClient
+    ): NativeResult<LiveKitTokenResult> =
+        runCatching {
+            fetchToken(
+                roomId = roomId,
+                identity = identity,
+                userId = userId,
+                homeserverUrl = homeserverUrl,
+                accessToken = accessToken,
+                livekitServiceUrl = focus.serviceUrl,
+                httpClient = httpClient
+            )
+        }.fold(
+            onSuccess = { it.toTokenResult() },
+            onFailure = { error ->
+                NativeResult.failure(
+                    NativeError(
+                        code = NativeErrorCode.AUTH_FAILED,
+                        message = error.message ?: "Failed to fetch LiveKit token",
+                        operation = "fetchLiveKitToken",
+                        recoverable = true
+                    )
+                )
+            }
+        )
+
+    suspend fun refreshLiveKitToken(
+        roomId: String,
+        callId: String,
+        focus: RtcFocus.LiveKit,
+        identity: String,
+        userId: String,
+        homeserverUrl: String,
+        accessToken: String,
+        httpClient: HttpClient
+    ): NativeResult<LiveKitTokenResult> {
+        println("DEBUG [LiveKitTokenProvider] Token refresh started for call $callId")
+        return fetchLiveKitToken(roomId, callId, focus, identity, userId, homeserverUrl, accessToken, httpClient)
+    }
+
     suspend fun fetchToken(
         roomId: String,
         identity: String,
@@ -95,8 +147,8 @@ object LiveKitTokenProvider {
             throw Exception("LiveKit token or URL not found in response: $lkBody")
         }
         
-        println("DEBUG [LiveKitTokenProvider] Successfully received LiveKit JWT and SFU URL: $sfuUrl")
-        return LiveKitAuthResponse(token, sfuUrl)
+        println("DEBUG [LiveKitTokenProvider] LiveKit token fetched")
+        return enrichAuthResponse(token, sfuUrl, identity)
     }
 
     private suspend fun fetchTokenLegacy(
@@ -140,6 +192,23 @@ object LiveKitTokenProvider {
             throw Exception("LiveKit token or URL not found in legacy response: $lkBody")
         }
         
-        return LiveKitAuthResponse(token, sfuUrl)
+        return enrichAuthResponse(token, sfuUrl, identity)
+    }
+
+    private fun enrichAuthResponse(token: String, serverUrl: String, fallbackIdentity: String): LiveKitAuthResponse {
+        val tokenResult = LiveKitAuthResponse(token, serverUrl, identity = fallbackIdentity).toTokenResult()
+        val value = tokenResult.value
+        return if (tokenResult.ok && value != null) {
+            LiveKitAuthResponse(
+                token = token,
+                serverUrl = serverUrl,
+                expiresAtEpochSeconds = value.expiresAtEpochSeconds,
+                roomName = value.roomName,
+                identity = value.identity ?: fallbackIdentity,
+                grants = value.grants
+            )
+        } else {
+            LiveKitAuthResponse(token, serverUrl, identity = fallbackIdentity)
+        }
     }
 }

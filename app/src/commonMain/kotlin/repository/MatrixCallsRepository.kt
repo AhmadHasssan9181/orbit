@@ -775,14 +775,28 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
         // MSC3401: LiveKit Identity MUST match membershipID in payload (COLONS)
         val identity = "$userId:$deviceId"
         
-        return livekit.LiveKitTokenProvider.fetchToken(
+        val tokenResult = livekit.LiveKitTokenProvider.fetchLiveKitToken(
             roomId = roomId,
+            callId = callId,
+            focus = livekit.RtcFocus.LiveKit(
+                serviceUrl = livekitServiceUrl,
+                alias = roomId,
+                raw = livekitServiceUrl
+            ),
             identity = identity,
-            userId = userId, // Pass plain userId separately
+            userId = userId,
             homeserverUrl = context.homeserverUrl,
             accessToken = context.accessToken ?: throw Exception("No access token"),
-            livekitServiceUrl = livekitServiceUrl,
             httpClient = context.httpClient
+        )
+        val value = tokenResult.value ?: throw Exception(tokenResult.error?.message ?: "Failed to fetch LiveKit token")
+        return livekit.LiveKitAuthResponse(
+            token = value.token,
+            serverUrl = value.livekitUrl,
+            expiresAtEpochSeconds = value.expiresAtEpochSeconds,
+            roomName = value.roomName,
+            identity = value.identity,
+            grants = value.grants
         )
     }
 
