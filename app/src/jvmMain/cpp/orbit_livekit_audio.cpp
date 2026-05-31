@@ -263,6 +263,105 @@ void logFrameDroppedNotReadyLocked() {
     }
 }
 
+constexpr jint kStatusOk = 0;
+constexpr jint kStatusConnectFailed = 2;
+constexpr jint kStatusPublishAudioFailed = 6;
+constexpr jint kStatusPublishVideoFailed = 7;
+constexpr jint kStatusAudioCaptureFailed = 8;
+constexpr jint kStatusVideoCaptureFailed = 9;
+constexpr jint kStatusNativeException = 22;
+constexpr jint kStatusStaleEvent = 23;
+
+constexpr jlong kRawSessionId = 1;
+jlong g_rawEpoch = 0;
+bool g_rawHasLastError = false;
+std::string g_rawLastErrorJson =
+    R"({"code":"NONE","message":"","operation":"native","recoverable":false})";
+
+std::string escapeJson(const std::string& input) {
+    std::string output;
+    output.reserve(input.size());
+    for (const char c : input) {
+        switch (c) {
+            case '\\':
+                output += "\\\\";
+                break;
+            case '"':
+                output += "\\\"";
+                break;
+            case '\n':
+                output += "\\n";
+                break;
+            case '\r':
+                output += "\\r";
+                break;
+            case '\t':
+                output += "\\t";
+                break;
+            default:
+                output += c;
+                break;
+        }
+    }
+    return output;
+}
+
+void clearRawErrorLocked() {
+    g_rawHasLastError = false;
+    g_rawLastErrorJson =
+        R"({"code":"NONE","message":"","operation":"native","recoverable":false})";
+}
+
+void setRawErrorLocked(
+    const std::string& code,
+    const std::string& message,
+    const std::string& operation,
+    bool recoverable) {
+    g_rawHasLastError = true;
+    g_rawLastErrorJson =
+        std::string("{\"code\":\"") + escapeJson(code) +
+        "\",\"message\":\"" + escapeJson(message) +
+        "\",\"operation\":\"" + escapeJson(operation) +
+        "\",\"recoverable\":" + (recoverable ? "true" : "false") + "}";
+}
+
+bool isRawSessionValid(jlong sessionId) {
+    return sessionId == kRawSessionId;
+}
+
+std::string rawReadinessJsonLocked(jlong sessionId) {
+    const bool validSession = isRawSessionValid(sessionId);
+    const bool connected = validSession && g_connected;
+    const bool audioPublished = validSession && g_micPublished;
+    const bool acceptingAudioFrames = validSession && hasReadyMicLocked();
+    const char* state = "Idle";
+    if (!validSession) {
+        state = "Failed";
+    } else if (connected && audioPublished && acceptingAudioFrames) {
+        state = "MediaReady";
+    } else if (connected && audioPublished) {
+        state = "AudioPublished";
+    } else if (connected) {
+        state = "LiveKitConnected";
+    }
+
+    return std::string("{\"sessionId\":") + std::to_string(sessionId) +
+        ",\"epoch\":" + std::to_string(g_rawEpoch) +
+        ",\"state\":\"" + state +
+        "\",\"connected\":" + (connected ? "true" : "false") +
+        ",\"audioPublished\":" + (audioPublished ? "true" : "false") +
+        ",\"videoPublished\":false" +
+        ",\"acceptingAudioFrames\":" + (acceptingAudioFrames ? "true" : "false") +
+        ",\"acceptingVideoFrames\":false" +
+        ",\"cameraRequested\":false" +
+        ",\"cameraRequired\":false" +
+        ",\"cameraState\":\"NotRequested\"" +
+        ",\"joinedAsAudioOnlyFallback\":false" +
+        ",\"tokenRefreshScheduled\":false" +
+        ",\"lastError\":" + (g_rawHasLastError ? g_rawLastErrorJson : "null") +
+        "}";
+}
+
 } // namespace
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -499,6 +598,283 @@ Java_livekit_LiveKitNativeAudioBridge_nativeSetRemoteAudioSink(JNIEnv* env, jcla
 
     g_remoteAudioSink = newSink;
     g_remoteAudioSinkMethod = method;
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_livekit_OrbitLiveKitNativeRaw_nativeCreateSession(JNIEnv*, jclass) {
+    initializeSdkOnce();
+    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    g_rawEpoch += 1;
+    clearRawErrorLocked();
+    return kRawSessionId;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_livekit_OrbitLiveKitNativeRaw_nativeDestroySession(JNIEnv*, jclass, jlong sessionId) {
+    if (!isRawSessionValid(sessionId)) {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativeDestroySession", false);
+        return kStatusStaleEvent;
+    }
+
+    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    g_acceptingFrames = false;
+    resetRoomLocked();
+    clearRawErrorLocked();
+    return kStatusOk;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_livekit_OrbitLiveKitNativeRaw_nativeSetEventSink(JNIEnv*, jclass, jobject) {
+    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    clearRawErrorLocked();
+    return kStatusOk;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_livekit_OrbitLiveKitNativeRaw_nativeSetMixedAudioSink(JNIEnv*, jclass, jobject) {
+    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    clearRawErrorLocked();
+    return kStatusOk;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_livekit_OrbitLiveKitNativeRaw_nativeSetRemoteVideoSink(JNIEnv*, jclass, jobject) {
+    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    clearRawErrorLocked();
+    return kStatusOk;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_livekit_OrbitLiveKitNativeRaw_nativeConnectAsync(
+    JNIEnv* env,
+    jclass,
+    jlong sessionId,
+    jlong epoch,
+    jstring url,
+    jstring token,
+    jstring) {
+    if (!isRawSessionValid(sessionId)) {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativeConnectAsync", false);
+        return kStatusStaleEvent;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        g_rawEpoch = epoch;
+        clearRawErrorLocked();
+    }
+
+    const jboolean connected =
+        Java_livekit_LiveKitNativeAudioBridge_nativeConnect(env, nullptr, url, token);
+    if (connected == JNI_TRUE) {
+        return kStatusOk;
+    }
+
+    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    setRawErrorLocked("CONNECT_FAILED", "LiveKit C++ room connect failed", "nativeConnectAsync", true);
+    return kStatusConnectFailed;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_livekit_OrbitLiveKitNativeRaw_nativeReconnectAsync(
+    JNIEnv* env,
+    jclass,
+    jlong sessionId,
+    jlong epoch,
+    jstring url,
+    jstring token) {
+    return Java_livekit_OrbitLiveKitNativeRaw_nativeConnectAsync(
+        env,
+        nullptr,
+        sessionId,
+        epoch,
+        url,
+        token,
+        nullptr);
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_livekit_OrbitLiveKitNativeRaw_nativeDisconnect(
+    JNIEnv*,
+    jclass,
+    jlong sessionId,
+    jlong epoch,
+    jboolean) {
+    if (!isRawSessionValid(sessionId)) {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativeDisconnect", false);
+        return kStatusStaleEvent;
+    }
+
+    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    g_rawEpoch = epoch;
+    g_acceptingFrames = false;
+    resetRoomLocked();
+    clearRawErrorLocked();
+    std::cout << "DEBUG [OrbitLiveKitAudio] disconnect cleanup completed" << std::endl;
+    return kStatusOk;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_livekit_OrbitLiveKitNativeRaw_nativePublishAudio(
+    JNIEnv* env,
+    jclass,
+    jlong sessionId,
+    jlong epoch,
+    jint sampleRate,
+    jint channels) {
+    if (!isRawSessionValid(sessionId)) {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativePublishAudio", false);
+        return kStatusStaleEvent;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        g_rawEpoch = epoch;
+        clearRawErrorLocked();
+    }
+
+    const jboolean published =
+        Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(env, nullptr, sampleRate, channels, kFrameMs);
+    if (published == JNI_TRUE) {
+        return kStatusOk;
+    }
+
+    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    setRawErrorLocked("PUBLISH_AUDIO_FAILED", "LiveKit C++ microphone publish failed", "nativePublishAudio", false);
+    return kStatusPublishAudioFailed;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_livekit_OrbitLiveKitNativeRaw_nativePushAudioFrame(
+    JNIEnv* env,
+    jclass,
+    jlong sessionId,
+    jlong epoch,
+    jobject buffer,
+    jint sampleRate,
+    jint channels,
+    jint samplesPerChannel,
+    jlong) {
+    if (!isRawSessionValid(sessionId)) {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativePushAudioFrame", false);
+        return kStatusStaleEvent;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        if (epoch != g_rawEpoch) {
+            setRawErrorLocked("STALE_EVENT", "Stale native media epoch", "nativePushAudioFrame", true);
+            return kStatusStaleEvent;
+        }
+    }
+
+    const jint byteLength = samplesPerChannel * channels * static_cast<jint>(sizeof(std::int16_t));
+    const jboolean pushed =
+        Java_livekit_LiveKitNativeAudioBridge_nativePushAudioFrame(
+            env,
+            nullptr,
+            buffer,
+            byteLength,
+            sampleRate,
+            channels,
+            samplesPerChannel);
+    if (pushed == JNI_TRUE) {
+        return kStatusOk;
+    }
+
+    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    setRawErrorLocked("AUDIO_CAPTURE_FAILED", "Native audio frame was rejected", "nativePushAudioFrame", true);
+    return kStatusAudioCaptureFailed;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_livekit_OrbitLiveKitNativeRaw_nativePublishVideo(
+    JNIEnv*,
+    jclass,
+    jlong sessionId,
+    jlong epoch,
+    jint,
+    jint,
+    jint,
+    jint) {
+    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    if (!isRawSessionValid(sessionId)) {
+        setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativePublishVideo", false);
+        return kStatusStaleEvent;
+    }
+    g_rawEpoch = epoch;
+    setRawErrorLocked("PUBLISH_VIDEO_FAILED", "Native C++ video is not implemented in this session", "nativePublishVideo", true);
+    return kStatusPublishVideoFailed;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_livekit_OrbitLiveKitNativeRaw_nativePushVideoFrame(
+    JNIEnv*,
+    jclass,
+    jlong sessionId,
+    jlong epoch,
+    jobject,
+    jint,
+    jint,
+    jint,
+    jint,
+    jint,
+    jint,
+    jlong,
+    jint) {
+    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    if (!isRawSessionValid(sessionId)) {
+        setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativePushVideoFrame", false);
+        return kStatusStaleEvent;
+    }
+    if (epoch != g_rawEpoch) {
+        setRawErrorLocked("STALE_EVENT", "Stale native media epoch", "nativePushVideoFrame", true);
+        return kStatusStaleEvent;
+    }
+    setRawErrorLocked("VIDEO_CAPTURE_FAILED", "Native C++ video is not implemented in this session", "nativePushVideoFrame", true);
+    return kStatusVideoCaptureFailed;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_livekit_OrbitLiveKitNativeRaw_nativeSetAudioMuted(JNIEnv*, jclass, jlong sessionId, jlong epoch, jboolean) {
+    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    if (!isRawSessionValid(sessionId)) {
+        setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativeSetAudioMuted", false);
+        return kStatusStaleEvent;
+    }
+    g_rawEpoch = epoch;
+    clearRawErrorLocked();
+    return kStatusOk;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_livekit_OrbitLiveKitNativeRaw_nativeSetVideoMuted(JNIEnv*, jclass, jlong sessionId, jlong epoch, jboolean) {
+    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    if (!isRawSessionValid(sessionId)) {
+        setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativeSetVideoMuted", false);
+        return kStatusStaleEvent;
+    }
+    g_rawEpoch = epoch;
+    clearRawErrorLocked();
+    return kStatusOk;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_livekit_OrbitLiveKitNativeRaw_nativeGetLastErrorJson(JNIEnv* env, jclass, jlong) {
+    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    return env->NewStringUTF(g_rawLastErrorJson.c_str());
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_livekit_OrbitLiveKitNativeRaw_nativeGetReadinessJson(JNIEnv* env, jclass, jlong sessionId) {
+    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    const std::string readinessJson = rawReadinessJsonLocked(sessionId);
+    return env->NewStringUTF(readinessJson.c_str());
 }
 
 extern "C" JNIEXPORT jint JNICALL
