@@ -38,6 +38,13 @@ fun VoiceChannelScreen(
             val callState by callManager.callState.collectAsState()
             val scope = rememberCoroutineScope()
             val activeGroupCallUrl by matrixRepository.observeActiveGroupCall(channel.matrixRoomId).collectAsState("LOADING")
+            var pendingVoiceJoin by remember(channel.id) { mutableStateOf(false) }
+
+            LaunchedEffect(callState) {
+                if (callState != CallState.CONNECTING) {
+                    pendingVoiceJoin = false
+                }
+            }
             
             if (callState == CallState.IDLE || callState == CallState.ENDED) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -51,44 +58,49 @@ fun VoiceChannelScreen(
                             Spacer(modifier = Modifier.padding(16.dp))
                             Button(
                                 onClick = {
-                                    scope.launch {
-                                        try {
-                                            println("DEBUG [VoiceChannelScreen] User clicked Connect to Voice")
-                                            val activeUrl = activeGroupCallUrl
-                                            val isCreator = activeUrl == null || activeUrl == "LOADING"
-                                            
-                                            val callId = if (!isCreator) {
-                                                if (activeUrl!!.startsWith("matrix-call://")) {
-                                                    activeUrl.substringAfter("://")
+                                    if (pendingVoiceJoin || callState == CallState.CONNECTING) {
+                                        println("DEBUG [VoiceChannelScreen] Ignoring duplicate voice join click")
+                                    } else {
+                                        pendingVoiceJoin = true
+                                        scope.launch {
+                                            try {
+                                                println("DEBUG [VoiceChannelScreen] User clicked Connect to Voice")
+                                                val activeUrl = activeGroupCallUrl
+                                                val isCreator = activeUrl == null || activeUrl == "LOADING"
+
+                                                val callId = if (!isCreator) {
+                                                    if (activeUrl!!.startsWith("matrix-call://")) {
+                                                        activeUrl.substringAfter("://")
+                                                    } else {
+                                                        val extracted = activeUrl.substringAfter("?callId=", missingDelimiterValue = "m.call")
+                                                        if (extracted.isBlank()) "m.call" else extracted
+                                                    }
                                                 } else {
-                                                    val extracted = activeUrl.substringAfter("?callId=", missingDelimiterValue = "m.call")
-                                                    if (extracted.isBlank()) "m.call" else extracted
+                                                    // Creator flow uses seamless 'm.call' state key
+                                                    "m.call"
                                                 }
-                                            } else {
-                                                // Creator flow uses seamless 'm.call' state key
-                                                "m.call"
-                                            }
 
-                                            if (isCreator) {
-                                                matrixRepository.startGroupCall(channel.matrixRoomId, callId)
-                                            } else {
-                                                matrixRepository.joinGroupCall(channel.matrixRoomId, callId)
-                                            }
+                                                if (isCreator) {
+                                                    matrixRepository.startGroupCall(channel.matrixRoomId, callId)
+                                                }
 
-                                            val livekitUrl = if (!isCreator && (activeUrl!!.startsWith("wss://") || activeUrl.startsWith("ws://"))) {
-                                                activeUrl.substringBefore("?callId=")
-                                            } else {
-                                                (matrixRepository as? MatrixOrbitRepository)?.context?.defaultLiveKitServiceUrl
-                                            }
+                                                val livekitUrl = if (!isCreator && (activeUrl!!.startsWith("wss://") || activeUrl.startsWith("ws://"))) {
+                                                    activeUrl.substringBefore("?callId=")
+                                                } else {
+                                                    (matrixRepository as? MatrixOrbitRepository)?.context?.defaultLiveKitServiceUrl
+                                                }
 
-                                            callManager.joinGroupCall(channel.matrixRoomId, callId, true, livekitUrl) {
-                                                matrixRepository.fetchLiveKitToken(channel.matrixRoomId, callId, livekitUrl ?: "")
+                                                callManager.joinGroupCall(channel.matrixRoomId, callId, false, livekitUrl) {
+                                                    matrixRepository.fetchLiveKitToken(channel.matrixRoomId, callId, livekitUrl ?: "")
+                                                }
+                                            } catch (e: Exception) {
+                                                pendingVoiceJoin = false
+                                                println("ERROR [VoiceChannelScreen] Uncaught exception during join: ${e.message}")
                                             }
-                                        } catch (e: Exception) {
-                                            println("ERROR [VoiceChannelScreen] Uncaught exception during join: ${e.message}")
                                         }
                                     }
                                 },
+                                enabled = !pendingVoiceJoin && callState != CallState.CONNECTING,
                                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                             ) {
                                 Icon(Icons.Filled.Call, contentDescription = null)

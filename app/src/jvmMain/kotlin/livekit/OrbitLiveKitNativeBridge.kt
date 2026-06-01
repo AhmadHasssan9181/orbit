@@ -43,8 +43,19 @@ class OrbitLiveKitNativeBridge(
     fun disconnect(sessionId: Long, epoch: Long, userInitiated: Boolean): NativeResult<Unit> =
         statusToResult(sessionId, raw.nativeDisconnect(sessionId, epoch, userInitiated), "nativeDisconnect")
 
-    fun publishAudio(sessionId: Long, epoch: Long, sampleRate: Int, channels: Int): NativeResult<Unit> =
-        statusToResult(sessionId, raw.nativePublishAudio(sessionId, epoch, sampleRate, channels), "nativePublishAudio")
+    fun publishAudio(
+        sessionId: Long,
+        epoch: Long,
+        sampleRate: Int,
+        channels: Int,
+        queueSizeMs: Int,
+        expectedTestTone: Boolean
+    ): NativeResult<Unit> =
+        statusToResult(
+            sessionId,
+            raw.nativePublishAudio(sessionId, epoch, sampleRate, channels, queueSizeMs, expectedTestTone),
+            "nativePublishAudio"
+        )
 
     fun pushAudioFrame(
         sessionId: Long,

@@ -43,7 +43,14 @@ object OrbitLiveKitNativeRaw {
     external fun nativeDisconnect(sessionId: Long, epoch: Long, userInitiated: Boolean): Int
 
     @JvmStatic
-    external fun nativePublishAudio(sessionId: Long, epoch: Long, sampleRate: Int, channels: Int): Int
+    external fun nativePublishAudio(
+        sessionId: Long,
+        epoch: Long,
+        sampleRate: Int,
+        channels: Int,
+        queueSizeMs: Int,
+        expectedTestTone: Boolean
+    ): Int
 
     @JvmStatic
     external fun nativePushAudioFrame(

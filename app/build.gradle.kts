@@ -107,6 +107,20 @@ dependencies {
     add("kspJvm", "androidx.room:room-compiler:2.7.0-alpha11")
 }
 
+val orbitAudioJvmArgs = listOf(
+    "orbit.audio.testTone",
+    "orbit.audio.testToneStereo",
+    "orbit.audio.inputDeviceName",
+    "orbit.audio.captureGain",
+    "orbit.audio.selfTestDurationMs",
+    "orbit.audio.autoProbeDurationMs",
+    "orbit.livekit.audioSourceQueueMs"
+).mapNotNull { propertyName ->
+    System.getProperty(propertyName)
+        ?.takeIf { it.isNotBlank() }
+        ?.let { "-D$propertyName=$it" }
+}
+
 android {
     namespace = "com.noobdev.orbit"
     compileSdk = 34
@@ -137,7 +151,12 @@ compose.desktop {
         jvmArgs += listOf(
             "--add-opens", "java.base/java.lang=ALL-UNNAMED"
         )
+        jvmArgs += orbitAudioJvmArgs
     }
+}
+
+tasks.withType<JavaExec>().configureEach {
+    jvmArgs(orbitAudioJvmArgs)
 }
 
 room {
@@ -181,8 +200,54 @@ tasks.register("compileJniBridge") {
         file("build/jni/_deps/livekit-sdk").walkTopDown()
             .filter { it.isFile && it.extension.equals("dll", ignoreCase = true) }
             .forEach { sdkDll ->
-                sdkDll.copyTo(targetDir.resolve(sdkDll.name), overwrite = true)
+                val targetDll = targetDir.resolve(sdkDll.name)
+                try {
+                    sdkDll.copyTo(targetDll, overwrite = true)
+                } catch (existing: FileAlreadyExistsException) {
+                    if (targetDll.exists() && targetDll.length() == sdkDll.length()) {
+                        println("Skipping unchanged LiveKit SDK DLL already in resources: ${sdkDll.name}")
+                    } else {
+                        throw existing
+                    }
+                }
             }
+    }
+}
+
+tasks.register("runLiveKitTonePublisher") {
+    dependsOn("compileJniBridge")
+
+    doLast {
+        val url = (findProperty("livekitUrl") as String?) ?: System.getenv("ORBIT_LIVEKIT_URL")
+        val token = (findProperty("livekitToken") as String?) ?: System.getenv("ORBIT_LIVEKIT_TOKEN")
+        val seconds = ((findProperty("toneSeconds") as String?)
+            ?: System.getenv("ORBIT_LIVEKIT_TONE_SECONDS")
+            ?: "120")
+
+        if (url.isNullOrBlank() || token.isNullOrBlank()) {
+            throw GradleException(
+                "Set ORBIT_LIVEKIT_URL and ORBIT_LIVEKIT_TOKEN, or pass -PlivekitUrl=... -PlivekitToken=..."
+            )
+        }
+
+        val exeName = if (org.gradle.internal.os.OperatingSystem.current().isWindows) {
+            "orbit_livekit_tone_publisher.exe"
+        } else {
+            "orbit_livekit_tone_publisher"
+        }
+        val candidates = listOf(
+            file("build/jni/Release/$exeName"),
+            file("build/jni/$exeName")
+        )
+        val executable = candidates.firstOrNull { it.exists() }
+            ?: throw GradleException("Cannot find $exeName. Run :app:compileJniBridge first.")
+
+        exec {
+            environment("ORBIT_LIVEKIT_URL", url)
+            environment("ORBIT_LIVEKIT_TOKEN", token)
+            environment("ORBIT_LIVEKIT_TONE_SECONDS", seconds)
+            commandLine(executable.absolutePath)
+        }
     }
 }
 

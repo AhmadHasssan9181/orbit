@@ -66,6 +66,24 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             cancelPendingDeferreds(error)
             return NativeResult.failure(error)
         }
+        println("DEBUG [LiveKitNativeMediaSession] LiveKit token details identity=${tokenResult.value.identity ?: "<none>"} room=${tokenResult.value.roomName ?: "<none>"} canPublish=${tokenResult.value.grants.canPublish} canSubscribe=${tokenResult.value.grants.canSubscribe} canPublishSources=${tokenResult.value.grants.canPublishSources ?: emptyList<String>()}")
+
+        if (LiveKitNativeAudioCapture.configuredTestTone()) {
+            println("DEBUG [LiveKitNativeMediaSession] test tone enabled before call start; microphone self-test skipped")
+        } else {
+            val micSelfTestDurationMs = LiveKitNativeAudioCapture.configuredSelfTestDurationMs()
+            println("DEBUG [LiveKitNativeMediaSession] microphone self-test before call start durationMs=$micSelfTestDurationMs")
+            val micSelfTest = LiveKitNativeAudioCapture.prepareMicrophoneForCall(micSelfTestDurationMs)
+            if (!micSelfTest.ok || micSelfTest.value == null) {
+                val error = micSelfTest.error ?: unknownError("Microphone self-test failed", "JVM_MIC_CAPTURE")
+                cancelPendingDeferreds(error)
+                updateReadinessWithError(NativeMediaState.Failed, error)
+                return NativeResult.failure(error)
+            }
+            println(
+                "DEBUG [LiveKitNativeMediaSession] microphone self-test selected mixer=${micSelfTest.value.selectedMixerName} description=${micSelfTest.value.selectedMixerDescription} peak=${micSelfTest.value.selectedPeak} rms=${micSelfTest.value.selectedRms} allInputsTooLow=${micSelfTest.value.allInputsTooLow}"
+            )
+        }
 
         if (sessionId == 0L) {
             val created = bridge.createSession()
@@ -122,7 +140,11 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         LiveKitNativeAudioPlayer.start(sessionId, epoch, bridge, ::handlePlaybackFailure)
         println("DEBUG [LiveKitNativeMediaSession] audio publish started")
         updateNativeState(NativeMediaState.PublishingAudio)
-        val audioStarted = bridge.publishAudio(sessionId, epoch, LiveKitNativeAudioCapture.SAMPLE_RATE, LiveKitNativeAudioCapture.CHANNELS)
+        val publishChannels = LiveKitNativeAudioCapture.configuredPublishChannels()
+        val queueSizeMs = configuredAudioSourceQueueMs()
+        val expectedTestTone = LiveKitNativeAudioCapture.configuredTestTone()
+        println("DEBUG [LiveKitNativeMediaSession] audio publish format sampleRate=${LiveKitNativeAudioCapture.SAMPLE_RATE} channels=$publishChannels samplesPerChannel=${LiveKitNativeAudioCapture.SAMPLES_PER_CHANNEL} frameMs=${LiveKitNativeAudioCapture.FRAME_MS} queueSizeMs=$queueSizeMs expectedTestTone=$expectedTestTone")
+        val audioStarted = bridge.publishAudio(sessionId, epoch, LiveKitNativeAudioCapture.SAMPLE_RATE, publishChannels, queueSizeMs, expectedTestTone)
         if (!audioStarted.ok) {
             val error = audioStarted.error ?: unknownError("Native audio publish failed", "nativePublishAudio")
             cancelPendingDeferreds(error)
@@ -134,6 +156,19 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             val error = audioPublished.error ?: unknownError("Native audio publish timed out", "publishAudio")
             cancelPendingDeferreds(error)
             return NativeResult.failure(error)
+        }
+
+        LiveKitNativeAudioCapture.setMuted(desiredAudioMuted)
+        val initialMute = bridge.setAudioMuted(sessionId, epoch, desiredAudioMuted)
+        if (!initialMute.ok) {
+            val error = initialMute.error ?: unknownError("Native mic mute state failed after publish", "nativeSetAudioMuted")
+            cancelPendingDeferreds(error)
+            return NativeResult.failure(error)
+        }
+        if (desiredAudioMuted) {
+            println("DEBUG [LiveKitNativeMediaSession] native mic muted after publish")
+        } else {
+            println("DEBUG [LiveKitNativeMediaSession] native mic unmuted after publish")
         }
 
         val videoOutcome = handleOptionalVideoPublish(videoPolicy, grantCheck.value.videoAllowed)
@@ -205,6 +240,21 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         } else {
             NativeResult.failure(nativeReadiness.error ?: unknownError("Native media is not ready", "ensureMediaReady"))
         }
+    }
+
+    private fun configuredAudioSourceQueueMs(): Int {
+        val raw = System.getProperty("orbit.livekit.audioSourceQueueMs")
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?: System.getenv("ORBIT_LIVEKIT_AUDIO_SOURCE_QUEUE_MS")
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+        val value = raw?.toIntOrNull() ?: 10
+        if (value != 10) {
+            println("WARN [LiveKitNativeMediaSession] orbit.livekit.audioSourceQueueMs=$value is disabled for the decode test; using 10")
+            return 10
+        }
+        return value
     }
 
     fun disconnect(userInitiated: Boolean) {
@@ -495,7 +545,11 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         println("DEBUG [LiveKitNativeMediaSession] native reconnect success")
         LiveKitNativeAudioPlayer.start(sessionId, epoch, bridge, ::handlePlaybackFailure)
 
-        val audioStarted = bridge.publishAudio(sessionId, epoch, LiveKitNativeAudioCapture.SAMPLE_RATE, LiveKitNativeAudioCapture.CHANNELS)
+        val publishChannels = LiveKitNativeAudioCapture.configuredPublishChannels()
+        val queueSizeMs = configuredAudioSourceQueueMs()
+        val expectedTestTone = LiveKitNativeAudioCapture.configuredTestTone()
+        println("DEBUG [LiveKitNativeMediaSession] audio republish format sampleRate=${LiveKitNativeAudioCapture.SAMPLE_RATE} channels=$publishChannels samplesPerChannel=${LiveKitNativeAudioCapture.SAMPLES_PER_CHANNEL} frameMs=${LiveKitNativeAudioCapture.FRAME_MS} queueSizeMs=$queueSizeMs expectedTestTone=$expectedTestTone")
+        val audioStarted = bridge.publishAudio(sessionId, epoch, LiveKitNativeAudioCapture.SAMPLE_RATE, publishChannels, queueSizeMs, expectedTestTone)
         if (!audioStarted.ok) {
             handleNativeError(audioStarted.error ?: unknownError("Audio republish failed", "nativePublishAudio"))
             return

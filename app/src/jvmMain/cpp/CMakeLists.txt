@@ -44,3 +44,19 @@ target_link_libraries(orbit_livekit_audio PRIVATE
     ${JNI_LIBRARIES}
     LiveKit::livekit
 )
+
+add_executable(orbit_livekit_tone_publisher
+    livekit_tone_publisher.cpp
+)
+
+target_link_libraries(orbit_livekit_tone_publisher PRIVATE
+    LiveKit::livekit
+)
+
+if(WIN32 AND DEFINED ORBIT_LIVEKIT_SDK_ROOT)
+    add_custom_command(TARGET orbit_livekit_tone_publisher POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${ORBIT_LIVEKIT_SDK_ROOT}/bin"
+            "$<TARGET_FILE_DIR:orbit_livekit_tone_publisher>"
+    )
+endif()

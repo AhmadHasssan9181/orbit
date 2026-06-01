@@ -61,6 +61,7 @@ class CallManager(
     var sendCandidate: (suspend (roomId: String, callId: String, candidate: IceCandidateModel) -> Unit)? = null
     var sendHangup: (suspend (roomId: String, callId: String) -> Unit)? = null
     var onLeaveGroupCall: (suspend (roomId: String, callId: String) -> Unit)? = null
+    var onUpdateGroupCallMembershipCapabilities: (suspend (roomId: String, callId: String, audio: Boolean, video: Boolean) -> Unit)? = null
 
     private val pendingLocalCandidates = mutableListOf<IceCandidateModel>()
     private var candidatesAllowedForCallId: String? = null
@@ -238,6 +239,12 @@ class CallManager(
                     value.acceptingAudioFrames
                 if (!ready) {
                     println("DEBUG [CallManager] Native media not ready after join: $value")
+                } else {
+                    if (!value.videoPublished) {
+                        isLocalVideoEnabled.value = false
+                    }
+                    println("DEBUG [CallManager] publishing MatrixRTC membership after MediaReady audio=true video=${value.videoPublished}")
+                    onUpdateGroupCallMembershipCapabilities?.invoke(roomId, callId, true, value.videoPublished)
                 }
                 ready
             }

@@ -7,12 +7,14 @@
 #include <chrono>
 #include <cstdint>
 #include <cmath>
+#include <condition_variable>
 #include <cstring>
 #include <deque>
 #include <exception>
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -31,8 +33,13 @@ std::shared_ptr<livekit::LocalAudioTrack> g_audioTrack;
 bool g_connected = false;
 bool g_micPublished = false;
 bool g_acceptingFrames = false;
-bool g_firstAudioFrameAccepted = false;
+int g_publishedAudioChannels = 0;
+std::atomic_bool g_expectedTestTone{false};
+std::atomic_bool g_firstAudioFrameAccepted{false};
 bool g_frameDroppedNotReadyLogged = false;
+int g_audioPushDiagnosticsLogged = 0;
+std::atomic_bool g_callbackShutdown{false};
+std::atomic_bool g_sessionDestroyed{false};
 
 JavaVM* g_javaVm = nullptr;
 std::mutex g_sinkMutex;
@@ -49,6 +56,7 @@ jmethodID g_eventSinkMethod = nullptr;
 
 std::mutex g_jniAttachLogMutex;
 std::unordered_set<std::string> g_loggedJniAttachSuccess;
+std::unordered_set<std::string> g_loggedCallbackSkips;
 
 struct RemoteAudioReader {
     std::string trackSid;
@@ -62,14 +70,36 @@ std::unordered_map<std::string, std::shared_ptr<RemoteAudioReader>> g_remoteAudi
 
 constexpr jint kSampleRate = 48000;
 constexpr jint kChannels = 1;
+constexpr jint kMaxChannels = 2;
 constexpr jint kFrameMs = 10;
 constexpr jint kSamplesPerChannel = 480;
 constexpr jint kFrameBytes = 960;
+constexpr jint kBytesPerSample = static_cast<jint>(sizeof(std::int16_t));
+constexpr int kAudioSourceCaptureTimeoutMs = 0;
 constexpr std::size_t kTargetParticipantQueueSamples = kSamplesPerChannel * 6; // 60 ms target playout depth
 constexpr std::size_t kMaxParticipantQueueSamples = kSamplesPerChannel * 12; // 120 ms
 constexpr jlong kRawSessionId = 1;
 jlong g_rawEpoch = 0;
 bool g_rawDisconnecting = false;
+
+bool isSupportedAudioChannels(jint channels) {
+    return channels == kChannels || channels == kMaxChannels;
+}
+
+bool isSupportedAudioSourceQueueMs(jint queueSizeMs) {
+    return queueSizeMs == 10;
+}
+
+jint audioFrameBytes(jint channels, jint samplesPerChannel = kSamplesPerChannel) {
+    return samplesPerChannel * channels * kBytesPerSample;
+}
+
+double audioFrameDurationMs(jint sampleRate, jint samplesPerChannel) {
+    if (sampleRate <= 0) {
+        return 0.0;
+    }
+    return (static_cast<double>(samplesPerChannel) * 1000.0) / static_cast<double>(sampleRate);
+}
 
 void setRawErrorThreadSafe(
     const std::string& code,
@@ -90,6 +120,381 @@ struct ParticipantPcmQueue {
 };
 
 void dispatchMixedAudioFrame(const std::vector<std::int16_t>& samples, std::int64_t timestampNs);
+
+struct PcmDiagnostics {
+    double rms{0.0};
+    std::int32_t peak{0};
+    std::int32_t min{0};
+    std::int32_t max{0};
+    bool allZero{true};
+    std::vector<std::int32_t> firstSamples;
+};
+
+PcmDiagnostics computePcmDiagnostics(const std::int16_t* samples, std::size_t sampleCount) {
+    PcmDiagnostics diagnostics;
+    if (samples == nullptr || sampleCount == 0) {
+        return diagnostics;
+    }
+
+    double sumSquares = 0.0;
+    for (std::size_t i = 0; i < sampleCount; ++i) {
+        const auto value = static_cast<std::int32_t>(samples[i]);
+        const auto absValue = std::abs(value);
+        if (i == 0 || value < diagnostics.min) {
+            diagnostics.min = value;
+        }
+        if (i == 0 || value > diagnostics.max) {
+            diagnostics.max = value;
+        }
+        if (diagnostics.firstSamples.size() < 10) {
+            diagnostics.firstSamples.push_back(value);
+        }
+        if (value != 0) {
+            diagnostics.allZero = false;
+        }
+        diagnostics.peak = std::max(diagnostics.peak, absValue);
+        sumSquares += static_cast<double>(value) * static_cast<double>(value);
+    }
+    diagnostics.rms = std::sqrt(sumSquares / static_cast<double>(sampleCount));
+    return diagnostics;
+}
+
+struct AudioSourceFramePacket {
+    std::vector<std::int16_t> samples;
+    int sampleRate{kSampleRate};
+    int channels{kChannels};
+    int samplesPerChannel{kSamplesPerChannel};
+    std::int64_t timestampNs{0};
+};
+
+class NativeAudioSourceWorker {
+public:
+    ~NativeAudioSourceWorker() {
+        stop();
+    }
+
+    void start(const std::shared_ptr<livekit::AudioSource>& source) {
+        stop();
+        resetStats();
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            source_ = source;
+            running_ = source_ != nullptr;
+            hasLatest_ = false;
+            lastStatsLog_ = std::chrono::steady_clock::now();
+        }
+        if (!source) {
+            return;
+        }
+        worker_ = std::thread([this] { run(); });
+        std::cout << "DEBUG [OrbitLiveKitAudio] audio source worker started cadenceMs="
+                  << kFrameMs << " captureTimeoutMs=" << kAudioSourceCaptureTimeoutMs << std::endl;
+    }
+
+    void stop() {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            running_ = false;
+            hasLatest_ = false;
+            latest_ = AudioSourceFramePacket{};
+        }
+        cv_.notify_all();
+        if (worker_.joinable()) {
+            if (worker_.get_id() == std::this_thread::get_id()) {
+                worker_.detach();
+            } else {
+                worker_.join();
+            }
+        }
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            source_.reset();
+        }
+    }
+
+    bool enqueue(
+        std::vector<std::int16_t>&& samples,
+        int sampleRate,
+        int channels,
+        int samplesPerChannel,
+        std::int64_t timestampNs) {
+        framesReceivedFromKotlin_.fetch_add(1, std::memory_order_relaxed);
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (!running_ || source_ == nullptr) {
+                setLastCaptureError("audio source worker is not running");
+                return false;
+            }
+            if (hasLatest_) {
+                framesDroppedDueBackpressure_.fetch_add(1, std::memory_order_relaxed);
+            }
+            latest_.samples = std::move(samples);
+            latest_.sampleRate = sampleRate;
+            latest_.channels = channels;
+            latest_.samplesPerChannel = samplesPerChannel;
+            latest_.timestampNs = timestampNs;
+            hasLatest_ = true;
+        }
+        cv_.notify_one();
+        return true;
+    }
+
+private:
+    void resetStats() {
+        framesReceivedFromKotlin_ = 0;
+        framesSubmittedToLiveKit_ = 0;
+        framesAcceptedByLiveKit_ = 0;
+        framesTimedOut_ = 0;
+        framesDroppedDueBackpressure_ = 0;
+        workerFramesWithTonePeakGreaterThan1000_ = 0;
+        workerFramesSilent_ = 0;
+        workerFramesCaptured_ = 0;
+        workerFramesSkippedMuted_ = 0;
+        formatDiagnosticsLogged_ = 0;
+        preCaptureDiagnosticsLogged_ = 0;
+        workerFrameSequence_ = 0;
+        lastFrameTimestampNs_ = 0;
+        setLastCaptureError("");
+    }
+
+    void run() {
+        using clock = std::chrono::steady_clock;
+        auto nextSubmit = clock::now();
+
+        while (true) {
+            AudioSourceFramePacket packet;
+            std::shared_ptr<livekit::AudioSource> source;
+            {
+                std::unique_lock<std::mutex> lock(mutex_);
+                cv_.wait(lock, [this] { return !running_ || hasLatest_; });
+                if (!running_) {
+                    break;
+                }
+                packet = std::move(latest_);
+                latest_ = AudioSourceFramePacket{};
+                hasLatest_ = false;
+                source = source_;
+            }
+
+            const auto now = clock::now();
+            if (nextSubmit > now) {
+                std::this_thread::sleep_until(nextSubmit);
+            } else if (now - nextSubmit > std::chrono::milliseconds(kFrameMs * 2)) {
+                nextSubmit = now;
+            }
+            nextSubmit += std::chrono::milliseconds(kFrameMs);
+
+            if (source == nullptr || packet.samples.empty()) {
+                logStatsIfDue(false);
+                continue;
+            }
+
+            bool timestampMonotonic = true;
+            if (lastFrameTimestampNs_ != 0 && packet.timestampNs <= lastFrameTimestampNs_) {
+                timestampMonotonic = false;
+            }
+            lastFrameTimestampNs_ = packet.timestampNs;
+            if (formatDiagnosticsLogged_ < 10) {
+                formatDiagnosticsLogged_ += 1;
+                std::cout << "DEBUG [OrbitLiveKitAudio] audio source frame #"
+                          << formatDiagnosticsLogged_
+                          << " sampleRate=" << packet.sampleRate
+                          << " channels=" << packet.channels
+                          << " samplesPerChannel=" << packet.samplesPerChannel
+                          << " bytes=" << packet.samples.size() * sizeof(std::int16_t)
+                          << " durationMs=" << audioFrameDurationMs(packet.sampleRate, packet.samplesPerChannel)
+                          << " format=int16 signed little-endian"
+                          << " ownsNativeMemory=true"
+                          << " timestampNs=" << packet.timestampNs
+                          << " timestampMonotonic=" << (timestampMonotonic ? "true" : "false")
+                          << std::endl;
+            }
+
+            try {
+                livekit::AudioFrame frame(
+                    std::move(packet.samples),
+                    packet.sampleRate,
+                    packet.channels,
+                    packet.samplesPerChannel);
+                const auto frameSequence = ++workerFrameSequence_;
+                const auto& frameSamples = frame.data();
+                const auto pcmStats = computePcmDiagnostics(frameSamples.data(), frameSamples.size());
+                if (pcmStats.peak > 1000) {
+                    workerFramesWithTonePeakGreaterThan1000_.fetch_add(1, std::memory_order_relaxed);
+                }
+                if (pcmStats.allZero || pcmStats.peak <= 3) {
+                    workerFramesSilent_.fetch_add(1, std::memory_order_relaxed);
+                }
+
+                bool acceptingFrames = true;
+                bool micPublished = true;
+                bool trackMuted = false;
+                bool stateRead = false;
+                {
+                    std::unique_lock<std::mutex> sessionLock(g_sessionMutex, std::try_to_lock);
+                    if (sessionLock.owns_lock()) {
+                        acceptingFrames = g_acceptingFrames;
+                        micPublished = g_micPublished;
+                        trackMuted = g_audioTrack != nullptr && g_audioTrack->muted();
+                        stateRead = true;
+                    }
+                }
+
+                if (stateRead && (trackMuted || !acceptingFrames)) {
+                    if (trackMuted) {
+                        workerFramesSkippedMuted_.fetch_add(1, std::memory_order_relaxed);
+                    }
+                    if (preCaptureDiagnosticsLogged_ < 20) {
+                        preCaptureDiagnosticsLogged_ += 1;
+                        std::cout << "DEBUG [OrbitLiveKitAudio] worker frame skipped before captureFrame seq="
+                                  << frameSequence
+                                  << " acceptingFrames=" << (acceptingFrames ? "true" : "false")
+                                  << " micPublished=" << (micPublished ? "true" : "false")
+                                  << " trackMuted=" << (trackMuted ? "true" : "false")
+                                  << " stateRead=" << (stateRead ? "true" : "false")
+                                  << std::endl;
+                    }
+                    logStatsIfDue(false);
+                    continue;
+                }
+
+                if (g_expectedTestTone.load(std::memory_order_relaxed) && pcmStats.peak < 1000) {
+                    std::cerr << "ERROR [OrbitLiveKitAudio] test tone lost before captureFrame seq="
+                              << frameSequence
+                              << " peak=" << pcmStats.peak
+                              << " rms=" << pcmStats.rms
+                              << std::endl;
+                }
+
+                if (preCaptureDiagnosticsLogged_ < 20) {
+                    preCaptureDiagnosticsLogged_ += 1;
+                    std::cout << "DEBUG [OrbitLiveKitAudio] worker pre-capture frame seq="
+                              << frameSequence
+                              << " min=" << pcmStats.min
+                              << " max=" << pcmStats.max
+                              << " peak=" << pcmStats.peak
+                              << " rms=" << pcmStats.rms
+                              << " first10Samples=[";
+                    for (std::size_t i = 0; i < pcmStats.firstSamples.size(); ++i) {
+                        if (i > 0) {
+                            std::cout << ",";
+                        }
+                        std::cout << pcmStats.firstSamples[i];
+                    }
+                    std::cout << "]"
+                              << " allZero=" << (pcmStats.allZero ? "true" : "false")
+                              << " muted=" << (trackMuted ? "true" : "false")
+                              << " acceptingFrames=" << (acceptingFrames ? "true" : "false")
+                              << " micPublished=" << (micPublished ? "true" : "false")
+                              << " trackMuted=" << (trackMuted ? "true" : "false")
+                              << " stateRead=" << (stateRead ? "true" : "false")
+                              << std::endl;
+                }
+
+                if (formatDiagnosticsLogged_ <= 10) {
+                    std::cout << "DEBUG [OrbitLiveKitAudio] LiveKit AudioFrame("
+                              << "buffer.size=" << frame.data().size()
+                              << ", totalSamples=" << frame.totalSamples()
+                              << ", sampleRate=" << frame.sampleRate()
+                              << ", numChannels=" << frame.numChannels()
+                              << ", samplesPerChannel=" << frame.samplesPerChannel()
+                              << ") duration=" << frame.duration()
+                              << std::endl;
+                }
+                framesSubmittedToLiveKit_.fetch_add(1, std::memory_order_relaxed);
+                source->captureFrame(frame, kAudioSourceCaptureTimeoutMs);
+                framesAcceptedByLiveKit_.fetch_add(1, std::memory_order_relaxed);
+                workerFramesCaptured_.fetch_add(1, std::memory_order_relaxed);
+                setLastCaptureError("");
+                if (!g_firstAudioFrameAccepted.exchange(true)) {
+                    std::cout << "DEBUG [OrbitLiveKitAudio] first audio frame accepted" << std::endl;
+                }
+            } catch (const std::exception& error) {
+                const std::string message = error.what();
+                if (message.find("timed out") != std::string::npos ||
+                    message.find("timeout") != std::string::npos) {
+                    framesTimedOut_.fetch_add(1, std::memory_order_relaxed);
+                }
+                setLastCaptureError(message);
+            } catch (...) {
+                setLastCaptureError("unknown captureFrame error");
+            }
+
+            logStatsIfDue(false);
+        }
+
+        logStatsIfDue(true);
+        std::cout << "DEBUG [OrbitLiveKitAudio] audio source worker exited" << std::endl;
+    }
+
+    void setLastCaptureError(const std::string& error) {
+        std::lock_guard<std::mutex> lock(errorMutex_);
+        lastCaptureError_ = error;
+    }
+
+    std::string lastCaptureError() const {
+        std::lock_guard<std::mutex> lock(errorMutex_);
+        return lastCaptureError_;
+    }
+
+    void logStatsIfDue(bool force) {
+        const auto now = std::chrono::steady_clock::now();
+        bool shouldLog = force;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (!shouldLog && now - lastStatsLog_ >= std::chrono::seconds(1)) {
+                shouldLog = true;
+            }
+            if (shouldLog) {
+                lastStatsLog_ = now;
+            }
+        }
+        if (!shouldLog) {
+            return;
+        }
+
+        const auto error = lastCaptureError();
+        std::cout << "DEBUG [OrbitLiveKitAudio] audio source stats: received="
+                  << framesReceivedFromKotlin_.load(std::memory_order_relaxed)
+                  << " submitted=" << framesSubmittedToLiveKit_.load(std::memory_order_relaxed)
+                  << " accepted=" << framesAcceptedByLiveKit_.load(std::memory_order_relaxed)
+                  << " timedOut=" << framesTimedOut_.load(std::memory_order_relaxed)
+                  << " dropped=" << framesDroppedDueBackpressure_.load(std::memory_order_relaxed)
+                  << " workerFramesWithTonePeakGreaterThan1000=" << workerFramesWithTonePeakGreaterThan1000_.load(std::memory_order_relaxed)
+                  << " workerFramesSilent=" << workerFramesSilent_.load(std::memory_order_relaxed)
+                  << " workerFramesCaptured=" << workerFramesCaptured_.load(std::memory_order_relaxed)
+                  << " workerFramesSkippedMuted=" << workerFramesSkippedMuted_.load(std::memory_order_relaxed)
+                  << " lastCaptureError=" << (error.empty() ? "<none>" : error)
+                  << std::endl;
+    }
+
+    mutable std::mutex mutex_;
+    mutable std::mutex errorMutex_;
+    std::condition_variable cv_;
+    std::thread worker_;
+    bool running_{false};
+    bool hasLatest_{false};
+    std::shared_ptr<livekit::AudioSource> source_;
+    AudioSourceFramePacket latest_;
+    std::chrono::steady_clock::time_point lastStatsLog_{};
+    std::string lastCaptureError_;
+    int formatDiagnosticsLogged_{0};
+    int preCaptureDiagnosticsLogged_{0};
+    std::uint64_t workerFrameSequence_{0};
+    std::int64_t lastFrameTimestampNs_{0};
+
+    std::atomic<std::uint64_t> framesReceivedFromKotlin_{0};
+    std::atomic<std::uint64_t> framesSubmittedToLiveKit_{0};
+    std::atomic<std::uint64_t> framesAcceptedByLiveKit_{0};
+    std::atomic<std::uint64_t> framesTimedOut_{0};
+    std::atomic<std::uint64_t> framesDroppedDueBackpressure_{0};
+    std::atomic<std::uint64_t> workerFramesWithTonePeakGreaterThan1000_{0};
+    std::atomic<std::uint64_t> workerFramesSilent_{0};
+    std::atomic<std::uint64_t> workerFramesCaptured_{0};
+    std::atomic<std::uint64_t> workerFramesSkippedMuted_{0};
+};
+
+NativeAudioSourceWorker g_audioSourceWorker;
 
 class NativeAudioMixer {
 public:
@@ -302,7 +707,7 @@ private:
         dispatchMixedAudioFrame(mixed, static_cast<std::int64_t>(timestampNs));
     }
 
-    void mixLoop() {
+void mixLoop() {
         using clock = std::chrono::steady_clock;
         auto nextTick = clock::now();
 
@@ -316,6 +721,7 @@ private:
                 nextTick = now;
             }
         }
+        std::cout << "DEBUG [OrbitLiveKitAudio] mixer thread exited" << std::endl;
     }
 
     std::atomic_bool running_{false};
@@ -349,12 +755,33 @@ std::string jStringToString(JNIEnv* env, jstring value) {
     return out;
 }
 
-bool getJniEnv(JNIEnv** env, bool* attached) {
+void logCallbackSkipOnce(const char* callbackType, const char* reason) {
+    const std::string type = callbackType == nullptr ? "callback" : callbackType;
+    const std::string reasonText = reason == nullptr ? "unknown" : reason;
+    std::lock_guard<std::mutex> lock(g_jniAttachLogMutex);
+    const std::string key = type + ":" + reasonText;
+    if (g_loggedCallbackSkips.insert(key).second) {
+        std::cout << "DEBUG [OrbitLiveKitAudio] " << type
+                  << " callback skipped because " << reasonText << std::endl;
+    }
+}
+
+bool callbacksStopped(const char* callbackType) {
+    if (g_sessionDestroyed.load() || g_callbackShutdown.load()) {
+        logCallbackSkipOnce(callbackType, "session destroyed");
+        return true;
+    }
+    return false;
+}
+
+bool getJniEnv(JNIEnv** env, bool* attached, const char* callbackType = "jni-callback") {
     *env = nullptr;
     *attached = false;
+    if (callbacksStopped(callbackType)) {
+        return false;
+    }
     if (g_javaVm == nullptr) {
-        setRawErrorThreadSafe("NATIVE_EXCEPTION", "JavaVM is not available for JNI callback", "JNI_ATTACH", true);
-        std::cerr << "ERROR [OrbitLiveKitAudio] JavaVM is not available for JNI callback" << std::endl;
+        logCallbackSkipOnce(callbackType, "JavaVM missing");
         return false;
     }
 
@@ -411,10 +838,21 @@ void dispatchMixedAudioFrame(const std::vector<std::int16_t>& samples, std::int6
     if (samples.empty()) {
         return;
     }
+    if (callbacksStopped("mixed-audio")) {
+        return;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_mixedAudioSinkMutex);
+        if (g_mixedAudioSink == nullptr || g_mixedAudioSinkMethod == nullptr) {
+            logCallbackSkipOnce("mixed-audio", "sink missing");
+            return;
+        }
+    }
 
     JNIEnv* env = nullptr;
     bool attached = false;
-    if (!getJniEnv(&env, &attached) || env == nullptr) {
+    if (!getJniEnv(&env, &attached, "mixed-audio") || env == nullptr) {
         return;
     }
     logJniAttachSuccess("mixed-audio", attached);
@@ -426,6 +864,8 @@ void dispatchMixedAudioFrame(const std::vector<std::int16_t>& samples, std::int6
         if (g_mixedAudioSink != nullptr && g_mixedAudioSinkMethod != nullptr) {
             sink = env->NewLocalRef(g_mixedAudioSink);
             method = g_mixedAudioSinkMethod;
+        } else {
+            logCallbackSkipOnce("mixed-audio", "sink missing");
         }
     }
 
@@ -471,9 +911,20 @@ void dispatchMixedAudioFrame(const std::vector<std::int16_t>& samples, std::int6
 }
 
 void dispatchRemoteAudioFrame(const livekit::AudioFrame& frame) {
+    if (callbacksStopped("remote-audio")) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_sinkMutex);
+        if (g_remoteAudioSink == nullptr || g_remoteAudioSinkMethod == nullptr) {
+            logCallbackSkipOnce("remote-audio", "sink missing");
+            return;
+        }
+    }
+
     JNIEnv* env = nullptr;
     bool attached = false;
-    if (!getJniEnv(&env, &attached) || env == nullptr) {
+    if (!getJniEnv(&env, &attached, "remote-audio") || env == nullptr) {
         return;
     }
     logJniAttachSuccess("remote-audio", attached);
@@ -485,6 +936,8 @@ void dispatchRemoteAudioFrame(const livekit::AudioFrame& frame) {
         if (g_remoteAudioSink != nullptr && g_remoteAudioSinkMethod != nullptr) {
             sink = env->NewLocalRef(g_remoteAudioSink);
             method = g_remoteAudioSinkMethod;
+        } else {
+            logCallbackSkipOnce("remote-audio", "sink missing");
         }
     }
 
@@ -568,6 +1021,9 @@ void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track, const
         reader->thread = std::thread([reader] {
             livekit::AudioFrameEvent event;
             while (reader->running && reader->stream != nullptr && reader->stream->read(event)) {
+                if (callbacksStopped("remote-audio-reader")) {
+                    break;
+                }
                 const auto& samples = event.frame.data();
                 if (samples.empty()) {
                     continue;
@@ -592,6 +1048,8 @@ void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track, const
                               << reader->trackSid << std::endl;
                 }
             }
+            std::cout << "DEBUG [OrbitLiveKitAudio] reader thread exited track="
+                      << reader->trackSid << std::endl;
         });
         g_remoteAudioReaders[trackSid] = reader;
         std::cout << "DEBUG [OrbitLiveKitAudio] Started remote audio stream for track "
@@ -638,17 +1096,71 @@ void stopRemoteReadersForParticipantLocked(const std::string& participantIdentit
     }
 }
 
+std::string trackSourceLabel(livekit::TrackSource source);
+std::string optionalTrackSourceLabel(const std::optional<livekit::TrackSource>& source);
+std::string audioFeaturesLabel(const std::vector<livekit::AudioTrackFeature>& features);
+std::string encryptionTypeLabel(livekit::EncryptionType type);
+
 class OrbitAudioRoomDelegate final : public livekit::RoomDelegate {
 public:
+    void onLocalTrackPublished(livekit::Room&, const livekit::LocalTrackPublishedEvent& event) override {
+        if (event.track == nullptr) {
+            return;
+        }
+        const auto publication = event.publication;
+        const auto trackSource = event.track->source();
+        std::cout << "DEBUG [OrbitLiveKitAudio] local microphone track publish event "
+                  << "localTrackSid=" << event.track->sid()
+                  << " localTrackName=" << event.track->name()
+                  << " localTrackKind=" << static_cast<int>(event.track->kind())
+                  << " localTrackSourceEnum=" << (trackSource.has_value() ? std::to_string(static_cast<int>(trackSource.value())) : "unset")
+                  << " localTrackSourceLabel=" << optionalTrackSourceLabel(trackSource)
+                  << " localTrackMuted=" << (event.track->muted() ? "true" : "false")
+                  << " publicationSid=" << (publication != nullptr ? publication->sid() : std::string{"<none>"})
+                  << " publicationName=" << (publication != nullptr ? publication->name() : std::string{"<none>"})
+                  << " publicationSourceEnum=" << (publication != nullptr ? std::to_string(static_cast<int>(publication->source())) : std::string{"unset"})
+                  << " publicationSourceLabel=" << (publication != nullptr ? trackSourceLabel(publication->source()) : std::string{"unset"})
+                  << " publicationMuted=" << (publication != nullptr && publication->muted() ? "true" : "false")
+                  << " publicationEncryption=" << (publication != nullptr ? encryptionTypeLabel(publication->encryptionType()) : std::string{"unset"})
+                  << " publicationAudioFeatures=" << (publication != nullptr ? audioFeaturesLabel(publication->audioFeatures()) : std::string{"[]"})
+                  << std::endl;
+    }
+
     void onTrackSubscribed(livekit::Room&, const livekit::TrackSubscribedEvent& event) override {
+        if (callbacksStopped("room-delegate")) {
+            return;
+        }
         std::lock_guard<std::mutex> lock(g_sessionMutex);
         const std::string identity = event.participant != nullptr
             ? event.participant->identity()
             : std::string{};
+        const auto trackSource = event.track != nullptr ? event.track->source() : std::optional<livekit::TrackSource>{};
+        const auto publication = event.publication;
+        std::cout << "DEBUG [OrbitLiveKitAudio] remote audio track subscribed "
+                  << "participantIdentity=" << identity
+                  << " participantName=" << (event.participant != nullptr ? event.participant->name() : std::string{"<none>"})
+                  << " participantMetadata=" << (event.participant != nullptr ? event.participant->metadata() : std::string{"<none>"})
+                  << " remoteTrackSid=" << (event.track != nullptr ? event.track->sid() : std::string{"<none>"})
+                  << " remoteTrackName=" << (event.track != nullptr ? event.track->name() : std::string{"<none>"})
+                  << " remoteTrackKind=" << (event.track != nullptr ? std::to_string(static_cast<int>(event.track->kind())) : std::string{"unset"})
+                  << " remoteTrackSourceEnum=" << (trackSource.has_value() ? std::to_string(static_cast<int>(trackSource.value())) : "unset")
+                  << " remoteTrackSourceLabel=" << optionalTrackSourceLabel(trackSource)
+                  << " remoteTrackMuted=" << (event.track != nullptr && event.track->muted() ? "true" : "false")
+                  << " remotePublicationSid=" << (publication != nullptr ? publication->sid() : std::string{"<none>"})
+                  << " remotePublicationName=" << (publication != nullptr ? publication->name() : std::string{"<none>"})
+                  << " remotePublicationSourceEnum=" << (publication != nullptr ? std::to_string(static_cast<int>(publication->source())) : std::string{"unset"})
+                  << " remotePublicationSourceLabel=" << (publication != nullptr ? trackSourceLabel(publication->source()) : std::string{"unset"})
+                  << " remotePublicationMuted=" << (publication != nullptr && publication->muted() ? "true" : "false")
+                  << " remotePublicationEncryption=" << (publication != nullptr ? encryptionTypeLabel(publication->encryptionType()) : std::string{"unset"})
+                  << " remotePublicationAudioFeatures=" << (publication != nullptr ? audioFeaturesLabel(publication->audioFeatures()) : std::string{"[]"})
+                  << std::endl;
         startRemoteReaderLocked(event.track, identity);
     }
 
     void onTrackUnsubscribed(livekit::Room&, const livekit::TrackUnsubscribedEvent& event) override {
+        if (callbacksStopped("room-delegate")) {
+            return;
+        }
         if (event.track == nullptr) {
             return;
         }
@@ -657,6 +1169,9 @@ public:
     }
 
     void onParticipantDisconnected(livekit::Room&, const livekit::ParticipantDisconnectedEvent& event) override {
+        if (callbacksStopped("room-delegate")) {
+            return;
+        }
         if (event.participant == nullptr) {
             return;
         }
@@ -665,6 +1180,9 @@ public:
     }
 
     void onDisconnected(livekit::Room&, const livekit::DisconnectedEvent&) override {
+        if (callbacksStopped("room-delegate")) {
+            return;
+        }
         std::lock_guard<std::mutex> lock(g_sessionMutex);
         g_acceptingFrames = false;
         g_micPublished = false;
@@ -675,18 +1193,22 @@ public:
 
 void resetRoomLocked() {
     g_acceptingFrames = false;
-    stopAllRemoteReadersLocked();
-    g_audioTrack.reset();
-    g_audioSource.reset();
+    g_audioSourceWorker.stop();
     if (g_room != nullptr) {
         g_room->setDelegate(nullptr);
     }
+    stopAllRemoteReadersLocked();
+    g_audioTrack.reset();
+    g_audioSource.reset();
     g_delegate.reset();
     g_room.reset();
     g_connected = false;
     g_micPublished = false;
+    g_publishedAudioChannels = 0;
+    g_expectedTestTone = false;
     g_firstAudioFrameAccepted = false;
     g_frameDroppedNotReadyLogged = false;
+    g_audioPushDiagnosticsLogged = 0;
 }
 
 bool hasReadyMicLocked() {
@@ -747,6 +1269,89 @@ std::string escapeJson(const std::string& input) {
     return output;
 }
 
+std::string trackSourceLabel(livekit::TrackSource source) {
+    switch (source) {
+        case livekit::TrackSource::SOURCE_CAMERA:
+            return "camera";
+        case livekit::TrackSource::SOURCE_MICROPHONE:
+            return "microphone";
+        case livekit::TrackSource::SOURCE_SCREENSHARE:
+            return "screenshare";
+        case livekit::TrackSource::SOURCE_SCREENSHARE_AUDIO:
+            return "screenshare_audio";
+        case livekit::TrackSource::SOURCE_UNKNOWN:
+        default:
+            return "unknown";
+    }
+}
+
+std::string optionalTrackSourceLabel(const std::optional<livekit::TrackSource>& source) {
+    return source.has_value() ? trackSourceLabel(source.value()) : "unset";
+}
+
+std::string audioFeatureLabel(livekit::AudioTrackFeature feature) {
+    switch (feature) {
+        case livekit::AudioTrackFeature::TF_STEREO:
+            return "stereo";
+        case livekit::AudioTrackFeature::TF_NO_DTX:
+            return "no_dtx";
+        case livekit::AudioTrackFeature::TF_AUTO_GAIN_CONTROL:
+            return "auto_gain_control";
+        case livekit::AudioTrackFeature::TF_ECHO_CANCELLATION:
+            return "echo_cancellation";
+        case livekit::AudioTrackFeature::TF_NOISE_SUPPRESSION:
+            return "noise_suppression";
+        case livekit::AudioTrackFeature::TF_ENHANCED_NOISE_CANCELLATION:
+            return "enhanced_noise_cancellation";
+        case livekit::AudioTrackFeature::TF_PRECONNECT_BUFFER:
+            return "preconnect_buffer";
+        default:
+            return "unknown";
+    }
+}
+
+std::string audioFeaturesLabel(const std::vector<livekit::AudioTrackFeature>& features) {
+    if (features.empty()) {
+        return "[]";
+    }
+    std::string out = "[";
+    for (std::size_t i = 0; i < features.size(); ++i) {
+        if (i > 0) {
+            out += ",";
+        }
+        out += audioFeatureLabel(features[i]);
+    }
+    out += "]";
+    return out;
+}
+
+std::string encryptionTypeLabel(livekit::EncryptionType type) {
+    switch (type) {
+        case livekit::EncryptionType::NONE:
+            return "none";
+        case livekit::EncryptionType::GCM:
+            return "gcm";
+        case livekit::EncryptionType::CUSTOM:
+            return "custom";
+        default:
+            return "unknown";
+    }
+}
+
+std::string buildMatrixRtcParticipantMetadata(const std::string& identity) {
+    std::string userId = identity;
+    std::string deviceId;
+    const auto lastColon = identity.rfind(':');
+    if (lastColon != std::string::npos && lastColon + 1 < identity.size()) {
+        userId = identity.substr(0, lastColon);
+        deviceId = identity.substr(lastColon + 1);
+    }
+
+    return std::string("{\"user_id\":\"") + escapeJson(userId) +
+        "\",\"device_id\":\"" + escapeJson(deviceId) +
+        "\",\"member_id\":\"" + escapeJson(identity) + "\"}";
+}
+
 void clearRawErrorLocked() {
     g_rawHasLastError = false;
     g_rawLastErrorJson =
@@ -791,6 +1396,7 @@ void dispatchNativeEvent(JNIEnv* env, jobject event) {
     }
 
     if (sink == nullptr || method == nullptr) {
+        logCallbackSkipOnce("native-event", "sink missing");
         return;
     }
 
@@ -1003,7 +1609,11 @@ std::string rawReadinessJsonLocked(jlong sessionId) {
         "}";
 }
 
-bool connectRoom(const std::string& urlString, const std::string& tokenString, std::string* errorMessage) {
+bool connectRoom(
+    const std::string& urlString,
+    const std::string& tokenString,
+    const std::string& requestedIdentity,
+    std::string* errorMessage) {
     if (urlString.empty() || tokenString.empty()) {
         if (errorMessage != nullptr) {
             *errorMessage = "Missing LiveKit URL or token";
@@ -1036,6 +1646,31 @@ bool connectRoom(const std::string& urlString, const std::string& tokenString, s
             return false;
         }
 
+        auto* localParticipant = g_room->localParticipant();
+        if (localParticipant != nullptr) {
+            std::cout << "DEBUG [OrbitLiveKitAudio] local participant connected "
+                      << "requestedIdentity=" << (requestedIdentity.empty() ? std::string{"<none>"} : requestedIdentity)
+                      << " identity=" << localParticipant->identity()
+                      << " sid=" << localParticipant->sid()
+                      << " name=" << localParticipant->name()
+                      << " metadata=" << (localParticipant->metadata().empty() ? std::string{"<empty>"} : localParticipant->metadata())
+                      << std::endl;
+
+            if (localParticipant->metadata().empty() && !localParticipant->identity().empty()) {
+                const auto metadata = buildMatrixRtcParticipantMetadata(localParticipant->identity());
+                std::cout << "DEBUG [OrbitLiveKitAudio] setting local participant metadata: "
+                          << metadata << std::endl;
+                try {
+                    localParticipant->setMetadata(metadata);
+                } catch (const std::exception& error) {
+                    std::cout << "WARN [OrbitLiveKitAudio] local participant metadata update failed: "
+                              << error.what() << std::endl;
+                } catch (...) {
+                    std::cout << "WARN [OrbitLiveKitAudio] local participant metadata update failed: unknown error" << std::endl;
+                }
+            }
+        }
+
         for (const auto& participant : g_room->remoteParticipants()) {
             if (participant == nullptr) {
                 continue;
@@ -1045,6 +1680,26 @@ bool connectRoom(const std::string& urlString, const std::string& tokenString, s
                 if (publication == nullptr || !publication->subscribed()) {
                     continue;
                 }
+                const auto track = publication->track();
+                const auto trackSource = track != nullptr ? track->source() : std::optional<livekit::TrackSource>{};
+                std::cout << "DEBUG [OrbitLiveKitAudio] existing remote audio publication "
+                          << "participantIdentity=" << participant->identity()
+                          << " participantName=" << participant->name()
+                          << " participantMetadata=" << participant->metadata()
+                          << " remoteTrackSid=" << (track != nullptr ? track->sid() : std::string{"<none>"})
+                          << " remoteTrackName=" << (track != nullptr ? track->name() : std::string{"<none>"})
+                          << " remoteTrackKind=" << (track != nullptr ? std::to_string(static_cast<int>(track->kind())) : std::string{"unset"})
+                          << " remoteTrackSourceEnum=" << (trackSource.has_value() ? std::to_string(static_cast<int>(trackSource.value())) : "unset")
+                          << " remoteTrackSourceLabel=" << optionalTrackSourceLabel(trackSource)
+                          << " remotePublicationSid=" << publication->sid()
+                          << " remotePublicationName=" << publication->name()
+                          << " remotePublicationKind=" << static_cast<int>(publication->kind())
+                          << " remotePublicationSourceEnum=" << static_cast<int>(publication->source())
+                          << " remotePublicationSourceLabel=" << trackSourceLabel(publication->source())
+                          << " remotePublicationMuted=" << (publication->muted() ? "true" : "false")
+                          << " remotePublicationEncryption=" << encryptionTypeLabel(publication->encryptionType())
+                          << " remotePublicationAudioFeatures=" << audioFeaturesLabel(publication->audioFeatures())
+                          << std::endl;
                 startRemoteReaderLocked(publication->track(), participant->identity());
             }
         }
@@ -1079,14 +1734,17 @@ Java_livekit_LiveKitNativeAudioBridge_nativeSdkVersion(JNIEnv* env, jclass) {
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_livekit_LiveKitNativeAudioBridge_nativeConnect(JNIEnv* env, jclass, jstring url, jstring token) {
+    g_sessionDestroyed = false;
+    g_callbackShutdown = false;
     const std::string urlString = jStringToString(env, url);
     const std::string tokenString = jStringToString(env, token);
     std::string errorMessage;
-    return connectRoom(urlString, tokenString, &errorMessage) ? JNI_TRUE : JNI_FALSE;
+    return connectRoom(urlString, tokenString, "", &errorMessage) ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT void JNICALL
 Java_livekit_LiveKitNativeAudioBridge_nativeDisconnect(JNIEnv*, jclass) {
+    g_callbackShutdown = true;
     g_audioMixer.stop();
     std::lock_guard<std::mutex> lock(g_sessionMutex);
     g_acceptingFrames = false;
@@ -1096,13 +1754,18 @@ Java_livekit_LiveKitNativeAudioBridge_nativeDisconnect(JNIEnv*, jclass) {
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(
-    JNIEnv*, jclass, jint sampleRate, jint channels, jint frameMs) {
+    JNIEnv*, jclass, jint sampleRate, jint channels, jint frameMs, jint queueSizeMs, jboolean expectedTestTone) {
     std::cout << "DEBUG [OrbitLiveKitAudio] mic publish started" << std::endl;
-    if (sampleRate != kSampleRate || channels != kChannels || frameMs != kFrameMs) {
+    if (sampleRate != kSampleRate ||
+        !isSupportedAudioChannels(channels) ||
+        frameMs != kFrameMs ||
+        !isSupportedAudioSourceQueueMs(queueSizeMs)) {
         std::lock_guard<std::mutex> lock(g_sessionMutex);
         g_acceptingFrames = false;
         g_micPublished = false;
-        std::cerr << "ERROR [OrbitLiveKitAudio] Invalid audio publish format; expected 48000 Hz mono 10 ms" << std::endl;
+        g_publishedAudioChannels = 0;
+        g_expectedTestTone = false;
+        std::cerr << "ERROR [OrbitLiveKitAudio] Invalid audio publish format; expected 48000 Hz, 1 or 2 channels, 10 ms, queueSizeMs 10" << std::endl;
         return JNI_FALSE;
     }
 
@@ -1110,40 +1773,99 @@ Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(
         std::lock_guard<std::mutex> lock(g_sessionMutex);
         g_acceptingFrames = false;
         g_micPublished = false;
+        g_publishedAudioChannels = 0;
+        g_expectedTestTone = expectedTestTone == JNI_TRUE;
         g_firstAudioFrameAccepted = false;
         g_frameDroppedNotReadyLogged = false;
+        g_audioPushDiagnosticsLogged = 0;
 
         if (!g_connected || g_room == nullptr || g_room->localParticipant() == nullptr) {
             std::cerr << "ERROR [OrbitLiveKitAudio] Cannot publish audio before room connect" << std::endl;
             return JNI_FALSE;
         }
 
+        g_audioSourceWorker.stop();
         g_audioTrack.reset();
         g_audioSource = std::make_shared<livekit::AudioSource>(
             static_cast<int>(sampleRate),
             static_cast<int>(channels),
-            0);
-        g_audioTrack = g_room->localParticipant()->publishAudioTrack(
-            "microphone",
-            g_audioSource,
-            livekit::TrackSource::SOURCE_MICROPHONE);
+            static_cast<int>(queueSizeMs));
+        std::cout << "DEBUG [OrbitLiveKitAudio] AudioSource(sampleRate="
+                  << g_audioSource->sampleRate()
+                  << ", channels=" << g_audioSource->numChannels()
+                  << ", queueSizeMs=" << queueSizeMs
+                  << ")" << std::endl;
+        std::cout << "DEBUG [OrbitLiveKitAudio] AudioSource created sampleRate="
+                  << g_audioSource->sampleRate()
+                  << " channels=" << g_audioSource->numChannels()
+                  << " queueSizeMs=" << queueSizeMs
+                  << " frameMs=" << frameMs
+                  << " samplesPerChannel=" << kSamplesPerChannel
+                  << " bytesPerFrame=" << audioFrameBytes(channels)
+                  << std::endl;
+        livekit::TrackPublishOptions publishOptions;
+        publishOptions.source = livekit::TrackSource::SOURCE_MICROPHONE;
 
-        if (g_audioSource == nullptr || g_audioTrack == nullptr) {
+        std::cout << "DEBUG [OrbitLiveKitAudio] audio publish options: "
+                  << "trackName=audio"
+                  << " trackKind=" << static_cast<int>(livekit::TrackKind::KIND_AUDIO)
+                  << " trackSourceEnum=" << static_cast<int>(livekit::TrackSource::SOURCE_MICROPHONE)
+                  << " trackSourceLabel=" << trackSourceLabel(livekit::TrackSource::SOURCE_MICROPHONE)
+                  << " source=SOURCE_MICROPHONE"
+                  << " channels=" << channels
+                  << " expectedTestTone=" << (g_expectedTestTone.load(std::memory_order_relaxed) ? "true" : "false")
+                  << std::endl;
+
+        g_audioTrack = livekit::LocalAudioTrack::createLocalAudioTrack("audio", g_audioSource);
+        if (g_audioTrack == nullptr) {
+            g_audioSource.reset();
+            std::cerr << "ERROR [OrbitLiveKitAudio] Native C++ microphone track creation failed" << std::endl;
+            return JNI_FALSE;
+        }
+        g_room->localParticipant()->publishTrack(g_audioTrack, publishOptions);
+
+        const auto publication = g_audioTrack->publication();
+        if (g_audioSource == nullptr || g_audioTrack == nullptr || publication == nullptr) {
             g_audioTrack.reset();
             g_audioSource.reset();
-            std::cerr << "ERROR [OrbitLiveKitAudio] Native C++ microphone publish returned no track" << std::endl;
+            std::cerr << "ERROR [OrbitLiveKitAudio] Native C++ microphone publish returned no publication" << std::endl;
             return JNI_FALSE;
         }
 
+        if (g_audioTrack->muted()) {
+            g_audioTrack->unmute();
+        }
+        g_audioSourceWorker.start(g_audioSource);
         g_micPublished = true;
         g_acceptingFrames = true;
+        g_publishedAudioChannels = static_cast<int>(channels);
         std::cout << "DEBUG [OrbitLiveKitAudio] mic publish succeeded" << std::endl;
+        const auto trackSource = g_audioTrack->source();
+        std::cout << "DEBUG [OrbitLiveKitAudio] local microphone track details "
+                  << "trackName=" << g_audioTrack->name()
+                  << " trackKind=" << static_cast<int>(g_audioTrack->kind())
+                  << " trackSourceEnum=" << (trackSource.has_value() ? std::to_string(static_cast<int>(trackSource.value())) : "unset")
+                  << " trackSourceLabel=" << optionalTrackSourceLabel(trackSource)
+                  << " publicationSourceEnum=" << static_cast<int>(publication->source())
+                  << " publicationSourceLabel=" << trackSourceLabel(publication->source())
+                  << " publicationSid=" << publication->sid()
+                  << " publicationName=" << publication->name()
+                  << " publicationMuted=" << (publication->muted() ? "true" : "false")
+                  << " publicationEncryption=" << encryptionTypeLabel(publication->encryptionType())
+                  << " publicationAudioFeatures=" << audioFeaturesLabel(publication->audioFeatures())
+                  << " localTrackSid=" << g_audioTrack->sid()
+                  << " localTrackMuted=" << (g_audioTrack->muted() ? "true" : "false")
+                  << " trackMetadata=<not exposed by LiveKit C++ SDK>"
+                  << std::endl;
         std::cout << "DEBUG [OrbitLiveKitAudio] acceptingFrames=true" << std::endl;
         return JNI_TRUE;
     } catch (const std::exception& error) {
         std::lock_guard<std::mutex> lock(g_sessionMutex);
         g_acceptingFrames = false;
         g_micPublished = false;
+        g_publishedAudioChannels = 0;
+        g_expectedTestTone = false;
+        g_audioSourceWorker.stop();
         g_audioTrack.reset();
         g_audioSource.reset();
         std::cerr << "ERROR [OrbitLiveKitAudio] Publish audio threw: " << error.what() << std::endl;
@@ -1152,6 +1874,9 @@ Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(
         std::lock_guard<std::mutex> lock(g_sessionMutex);
         g_acceptingFrames = false;
         g_micPublished = false;
+        g_publishedAudioChannels = 0;
+        g_expectedTestTone = false;
+        g_audioSourceWorker.stop();
         g_audioTrack.reset();
         g_audioSource.reset();
         std::cerr << "ERROR [OrbitLiveKitAudio] Publish audio threw unknown error" << std::endl;
@@ -1172,21 +1897,28 @@ Java_livekit_LiveKitNativeAudioBridge_nativePushAudioFrame(
         return JNI_FALSE;
     }
 
-    if (byteLength != kFrameBytes ||
+    if (byteLength != audioFrameBytes(channels, samplesPerChannel) ||
         sampleRate != kSampleRate ||
-        channels != kChannels ||
+        !isSupportedAudioChannels(channels) ||
         samplesPerChannel != kSamplesPerChannel) {
         return JNI_FALSE;
     }
 
-    std::shared_ptr<livekit::AudioSource> source;
+    bool acceptingAudioFrames = false;
+    bool nativeTrackMuted = false;
     {
         std::lock_guard<std::mutex> lock(g_sessionMutex);
         if (!hasReadyMicLocked()) {
             logFrameDroppedNotReadyLocked();
             return JNI_FALSE;
         }
-        source = g_audioSource;
+        if (g_publishedAudioChannels != channels) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] Audio frame channels do not match published AudioSource channels frameChannels="
+                      << channels << " publishedChannels=" << g_publishedAudioChannels << std::endl;
+            return JNI_FALSE;
+        }
+        acceptingAudioFrames = hasReadyMicLocked();
+        nativeTrackMuted = g_audioTrack != nullptr && g_audioTrack->muted();
     }
 
     void* data = env->GetDirectBufferAddress(pcm);
@@ -1201,18 +1933,49 @@ Java_livekit_LiveKitNativeAudioBridge_nativePushAudioFrame(
         std::vector<std::int16_t> samples(static_cast<std::size_t>(expectedBytes / sizeof(std::int16_t)));
         std::memcpy(samples.data(), data, static_cast<std::size_t>(expectedBytes));
 
-        livekit::AudioFrame frame(
-            std::move(samples),
-            static_cast<int>(sampleRate),
-            static_cast<int>(channels),
-            static_cast<int>(samplesPerChannel));
-        source->captureFrame(frame, 20);
         {
             std::lock_guard<std::mutex> lock(g_sessionMutex);
-            if (!g_firstAudioFrameAccepted) {
-                g_firstAudioFrameAccepted = true;
-                std::cout << "DEBUG [OrbitLiveKitAudio] first audio frame accepted" << std::endl;
+            if (g_audioPushDiagnosticsLogged < 10) {
+                const auto stats = computePcmDiagnostics(samples.data(), samples.size());
+                g_audioPushDiagnosticsLogged += 1;
+                std::cout << "DEBUG [OrbitLiveKitAudio] pushed mic frame #"
+                          << g_audioPushDiagnosticsLogged
+                          << " min=" << stats.min
+                          << " max=" << stats.max
+                          << " rms=" << stats.rms
+                          << " peak=" << stats.peak
+                          << " allZero=" << (stats.allZero ? "true" : "false")
+                          << " sampleRate=" << sampleRate
+                          << " channels=" << channels
+                          << " samplesPerChannel=" << samplesPerChannel
+                          << " acceptingAudioFrames=" << (acceptingAudioFrames ? "true" : "false")
+                          << " muted=" << (nativeTrackMuted ? "true" : "false")
+                          << " nativeTrackMuted=" << (nativeTrackMuted ? "true" : "false")
+                          << " first10Samples=[";
+                for (std::size_t i = 0; i < stats.firstSamples.size(); ++i) {
+                    if (i > 0) {
+                        std::cout << ",";
+                    }
+                    std::cout << stats.firstSamples[i];
+                }
+                std::cout << "]" << std::endl;
+                if (stats.allZero) {
+                    std::cout << "DEBUG [OrbitLiveKitAudio] pushed mic frame is silence" << std::endl;
+                } else {
+                    std::cout << "DEBUG [OrbitLiveKitAudio] pushed mic frame RMS > 0" << std::endl;
+                }
             }
+        }
+
+        const auto timestampNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (!g_audioSourceWorker.enqueue(
+                std::move(samples),
+                static_cast<int>(sampleRate),
+                static_cast<int>(channels),
+                static_cast<int>(samplesPerChannel),
+                static_cast<std::int64_t>(timestampNs))) {
+            return JNI_FALSE;
         }
         return JNI_TRUE;
     } catch (const std::exception& error) {
@@ -1275,6 +2038,8 @@ Java_livekit_LiveKitNativeAudioBridge_nativeSetRemoteAudioSink(JNIEnv* env, jcla
 extern "C" JNIEXPORT jlong JNICALL
 Java_livekit_OrbitLiveKitNativeRaw_nativeCreateSession(JNIEnv*, jclass) {
     initializeSdkOnce();
+    g_sessionDestroyed = false;
+    g_callbackShutdown = false;
     std::lock_guard<std::mutex> lock(g_sessionMutex);
     g_rawEpoch += 1;
     g_rawDisconnecting = false;
@@ -1290,6 +2055,17 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeDestroySession(JNIEnv* env, jclass, jlo
         return kStatusStaleEvent;
     }
 
+    g_callbackShutdown = true;
+    g_sessionDestroyed = true;
+    {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        g_rawDisconnecting = true;
+        g_acceptingFrames = false;
+        if (g_room != nullptr) {
+            g_room->setDelegate(nullptr);
+        }
+        stopAllRemoteReadersLocked();
+    }
     g_audioMixer.stop();
     {
         std::lock_guard<std::mutex> lock(g_eventSinkMutex);
@@ -1316,8 +2092,6 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeDestroySession(JNIEnv* env, jclass, jlo
         }
     }
     std::lock_guard<std::mutex> lock(g_sessionMutex);
-    g_rawDisconnecting = true;
-    g_acceptingFrames = false;
     resetRoomLocked();
     clearRawErrorLocked();
     return kStatusOk;
@@ -1370,6 +2144,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetMixedAudioSink(JNIEnv* env, jclass, 
         env->GetJavaVM(&g_javaVm);
     }
 
+    g_audioMixer.stop();
     {
         std::lock_guard<std::mutex> lock(g_mixedAudioSinkMutex);
         if (g_mixedAudioSink != nullptr) {
@@ -1402,8 +2177,6 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetMixedAudioSink(JNIEnv* env, jclass, 
 
     if (sink != nullptr) {
         g_audioMixer.start();
-    } else {
-        g_audioMixer.stop();
     }
 
     std::lock_guard<std::mutex> lock(g_sessionMutex);
@@ -1426,7 +2199,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeConnectAsync(
     jlong epoch,
     jstring url,
     jstring token,
-    jstring) {
+    jstring identity) {
     if (!isRawSessionValid(sessionId)) {
         std::lock_guard<std::mutex> lock(g_sessionMutex);
         setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativeConnectAsync", false);
@@ -1435,6 +2208,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeConnectAsync(
 
     const std::string urlString = jStringToString(env, url);
     const std::string tokenString = jStringToString(env, token);
+    const std::string identityString = jStringToString(env, identity);
     if (urlString.empty() || tokenString.empty()) {
         {
             std::lock_guard<std::mutex> lock(g_sessionMutex);
@@ -1459,16 +2233,13 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeConnectAsync(
         g_rawDisconnecting = false;
         clearRawErrorLocked();
     }
+    g_sessionDestroyed = false;
+    g_callbackShutdown = false;
 
     dispatchSimpleNativeEvent(env, "livekit/NativeMediaEvent$Connecting", sessionId, epoch);
-    std::thread([sessionId, epoch, urlString, tokenString] {
-        JNIEnv* workerEnv = nullptr;
-        bool attached = false;
-        getJniEnv(&workerEnv, &attached);
-        logJniAttachSuccess("native-event", attached);
-
+    std::thread([sessionId, epoch, urlString, tokenString, identityString] {
         std::string errorMessage;
-        const bool connected = connectRoom(urlString, tokenString, &errorMessage);
+        const bool connected = connectRoom(urlString, tokenString, identityString, &errorMessage);
 
         bool shouldDispatch = false;
         bool cleanupDisconnectedStaleConnect = false;
@@ -1488,6 +2259,13 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeConnectAsync(
         if (cleanupDisconnectedStaleConnect) {
             std::lock_guard<std::mutex> lock(g_sessionMutex);
             resetRoomLocked();
+        }
+
+        JNIEnv* workerEnv = nullptr;
+        bool attached = false;
+        if (shouldDispatch) {
+            getJniEnv(&workerEnv, &attached, "native-event");
+            logJniAttachSuccess("native-event", attached);
         }
 
         if (workerEnv != nullptr && shouldDispatch) {
@@ -1543,12 +2321,17 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeDisconnect(
         return kStatusStaleEvent;
     }
 
+    g_callbackShutdown = true;
     g_audioMixer.stop();
     {
         std::lock_guard<std::mutex> lock(g_sessionMutex);
         g_rawEpoch = epoch;
         g_rawDisconnecting = true;
         g_acceptingFrames = false;
+        if (g_room != nullptr) {
+            g_room->setDelegate(nullptr);
+        }
+        stopAllRemoteReadersLocked();
         resetRoomLocked();
         clearRawErrorLocked();
         std::cout << "DEBUG [OrbitLiveKitAudio] disconnect cleanup completed" << std::endl;
@@ -1569,7 +2352,9 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePublishAudio(
     jlong sessionId,
     jlong epoch,
     jint sampleRate,
-    jint channels) {
+    jint channels,
+    jint queueSizeMs,
+    jboolean expectedTestTone) {
     if (!isRawSessionValid(sessionId)) {
         std::lock_guard<std::mutex> lock(g_sessionMutex);
         setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativePublishAudio", false);
@@ -1583,7 +2368,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePublishAudio(
     }
 
     const jboolean published =
-        Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(env, nullptr, sampleRate, channels, kFrameMs);
+        Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(env, nullptr, sampleRate, channels, kFrameMs, queueSizeMs, expectedTestTone);
     if (published == JNI_TRUE) {
         dispatchSimpleNativeEvent(env, "livekit/NativeMediaEvent$AudioPublished", sessionId, epoch);
         return kStatusOk;
@@ -1718,6 +2503,10 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetAudioMuted(JNIEnv*, jclass, jlong se
         } else {
             track->unmute();
         }
+        std::cout << "DEBUG [OrbitLiveKitAudio] native mic muted="
+                  << (muted == JNI_TRUE ? "true" : "false")
+                  << " trackMuted=" << (track->muted() ? "true" : "false")
+                  << std::endl;
         return kStatusOk;
     } catch (const std::exception& error) {
         std::lock_guard<std::mutex> lock(g_sessionMutex);
@@ -1758,5 +2547,14 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeGetReadinessJson(JNIEnv* env, jclass, j
 extern "C" JNIEXPORT jint JNICALL
 JNI_OnLoad(JavaVM* vm, void*) {
     g_javaVm = vm;
+    g_sessionDestroyed = false;
+    g_callbackShutdown = false;
     return JNI_VERSION_1_8;
+}
+
+extern "C" JNIEXPORT void JNICALL
+JNI_OnUnload(JavaVM*, void*) {
+    g_callbackShutdown = true;
+    g_sessionDestroyed = true;
+    g_javaVm = nullptr;
 }
