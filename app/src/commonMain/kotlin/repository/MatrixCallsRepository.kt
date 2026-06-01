@@ -616,11 +616,8 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
             println("ERROR [MatrixCallsRepository] Failed to publish m.call: ${e.message}")
         }
 
-        // 3. Join as member (will publish the member event)
-        joinGroupCall(roomId, "m.call")
-        
-        // Optimistically update local state
-        context.activeGroupCalls.getOrPut(roomId) { MutableStateFlow(null) }.value = "${context.defaultLiveKitServiceUrl}?callId="
+        // 3. Membership is published by CallManager only after native MediaReady.
+        context.activeGroupCalls.getOrPut(roomId) { MutableStateFlow(null) }.value = "${context.defaultLiveKitServiceUrl}?callId=m.call"
     }
 
     override suspend fun endGroupCall(roomId: String, callId: String) {
@@ -645,7 +642,16 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
 
     override suspend fun joinGroupCall(roomId: String, callId: String) {
         println("DEBUG [MatrixCallsRepository] JOINING MSC3401 Call for $roomId (callId=$callId)")
-        
+
+        publishGroupCallMembership(roomId, callId, audio = true, video = false)
+    }
+
+    override suspend fun updateGroupCallMembershipCapabilities(roomId: String, callId: String, audio: Boolean, video: Boolean) {
+        println("DEBUG [MatrixCallsRepository] publishing MatrixRTC membership audio=$audio video=$video")
+        publishGroupCallMembership(roomId, callId, audio = audio, video = video)
+    }
+
+    private suspend fun publishGroupCallMembership(roomId: String, callId: String, audio: Boolean, video: Boolean) {
         val userId = context.userId ?: return
         val deviceId = context.deviceId ?: "ORBIT_DESKTOP"
         // MSC3401 State Key Format: _@user:domain_deviceId_callId
@@ -674,6 +680,7 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
         try {
             // Element expects call_id to be empty string for room-wide calls
             val jsonCallId = if (callId == "m.call") "" else callId
+            val membershipId = "$userId:$deviceId"
 
             val payload = buildJsonObject {
                 put("application", "m.call")
@@ -681,10 +688,10 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                 put("device_id", deviceId)
                 // MSC3401: membershipID MUST match the LiveKit identity (COLONS)
                 // This is critical for Element to link the media tracks to the user.
-                put("membershipID", "$userId:$deviceId") 
+                put("membershipID", membershipId)
                 // MSC3401 strictly requires created_ts for focus selection
                 put("created_ts", getTimeMillis())
-                put("m.call.intent", "video")
+                put("m.call.intent", if (video) "video" else "audio")
                 put("scope", "m.room")
                 put("expires", 14400000)
                 put("foci_preferred", buildJsonArray {
@@ -708,10 +715,11 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                     })
                 })
                 put("capabilities", buildJsonObject {
-                    put("audio", true)
-                    put("video", true)
+                    put("audio", audio)
+                    put("video", video)
                 })
             }
+            println("DEBUG [MatrixCallsRepository] MatrixRTC membership details userId=$userId deviceId=$deviceId membershipID=$membershipId call_id=${jsonCallId.ifBlank { "<room>" }} roomId=$roomId intent=${if (video) "video" else "audio"} capabilitiesAudio=$audio capabilitiesVideo=$video")
             println("DEBUG [MatrixCallsRepository] Sending m.call.member payload: $payload")
             
             val encodedStateKey = stateKey.encode()
@@ -723,14 +731,7 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                 setBody(payload)
             }
             println("DEBUG [MatrixCallsRepository] Published m.call.member (modern), status: ${response1.status.value}")
-            
-            // ATTEMPT 2: Legacy MSC3401 namespace (Required by some servers/Orbit rooms)
-            val response2 = context.httpClient.put(context.fullUrl("/rooms/$roomId/state/org.matrix.msc3401.call.member/$encodedStateKey")) {
-                header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
-                contentType(ContentType.Application.Json)
-                setBody(payload)
-            }
-            println("DEBUG [MatrixCallsRepository] Published m.call.member (legacy), status: ${response2.status.value}")
+            println("DEBUG [MatrixCallsRepository] Skipped legacy org.matrix.msc3401.call.member publish to avoid duplicate Element participants")
 
         } catch (e: Exception) {
             println("ERROR [MatrixCallsRepository] Failed to publish member join: ${e.message}")

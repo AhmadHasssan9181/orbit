@@ -156,6 +156,10 @@ fun WebRtcEffects(
             repository.leaveGroupCall(roomId, callId)
         }
 
+        callManager.onUpdateGroupCallMembershipCapabilities = { roomId, callId, audio, video ->
+            repository.updateGroupCallMembershipCapabilities(roomId, callId, audio, video)
+        }
+
         // --- ICE Candidate Batching Logic ---
         val candidateBatch = mutableListOf<webrtc.IceCandidateModel>()
         var batchJob: kotlinx.coroutines.Job? = null
