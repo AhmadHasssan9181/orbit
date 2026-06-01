@@ -4,14 +4,20 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <cmath>
 #include <cstring>
+#include <deque>
 #include <exception>
 #include <iostream>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -33,24 +39,293 @@ std::mutex g_sinkMutex;
 jobject g_remoteAudioSink = nullptr;
 jmethodID g_remoteAudioSinkMethod = nullptr;
 
+std::mutex g_mixedAudioSinkMutex;
+jobject g_mixedAudioSink = nullptr;
+jmethodID g_mixedAudioSinkMethod = nullptr;
+
 std::mutex g_eventSinkMutex;
 jobject g_eventSink = nullptr;
 jmethodID g_eventSinkMethod = nullptr;
 
+std::mutex g_jniAttachLogMutex;
+std::unordered_set<std::string> g_loggedJniAttachSuccess;
+
 struct RemoteAudioReader {
     std::string trackSid;
+    std::string participantIdentity;
     std::shared_ptr<livekit::AudioStream> stream;
     std::thread thread;
     std::atomic_bool running{true};
 };
 
-std::vector<std::shared_ptr<RemoteAudioReader>> g_remoteAudioReaders;
+std::unordered_map<std::string, std::shared_ptr<RemoteAudioReader>> g_remoteAudioReaders;
 
 constexpr jint kSampleRate = 48000;
 constexpr jint kChannels = 1;
 constexpr jint kFrameMs = 10;
 constexpr jint kSamplesPerChannel = 480;
 constexpr jint kFrameBytes = 960;
+constexpr std::size_t kTargetParticipantQueueSamples = kSamplesPerChannel * 6; // 60 ms target playout depth
+constexpr std::size_t kMaxParticipantQueueSamples = kSamplesPerChannel * 12; // 120 ms
+constexpr jlong kRawSessionId = 1;
+jlong g_rawEpoch = 0;
+bool g_rawDisconnecting = false;
+
+void setRawErrorThreadSafe(
+    const std::string& code,
+    const std::string& message,
+    const std::string& operation,
+    bool recoverable);
+
+struct ParticipantPcmQueue {
+    explicit ParticipantPcmQueue(std::string identity)
+        : participantIdentity(std::move(identity)) {}
+
+    std::string participantIdentity;
+    std::deque<std::int16_t> pcm;
+    std::mutex queueMutex;
+    std::atomic_bool active{true};
+    std::atomic<std::int64_t> lastFrameNs{0};
+    bool targetDepthPrimed{false};
+};
+
+void dispatchMixedAudioFrame(const std::vector<std::int16_t>& samples, std::int64_t timestampNs);
+
+class NativeAudioMixer {
+public:
+    ~NativeAudioMixer() {
+        stop();
+    }
+
+    void start() {
+        bool expected = false;
+        if (!running_.compare_exchange_strong(expected, true)) {
+            return;
+        }
+
+        worker_ = std::thread([this] { mixLoop(); });
+    }
+
+    void stop() {
+        const bool wasRunning = running_.exchange(false);
+        if (wasRunning && worker_.joinable()) {
+            if (worker_.get_id() == std::this_thread::get_id()) {
+                worker_.detach();
+            } else {
+                worker_.join();
+            }
+        }
+        clearParticipants();
+        mixedCallbackStartedLogged_ = false;
+    }
+
+    void addParticipant(const std::string& identity) {
+        if (identity.empty()) {
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto& queue = participants_[identity];
+        if (queue == nullptr) {
+            queue = std::make_shared<ParticipantPcmQueue>(identity);
+            std::cout << "DEBUG [OrbitLiveKitAudio] remote audio participant added: "
+                      << identity << std::endl;
+        }
+        queue->active = true;
+    }
+
+    void removeParticipant(const std::string& identity) {
+        if (identity.empty()) {
+            return;
+        }
+
+        std::shared_ptr<ParticipantPcmQueue> removed;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto it = participants_.find(identity);
+            if (it == participants_.end()) {
+                return;
+            }
+            removed = it->second;
+            participants_.erase(it);
+        }
+        if (removed != nullptr) {
+            removed->active = false;
+            std::lock_guard<std::mutex> queueLock(removed->queueMutex);
+            removed->pcm.clear();
+        }
+    }
+
+    void clearParticipants() {
+        std::unordered_map<std::string, std::shared_ptr<ParticipantPcmQueue>> participants;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            participants.swap(participants_);
+        }
+
+        for (const auto& entry : participants) {
+            if (entry.second == nullptr) {
+                continue;
+            }
+            entry.second->active = false;
+            std::lock_guard<std::mutex> queueLock(entry.second->queueMutex);
+            entry.second->pcm.clear();
+        }
+    }
+
+    void pushParticipantFrame(
+        const std::string& identity,
+        const std::int16_t* pcm,
+        int sampleRate,
+        int samplesPerChannel,
+        int channels,
+        std::int64_t timestampNs) {
+        if (identity.empty() ||
+            pcm == nullptr ||
+            sampleRate != kSampleRate ||
+            samplesPerChannel <= 0 ||
+            channels <= 0) {
+            return;
+        }
+
+        std::shared_ptr<ParticipantPcmQueue> queue;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto& existing = participants_[identity];
+            if (existing == nullptr) {
+                existing = std::make_shared<ParticipantPcmQueue>(identity);
+                std::cout << "DEBUG [OrbitLiveKitAudio] remote audio participant added: "
+                          << identity << std::endl;
+            }
+            existing->active = true;
+            queue = existing;
+        }
+
+        std::vector<std::int16_t> mono;
+        mono.reserve(static_cast<std::size_t>(samplesPerChannel));
+        for (int sample = 0; sample < samplesPerChannel; ++sample) {
+            if (channels == 1) {
+                mono.push_back(pcm[sample]);
+            } else {
+                std::int32_t sum = 0;
+                for (int channel = 0; channel < channels; ++channel) {
+                    sum += pcm[sample * channels + channel];
+                }
+                mono.push_back(static_cast<std::int16_t>(sum / channels));
+            }
+        }
+
+        {
+            std::lock_guard<std::mutex> queueLock(queue->queueMutex);
+            while (queue->pcm.size() + mono.size() > kMaxParticipantQueueSamples && !queue->pcm.empty()) {
+                queue->pcm.pop_front();
+            }
+            queue->pcm.insert(queue->pcm.end(), mono.begin(), mono.end());
+            if (queue->pcm.size() >= kTargetParticipantQueueSamples) {
+                queue->targetDepthPrimed = true;
+            }
+            queue->lastFrameNs = timestampNs;
+        }
+    }
+
+private:
+    std::vector<std::shared_ptr<ParticipantPcmQueue>> snapshotQueues() {
+        std::vector<std::shared_ptr<ParticipantPcmQueue>> queues;
+        std::lock_guard<std::mutex> lock(mutex_);
+        queues.reserve(participants_.size());
+        for (const auto& entry : participants_) {
+            if (entry.second != nullptr && entry.second->active) {
+                queues.push_back(entry.second);
+            }
+        }
+        return queues;
+    }
+
+    void mixOneFrame() {
+        const auto queues = snapshotQueues();
+        if (queues.empty()) {
+            return;
+        }
+
+        std::vector<std::int32_t> accumulator(kSamplesPerChannel, 0);
+        int activeParticipants = 0;
+
+        for (const auto& queue : queues) {
+            if (queue == nullptr || !queue->active) {
+                continue;
+            }
+
+            std::vector<std::int16_t> frame(kSamplesPerChannel, 0);
+            {
+                std::lock_guard<std::mutex> queueLock(queue->queueMutex);
+                const bool canRead = queue->targetDepthPrimed || queue->pcm.size() >= kTargetParticipantQueueSamples;
+                if (canRead) {
+                    queue->targetDepthPrimed = true;
+                }
+                const auto samplesToRead = canRead
+                    ? std::min<std::size_t>(queue->pcm.size(), kSamplesPerChannel)
+                    : 0;
+                for (std::size_t i = 0; i < samplesToRead; ++i) {
+                    frame[i] = queue->pcm.front();
+                    queue->pcm.pop_front();
+                }
+                if (queue->pcm.empty()) {
+                    queue->targetDepthPrimed = false;
+                }
+            }
+
+            activeParticipants += 1;
+            for (int i = 0; i < kSamplesPerChannel; ++i) {
+                accumulator[i] += frame[static_cast<std::size_t>(i)];
+            }
+        }
+
+        if (activeParticipants <= 0) {
+            return;
+        }
+
+        const double divisor = std::sqrt(static_cast<double>(activeParticipants));
+        std::vector<std::int16_t> mixed(kSamplesPerChannel, 0);
+        for (int i = 0; i < kSamplesPerChannel; ++i) {
+            const auto scaled = static_cast<std::int32_t>(accumulator[i] / divisor);
+            mixed[static_cast<std::size_t>(i)] = static_cast<std::int16_t>(
+                std::clamp(scaled, -32768, 32767));
+        }
+
+        if (!mixedCallbackStartedLogged_) {
+            mixedCallbackStartedLogged_ = true;
+            std::cout << "DEBUG [OrbitLiveKitAudio] mixed audio callback started" << std::endl;
+        }
+
+        const auto timestampNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        dispatchMixedAudioFrame(mixed, static_cast<std::int64_t>(timestampNs));
+    }
+
+    void mixLoop() {
+        using clock = std::chrono::steady_clock;
+        auto nextTick = clock::now();
+
+        while (running_) {
+            nextTick += std::chrono::milliseconds(kFrameMs);
+            mixOneFrame();
+            std::this_thread::sleep_until(nextTick);
+
+            const auto now = clock::now();
+            if (now > nextTick + std::chrono::milliseconds(20)) {
+                nextTick = now;
+            }
+        }
+    }
+
+    std::atomic_bool running_{false};
+    std::atomic_bool mixedCallbackStartedLogged_{false};
+    std::thread worker_;
+    std::mutex mutex_;
+    std::unordered_map<std::string, std::shared_ptr<ParticipantPcmQueue>> participants_;
+};
+
+NativeAudioMixer g_audioMixer;
 
 void initializeSdkOnce() {
     std::call_once(g_initializeOnce, [] {
@@ -78,6 +353,8 @@ bool getJniEnv(JNIEnv** env, bool* attached) {
     *env = nullptr;
     *attached = false;
     if (g_javaVm == nullptr) {
+        setRawErrorThreadSafe("NATIVE_EXCEPTION", "JavaVM is not available for JNI callback", "JNI_ATTACH", true);
+        std::cerr << "ERROR [OrbitLiveKitAudio] JavaVM is not available for JNI callback" << std::endl;
         return false;
     }
 
@@ -85,15 +362,112 @@ bool getJniEnv(JNIEnv** env, bool* attached) {
     if (getEnvResult == JNI_OK) {
         return true;
     }
+    if (getEnvResult == JNI_EVERSION) {
+        setRawErrorThreadSafe("NATIVE_EXCEPTION", "Unsupported JNI version for callback thread", "JNI_ATTACH", false);
+        std::cerr << "ERROR [OrbitLiveKitAudio] Unsupported JNI version for callback thread" << std::endl;
+        return false;
+    }
     if (getEnvResult != JNI_EDETACHED) {
+        setRawErrorThreadSafe("NATIVE_EXCEPTION", "JNI GetEnv failed with code " + std::to_string(getEnvResult), "JNI_ATTACH", true);
+        std::cerr << "ERROR [OrbitLiveKitAudio] JNI GetEnv failed with code "
+                  << getEnvResult << std::endl;
         return false;
     }
 
-    if (g_javaVm->AttachCurrentThread(reinterpret_cast<void**>(env), nullptr) != JNI_OK) {
+    JavaVMAttachArgs args{};
+    args.version = JNI_VERSION_1_8;
+    args.name = const_cast<char*>("OrbitLiveKitAudio");
+    args.group = nullptr;
+    const jint attachResult = g_javaVm->AttachCurrentThread(reinterpret_cast<void**>(env), &args);
+    if (attachResult != JNI_OK) {
+        setRawErrorThreadSafe("NATIVE_EXCEPTION", "JNI AttachCurrentThread failed with code " + std::to_string(attachResult), "JNI_ATTACH", true);
+        std::cerr << "ERROR [OrbitLiveKitAudio] JNI AttachCurrentThread failed with code "
+                  << attachResult << std::endl;
         return false;
     }
     *attached = true;
     return true;
+}
+
+void releaseJniEnv(bool attached) {
+    if (attached && g_javaVm != nullptr) {
+        g_javaVm->DetachCurrentThread();
+    }
+}
+
+void logJniAttachSuccess(const char* callbackType, bool attached) {
+    if (!attached || callbackType == nullptr) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(g_jniAttachLogMutex);
+    if (g_loggedJniAttachSuccess.insert(callbackType).second) {
+        std::cout << "DEBUG [OrbitLiveKitAudio] JNI thread attach succeeded for "
+                  << callbackType << std::endl;
+    }
+}
+
+void dispatchMixedAudioFrame(const std::vector<std::int16_t>& samples, std::int64_t timestampNs) {
+    if (samples.empty()) {
+        return;
+    }
+
+    JNIEnv* env = nullptr;
+    bool attached = false;
+    if (!getJniEnv(&env, &attached) || env == nullptr) {
+        return;
+    }
+    logJniAttachSuccess("mixed-audio", attached);
+
+    jobject sink = nullptr;
+    jmethodID method = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_mixedAudioSinkMutex);
+        if (g_mixedAudioSink != nullptr && g_mixedAudioSinkMethod != nullptr) {
+            sink = env->NewLocalRef(g_mixedAudioSink);
+            method = g_mixedAudioSinkMethod;
+        }
+    }
+
+    if (sink != nullptr && method != nullptr) {
+        jlong epoch = 0;
+        bool shouldDispatch = false;
+        {
+            std::lock_guard<std::mutex> lock(g_sessionMutex);
+            epoch = g_rawEpoch;
+            shouldDispatch = g_connected && !g_rawDisconnecting;
+        }
+
+        if (shouldDispatch) {
+            const auto byteLength = static_cast<jsize>(samples.size() * sizeof(std::int16_t));
+            jbyteArray pcm = env->NewByteArray(byteLength);
+            if (pcm != nullptr) {
+                env->SetByteArrayRegion(
+                    pcm,
+                    0,
+                    byteLength,
+                    reinterpret_cast<const jbyte*>(samples.data()));
+                env->CallVoidMethod(
+                    sink,
+                    method,
+                    kRawSessionId,
+                    epoch,
+                    pcm,
+                    static_cast<jint>(kSampleRate),
+                    static_cast<jint>(kChannels),
+                    static_cast<jint>(kSamplesPerChannel),
+                    static_cast<jlong>(timestampNs));
+                if (env->ExceptionCheck()) {
+                    env->ExceptionDescribe();
+                    env->ExceptionClear();
+                }
+                env->DeleteLocalRef(pcm);
+            }
+        }
+        env->DeleteLocalRef(sink);
+    }
+
+    releaseJniEnv(attached);
 }
 
 void dispatchRemoteAudioFrame(const livekit::AudioFrame& frame) {
@@ -102,6 +476,7 @@ void dispatchRemoteAudioFrame(const livekit::AudioFrame& frame) {
     if (!getJniEnv(&env, &attached) || env == nullptr) {
         return;
     }
+    logJniAttachSuccess("remote-audio", attached);
 
     jobject sink = nullptr;
     jmethodID method = nullptr;
@@ -139,9 +514,7 @@ void dispatchRemoteAudioFrame(const livekit::AudioFrame& frame) {
         env->DeleteLocalRef(sink);
     }
 
-    if (attached) {
-        g_javaVm->DetachCurrentThread();
-    }
+    releaseJniEnv(attached);
 }
 
 void stopReader(const std::shared_ptr<RemoteAudioReader>& reader) {
@@ -165,30 +538,62 @@ void stopReader(const std::shared_ptr<RemoteAudioReader>& reader) {
 void stopAllRemoteReadersLocked() {
     auto readers = std::move(g_remoteAudioReaders);
     g_remoteAudioReaders.clear();
-    for (const auto& reader : readers) {
-        stopReader(reader);
+    for (const auto& entry : readers) {
+        stopReader(entry.second);
     }
+    g_audioMixer.clearParticipants();
 }
 
-void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track) {
+void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track, const std::string& participantIdentity) {
     if (track == nullptr || track->kind() != livekit::TrackKind::KIND_AUDIO) {
         return;
     }
 
     try {
+        const std::string trackSid = track->sid();
+        if (g_remoteAudioReaders.find(trackSid) != g_remoteAudioReaders.end()) {
+            std::cout << "DEBUG [OrbitLiveKitAudio] Remote audio reader already active for track "
+                      << trackSid << std::endl;
+            return;
+        }
+
         livekit::AudioStream::Options options;
         options.capacity = 20;
 
         auto reader = std::make_shared<RemoteAudioReader>();
-        reader->trackSid = track->sid();
+        reader->trackSid = trackSid;
+        reader->participantIdentity = participantIdentity.empty() ? track->sid() : participantIdentity;
+        g_audioMixer.addParticipant(reader->participantIdentity);
         reader->stream = livekit::AudioStream::fromTrack(track, options);
         reader->thread = std::thread([reader] {
             livekit::AudioFrameEvent event;
             while (reader->running && reader->stream != nullptr && reader->stream->read(event)) {
-                dispatchRemoteAudioFrame(event.frame);
+                const auto& samples = event.frame.data();
+                if (samples.empty()) {
+                    continue;
+                }
+                const auto timestampNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count();
+                g_audioMixer.pushParticipantFrame(
+                    reader->participantIdentity,
+                    samples.data(),
+                    event.frame.sampleRate(),
+                    event.frame.samplesPerChannel(),
+                    event.frame.numChannels(),
+                    static_cast<std::int64_t>(timestampNs));
+            }
+            std::unique_lock<std::mutex> lock(g_sessionMutex, std::try_to_lock);
+            if (lock.owns_lock()) {
+                auto it = g_remoteAudioReaders.find(reader->trackSid);
+                if (it != g_remoteAudioReaders.end() && it->second == reader) {
+                    g_audioMixer.removeParticipant(reader->participantIdentity);
+                    g_remoteAudioReaders.erase(it);
+                    std::cout << "DEBUG [OrbitLiveKitAudio] Remote audio reader exited for track "
+                              << reader->trackSid << std::endl;
+                }
             }
         });
-        g_remoteAudioReaders.push_back(reader);
+        g_remoteAudioReaders[trackSid] = reader;
         std::cout << "DEBUG [OrbitLiveKitAudio] Started remote audio stream for track "
                   << reader->trackSid << std::endl;
     } catch (const std::exception& error) {
@@ -198,24 +603,49 @@ void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track) {
 }
 
 void stopRemoteReaderLocked(const std::string& trackSid) {
-    auto it = std::remove_if(
-        g_remoteAudioReaders.begin(),
-        g_remoteAudioReaders.end(),
-        [&](const std::shared_ptr<RemoteAudioReader>& reader) {
-            if (reader != nullptr && reader->trackSid == trackSid) {
-                stopReader(reader);
-                return true;
-            }
-            return false;
-        });
-    g_remoteAudioReaders.erase(it, g_remoteAudioReaders.end());
+    auto it = g_remoteAudioReaders.find(trackSid);
+    if (it == g_remoteAudioReaders.end()) {
+        return;
+    }
+
+    auto reader = it->second;
+    g_remoteAudioReaders.erase(it);
+    if (reader != nullptr) {
+        g_audioMixer.removeParticipant(reader->participantIdentity);
+        stopReader(reader);
+    }
+}
+
+void stopRemoteReadersForParticipantLocked(const std::string& participantIdentity) {
+    if (participantIdentity.empty()) {
+        return;
+    }
+
+    std::vector<std::shared_ptr<RemoteAudioReader>> readers;
+    for (auto it = g_remoteAudioReaders.begin(); it != g_remoteAudioReaders.end();) {
+        const auto& reader = it->second;
+        if (reader != nullptr && reader->participantIdentity == participantIdentity) {
+            readers.push_back(reader);
+            it = g_remoteAudioReaders.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    g_audioMixer.removeParticipant(participantIdentity);
+    for (const auto& reader : readers) {
+        stopReader(reader);
+    }
 }
 
 class OrbitAudioRoomDelegate final : public livekit::RoomDelegate {
 public:
     void onTrackSubscribed(livekit::Room&, const livekit::TrackSubscribedEvent& event) override {
         std::lock_guard<std::mutex> lock(g_sessionMutex);
-        startRemoteReaderLocked(event.track);
+        const std::string identity = event.participant != nullptr
+            ? event.participant->identity()
+            : std::string{};
+        startRemoteReaderLocked(event.track, identity);
     }
 
     void onTrackUnsubscribed(livekit::Room&, const livekit::TrackUnsubscribedEvent& event) override {
@@ -224,6 +654,14 @@ public:
         }
         std::lock_guard<std::mutex> lock(g_sessionMutex);
         stopRemoteReaderLocked(event.track->sid());
+    }
+
+    void onParticipantDisconnected(livekit::Room&, const livekit::ParticipantDisconnectedEvent& event) override {
+        if (event.participant == nullptr) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        stopRemoteReadersForParticipantLocked(event.participant->identity());
     }
 
     void onDisconnected(livekit::Room&, const livekit::DisconnectedEvent&) override {
@@ -255,6 +693,7 @@ bool hasReadyMicLocked() {
     return g_connected &&
         g_micPublished &&
         g_acceptingFrames &&
+        !g_rawDisconnecting &&
         g_room != nullptr &&
         g_audioSource != nullptr &&
         g_audioTrack != nullptr;
@@ -276,10 +715,7 @@ constexpr jint kStatusVideoCaptureFailed = 9;
 constexpr jint kStatusNativeException = 22;
 constexpr jint kStatusStaleEvent = 23;
 
-constexpr jlong kRawSessionId = 1;
-jlong g_rawEpoch = 0;
 bool g_rawHasLastError = false;
-bool g_rawDisconnecting = false;
 std::string g_rawLastErrorJson =
     R"({"code":"NONE","message":"","operation":"native","recoverable":false})";
 
@@ -328,6 +764,15 @@ void setRawErrorLocked(
         "\",\"message\":\"" + escapeJson(message) +
         "\",\"operation\":\"" + escapeJson(operation) +
         "\",\"recoverable\":" + (recoverable ? "true" : "false") + "}";
+}
+
+void setRawErrorThreadSafe(
+    const std::string& code,
+    const std::string& message,
+    const std::string& operation,
+    bool recoverable) {
+    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    setRawErrorLocked(code, message, operation, recoverable);
 }
 
 void dispatchNativeEvent(JNIEnv* env, jobject event) {
@@ -591,6 +1036,19 @@ bool connectRoom(const std::string& urlString, const std::string& tokenString, s
             return false;
         }
 
+        for (const auto& participant : g_room->remoteParticipants()) {
+            if (participant == nullptr) {
+                continue;
+            }
+            for (const auto& publicationEntry : participant->trackPublications()) {
+                const auto& publication = publicationEntry.second;
+                if (publication == nullptr || !publication->subscribed()) {
+                    continue;
+                }
+                startRemoteReaderLocked(publication->track(), participant->identity());
+            }
+        }
+
         std::cout << "DEBUG [OrbitLiveKitAudio] native connect succeeded" << std::endl;
         return true;
     } catch (const std::exception& error) {
@@ -629,6 +1087,7 @@ Java_livekit_LiveKitNativeAudioBridge_nativeConnect(JNIEnv* env, jclass, jstring
 
 extern "C" JNIEXPORT void JNICALL
 Java_livekit_LiveKitNativeAudioBridge_nativeDisconnect(JNIEnv*, jclass) {
+    g_audioMixer.stop();
     std::lock_guard<std::mutex> lock(g_sessionMutex);
     g_acceptingFrames = false;
     resetRoomLocked();
@@ -663,7 +1122,7 @@ Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(
         g_audioSource = std::make_shared<livekit::AudioSource>(
             static_cast<int>(sampleRate),
             static_cast<int>(channels),
-            static_cast<int>(frameMs));
+            0);
         g_audioTrack = g_room->localParticipant()->publishAudioTrack(
             "microphone",
             g_audioSource,
@@ -824,13 +1283,38 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeCreateSession(JNIEnv*, jclass) {
 }
 
 extern "C" JNIEXPORT jint JNICALL
-Java_livekit_OrbitLiveKitNativeRaw_nativeDestroySession(JNIEnv*, jclass, jlong sessionId) {
+Java_livekit_OrbitLiveKitNativeRaw_nativeDestroySession(JNIEnv* env, jclass, jlong sessionId) {
     if (!isRawSessionValid(sessionId)) {
         std::lock_guard<std::mutex> lock(g_sessionMutex);
         setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativeDestroySession", false);
         return kStatusStaleEvent;
     }
 
+    g_audioMixer.stop();
+    {
+        std::lock_guard<std::mutex> lock(g_eventSinkMutex);
+        if (g_eventSink != nullptr) {
+            env->DeleteGlobalRef(g_eventSink);
+            g_eventSink = nullptr;
+            g_eventSinkMethod = nullptr;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_mixedAudioSinkMutex);
+        if (g_mixedAudioSink != nullptr) {
+            env->DeleteGlobalRef(g_mixedAudioSink);
+            g_mixedAudioSink = nullptr;
+            g_mixedAudioSinkMethod = nullptr;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_sinkMutex);
+        if (g_remoteAudioSink != nullptr) {
+            env->DeleteGlobalRef(g_remoteAudioSink);
+            g_remoteAudioSink = nullptr;
+            g_remoteAudioSinkMethod = nullptr;
+        }
+    }
     std::lock_guard<std::mutex> lock(g_sessionMutex);
     g_rawDisconnecting = true;
     g_acceptingFrames = false;
@@ -881,7 +1365,47 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetEventSink(JNIEnv* env, jclass, jobje
 }
 
 extern "C" JNIEXPORT jint JNICALL
-Java_livekit_OrbitLiveKitNativeRaw_nativeSetMixedAudioSink(JNIEnv*, jclass, jobject) {
+Java_livekit_OrbitLiveKitNativeRaw_nativeSetMixedAudioSink(JNIEnv* env, jclass, jobject sink) {
+    if (g_javaVm == nullptr) {
+        env->GetJavaVM(&g_javaVm);
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_mixedAudioSinkMutex);
+        if (g_mixedAudioSink != nullptr) {
+            env->DeleteGlobalRef(g_mixedAudioSink);
+            g_mixedAudioSink = nullptr;
+            g_mixedAudioSinkMethod = nullptr;
+        }
+
+        if (sink != nullptr) {
+            jobject newSink = env->NewGlobalRef(sink);
+            jclass sinkClass = env->GetObjectClass(sink);
+            jmethodID method = env->GetMethodID(sinkClass, "onMixedAudioFrame", "(JJ[BIIIJ)V");
+            env->DeleteLocalRef(sinkClass);
+
+            if (method == nullptr) {
+                if (env->ExceptionCheck()) {
+                    env->ExceptionDescribe();
+                    env->ExceptionClear();
+                }
+                env->DeleteGlobalRef(newSink);
+                std::lock_guard<std::mutex> sessionLock(g_sessionMutex);
+                setRawErrorLocked("NATIVE_EXCEPTION", "NativeMixedAudioSink.onMixedAudioFrame not found", "nativeSetMixedAudioSink", false);
+                return kStatusNativeException;
+            }
+
+            g_mixedAudioSink = newSink;
+            g_mixedAudioSinkMethod = method;
+        }
+    }
+
+    if (sink != nullptr) {
+        g_audioMixer.start();
+    } else {
+        g_audioMixer.stop();
+    }
+
     std::lock_guard<std::mutex> lock(g_sessionMutex);
     clearRawErrorLocked();
     return kStatusOk;
@@ -941,6 +1465,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeConnectAsync(
         JNIEnv* workerEnv = nullptr;
         bool attached = false;
         getJniEnv(&workerEnv, &attached);
+        logJniAttachSuccess("native-event", attached);
 
         std::string errorMessage;
         const bool connected = connectRoom(urlString, tokenString, &errorMessage);
@@ -981,9 +1506,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeConnectAsync(
             }
         }
 
-        if (attached && g_javaVm != nullptr) {
-            g_javaVm->DetachCurrentThread();
-        }
+        releaseJniEnv(attached);
     }).detach();
 
     return kStatusOk;
@@ -1020,6 +1543,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeDisconnect(
         return kStatusStaleEvent;
     }
 
+    g_audioMixer.stop();
     {
         std::lock_guard<std::mutex> lock(g_sessionMutex);
         g_rawEpoch = epoch;
@@ -1093,6 +1617,11 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePushAudioFrame(
             setRawErrorLocked("STALE_EVENT", "Stale native media epoch", "nativePushAudioFrame", true);
             return kStatusStaleEvent;
         }
+        if (!hasReadyMicLocked()) {
+            logFrameDroppedNotReadyLocked();
+            clearRawErrorLocked();
+            return kStatusOk;
+        }
     }
 
     const jint byteLength = samplesPerChannel * channels * static_cast<jint>(sizeof(std::int16_t));
@@ -1163,15 +1692,42 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePushVideoFrame(
 }
 
 extern "C" JNIEXPORT jint JNICALL
-Java_livekit_OrbitLiveKitNativeRaw_nativeSetAudioMuted(JNIEnv*, jclass, jlong sessionId, jlong epoch, jboolean) {
-    std::lock_guard<std::mutex> lock(g_sessionMutex);
-    if (!isRawSessionValid(sessionId)) {
-        setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativeSetAudioMuted", false);
-        return kStatusStaleEvent;
+Java_livekit_OrbitLiveKitNativeRaw_nativeSetAudioMuted(JNIEnv*, jclass, jlong sessionId, jlong epoch, jboolean muted) {
+    std::shared_ptr<livekit::LocalAudioTrack> track;
+    {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        if (!isRawSessionValid(sessionId)) {
+            setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativeSetAudioMuted", false);
+            return kStatusStaleEvent;
+        }
+        if (epoch != g_rawEpoch) {
+            setRawErrorLocked("STALE_EVENT", "Stale native media epoch", "nativeSetAudioMuted", true);
+            return kStatusStaleEvent;
+        }
+        clearRawErrorLocked();
+        track = g_audioTrack;
     }
-    g_rawEpoch = epoch;
-    clearRawErrorLocked();
-    return kStatusOk;
+
+    if (track == nullptr) {
+        return kStatusOk;
+    }
+
+    try {
+        if (muted == JNI_TRUE) {
+            track->mute();
+        } else {
+            track->unmute();
+        }
+        return kStatusOk;
+    } catch (const std::exception& error) {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        setRawErrorLocked("NATIVE_EXCEPTION", std::string("Native audio mute failed: ") + error.what(), "nativeSetAudioMuted", true);
+        return kStatusNativeException;
+    } catch (...) {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        setRawErrorLocked("NATIVE_EXCEPTION", "Native audio mute failed", "nativeSetAudioMuted", true);
+        return kStatusNativeException;
+    }
 }
 
 extern "C" JNIEXPORT jint JNICALL

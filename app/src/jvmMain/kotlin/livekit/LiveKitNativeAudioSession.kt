@@ -26,7 +26,10 @@ object LiveKitNativeAudioSession {
     }
 
     fun setMuted(isMuted: Boolean) {
-        LiveKitNativeAudioCapture.setMuted(isMuted)
+        val result = LiveKitNativeMediaSession.setAudioMuted(isMuted)
+        if (!result.ok) {
+            println("ERROR [LiveKitNativeAudioSession] Failed to set native audio mute: ${result.error?.message}")
+        }
     }
 
     fun disconnect() {
