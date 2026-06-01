@@ -27,8 +27,17 @@ object LiveKitNativeAudioCapture {
     @Volatile private var activeLine: TargetDataLine? = null
     @Volatile private var started = false
     @Volatile private var muted = false
+    @Volatile private var sessionId = 0L
+    @Volatile private var epoch = 0L
+    @Volatile private var bridge: OrbitLiveKitNativeBridge? = null
+    @Volatile private var failureSink: ((NativeError) -> Unit)? = null
 
-    fun start(): Boolean {
+    fun start(
+        sessionId: Long,
+        epoch: Long,
+        nativeBridge: OrbitLiveKitNativeBridge,
+        onFailure: (NativeError) -> Unit
+    ): Boolean {
         if (started) return true
 
         LiveKitNativeAudioBridge.resetFrameDropLog()
@@ -37,6 +46,10 @@ object LiveKitNativeAudioCapture {
             return false
         }
 
+        this.sessionId = sessionId
+        this.epoch = epoch
+        bridge = nativeBridge
+        failureSink = onFailure
         started = true
         captureJob = scope.launch {
             runCaptureLoop()
@@ -53,6 +66,10 @@ object LiveKitNativeAudioCapture {
         }
         job?.cancel()
         captureJob = null
+        sessionId = 0L
+        epoch = 0L
+        bridge = null
+        failureSink = null
         return job
     }
 
@@ -84,6 +101,7 @@ object LiveKitNativeAudioCapture {
 
         val heapBuffer = ByteArray(FRAME_BYTES)
         val directBuffer = ByteBuffer.allocateDirect(FRAME_BYTES).order(ByteOrder.LITTLE_ENDIAN)
+        var consecutivePushFailures = 0
 
         val line = AudioSystem.getLine(info) as TargetDataLine
         activeLine = line
@@ -99,17 +117,39 @@ object LiveKitNativeAudioCapture {
                     heapBuffer.fill(0, 0, read)
                 }
 
+                if (!LiveKitNativeAudioBridge.acceptingFrames) {
+                    continue
+                }
+
                 directBuffer.clear()
                 directBuffer.put(heapBuffer, 0, read)
                 directBuffer.flip()
 
-                LiveKitNativeAudioBridge.pushAudioFrame(
+                val result = bridge?.pushAudioFrame(
+                    sessionId,
+                    epoch,
                     directBuffer,
-                    read,
                     SAMPLE_RATE,
                     CHANNELS,
-                    SAMPLES_PER_CHANNEL
+                    SAMPLES_PER_CHANNEL,
+                    System.nanoTime()
                 )
+                if (result == null || result.ok) {
+                    consecutivePushFailures = 0
+                    continue
+                }
+
+                consecutivePushFailures += 1
+                if (consecutivePushFailures >= 3) {
+                    val error = result.error ?: NativeError(
+                        code = NativeErrorCode.AUDIO_CAPTURE_FAILED,
+                        message = "Native audio frame push failed",
+                        operation = "nativePushAudioFrame",
+                        recoverable = true
+                    )
+                    failureSink?.invoke(error)
+                    break
+                }
             }
         } catch (error: Throwable) {
             if (started) {

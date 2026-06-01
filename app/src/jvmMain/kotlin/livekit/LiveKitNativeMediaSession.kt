@@ -28,6 +28,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
     private var lastAuthResponse: LiveKitAuthResponse? = null
     private var lastVideoPolicy: JoinVideoPolicy = JoinVideoPolicy.AudioOnly
     private var lastRefreshTokenFetcher: (suspend () -> LiveKitAuthResponse)? = null
+    @Volatile private var desiredAudioMuted: Boolean = false
 
     @Volatile
     private var readinessCache = emptyReadiness()
@@ -118,7 +119,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             return NativeResult.failure(error)
         }
 
-        LiveKitNativeAudioPlayer.start()
+        LiveKitNativeAudioPlayer.start(sessionId, epoch, bridge, ::handlePlaybackFailure)
         println("DEBUG [LiveKitNativeMediaSession] audio publish started")
         updateNativeState(NativeMediaState.PublishingAudio)
         val audioStarted = bridge.publishAudio(sessionId, epoch, LiveKitNativeAudioCapture.SAMPLE_RATE, LiveKitNativeAudioCapture.CHANNELS)
@@ -143,7 +144,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             return NativeResult.failure(error)
         }
 
-        if (!LiveKitNativeAudioCapture.start()) {
+        if (!LiveKitNativeAudioCapture.start(sessionId, epoch, bridge, ::handleCaptureFailure)) {
             val error = NativeError(
                 code = NativeErrorCode.AUDIO_CAPTURE_FAILED,
                 message = "Microphone capture did not start after audio publish",
@@ -209,6 +210,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
     fun disconnect(userInitiated: Boolean) {
         if (userInitiated) {
             reconnectAllowed = false
+            desiredAudioMuted = false
         }
         refreshJob?.cancel()
         refreshJob = null
@@ -240,6 +242,15 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             tokenRefreshScheduled = false,
             lastError = null
         )
+    }
+
+    fun setAudioMuted(isMuted: Boolean): NativeResult<Unit> {
+        desiredAudioMuted = isMuted
+        LiveKitNativeAudioCapture.setMuted(isMuted)
+        if (sessionId == 0L) {
+            return NativeResult.failure(unknownError("No native media session exists", "nativeSetAudioMuted"))
+        }
+        return bridge.setAudioMuted(sessionId, epoch, isMuted)
     }
 
     override fun onNativeEvent(event: NativeMediaEvent) {
@@ -436,6 +447,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         if (!reconnectAllowed) return
 
         println("DEBUG [LiveKitNativeMediaSession] token refresh started")
+        println("DEBUG [LiveKitNativeMediaSession] mute state before reconnect: $desiredAudioMuted")
         updateNativeState(NativeMediaState.RefreshingToken)
         runCatching { LiveKitNativeAudioBridge.nativeSetAcceptingFrames(false) }
         runCatching { LiveKitNativeAudioCapture.stopAndJoin() }
@@ -481,6 +493,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             return
         }
         println("DEBUG [LiveKitNativeMediaSession] native reconnect success")
+        LiveKitNativeAudioPlayer.start(sessionId, epoch, bridge, ::handlePlaybackFailure)
 
         val audioStarted = bridge.publishAudio(sessionId, epoch, LiveKitNativeAudioCapture.SAMPLE_RATE, LiveKitNativeAudioCapture.CHANNELS)
         if (!audioStarted.ok) {
@@ -492,8 +505,33 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             handleNativeError(audioPublished.error ?: unknownError("Audio republish timed out", "republishAudio"))
             return
         }
-        LiveKitNativeAudioCapture.start()
-        updateNativeState(NativeMediaState.MediaReady)
+        println("DEBUG [LiveKitNativeMediaSession] audio republished")
+        val muteRestored = bridge.setAudioMuted(sessionId, epoch, desiredAudioMuted)
+        if (!muteRestored.ok) {
+            handleNativeError(muteRestored.error ?: unknownError("Native mute restore failed", "nativeSetAudioMuted"))
+            return
+        }
+        if (desiredAudioMuted) {
+            println("DEBUG [LiveKitNativeMediaSession] native mute reapplied")
+        } else {
+            println("DEBUG [LiveKitNativeMediaSession] native mute remains false after reconnect")
+        }
+        LiveKitNativeAudioCapture.start(sessionId, epoch, bridge, ::handleCaptureFailure)
+        updateReadiness(
+            state = NativeMediaState.MediaReady,
+            connected = true,
+            audioPublished = true,
+            videoPublished = false,
+            acceptingAudioFrames = LiveKitNativeAudioBridge.acceptingFrames,
+            acceptingVideoFrames = false,
+            cameraRequested = lastVideoPolicy != JoinVideoPolicy.AudioOnly,
+            cameraRequired = lastVideoPolicy == JoinVideoPolicy.VideoRequired,
+            cameraState = readinessCache.cameraState,
+            joinedAsAudioOnlyFallback = readinessCache.joinedAsAudioOnlyFallback,
+            tokenRefreshScheduled = refreshJob != null,
+            lastError = null
+        )
+        mediaReadyDeferred?.complete(NativeResult.success(Unit))
         scheduleTokenRefresh(tokenResult.value)
         clearCompletedDeferreds()
     }
@@ -590,6 +628,9 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
     }
 
     private fun handleNativeDisconnected(reason: String, recoverable: Boolean) {
+        runCatching { LiveKitNativeAudioBridge.nativeSetAcceptingFrames(false) }
+        runCatching { LiveKitNativeAudioCapture.stopAndJoin() }
+        runCatching { LiveKitNativeAudioPlayer.stop() }
         val error = NativeError(
             code = if (recoverable) NativeErrorCode.DISCONNECTED else NativeErrorCode.USER_LEFT,
             message = reason,
@@ -607,6 +648,14 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
     private fun handleNativeError(error: NativeError) {
         updateReadinessWithError(NativeMediaState.Failed, error)
         cancelPendingDeferreds(error)
+    }
+
+    private fun handleCaptureFailure(error: NativeError) {
+        handleNativeError(error)
+    }
+
+    private fun handlePlaybackFailure(error: NativeError) {
+        handleNativeError(error)
     }
 
     private fun updateReadinessWithError(state: NativeMediaState, error: NativeError) {
