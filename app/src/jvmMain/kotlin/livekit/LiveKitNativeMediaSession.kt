@@ -66,7 +66,15 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             cancelPendingDeferreds(error)
             return NativeResult.failure(error)
         }
+        val matrixRtcMemberId = authResponse.matrixRtcMemberId
+            ?: authResponse.identity
+            ?: tokenResult.value.identity.orEmpty()
+        val claimedDeviceId = authResponse.claimedDeviceId
+            ?: matrixRtcMemberId.substringAfterLast(":", missingDelimiterValue = "ORBIT_DESKTOP")
         println("DEBUG [LiveKitNativeMediaSession] LiveKit token details identity=${tokenResult.value.identity ?: "<none>"} room=${tokenResult.value.roomName ?: "<none>"} canPublish=${tokenResult.value.grants.canPublish} canSubscribe=${tokenResult.value.grants.canSubscribe} canPublishSources=${tokenResult.value.grants.canPublishSources ?: emptyList<String>()}")
+        println(
+            "DEBUG [MatrixRTCMapping] native media tokenRequestMemberId=$matrixRtcMemberId tokenRequestClaimedDeviceId=$claimedDeviceId jwtSub=${tokenResult.value.identity ?: "<none>"} livekitUrl=${tokenResult.value.livekitUrl} room=${tokenResult.value.roomName ?: "<none>"}"
+        )
 
         if (LiveKitNativeAudioCapture.configuredTestTone()) {
             println("DEBUG [LiveKitNativeMediaSession] test tone enabled before call start; microphone self-test skipped")
@@ -122,7 +130,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             epoch = epoch,
             url = tokenResult.value.livekitUrl,
             token = tokenResult.value.token,
-            identity = tokenResult.value.identity.orEmpty()
+            identity = matrixRtcMemberId
         )
         if (!startConnect.ok) {
             val error = startConnect.error ?: unknownError("Native connect failed", "nativeConnectAsync")

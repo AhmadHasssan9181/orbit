@@ -7,4 +7,5 @@ expect object LiveKitFeatureFlags {
     val ffiVideo: Boolean
     val debugFrames: Boolean
     val videoRequired: Boolean
+    val dumpTonePublisherEnv: Boolean
 }

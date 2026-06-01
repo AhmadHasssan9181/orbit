@@ -22,6 +22,9 @@ actual object LiveKitFeatureFlags {
     actual val videoRequired: Boolean
         get() = boolProperty("orbit.livekit.videoRequired", false)
 
+    actual val dumpTonePublisherEnv: Boolean
+        get() = boolProperty("orbit.livekit.dumpTonePublisherEnv", false)
+
     private fun boolProperty(key: String, defaultValue: Boolean): Boolean =
         when (System.getProperty(key)?.trim()?.lowercase()) {
             "true", "1", "yes", "on" -> true

@@ -20,6 +20,8 @@ data class LiveKitAuthResponse(
     val expiresAtEpochSeconds: Long? = null,
     val roomName: String? = null,
     val identity: String? = null,
+    val matrixRtcMemberId: String? = null,
+    val claimedDeviceId: String? = null,
     val grants: LiveKitVideoGrant? = null
 )
 
@@ -32,7 +34,8 @@ object LiveKitTokenProvider {
         userId: String,
         homeserverUrl: String,
         accessToken: String,
-        httpClient: HttpClient
+        httpClient: HttpClient,
+        forceLegacyJwtEndpoint: Boolean = false
     ): NativeResult<LiveKitTokenResult> =
         runCatching {
             fetchToken(
@@ -42,7 +45,8 @@ object LiveKitTokenProvider {
                 homeserverUrl = homeserverUrl,
                 accessToken = accessToken,
                 livekitServiceUrl = focus.serviceUrl,
-                httpClient = httpClient
+                httpClient = httpClient,
+                forceLegacyJwtEndpoint = forceLegacyJwtEndpoint
             )
         }.fold(
             onSuccess = { it.toTokenResult() },
@@ -66,10 +70,21 @@ object LiveKitTokenProvider {
         userId: String,
         homeserverUrl: String,
         accessToken: String,
-        httpClient: HttpClient
+        httpClient: HttpClient,
+        forceLegacyJwtEndpoint: Boolean = false
     ): NativeResult<LiveKitTokenResult> {
         println("DEBUG [LiveKitTokenProvider] Token refresh started for call $callId")
-        return fetchLiveKitToken(roomId, callId, focus, identity, userId, homeserverUrl, accessToken, httpClient)
+        return fetchLiveKitToken(
+            roomId = roomId,
+            callId = callId,
+            focus = focus,
+            identity = identity,
+            userId = userId,
+            homeserverUrl = homeserverUrl,
+            accessToken = accessToken,
+            httpClient = httpClient,
+            forceLegacyJwtEndpoint = forceLegacyJwtEndpoint
+        )
     }
 
     suspend fun fetchToken(
@@ -79,13 +94,18 @@ object LiveKitTokenProvider {
         homeserverUrl: String,
         accessToken: String,
         livekitServiceUrl: String,
-        httpClient: HttpClient
+        httpClient: HttpClient,
+        forceLegacyJwtEndpoint: Boolean = false
     ): LiveKitAuthResponse {
         println("DEBUG [LiveKitTokenProvider] Starting handshake for room: $roomId")
 
         // 1. Request Matrix OpenID Token
         // Ensure userId is just @user:domain (strip any :deviceId suffix if present)
         val cleanUserId = userId.split(":").take(2).joinToString(":")
+        val claimedDeviceId = deviceIdFromMemberId(identity)
+        println(
+            "DEBUG [MatrixRTCMapping] token request member.id=$identity claimed_user_id=$cleanUserId claimed_device_id=$claimedDeviceId slot_id=m.call#ROOM room_id=$roomId"
+        )
         
         val openIdUrl = "${homeserverUrl.trimEnd('/')}/_matrix/client/v3/user/${cleanUserId}/openid/request_token"
         println("DEBUG [LiveKitTokenProvider] Requesting OpenID token from $openIdUrl")
@@ -104,6 +124,13 @@ object LiveKitTokenProvider {
         val openIdToken = openIdResponse.body<JsonObject>()
         println("DEBUG [LiveKitTokenProvider] Received OpenID token")
 
+        if (forceLegacyJwtEndpoint) {
+            println(
+                "DEBUG [MatrixRTCMapping] forcing legacy /sfu/get JWT endpoint so LiveKit identity should equal MatrixRTC membershipID=$identity"
+            )
+            return fetchTokenLegacy(roomId, identity, cleanUserId, openIdToken, livekitServiceUrl, httpClient)
+        }
+
         // 2. Exchange OpenID for LiveKit JWT
         val lkAuthUrl = "${livekitServiceUrl.trimEnd('/')}/get_token"
         println("DEBUG [LiveKitTokenProvider] Exchanging for LiveKit JWT at $lkAuthUrl")
@@ -116,13 +143,7 @@ object LiveKitTokenProvider {
                 put("member", buildJsonObject {
                     put("id", identity) // Use the full MSC3401 identity here
                     put("claimed_user_id", cleanUserId)
-                    // Extract deviceId: check for colon format first, then underscore fallback
-                    val deviceId = when {
-                        identity.count { it == ':' } >= 2 -> identity.split(":").last()
-                        identity.contains("_") -> identity.split("_").getOrNull(2)
-                        else -> null
-                    } ?: "ORBIT_DESKTOP"
-                    put("claimed_device_id", deviceId)
+                    put("claimed_device_id", claimedDeviceId)
                 })
                 put("openid_token", openIdToken)
             }
@@ -134,6 +155,7 @@ object LiveKitTokenProvider {
             val errBody = lkResponse.bodyAsText()
             // Fallback for older deployments
             if (lkResponse.status.value == 404) {
+                println("DEBUG [LiveKitTokenProvider] /get_token returned 404, falling back to legacy /sfu/get body")
                 return fetchTokenLegacy(roomId, identity, cleanUserId, openIdToken, livekitServiceUrl, httpClient)
             }
             throw Exception("Failed to fetch LiveKit JWT (status ${lkResponse.status.value}): $errBody")
@@ -148,7 +170,8 @@ object LiveKitTokenProvider {
         }
         
         println("DEBUG [LiveKitTokenProvider] LiveKit token fetched")
-        return enrichAuthResponse(token, sfuUrl, identity)
+        dumpTonePublisherEnvIfEnabled(sfuUrl, token)
+        return enrichAuthResponse(token, sfuUrl, identity, claimedDeviceId)
     }
 
     private suspend fun fetchTokenLegacy(
@@ -160,20 +183,18 @@ object LiveKitTokenProvider {
         httpClient: HttpClient
     ): LiveKitAuthResponse {
         val lkAuthUrl = "${livekitServiceUrl.trimEnd('/')}/sfu/get"
-        println("DEBUG [LiveKitTokenProvider] Retrying with legacy endpoint: $lkAuthUrl")
+        val claimedDeviceId = deviceIdFromMemberId(identity)
+        println("DEBUG [LiveKitTokenProvider] Using legacy endpoint: $lkAuthUrl")
+        println(
+            "DEBUG [MatrixRTCMapping] legacy token request room=$roomId device_id=$claimedDeviceId expected_livekit_identity=$userId:$claimedDeviceId matrixRtcMemberId=$identity"
+        )
         
         val lkResponse = httpClient.post(lkAuthUrl) {
             contentType(ContentType.Application.Json)
             val requestBody = buildJsonObject {
-                put("room_id", roomId)
-                put("slot_id", "m.call#ROOM")
-                put("member", buildJsonObject {
-                    put("id", identity)
-                    put("claimed_user_id", userId)
-                    val deviceId = identity.split("_").getOrNull(2) ?: "ORBIT_DESKTOP"
-                    put("claimed_device_id", deviceId)
-                })
+                put("room", roomId)
                 put("openid_token", openIdToken)
+                put("device_id", claimedDeviceId)
             }
             println("DEBUG [LiveKitTokenProvider] Request Body: $requestBody")
             setBody(requestBody.toString())
@@ -192,23 +213,70 @@ object LiveKitTokenProvider {
             throw Exception("LiveKit token or URL not found in legacy response: $lkBody")
         }
         
-        return enrichAuthResponse(token, sfuUrl, identity)
+        dumpTonePublisherEnvIfEnabled(sfuUrl, token)
+        return enrichAuthResponse(token, sfuUrl, identity, claimedDeviceId)
     }
 
-    private fun enrichAuthResponse(token: String, serverUrl: String, fallbackIdentity: String): LiveKitAuthResponse {
-        val tokenResult = LiveKitAuthResponse(token, serverUrl, identity = fallbackIdentity).toTokenResult()
+    private fun enrichAuthResponse(
+        token: String,
+        serverUrl: String,
+        matrixRtcMemberId: String,
+        claimedDeviceId: String
+    ): LiveKitAuthResponse {
+        val tokenResult = LiveKitAuthResponse(
+            token = token,
+            serverUrl = serverUrl,
+            identity = matrixRtcMemberId,
+            matrixRtcMemberId = matrixRtcMemberId,
+            claimedDeviceId = claimedDeviceId
+        ).toTokenResult()
         val value = tokenResult.value
+        println(
+            "DEBUG [MatrixRTCMapping] LiveKit JWT sub=${value?.identity ?: "<decode-failed>"} tokenRequestMemberId=$matrixRtcMemberId tokenRequestClaimedDeviceId=$claimedDeviceId livekitUrl=$serverUrl room=${value?.roomName ?: "<none>"}"
+        )
+        println(
+            "DEBUG [MatrixRTCMapping] LiveKit JWT sub matches MatrixRTC membershipID=${value?.identity == matrixRtcMemberId} jwtSub=${value?.identity ?: "<decode-failed>"} membershipID=$matrixRtcMemberId"
+        )
         return if (tokenResult.ok && value != null) {
             LiveKitAuthResponse(
                 token = token,
                 serverUrl = serverUrl,
                 expiresAtEpochSeconds = value.expiresAtEpochSeconds,
                 roomName = value.roomName,
-                identity = value.identity ?: fallbackIdentity,
+                identity = value.identity ?: matrixRtcMemberId,
+                matrixRtcMemberId = matrixRtcMemberId,
+                claimedDeviceId = claimedDeviceId,
                 grants = value.grants
             )
         } else {
-            LiveKitAuthResponse(token, serverUrl, identity = fallbackIdentity)
+            LiveKitAuthResponse(
+                token = token,
+                serverUrl = serverUrl,
+                identity = matrixRtcMemberId,
+                matrixRtcMemberId = matrixRtcMemberId,
+                claimedDeviceId = claimedDeviceId
+            )
         }
     }
+
+    private fun deviceIdFromMemberId(memberId: String): String =
+        when {
+            memberId.count { it == ':' } >= 2 -> memberId.substringAfterLast(":")
+            memberId.contains("_") -> memberId.split("_").getOrNull(2)
+            else -> null
+        }?.takeIf { it.isNotBlank() } ?: "ORBIT_DESKTOP"
+
+    private fun dumpTonePublisherEnvIfEnabled(serverUrl: String, token: String) {
+        if (!LiveKitFeatureFlags.dumpTonePublisherEnv) return
+
+        println("DEBUG [LiveKitTokenProvider] BEGIN ORBIT_LIVEKIT_TONE_PUBLISHER_ENV")
+        println("\$env:ORBIT_LIVEKIT_URL='${serverUrl.escapePowerShellSingleQuoted()}'")
+        println("\$env:ORBIT_LIVEKIT_TOKEN='${token.escapePowerShellSingleQuoted()}'")
+        println("\$env:ORBIT_LIVEKIT_TONE_SECONDS='120'")
+        println(".\\gradlew --no-daemon :app:runLiveKitTonePublisher")
+        println("DEBUG [LiveKitTokenProvider] END ORBIT_LIVEKIT_TONE_PUBLISHER_ENV")
+    }
+
+    private fun String.escapePowerShellSingleQuoted(): String =
+        replace("'", "''")
 }

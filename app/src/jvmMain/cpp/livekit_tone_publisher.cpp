@@ -18,7 +18,7 @@
 namespace {
 
 constexpr int kSampleRate = 48000;
-constexpr int kChannels = 1;
+constexpr int kDefaultChannels = 2;
 constexpr int kSamplesPerChannel = 480;
 constexpr int kQueueSizeMs = 10;
 constexpr int kToneHz = 1000;
@@ -62,6 +62,21 @@ int getDurationSeconds(int argc, char** argv) {
   } catch (const std::exception&) {
     return 120;
   }
+}
+
+int getToneChannels(int argc, char** argv) {
+  std::string value = getArgOrEnv(argc, argv, 4, "ORBIT_LIVEKIT_TONE_CHANNELS");
+  if (value.empty()) {
+    return kDefaultChannels;
+  }
+  try {
+    const int parsed = std::stoi(value);
+    if (parsed == 1 || parsed == 2) {
+      return parsed;
+    }
+  } catch (const std::exception&) {
+  }
+  return kDefaultChannels;
 }
 
 PcmStats computeStats(const std::vector<std::int16_t>& samples) {
@@ -198,18 +213,21 @@ int main(int argc, char** argv) {
   const std::string url = getArgOrEnv(argc, argv, 1, "ORBIT_LIVEKIT_URL");
   const std::string token = getArgOrEnv(argc, argv, 2, "ORBIT_LIVEKIT_TOKEN");
   const int durationSeconds = getDurationSeconds(argc, argv);
+  const int channels = getToneChannels(argc, argv);
 
   if (url.empty() || token.empty()) {
-    std::cerr << "Usage: orbit_livekit_tone_publisher <livekit-url> <token> [durationSeconds]\n"
-              << "Or set ORBIT_LIVEKIT_URL, ORBIT_LIVEKIT_TOKEN, and optional ORBIT_LIVEKIT_TONE_SECONDS."
+    std::cerr << "Usage: orbit_livekit_tone_publisher <livekit-url> <token> [durationSeconds] [channels]\n"
+              << "Or set ORBIT_LIVEKIT_URL, ORBIT_LIVEKIT_TOKEN, optional ORBIT_LIVEKIT_TONE_SECONDS,"
+              << " and optional ORBIT_LIVEKIT_TONE_CHANNELS."
               << std::endl;
     return 2;
   }
 
   std::cout << "[tone] LiveKit C++ tone publisher starting" << std::endl;
-  std::cout << "[tone] AudioSource(" << kSampleRate << ", " << kChannels << ", " << kQueueSizeMs << ")"
+  std::cout << "[tone] AudioSource(" << kSampleRate << ", " << channels << ", " << kQueueSizeMs << ")"
             << std::endl;
-  std::cout << "[tone] trackName=audio source=SOURCE_MICROPHONE durationSeconds=" << durationSeconds << std::endl;
+  std::cout << "[tone] trackName=audio source=SOURCE_MICROPHONE durationSeconds=" << durationSeconds
+            << " channels=" << channels << std::endl;
 
   try {
     livekit::initialize(livekit::LogLevel::Info, livekit::LogSink::kConsole);
@@ -240,7 +258,7 @@ int main(int argc, char** argv) {
       return 1;
     }
 
-    auto audioSource = std::make_shared<livekit::AudioSource>(kSampleRate, kChannels, kQueueSizeMs);
+    auto audioSource = std::make_shared<livekit::AudioSource>(kSampleRate, channels, kQueueSizeMs);
     auto audioTrack = livekit::LocalAudioTrack::createLocalAudioTrack("audio", audioSource);
     livekit::TrackPublishOptions publishOptions;
     publishOptions.source = livekit::TrackSource::SOURCE_MICROPHONE;
@@ -259,9 +277,12 @@ int main(int argc, char** argv) {
     const auto endTime = nextTick + std::chrono::seconds(durationSeconds);
 
     while (std::chrono::steady_clock::now() < endTime) {
-      std::vector<std::int16_t> buffer(kSamplesPerChannel * kChannels);
-      for (auto& sample : buffer) {
-        sample = static_cast<std::int16_t>(std::lround(std::sin(phase) * kTonePeak));
+      std::vector<std::int16_t> buffer(kSamplesPerChannel * channels);
+      for (int sampleIndex = 0; sampleIndex < kSamplesPerChannel; ++sampleIndex) {
+        const auto sample = static_cast<std::int16_t>(std::lround(std::sin(phase) * kTonePeak));
+        for (int channel = 0; channel < channels; ++channel) {
+          buffer[(sampleIndex * channels) + channel] = sample;
+        }
         phase += phaseStep;
         if (phase >= 2.0 * kPi) {
           phase -= 2.0 * kPi;
@@ -269,7 +290,7 @@ int main(int argc, char** argv) {
       }
 
       const auto stats = computeStats(buffer);
-      livekit::AudioFrame frame(buffer, kSampleRate, kChannels, kSamplesPerChannel);
+      livekit::AudioFrame frame(buffer, kSampleRate, channels, kSamplesPerChannel);
 
       const bool shouldLogFrame = captured < 10 || captured % 100 == 0;
       if (shouldLogFrame) {
