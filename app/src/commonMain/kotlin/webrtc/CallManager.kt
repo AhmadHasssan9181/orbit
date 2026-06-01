@@ -221,7 +221,9 @@ class CallManager(
 
             println("DEBUG [CallManager] Fetching LiveKit token for url: $livekitUrl")
             val authResponse = livekitTokenFetcher()
-            println("DEBUG [CallManager] Token and SFU URL fetched. Connecting native media at ${authResponse.serverUrl}...")
+            println("DEBUG [CallManager] Token and SFU URL fetched. Publishing MatrixRTC membership before native media...")
+            onUpdateGroupCallMembershipCapabilities?.invoke(roomId, callId, true, false)
+            println("DEBUG [CallManager] MatrixRTC membership publish requested before native media. Connecting native media at ${authResponse.serverUrl}...")
             val readiness = livekit.connectAndPublishToLiveKit(
                 authResponse = authResponse,
                 isVideo = isVideo,

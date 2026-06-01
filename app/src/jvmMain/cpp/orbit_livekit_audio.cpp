@@ -30,6 +30,7 @@ std::unique_ptr<livekit::Room> g_room;
 std::unique_ptr<livekit::RoomDelegate> g_delegate;
 std::shared_ptr<livekit::AudioSource> g_audioSource;
 std::shared_ptr<livekit::LocalAudioTrack> g_audioTrack;
+std::string g_matrixRtcMemberId;
 bool g_connected = false;
 bool g_micPublished = false;
 bool g_acceptingFrames = false;
@@ -1204,6 +1205,7 @@ void resetRoomLocked() {
     g_room.reset();
     g_connected = false;
     g_micPublished = false;
+    g_matrixRtcMemberId.clear();
     g_publishedAudioChannels = 0;
     g_expectedTestTone = false;
     g_firstAudioFrameAccepted = false;
@@ -1627,6 +1629,7 @@ bool connectRoom(
 
         std::lock_guard<std::mutex> lock(g_sessionMutex);
         resetRoomLocked();
+        g_matrixRtcMemberId = requestedIdentity;
         std::cout << "DEBUG [OrbitLiveKitAudio] native connect started" << std::endl;
 
         g_room = std::make_unique<livekit::Room>();
@@ -1655,11 +1658,23 @@ bool connectRoom(
                       << " name=" << localParticipant->name()
                       << " metadata=" << (localParticipant->metadata().empty() ? std::string{"<empty>"} : localParticipant->metadata())
                       << std::endl;
+            std::cout << "DEBUG [MatrixRTCMapping] native connect tokenRequestMemberId="
+                      << (requestedIdentity.empty() ? std::string{"<none>"} : requestedIdentity)
+                      << " livekitLocalParticipantIdentity=" << localParticipant->identity()
+                      << " livekitParticipantSid=" << localParticipant->sid()
+                      << std::endl;
 
-            if (localParticipant->metadata().empty() && !localParticipant->identity().empty()) {
-                const auto metadata = buildMatrixRtcParticipantMetadata(localParticipant->identity());
+            const auto metadataMemberId = !requestedIdentity.empty()
+                ? requestedIdentity
+                : localParticipant->identity();
+            if (localParticipant->metadata().empty() && !metadataMemberId.empty()) {
+                const auto metadata = buildMatrixRtcParticipantMetadata(metadataMemberId);
                 std::cout << "DEBUG [OrbitLiveKitAudio] setting local participant metadata: "
                           << metadata << std::endl;
+                std::cout << "DEBUG [MatrixRTCMapping] native participant metadata member_id="
+                          << metadataMemberId
+                          << " livekitLocalParticipantIdentity=" << localParticipant->identity()
+                          << std::endl;
                 try {
                     localParticipant->setMetadata(metadata);
                 } catch (const std::exception& error) {
@@ -1856,6 +1871,16 @@ Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(
                   << " localTrackSid=" << g_audioTrack->sid()
                   << " localTrackMuted=" << (g_audioTrack->muted() ? "true" : "false")
                   << " trackMetadata=<not exposed by LiveKit C++ SDK>"
+                  << std::endl;
+        std::cout << "DEBUG [MatrixRTCMapping] native audio published tokenRequestMemberId="
+                  << (g_matrixRtcMemberId.empty() ? std::string{"<none>"} : g_matrixRtcMemberId)
+                  << " livekitLocalParticipantIdentity="
+                  << (g_room->localParticipant() != nullptr ? g_room->localParticipant()->identity() : std::string{"<none>"})
+                  << " livekitParticipantSid="
+                  << (g_room->localParticipant() != nullptr ? g_room->localParticipant()->sid() : std::string{"<none>"})
+                  << " publishedTrackSid=" << publication->sid()
+                  << " publishedTrackName=" << publication->name()
+                  << " publishedTrackSource=" << trackSourceLabel(publication->source())
                   << std::endl;
         std::cout << "DEBUG [OrbitLiveKitAudio] acceptingFrames=true" << std::endl;
         return JNI_TRUE;

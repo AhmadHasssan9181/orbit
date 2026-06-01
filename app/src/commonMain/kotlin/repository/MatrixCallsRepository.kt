@@ -127,6 +127,34 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
 
     override val activeCallsFlow = context.globalActiveCalls.asStateFlow()
 
+    private val matrixRtcMemberEventTypes = listOf("m.call.member", "org.matrix.msc3401.call.member")
+    private val matrixRtcVisibilityEventTypes = matrixRtcMemberEventTypes + listOf(
+        "m.call",
+        "org.matrix.msc3401.call",
+        "org.matrix.msc4143.rtc_foci"
+    )
+    private val matrixRtcMembershipShapes = mutableMapOf<String, MatrixRtcMembershipShape>()
+
+    private enum class MatrixRtcPublishMode(val label: String, val eventTypes: List<String>) {
+        ModernOnly("modern-only", listOf("m.call.member")),
+        LegacyOnly("legacy-only", listOf("org.matrix.msc3401.call.member")),
+        Both("both", listOf("m.call.member", "org.matrix.msc3401.call.member"))
+    }
+
+    private data class MatrixRtcVisibilityEvent(
+        val type: String,
+        val stateKey: String,
+        val sender: String,
+        val content: JsonObject,
+        val raw: JsonObject
+    )
+
+    private data class MatrixRtcMembershipShape(
+        val stateKey: String,
+        val contentCallId: String,
+        val publishMode: MatrixRtcPublishMode
+    )
+
     override suspend fun getTurnServers(): Result<List<TurnServer>> {
         return try {
             val response = context.httpClient.get(context.fullUrl("/voip/turnServer", v1 = true)) {
@@ -565,6 +593,265 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
         return flow.asStateFlow()
     }
 
+    private fun membershipShapeMapKey(roomId: String, callId: String): String = "$roomId\u0000$callId"
+
+    private fun String.encodeStateKey(): String =
+        replace("%", "%25")
+            .replace("@", "%40")
+            .replace(":", "%3A")
+            .replace("#", "%23")
+            .replace("/", "%2F")
+            .replace(" ", "%20")
+
+    private fun jsonString(content: JsonObject, key: String): String? =
+        runCatching { content[key]?.jsonPrimitive?.content }.getOrNull()
+
+    private fun jsonLong(content: JsonObject, key: String): Long? =
+        runCatching { content[key]?.jsonPrimitive?.longOrNull }.getOrNull()
+
+    private fun membershipId(content: JsonObject): String? =
+        jsonString(content, "membershipID") ?: jsonString(content, "membership_id")
+
+    private fun isActiveMatrixRtcMember(event: MatrixRtcVisibilityEvent): Boolean {
+        if (event.type !in matrixRtcMemberEventTypes) return false
+        return jsonString(event.content, "membership") != "leave"
+    }
+
+    private fun expiresRemainingMs(event: MatrixRtcVisibilityEvent): Long? {
+        val createdTs = jsonLong(event.content, "created_ts") ?: return null
+        val expires = jsonLong(event.content, "expires") ?: return null
+        return createdTs + expires - getTimeMillis()
+    }
+
+    private fun isUnexpiredMatrixRtcMember(event: MatrixRtcVisibilityEvent): Boolean =
+        expiresRemainingMs(event)?.let { it > 0 } ?: false
+
+    private fun hasNonNullContentField(content: JsonObject, key: String): Boolean {
+        val value = content[key] ?: return false
+        return value.toString() != "null"
+    }
+
+    private fun nullableContentFieldString(content: JsonObject, key: String): String? {
+        val value = content[key] ?: return null
+        return value.toString().takeUnless { it == "null" }
+    }
+
+    private suspend fun fetchMatrixRtcVisibilityEvents(roomId: String): List<MatrixRtcVisibilityEvent> {
+        return try {
+            val response = context.httpClient.get(context.fullUrl("/rooms/$roomId/state")) {
+                header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
+            }
+            if (response.status.value !in 200..299) {
+                println("WARN [MatrixRTCVisibilityAudit] all-state fetch failed status=${response.status.value}")
+                return emptyList()
+            }
+
+            Json.parseToJsonElement(response.bodyAsText()).jsonArray.mapNotNull { element ->
+                val raw = element.jsonObject
+                val type = jsonString(raw, "type") ?: return@mapNotNull null
+                if (type !in matrixRtcVisibilityEventTypes) return@mapNotNull null
+                val content = raw["content"]?.jsonObject ?: buildJsonObject { }
+                MatrixRtcVisibilityEvent(
+                    type = type,
+                    stateKey = jsonString(raw, "state_key") ?: "",
+                    sender = jsonString(raw, "sender") ?: "",
+                    content = content,
+                    raw = raw
+                )
+            }
+        } catch (e: Exception) {
+            println("WARN [MatrixRTCVisibilityAudit] all-state fetch exception=${e.message}")
+            emptyList()
+        }
+    }
+
+    private fun logMatrixRtcVisibilityEvents(label: String, events: List<MatrixRtcVisibilityEvent>) {
+        println("DEBUG [MatrixRTCVisibilityAudit] $label event_count=${events.size}")
+        events.forEach { event ->
+            val createdTs = jsonLong(event.content, "created_ts")
+            val expires = jsonLong(event.content, "expires")
+            val now = getTimeMillis()
+            val remaining = if (createdTs != null && expires != null) createdTs + expires - now else null
+            println(
+                "DEBUG [MatrixRTCVisibilityAudit] $label type=${event.type} state_key=${event.stateKey} sender=${event.sender} " +
+                    "membershipID=${membershipId(event.content)} device_id=${jsonString(event.content, "device_id")} " +
+                    "call_id=${jsonString(event.content, "call_id")} application=${jsonString(event.content, "application")} " +
+                    "intent=${jsonString(event.content, "m.call.intent")} scope=${jsonString(event.content, "scope")} " +
+                    "created_ts=$createdTs expires=$expires expires_remaining_ms=$remaining " +
+                    "foci_preferred=${event.content["foci_preferred"]} focus_active=${event.content["focus_active"]} " +
+                    "foci_active=${event.content["foci_active"]} capabilities=${event.content["capabilities"]}"
+            )
+        }
+    }
+
+    private fun findReferenceMemberEvent(
+        events: List<MatrixRtcVisibilityEvent>,
+        ownUserId: String,
+        ownDeviceId: String,
+        ownMembershipId: String
+    ): MatrixRtcVisibilityEvent? =
+        events
+            .filter(::isActiveMatrixRtcMember)
+            .filter(::isUnexpiredMatrixRtcMember)
+            .filter { event ->
+                val memberId = membershipId(event.content)
+                val deviceId = jsonString(event.content, "device_id")
+                event.sender != ownUserId &&
+                    memberId != ownMembershipId &&
+                    memberId?.startsWith("$ownUserId:") != true &&
+                    deviceId != ownDeviceId
+            }
+            .sortedWith(
+                if (MatrixRtcFeatureFlags.mirrorVisibleElementShape) {
+                    compareBy<MatrixRtcVisibilityEvent> { it.type != "org.matrix.msc3401.call.member" }
+                        .thenByDescending { expiresRemainingMs(it) ?: 0L }
+                        .thenBy { it.stateKey }
+                } else {
+                    compareBy<MatrixRtcVisibilityEvent> { it.type != "m.call.member" }
+                        .thenByDescending { expiresRemainingMs(it) ?: 0L }
+                        .thenBy { it.stateKey }
+                }
+            )
+            .firstOrNull()
+
+    private fun logSelectedReference(reference: MatrixRtcVisibilityEvent?, ownUserId: String) {
+        val remote = reference != null && reference.sender != ownUserId &&
+            membershipId(reference.content)?.startsWith("$ownUserId:") != true
+        println("DEBUG [MatrixRTCVisibilityAudit] selected_reference_is_remote=$remote")
+        println("DEBUG [MatrixRTCVisibilityAudit] selected_reference_sender=${reference?.sender}")
+        println("DEBUG [MatrixRTCVisibilityAudit] selected_reference_type=${reference?.type}")
+        println(
+            "DEBUG [MatrixRTCVisibilityAudit] selected_reference_call_id=${jsonString(reference?.content ?: buildJsonObject { }, "call_id")?.ifBlank { "<blank>" }}"
+        )
+        println("DEBUG [MatrixRTCVisibilityAudit] selected_reference_expires=${reference?.content?.let { jsonLong(it, "expires") }}")
+        println("DEBUG [MatrixRTCVisibilityAudit] selected_reference_expires_remaining_ms=${reference?.let(::expiresRemainingMs)}")
+        println("DEBUG [MatrixRTCVisibilityAudit] selected_reference_has_foci_active=${reference?.content?.let { hasNonNullContentField(it, "foci_active") } ?: false}")
+        println("DEBUG [MatrixRTCVisibilityAudit] selected_reference_has_capabilities=${reference?.content?.let { hasNonNullContentField(it, "capabilities") } ?: false}")
+    }
+
+    private fun findOwnMemberEvent(
+        events: List<MatrixRtcVisibilityEvent>,
+        ownDeviceId: String,
+        ownMembershipId: String,
+        selectedStateKey: String
+    ): MatrixRtcVisibilityEvent? =
+        events
+            .filter(::isActiveMatrixRtcMember)
+            .filter { event ->
+                event.stateKey == selectedStateKey ||
+                    membershipId(event.content) == ownMembershipId ||
+                    jsonString(event.content, "device_id") == ownDeviceId
+            }
+            .sortedWith(compareBy<MatrixRtcVisibilityEvent> { it.stateKey != selectedStateKey }.thenBy { it.type != "m.call.member" })
+            .firstOrNull()
+
+    private fun selectMatrixRtcPublishMode(reference: MatrixRtcVisibilityEvent?): MatrixRtcPublishMode {
+        if (MatrixRtcFeatureFlags.mirrorVisibleElementShape) {
+            println("DEBUG [MatrixRTCVisibilityAudit] publish mode=legacy-only reason=mirrorVisibleElementShape")
+            return MatrixRtcPublishMode.LegacyOnly
+        }
+
+        val configured = MatrixRtcFeatureFlags.publishMemberMode?.lowercase()
+        val mode = when (configured) {
+            "modern", "modern-only", "m.call.member" -> MatrixRtcPublishMode.ModernOnly
+            "legacy", "legacy-only", "org.matrix.msc3401.call.member" -> MatrixRtcPublishMode.LegacyOnly
+            "both", "dual" -> MatrixRtcPublishMode.Both
+            null -> when {
+                MatrixRtcFeatureFlags.publishLegacyMember -> MatrixRtcPublishMode.Both
+                reference?.type == "org.matrix.msc3401.call.member" -> MatrixRtcPublishMode.LegacyOnly
+                else -> MatrixRtcPublishMode.ModernOnly
+            }
+            else -> {
+                println("WARN [MatrixRTCVisibilityAudit] Unknown orbit.matrixrtc.publishMemberMode=$configured, using reference/default")
+                when {
+                    MatrixRtcFeatureFlags.publishLegacyMember -> MatrixRtcPublishMode.Both
+                    reference?.type == "org.matrix.msc3401.call.member" -> MatrixRtcPublishMode.LegacyOnly
+                    else -> MatrixRtcPublishMode.ModernOnly
+                }
+            }
+        }
+        println("DEBUG [MatrixRTCVisibilityAudit] publish mode=${mode.label} reference_type=${reference?.type}")
+        return mode
+    }
+
+    private fun selectMembershipStateKey(
+        reference: MatrixRtcVisibilityEvent?,
+        userId: String,
+        deviceId: String,
+        callId: String
+    ): String {
+        val refDeviceId = reference?.content?.let { jsonString(it, "device_id") }
+        val refMembershipId = reference?.content?.let { membershipId(it) }
+        val refUserId = if (!refMembershipId.isNullOrBlank() && !refDeviceId.isNullOrBlank()) {
+            refMembershipId.removeSuffix(":$refDeviceId")
+        } else {
+            null
+        }
+        val refPrefix = if (!refUserId.isNullOrBlank() && !refDeviceId.isNullOrBlank()) "_${refUserId}_${refDeviceId}_" else null
+        val refCallSuffix = if (reference != null && refPrefix != null && reference.stateKey.startsWith(refPrefix)) {
+            reference.stateKey.removePrefix(refPrefix)
+        } else {
+            null
+        }
+        val selected = if (!refCallSuffix.isNullOrBlank()) "_${userId}_${deviceId}_$refCallSuffix" else "_${userId}_${deviceId}_$callId"
+        val reason = if (!refCallSuffix.isNullOrBlank()) "mirrored_element_reference_suffix" else "fallback_orbit_state_key"
+        println(
+            "DEBUG [MatrixRTCVisibilityAudit] state_key selected reason=$reason element_reference_state_key=${reference?.stateKey} orbit_state_key=$selected"
+        )
+        return selected
+    }
+
+    private fun selectContentCallId(reference: MatrixRtcVisibilityEvent?, callId: String): String {
+        if (MatrixRtcFeatureFlags.mirrorVisibleElementShape) {
+            println("DEBUG [MatrixRTCVisibilityAudit] content call_id selected reason=mirrorVisibleElementShape orbit_call_id=<blank>")
+            return ""
+        }
+
+        val selected = if (reference != null && reference.content.containsKey("call_id")) {
+            jsonString(reference.content, "call_id") ?: ""
+        } else {
+            callId
+        }
+        println(
+            "DEBUG [MatrixRTCVisibilityAudit] content call_id selected element_reference_call_id=${reference?.content?.let { jsonString(it, "call_id") }} orbit_call_id=$selected"
+        )
+        return selected
+    }
+
+    private fun logMembershipComparison(reference: MatrixRtcVisibilityEvent?, orbit: MatrixRtcVisibilityEvent?) {
+        if (reference == null || orbit == null) {
+            println("WARN [MatrixRTCVisibilityAudit] comparison unavailable reference_present=${reference != null} orbit_present=${orbit != null}")
+            return
+        }
+
+        fun compare(field: String, referenceValue: String?, orbitValue: String?) {
+            println(
+                "DEBUG [MatrixRTCVisibilityAudit] comparison field=$field element_value=$referenceValue orbit_value=$orbitValue match=${referenceValue == orbitValue}"
+            )
+        }
+
+        compare("event_type", reference.type, orbit.type)
+        compare("state_key", reference.stateKey, orbit.stateKey)
+        compare("membershipID", membershipId(reference.content), membershipId(orbit.content))
+        compare("device_id", jsonString(reference.content, "device_id"), jsonString(orbit.content, "device_id"))
+        compare("call_id", jsonString(reference.content, "call_id"), jsonString(orbit.content, "call_id"))
+        compare("application", jsonString(reference.content, "application"), jsonString(orbit.content, "application"))
+        compare("scope", jsonString(reference.content, "scope"), jsonString(orbit.content, "scope"))
+        compare("m.call.intent", jsonString(reference.content, "m.call.intent"), jsonString(orbit.content, "m.call.intent"))
+        compare("focus_active", reference.content["focus_active"]?.toString(), orbit.content["focus_active"]?.toString())
+        compare("foci_preferred", reference.content["foci_preferred"]?.toString(), orbit.content["foci_preferred"]?.toString())
+        compare("foci_active", nullableContentFieldString(reference.content, "foci_active"), nullableContentFieldString(orbit.content, "foci_active"))
+        compare("capabilities", nullableContentFieldString(reference.content, "capabilities"), nullableContentFieldString(orbit.content, "capabilities"))
+    }
+
+    private suspend fun clearMatrixRtcMemberEvent(roomId: String, eventType: String, stateKey: String) {
+        context.httpClient.put(context.fullUrl("/rooms/$roomId/state/$eventType/${stateKey.encodeStateKey()}")) {
+            header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
+            contentType(ContentType.Application.Json)
+            setBody(buildJsonObject { put("membership", "leave") })
+        }
+    }
+
     override suspend fun startGroupCall(roomId: String, callId: String) {
         println("DEBUG [MatrixCallsRepository] STARTING MSC3401 Creator Flow for $roomId")
         
@@ -580,13 +867,8 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                 deviceId
             )
             for (key in keysToClear) {
-                // Clear both namespaces
                 for (ns in listOf("m.call.member", "org.matrix.msc3401.call.member")) {
-                    context.httpClient.put(context.fullUrl("/rooms/$roomId/state/$ns/$key")) {
-                        header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
-                        contentType(ContentType.Application.Json)
-                        setBody(buildJsonObject { put("membership", "leave") })
-                    }
+                    clearMatrixRtcMemberEvent(roomId, ns, key)
                 }
             }
         } catch (e: Exception) {}
@@ -616,7 +898,7 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
             println("ERROR [MatrixCallsRepository] Failed to publish m.call: ${e.message}")
         }
 
-        // 3. Membership is published by CallManager only after native MediaReady.
+        // 3. Membership is published by CallManager before native media and refreshed after MediaReady.
         context.activeGroupCalls.getOrPut(roomId) { MutableStateFlow(null) }.value = "${context.defaultLiveKitServiceUrl}?callId=m.call"
     }
 
@@ -654,46 +936,56 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
     private suspend fun publishGroupCallMembership(roomId: String, callId: String, audio: Boolean, video: Boolean) {
         val userId = context.userId ?: return
         val deviceId = context.deviceId ?: "ORBIT_DESKTOP"
-        // MSC3401 State Key Format: _@user:domain_deviceId_callId
-        val stateKey = "_${userId}_${deviceId}_$callId"
-        
-        // Helper to encode state keys for URL path
-        fun String.encode(): String = this.replace("@", "%40").replace(":", "%3A")
-
-        // Cleanup: Remove old malformed state events from previous versions
         try {
-            val keysToClear = listOf(userId, "_${userId}_${deviceId}_m.call", "_${userId}_${deviceId}", deviceId)
-            for (key in keysToClear) {
-                if (key == stateKey) continue
-                val encodedKey = key.encode()
-                // Clear both namespaces
-                for (ns in listOf("m.call.member", "org.matrix.msc3401.call.member")) {
-                    context.httpClient.put(context.fullUrl("/rooms/$roomId/state/$ns/$encodedKey")) {
-                        header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
-                        contentType(ContentType.Application.Json)
-                        setBody(buildJsonObject { put("membership", "leave") })
+            val membershipId = "$userId:$deviceId"
+            val beforeEvents = fetchMatrixRtcVisibilityEvents(roomId)
+            logMatrixRtcVisibilityEvents("before_publish", beforeEvents)
+            val reference = findReferenceMemberEvent(beforeEvents, userId, deviceId, membershipId)
+            logSelectedReference(reference, userId)
+            val stateKey = selectMembershipStateKey(reference, userId, deviceId, callId)
+            val jsonCallId = selectContentCallId(reference, callId)
+            val publishMode = selectMatrixRtcPublishMode(reference)
+            val shape = MatrixRtcMembershipShape(
+                stateKey = stateKey,
+                contentCallId = jsonCallId,
+                publishMode = publishMode
+            )
+            matrixRtcMembershipShapes[membershipShapeMapKey(roomId, callId)] = shape
+
+            try {
+                val keysToClear = listOf(
+                    userId,
+                    "_${userId}_${deviceId}_m.call",
+                    "_${userId}_${deviceId}_$callId",
+                    "_${userId}_${deviceId}_${jsonCallId}",
+                    "_${userId}_${deviceId}",
+                    deviceId
+                ).distinct()
+                for (key in keysToClear) {
+                    for (ns in matrixRtcMemberEventTypes) {
+                        if (key == stateKey && ns in publishMode.eventTypes) continue
+                        clearMatrixRtcMemberEvent(roomId, ns, key)
                     }
                 }
+            } catch (e: Exception) {
+                println("WARN [MatrixRTCVisibilityAudit] stale membership cleanup failed=${e.message}")
             }
-        } catch (e: Exception) {}
-        
-        try {
-            // Element expects call_id to be empty string for room-wide calls
-            val jsonCallId = if (callId == "m.call") "" else callId
-            val membershipId = "$userId:$deviceId"
 
+            val createdTs = getTimeMillis()
+            val mirrorElementShape = MatrixRtcFeatureFlags.mirrorVisibleElementShape
+            val expiresMs = if (mirrorElementShape) 43200000L else 14400000L
             val payload = buildJsonObject {
                 put("application", "m.call")
                 put("call_id", jsonCallId) 
                 put("device_id", deviceId)
-                // MSC3401: membershipID MUST match the LiveKit identity (COLONS)
-                // This is critical for Element to link the media tracks to the user.
+                // Keep membershipID aligned with the MatrixRTC token request member.id.
+                // LiveKit JWT sub is allowed to be an opaque service-generated participant identity.
                 put("membershipID", membershipId)
                 // MSC3401 strictly requires created_ts for focus selection
-                put("created_ts", getTimeMillis())
-                put("m.call.intent", if (video) "video" else "audio")
+                put("created_ts", createdTs)
+                put("m.call.intent", if (mirrorElementShape) "audio" else if (video) "video" else "audio")
                 put("scope", "m.room")
-                put("expires", 14400000)
+                put("expires", expiresMs)
                 put("foci_preferred", buildJsonArray {
                     add(buildJsonObject {
                         put("livekit_service_url", context.defaultLiveKitServiceUrl)
@@ -705,33 +997,51 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                     put("type", "livekit")
                     put("focus_selection", "oldest_membership")
                 })
-                // Add modern foci_active for newer clients too
-                put("foci_active", buildJsonArray {
-                    add(buildJsonObject {
-                        put("foci_id", "livekit")
-                        put("type", "livekit")
-                        put("livekit_service_url", context.defaultLiveKitServiceUrl)
-                        put("livekit_alias", roomId)
+                if (!mirrorElementShape) {
+                    // Add modern foci_active for newer clients too.
+                    put("foci_active", buildJsonArray {
+                        add(buildJsonObject {
+                            put("foci_id", "livekit")
+                            put("type", "livekit")
+                            put("livekit_service_url", context.defaultLiveKitServiceUrl)
+                            put("livekit_alias", roomId)
+                        })
                     })
-                })
-                put("capabilities", buildJsonObject {
-                    put("audio", audio)
-                    put("video", video)
-                })
+                    put("capabilities", buildJsonObject {
+                        put("audio", audio)
+                        put("video", video)
+                    })
+                }
             }
+            val now = getTimeMillis()
+            println(
+                "DEBUG [MatrixRTCVisibilityAudit] expiry created_ts=$createdTs expires=$expiresMs now=$now expires_remaining_ms=${createdTs + expiresMs - now}"
+            )
             println("DEBUG [MatrixCallsRepository] MatrixRTC membership details userId=$userId deviceId=$deviceId membershipID=$membershipId call_id=${jsonCallId.ifBlank { "<room>" }} roomId=$roomId intent=${if (video) "video" else "audio"} capabilitiesAudio=$audio capabilitiesVideo=$video")
+            println(
+                "DEBUG [MatrixRTCMapping] m.call.member state_key=$stateKey membershipID=$membershipId device_id=$deviceId call_id=${jsonCallId.ifBlank { "<room>" }} room_id=$roomId"
+            )
             println("DEBUG [MatrixCallsRepository] Sending m.call.member payload: $payload")
-            
-            val encodedStateKey = stateKey.encode()
-            
-            // ATTEMPT 1: Modern m.call.member (Required by Element)
-            val response1 = context.httpClient.put(context.fullUrl("/rooms/$roomId/state/m.call.member/$encodedStateKey")) {
-                header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
-                contentType(ContentType.Application.Json)
-                setBody(payload)
+
+            for (eventType in publishMode.eventTypes) {
+                val response = context.httpClient.put(context.fullUrl("/rooms/$roomId/state/$eventType/${stateKey.encodeStateKey()}")) {
+                    header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
+                    contentType(ContentType.Application.Json)
+                    setBody(payload)
+                }
+                println("DEBUG [MatrixCallsRepository] Published $eventType status=${response.status.value}")
+                println(
+                    "DEBUG [MatrixRTCMapping] $eventType publish status=${response.status.value} state_key=$stateKey membershipID=$membershipId"
+                )
             }
-            println("DEBUG [MatrixCallsRepository] Published m.call.member (modern), status: ${response1.status.value}")
-            println("DEBUG [MatrixCallsRepository] Skipped legacy org.matrix.msc3401.call.member publish to avoid duplicate Element participants")
+
+            val afterEvents = fetchMatrixRtcVisibilityEvents(roomId)
+            logMatrixRtcVisibilityEvents("after_publish", afterEvents)
+            val orbitMember = findOwnMemberEvent(afterEvents, deviceId, membershipId, stateKey)
+            println(
+                "DEBUG [MatrixRTCVisibilityAudit] orbit member visible=${orbitMember != null} selected_state_key=$stateKey selected_mode=${publishMode.label}"
+            )
+            logMembershipComparison(reference, orbitMember)
 
         } catch (e: Exception) {
             println("ERROR [MatrixCallsRepository] Failed to publish member join: ${e.message}")
@@ -742,27 +1052,19 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
         println("DEBUG [MatrixCallsRepository] LEAVING MSC3401 Call for $roomId")
         val userId = context.userId ?: return
         val deviceId = context.deviceId ?: "ORBIT_DESKTOP"
-        val stateKey = "_${userId}_${deviceId}_$callId"
+        val shape = matrixRtcMembershipShapes.remove(membershipShapeMapKey(roomId, callId))
+        val stateKey = shape?.stateKey ?: "_${userId}_${deviceId}_$callId"
+        val eventTypes = shape?.publishMode?.eventTypes ?: matrixRtcMemberEventTypes
 
         try {
-            // Leave both namespaces
-            for (ns in listOf("m.call.member", "org.matrix.msc3401.call.member")) {
-                val memberUrl = context.fullUrl("/rooms/$roomId/state/$ns/$stateKey")
-                context.httpClient.put(memberUrl) {
-                    header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
-                    contentType(ContentType.Application.Json)
-                    setBody(buildJsonObject {
-                        put("membership", "leave")
-                    })
-                }
+            for (ns in eventTypes) {
+                clearMatrixRtcMemberEvent(roomId, ns, stateKey)
+                println("DEBUG [MatrixRTCVisibilityAudit] leave published type=$ns state_key=$stateKey")
             }
             
             // Also cleanup the old device-only key if it exists
-            val oldKeyUrl = context.fullUrl("/rooms/$roomId/state/org.matrix.msc3401.call.member/$deviceId")
-            context.httpClient.put(oldKeyUrl) {
-                header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
-                contentType(ContentType.Application.Json)
-                setBody(buildJsonObject { put("membership", "leave") })
+            for (ns in matrixRtcMemberEventTypes) {
+                clearMatrixRtcMemberEvent(roomId, ns, deviceId)
             }
         } catch (e: Exception) {}
 
@@ -773,8 +1075,14 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
     override suspend fun fetchLiveKitToken(roomId: String, callId: String, livekitServiceUrl: String): livekit.LiveKitAuthResponse {
         val userId = context.userId ?: throw Exception("No user ID")
         val deviceId = context.deviceId ?: "ORBIT_DESKTOP"
-        // MSC3401: LiveKit Identity MUST match membershipID in payload (COLONS)
+        // MatrixRTC token member.id must match the m.call.member membershipID/device_id chain.
+        // In legacy Element-shape mode, the LiveKit JWT subject must also match this identity.
         val identity = "$userId:$deviceId"
+        val stateKey = "_${userId}_${deviceId}_$callId"
+        val forceLegacyJwtEndpoint = MatrixRtcFeatureFlags.mirrorVisibleElementShape
+        println(
+            "DEBUG [MatrixRTCMapping] token fetch expected m.call.member state_key=$stateKey membershipID=$identity device_id=$deviceId call_id=$callId room_id=$roomId forceLegacyJwtEndpoint=$forceLegacyJwtEndpoint"
+        )
         
         val tokenResult = livekit.LiveKitTokenProvider.fetchLiveKitToken(
             roomId = roomId,
@@ -788,7 +1096,8 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
             userId = userId,
             homeserverUrl = context.homeserverUrl,
             accessToken = context.accessToken ?: throw Exception("No access token"),
-            httpClient = context.httpClient
+            httpClient = context.httpClient,
+            forceLegacyJwtEndpoint = forceLegacyJwtEndpoint
         )
         val value = tokenResult.value ?: throw Exception(tokenResult.error?.message ?: "Failed to fetch LiveKit token")
         return livekit.LiveKitAuthResponse(
@@ -797,6 +1106,8 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
             expiresAtEpochSeconds = value.expiresAtEpochSeconds,
             roomName = value.roomName,
             identity = value.identity,
+            matrixRtcMemberId = identity,
+            claimedDeviceId = deviceId,
             grants = value.grants
         )
     }

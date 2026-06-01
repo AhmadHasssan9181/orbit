@@ -114,7 +114,11 @@ val orbitAudioJvmArgs = listOf(
     "orbit.audio.captureGain",
     "orbit.audio.selfTestDurationMs",
     "orbit.audio.autoProbeDurationMs",
-    "orbit.livekit.audioSourceQueueMs"
+    "orbit.livekit.audioSourceQueueMs",
+    "orbit.livekit.dumpTonePublisherEnv",
+    "orbit.matrixrtc.publishLegacyMember",
+    "orbit.matrixrtc.publishMemberMode",
+    "orbit.matrixrtc.mirrorVisibleElementShape"
 ).mapNotNull { propertyName ->
     System.getProperty(propertyName)
         ?.takeIf { it.isNotBlank() }
@@ -223,6 +227,9 @@ tasks.register("runLiveKitTonePublisher") {
         val seconds = ((findProperty("toneSeconds") as String?)
             ?: System.getenv("ORBIT_LIVEKIT_TONE_SECONDS")
             ?: "120")
+        val channels = ((findProperty("toneChannels") as String?)
+            ?: System.getenv("ORBIT_LIVEKIT_TONE_CHANNELS")
+            ?: "2")
 
         if (url.isNullOrBlank() || token.isNullOrBlank()) {
             throw GradleException(
@@ -246,6 +253,7 @@ tasks.register("runLiveKitTonePublisher") {
             environment("ORBIT_LIVEKIT_URL", url)
             environment("ORBIT_LIVEKIT_TOKEN", token)
             environment("ORBIT_LIVEKIT_TONE_SECONDS", seconds)
+            environment("ORBIT_LIVEKIT_TONE_CHANNELS", channels)
             commandLine(executable.absolutePath)
         }
     }

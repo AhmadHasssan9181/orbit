@@ -18,4 +18,7 @@ actual object LiveKitFeatureFlags {
 
     actual val videoRequired: Boolean
         get() = false
+
+    actual val dumpTonePublisherEnv: Boolean
+        get() = false
 }
