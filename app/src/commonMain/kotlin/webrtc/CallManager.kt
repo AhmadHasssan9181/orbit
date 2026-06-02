@@ -245,8 +245,22 @@ class CallManager(
                     if (!value.videoPublished) {
                         isLocalVideoEnabled.value = false
                     }
-                    println("DEBUG [CallManager] publishing MatrixRTC membership after MediaReady audio=true video=${value.videoPublished}")
-                    onUpdateGroupCallMembershipCapabilities?.invoke(roomId, callId, true, value.videoPublished, authResponse.identity)
+                    val membershipMode = livekit.LiveKitFeatureFlags.videoMembershipMode
+                    val membershipModeAllowsVideo = membershipMode == "intent-video" ||
+                        membershipMode == "capabilities-video" ||
+                        membershipMode == "element-reference"
+                    val updateVideoMembership = value.videoPublished &&
+                        livekit.LiveKitFeatureFlags.videoUpdateMembershipAfterPublish &&
+                        membershipModeAllowsVideo
+                    if (updateVideoMembership) {
+                        println("DEBUG [CallManager] publishing MatrixRTC membership after video publish audio=true video=true mode=$membershipMode")
+                        onUpdateGroupCallMembershipCapabilities?.invoke(roomId, callId, true, true, authResponse.identity)
+                    } else {
+                        println(
+                            "DEBUG [CallManager] keeping MatrixRTC membership audio-only after MediaReady " +
+                                "videoPublished=${value.videoPublished} updateMembershipAfterPublish=${livekit.LiveKitFeatureFlags.videoUpdateMembershipAfterPublish} membershipMode=$membershipMode"
+                        )
+                    }
                 }
                 ready
             }

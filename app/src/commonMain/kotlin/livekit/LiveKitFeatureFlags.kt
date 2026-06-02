@@ -7,5 +7,8 @@ expect object LiveKitFeatureFlags {
     val ffiVideo: Boolean
     val debugFrames: Boolean
     val videoRequired: Boolean
+    val videoPublish: Boolean
+    val videoUpdateMembershipAfterPublish: Boolean
+    val videoMembershipMode: String
     val dumpTonePublisherEnv: Boolean
 }

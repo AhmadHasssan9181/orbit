@@ -32,10 +32,24 @@ std::unique_ptr<livekit::RoomDelegate> g_delegate;
 std::shared_ptr<livekit::AudioSource> g_audioSource;
 std::shared_ptr<livekit::LocalAudioTrack> g_audioTrack;
 std::shared_ptr<livekit::AudioProcessingModule> g_audioProcessor;
+std::shared_ptr<livekit::VideoSource> g_videoSource;
+std::shared_ptr<livekit::LocalVideoTrack> g_videoTrack;
 std::string g_matrixRtcMemberId;
 bool g_connected = false;
 bool g_micPublished = false;
 bool g_acceptingFrames = false;
+bool g_videoPublished = false;
+bool g_acceptingVideoFrames = false;
+bool g_cameraRequested = false;
+int g_videoWidth = 0;
+int g_videoHeight = 0;
+int g_videoFps = 0;
+int g_videoFormat = 0;
+std::string g_videoPublicationSid;
+std::string g_videoLocalTrackSid;
+bool g_videoFrameDroppedNotReadyLogged = false;
+int g_videoPushDiagnosticsLogged = 0;
+std::int64_t g_lastVideoTimestampNs = 0;
 int g_publishedAudioChannels = 0;
 std::atomic_bool g_expectedTestTone{false};
 std::atomic_bool g_firstAudioFrameAccepted{false};
@@ -1119,7 +1133,7 @@ public:
         }
         const auto publication = event.publication;
         const auto trackSource = event.track->source();
-        std::cout << "DEBUG [OrbitLiveKitAudio] local microphone track publish event "
+        std::cout << "DEBUG [OrbitLiveKitAudio] local track publish event "
                   << "localTrackSid=" << event.track->sid()
                   << " localTrackName=" << event.track->name()
                   << " localTrackKind=" << static_cast<int>(event.track->kind())
@@ -1203,6 +1217,44 @@ public:
 
 void resetRoomLocked() {
     g_acceptingFrames = false;
+    if (g_videoSource != nullptr || g_videoTrack != nullptr || g_videoPublished || g_acceptingVideoFrames) {
+        std::cout << "DEBUG [VideoPublish] stop requested reason=room-reset" << std::endl;
+    }
+    g_acceptingVideoFrames = false;
+    if (g_room != nullptr && g_room->localParticipant() != nullptr && !g_videoPublicationSid.empty()) {
+        try {
+            std::cout << "DEBUG [VideoPublish] unpublish started publicationSid="
+                      << g_videoPublicationSid
+                      << " localTrackSid=" << (g_videoLocalTrackSid.empty() ? std::string{"<none>"} : g_videoLocalTrackSid)
+                      << std::endl;
+            g_room->localParticipant()->unpublishTrack(g_videoPublicationSid);
+            std::cout << "DEBUG [VideoPublish] unpublish success publicationSid="
+                      << g_videoPublicationSid << std::endl;
+        } catch (const std::exception& error) {
+            std::cerr << "WARN [VideoPublish] unpublish failed publicationSid="
+                      << g_videoPublicationSid
+                      << " message=" << error.what()
+                      << std::endl;
+        } catch (...) {
+            std::cerr << "WARN [VideoPublish] unpublish failed publicationSid="
+                      << g_videoPublicationSid
+                      << " message=unknown"
+                      << std::endl;
+        }
+    }
+    g_videoTrack.reset();
+    g_videoSource.reset();
+    g_videoPublished = false;
+    g_cameraRequested = false;
+    g_videoWidth = 0;
+    g_videoHeight = 0;
+    g_videoFps = 0;
+    g_videoFormat = 0;
+    g_videoPublicationSid.clear();
+    g_videoLocalTrackSid.clear();
+    g_videoFrameDroppedNotReadyLogged = false;
+    g_videoPushDiagnosticsLogged = 0;
+    g_lastVideoTimestampNs = 0;
     g_audioSourceWorker.stop();
     if (g_room != nullptr) {
         g_room->setDelegate(nullptr);
@@ -1232,10 +1284,27 @@ bool hasReadyMicLocked() {
         g_audioTrack != nullptr;
 }
 
+bool hasReadyVideoLocked() {
+    return g_connected &&
+        g_videoPublished &&
+        g_acceptingVideoFrames &&
+        !g_rawDisconnecting &&
+        g_room != nullptr &&
+        g_videoSource != nullptr &&
+        g_videoTrack != nullptr;
+}
+
 void logFrameDroppedNotReadyLocked() {
     if (!g_frameDroppedNotReadyLogged) {
         g_frameDroppedNotReadyLogged = true;
         std::cout << "DEBUG [OrbitLiveKitAudio] frame dropped because native audio not ready" << std::endl;
+    }
+}
+
+void logVideoFrameDroppedNotReadyLocked() {
+    if (!g_videoFrameDroppedNotReadyLogged) {
+        g_videoFrameDroppedNotReadyLogged = true;
+        std::cout << "DEBUG [VideoPublish] frame dropped because native video not ready" << std::endl;
     }
 }
 
@@ -1298,6 +1367,75 @@ std::string trackSourceLabel(livekit::TrackSource source) {
 
 std::string optionalTrackSourceLabel(const std::optional<livekit::TrackSource>& source) {
     return source.has_value() ? trackSourceLabel(source.value()) : "unset";
+}
+
+std::string trackKindLabel(livekit::TrackKind kind) {
+    switch (kind) {
+        case livekit::TrackKind::KIND_AUDIO:
+            return "audio";
+        case livekit::TrackKind::KIND_VIDEO:
+            return "video";
+        case livekit::TrackKind::KIND_UNKNOWN:
+        default:
+            return "unknown";
+    }
+}
+
+std::string streamStateLabel(livekit::StreamState state) {
+    switch (state) {
+        case livekit::StreamState::STATE_ACTIVE:
+            return "active";
+        case livekit::StreamState::STATE_PAUSED:
+            return "paused";
+        case livekit::StreamState::STATE_UNKNOWN:
+        default:
+            return "unknown";
+    }
+}
+
+void dumpLocalParticipantPublicationsLocked(const std::string& label) {
+    if (g_room == nullptr || g_room->localParticipant() == nullptr) {
+        std::cout << "DEBUG [VideoPublish] local publications dump label="
+                  << label << " unavailable=no-local-participant" << std::endl;
+        return;
+    }
+
+    const auto publications = g_room->localParticipant()->trackPublications();
+    std::cout << "DEBUG [VideoPublish] local publications dump label="
+              << label
+              << " count=" << publications.size()
+              << std::endl;
+    for (const auto& entry : publications) {
+        const auto& publication = entry.second;
+        if (publication == nullptr) {
+            std::cout << "DEBUG [VideoPublish] local publication sid="
+                      << entry.first
+                      << " null=true"
+                      << std::endl;
+            continue;
+        }
+
+        const auto track = publication->track();
+        std::cout << "DEBUG [VideoPublish] local publication "
+                  << "sid=" << publication->sid()
+                  << " name=" << publication->name()
+                  << " kind=" << trackKindLabel(publication->kind())
+                  << " kindEnum=" << static_cast<int>(publication->kind())
+                  << " source=" << trackSourceLabel(publication->source())
+                  << " sourceEnum=" << static_cast<int>(publication->source())
+                  << " muted=" << (publication->muted() ? "true" : "false")
+                  << " width=" << publication->width()
+                  << " height=" << publication->height()
+                  << " trackSid=" << (track != nullptr ? track->sid() : std::string{"<none>"})
+                  << " trackName=" << (track != nullptr ? track->name() : std::string{"<none>"})
+                  << " trackKind=" << (track != nullptr ? trackKindLabel(track->kind()) : std::string{"unset"})
+                  << " trackSource=" << (track != nullptr ? optionalTrackSourceLabel(track->source()) : std::string{"unset"})
+                  << " trackMuted=" << (track != nullptr && track->muted() ? "true" : "false")
+                  << " trackStreamState=" << (track != nullptr ? streamStateLabel(track->streamState()) : std::string{"unset"})
+                  << " subscribed=<not exposed for local publication>"
+                  << " enabled=<not exposed by LiveKit C++ SDK>"
+                  << std::endl;
+    }
 }
 
 std::string audioFeatureLabel(livekit::AudioTrackFeature feature) {
@@ -1591,7 +1729,9 @@ std::string rawReadinessJsonLocked(jlong sessionId) {
     const bool validSession = isRawSessionValid(sessionId);
     const bool connected = validSession && g_connected;
     const bool audioPublished = validSession && g_micPublished;
+    const bool videoPublished = validSession && g_videoPublished;
     const bool acceptingAudioFrames = validSession && hasReadyMicLocked();
+    const bool acceptingVideoFrames = validSession && hasReadyVideoLocked();
     const char* state = "Idle";
     if (!validSession) {
         state = "Failed";
@@ -1603,17 +1743,24 @@ std::string rawReadinessJsonLocked(jlong sessionId) {
         state = "LiveKitConnected";
     }
 
+    const char* cameraState = "NotRequested";
+    if (videoPublished) {
+        cameraState = "Published";
+    } else if (g_cameraRequested) {
+        cameraState = "Publishing";
+    }
+
     return std::string("{\"sessionId\":") + std::to_string(sessionId) +
         ",\"epoch\":" + std::to_string(g_rawEpoch) +
         ",\"state\":\"" + state +
         "\",\"connected\":" + (connected ? "true" : "false") +
         ",\"audioPublished\":" + (audioPublished ? "true" : "false") +
-        ",\"videoPublished\":false" +
+        ",\"videoPublished\":" + (videoPublished ? "true" : "false") +
         ",\"acceptingAudioFrames\":" + (acceptingAudioFrames ? "true" : "false") +
-        ",\"acceptingVideoFrames\":false" +
-        ",\"cameraRequested\":false" +
+        ",\"acceptingVideoFrames\":" + (acceptingVideoFrames ? "true" : "false") +
+        ",\"cameraRequested\":" + (g_cameraRequested ? "true" : "false") +
         ",\"cameraRequired\":false" +
-        ",\"cameraState\":\"NotRequested\"" +
+        ",\"cameraState\":\"" + cameraState + "\"" +
         ",\"joinedAsAudioOnlyFallback\":false" +
         ",\"tokenRefreshScheduled\":false" +
         ",\"lastError\":" + (g_rawHasLastError ? g_rawLastErrorJson : "null") +
@@ -2475,50 +2622,289 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePushAudioFrame(
 
 extern "C" JNIEXPORT jint JNICALL
 Java_livekit_OrbitLiveKitNativeRaw_nativePublishVideo(
-    JNIEnv*,
+    JNIEnv* env,
     jclass,
     jlong sessionId,
     jlong epoch,
-    jint,
-    jint,
-    jint,
-    jint) {
+    jint width,
+    jint height,
+    jint fps,
+    jint format) {
     std::lock_guard<std::mutex> lock(g_sessionMutex);
     if (!isRawSessionValid(sessionId)) {
         setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativePublishVideo", false);
         return kStatusStaleEvent;
     }
     g_rawEpoch = epoch;
-    setRawErrorLocked("PUBLISH_VIDEO_FAILED", "Native C++ video is not implemented in this session", "nativePublishVideo", true);
-    return kStatusPublishVideoFailed;
+    clearRawErrorLocked();
+
+    constexpr jint kVideoFormatI420 = 5;
+    if (width <= 0 || height <= 0 || fps <= 0 || format != kVideoFormatI420) {
+        setRawErrorLocked("CAMERA_MODE_REJECTED", "Unsupported native video publish format", "nativePublishVideo", true);
+        return kStatusPublishVideoFailed;
+    }
+
+    if (!g_connected || g_room == nullptr || g_room->localParticipant() == nullptr) {
+        setRawErrorLocked("PUBLISH_VIDEO_FAILED", "Cannot publish video before room connect", "nativePublishVideo", true);
+        return kStatusPublishVideoFailed;
+    }
+
+    g_cameraRequested = true;
+    g_acceptingVideoFrames = false;
+    g_videoPublished = false;
+    g_videoPushDiagnosticsLogged = 0;
+    g_videoFrameDroppedNotReadyLogged = false;
+    g_lastVideoTimestampNs = 0;
+
+    if (g_videoSource != nullptr || g_videoTrack != nullptr || !g_videoPublicationSid.empty()) {
+        if (g_room != nullptr && g_room->localParticipant() != nullptr && !g_videoPublicationSid.empty()) {
+            try {
+                std::cout << "DEBUG [VideoPublish] unpublish started publicationSid="
+                          << g_videoPublicationSid
+                          << " reason=republish"
+                          << std::endl;
+                g_room->localParticipant()->unpublishTrack(g_videoPublicationSid);
+                std::cout << "DEBUG [VideoPublish] unpublish success publicationSid="
+                          << g_videoPublicationSid << std::endl;
+            } catch (const std::exception& error) {
+                std::cerr << "WARN [VideoPublish] previous unpublish failed message="
+                          << error.what() << std::endl;
+            } catch (...) {
+                std::cerr << "WARN [VideoPublish] previous unpublish failed message=unknown" << std::endl;
+            }
+        }
+        g_videoTrack.reset();
+        g_videoSource.reset();
+        g_videoPublicationSid.clear();
+        g_videoLocalTrackSid.clear();
+    }
+
+    try {
+        g_videoWidth = static_cast<int>(width);
+        g_videoHeight = static_cast<int>(height);
+        g_videoFps = static_cast<int>(fps);
+        g_videoFormat = static_cast<int>(format);
+        g_videoSource = std::make_shared<livekit::VideoSource>(g_videoWidth, g_videoHeight);
+        std::cout << "VideoPublish source created "
+                  << "width=" << g_videoWidth
+                  << " height=" << g_videoHeight
+                  << " fps=" << g_videoFps
+                  << " livekitFormat=I420"
+                  << std::endl;
+
+        g_videoTrack = livekit::LocalVideoTrack::createLocalVideoTrack("camera", g_videoSource);
+        if (g_videoTrack == nullptr) {
+            g_videoSource.reset();
+            setRawErrorLocked("PUBLISH_VIDEO_FAILED", "Native C++ camera track creation failed", "nativePublishVideo", true);
+            return kStatusPublishVideoFailed;
+        }
+        g_videoLocalTrackSid = g_videoTrack->sid();
+        std::cout << "VideoPublish track created "
+                  << "trackName=camera "
+                  << "trackSource=SOURCE_CAMERA "
+                  << "localTrackSid=" << (g_videoLocalTrackSid.empty() ? std::string{"<pending>"} : g_videoLocalTrackSid)
+                  << " muted=" << (g_videoTrack->muted() ? "true" : "false")
+                  << std::endl;
+
+        livekit::TrackPublishOptions publishOptions;
+        publishOptions.source = livekit::TrackSource::SOURCE_CAMERA;
+        livekit::VideoEncodingOptions videoEncoding;
+        videoEncoding.max_framerate = static_cast<double>(g_videoFps);
+        publishOptions.video_encoding = videoEncoding;
+
+        std::cout << "VideoPublish publish started "
+                  << "trackName=camera "
+                  << "trackSource=SOURCE_CAMERA "
+                  << "width=" << g_videoWidth
+                  << " height=" << g_videoHeight
+                  << " fps=" << g_videoFps
+                  << " format=I420"
+                  << std::endl;
+        g_room->localParticipant()->publishTrack(g_videoTrack, publishOptions);
+        std::cout << "VideoPublish publishTrack returned success "
+                  << "trackName=camera "
+                  << "trackSource=SOURCE_CAMERA "
+                  << "width=" << g_videoWidth
+                  << " height=" << g_videoHeight
+                  << " fps=" << g_videoFps
+                  << " format=I420"
+                  << std::endl;
+
+        const auto publication = g_videoTrack->publication();
+        if (g_videoSource == nullptr || g_videoTrack == nullptr || publication == nullptr) {
+            g_videoTrack.reset();
+            g_videoSource.reset();
+            setRawErrorLocked("PUBLISH_VIDEO_FAILED", "Native C++ camera publish returned no publication", "nativePublishVideo", true);
+            return kStatusPublishVideoFailed;
+        }
+
+        if (g_videoTrack->muted()) {
+            g_videoTrack->unmute();
+        }
+
+        g_videoPublicationSid = publication->sid();
+        g_videoLocalTrackSid = g_videoTrack->sid();
+        g_videoPublished = true;
+        g_acceptingVideoFrames = true;
+
+        std::cout << "VideoPublish publish success "
+                  << "publicationSid=" << (g_videoPublicationSid.empty() ? std::string{"<none>"} : g_videoPublicationSid)
+                  << " publicationName=" << publication->name()
+                  << " publicationKind=" << trackKindLabel(publication->kind())
+                  << " publicationKindEnum=" << static_cast<int>(publication->kind())
+                  << " publicationSourceEnum=" << static_cast<int>(publication->source())
+                  << " publicationSourceLabel=" << trackSourceLabel(publication->source())
+                  << " localTrackSid=" << (g_videoLocalTrackSid.empty() ? std::string{"<none>"} : g_videoLocalTrackSid)
+                  << " localTrackMuted=" << (g_videoTrack->muted() ? "true" : "false")
+                  << " trackName=camera "
+                  << "trackSource=SOURCE_CAMERA "
+                  << " publicationWidth=" << publication->width()
+                  << " publicationHeight=" << publication->height()
+                  << std::endl;
+        dumpLocalParticipantPublicationsLocked("after_video_publish");
+    } catch (const std::exception& error) {
+        g_acceptingVideoFrames = false;
+        g_videoPublished = false;
+        g_videoTrack.reset();
+        g_videoSource.reset();
+        g_videoPublicationSid.clear();
+        g_videoLocalTrackSid.clear();
+        setRawErrorLocked("PUBLISH_VIDEO_FAILED", std::string("Native C++ camera publish failed: ") + error.what(), "nativePublishVideo", true);
+        return kStatusPublishVideoFailed;
+    } catch (...) {
+        g_acceptingVideoFrames = false;
+        g_videoPublished = false;
+        g_videoTrack.reset();
+        g_videoSource.reset();
+        g_videoPublicationSid.clear();
+        g_videoLocalTrackSid.clear();
+        setRawErrorLocked("PUBLISH_VIDEO_FAILED", "Native C++ camera publish failed", "nativePublishVideo", true);
+        return kStatusPublishVideoFailed;
+    }
+
+    dispatchSimpleNativeEvent(env, "livekit/NativeMediaEvent$VideoPublished", sessionId, epoch);
+    return kStatusOk;
 }
 
 extern "C" JNIEXPORT jint JNICALL
 Java_livekit_OrbitLiveKitNativeRaw_nativePushVideoFrame(
-    JNIEnv*,
+    JNIEnv* env,
     jclass,
     jlong sessionId,
     jlong epoch,
-    jobject,
-    jint,
-    jint,
-    jint,
-    jint,
-    jint,
-    jint,
-    jlong,
-    jint) {
-    std::lock_guard<std::mutex> lock(g_sessionMutex);
-    if (!isRawSessionValid(sessionId)) {
-        setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativePushVideoFrame", false);
-        return kStatusStaleEvent;
+    jobject buffer,
+    jint width,
+    jint height,
+    jint format,
+    jint strideY,
+    jint strideU,
+    jint strideV,
+    jlong timestampNs,
+    jint rotation) {
+    constexpr jint kVideoFormatI420 = 5;
+    std::shared_ptr<livekit::VideoSource> source;
+    {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        if (!isRawSessionValid(sessionId)) {
+            setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativePushVideoFrame", false);
+            return kStatusStaleEvent;
+        }
+        if (epoch != g_rawEpoch) {
+            setRawErrorLocked("STALE_EVENT", "Stale native media epoch", "nativePushVideoFrame", true);
+            return kStatusStaleEvent;
+        }
+        if (!hasReadyVideoLocked()) {
+            logVideoFrameDroppedNotReadyLocked();
+            clearRawErrorLocked();
+            return kStatusOk;
+        }
+        if (format != kVideoFormatI420 || width != g_videoWidth || height != g_videoHeight) {
+            setRawErrorLocked("VIDEO_CAPTURE_FAILED", "Video frame format or dimensions do not match published source", "nativePushVideoFrame", true);
+            return kStatusVideoCaptureFailed;
+        }
+        source = g_videoSource;
     }
-    if (epoch != g_rawEpoch) {
-        setRawErrorLocked("STALE_EVENT", "Stale native media epoch", "nativePushVideoFrame", true);
-        return kStatusStaleEvent;
+
+    if (buffer == nullptr || source == nullptr) {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        setRawErrorLocked("VIDEO_CAPTURE_FAILED", "Missing native video frame buffer or source", "nativePushVideoFrame", true);
+        return kStatusVideoCaptureFailed;
     }
-    setRawErrorLocked("VIDEO_CAPTURE_FAILED", "Native C++ video is not implemented in this session", "nativePushVideoFrame", true);
-    return kStatusVideoCaptureFailed;
+
+    void* data = env->GetDirectBufferAddress(buffer);
+    const jlong capacity = env->GetDirectBufferCapacity(buffer);
+    if (data == nullptr || capacity <= 0) {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        setRawErrorLocked("VIDEO_CAPTURE_FAILED", "Video frame buffer must be direct", "nativePushVideoFrame", true);
+        return kStatusVideoCaptureFailed;
+    }
+
+    const int chromaWidth = (static_cast<int>(width) + 1) / 2;
+    const int chromaHeight = (static_cast<int>(height) + 1) / 2;
+    const int expectedStrideY = static_cast<int>(width);
+    const int expectedStrideU = chromaWidth;
+    const int expectedStrideV = chromaWidth;
+    const std::size_t expectedBytes =
+        static_cast<std::size_t>(width) * static_cast<std::size_t>(height) +
+        static_cast<std::size_t>(chromaWidth) * static_cast<std::size_t>(chromaHeight) * 2U;
+
+    if (strideY != expectedStrideY || strideU != expectedStrideU || strideV != expectedStrideV ||
+        static_cast<std::size_t>(capacity) < expectedBytes) {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        setRawErrorLocked("VIDEO_CAPTURE_FAILED", "Packed I420 frame layout is invalid", "nativePushVideoFrame", true);
+        return kStatusVideoCaptureFailed;
+    }
+
+    try {
+        std::vector<std::uint8_t> frameData(expectedBytes);
+        std::memcpy(frameData.data(), data, expectedBytes);
+        livekit::VideoFrame frame(
+            static_cast<int>(width),
+            static_cast<int>(height),
+            livekit::VideoBufferType::I420,
+            std::move(frameData));
+
+        livekit::VideoRotation nativeRotation = livekit::VideoRotation::VIDEO_ROTATION_0;
+        if (rotation == 90) {
+            nativeRotation = livekit::VideoRotation::VIDEO_ROTATION_90;
+        } else if (rotation == 180) {
+            nativeRotation = livekit::VideoRotation::VIDEO_ROTATION_180;
+        } else if (rotation == 270) {
+            nativeRotation = livekit::VideoRotation::VIDEO_ROTATION_270;
+        }
+        const auto timestampUs = static_cast<std::int64_t>(timestampNs / 1000LL);
+        source->captureFrame(frame, timestampUs, nativeRotation);
+
+        {
+            std::lock_guard<std::mutex> lock(g_sessionMutex);
+            g_lastVideoTimestampNs = static_cast<std::int64_t>(timestampNs);
+            if (g_videoPushDiagnosticsLogged < 8) {
+                g_videoPushDiagnosticsLogged += 1;
+                std::cout << "DEBUG [VideoPublish] native frame #"
+                          << g_videoPushDiagnosticsLogged
+                          << " width=" << width
+                          << " height=" << height
+                          << " sourceFormat=I420"
+                          << " livekitFormat=I420"
+                          << " bytes=" << expectedBytes
+                          << " timestampNs=" << timestampNs
+                          << " timestampUs=" << timestampUs
+                          << " rotation=" << rotation
+                          << " trackName=camera"
+                          << " trackSource=SOURCE_CAMERA"
+                          << std::endl;
+            }
+        }
+        return kStatusOk;
+    } catch (const std::exception& error) {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        setRawErrorLocked("VIDEO_CAPTURE_FAILED", std::string("Native video captureFrame failed: ") + error.what(), "nativePushVideoFrame", true);
+        return kStatusVideoCaptureFailed;
+    } catch (...) {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        setRawErrorLocked("VIDEO_CAPTURE_FAILED", "Native video captureFrame failed", "nativePushVideoFrame", true);
+        return kStatusVideoCaptureFailed;
+    }
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -2565,15 +2951,48 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetAudioMuted(JNIEnv*, jclass, jlong se
 }
 
 extern "C" JNIEXPORT jint JNICALL
-Java_livekit_OrbitLiveKitNativeRaw_nativeSetVideoMuted(JNIEnv*, jclass, jlong sessionId, jlong epoch, jboolean) {
-    std::lock_guard<std::mutex> lock(g_sessionMutex);
-    if (!isRawSessionValid(sessionId)) {
-        setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativeSetVideoMuted", false);
-        return kStatusStaleEvent;
+Java_livekit_OrbitLiveKitNativeRaw_nativeSetVideoMuted(JNIEnv*, jclass, jlong sessionId, jlong epoch, jboolean muted) {
+    std::shared_ptr<livekit::LocalVideoTrack> track;
+    {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        if (!isRawSessionValid(sessionId)) {
+            setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativeSetVideoMuted", false);
+            return kStatusStaleEvent;
+        }
+        if (epoch != g_rawEpoch) {
+            setRawErrorLocked("STALE_EVENT", "Stale native media epoch", "nativeSetVideoMuted", true);
+            return kStatusStaleEvent;
+        }
+        clearRawErrorLocked();
+        track = g_videoTrack;
     }
-    g_rawEpoch = epoch;
-    clearRawErrorLocked();
-    return kStatusOk;
+
+    if (track == nullptr) {
+        return kStatusOk;
+    }
+
+    try {
+        if (muted == JNI_TRUE) {
+            track->mute();
+        } else {
+            track->unmute();
+        }
+        std::cout << "DEBUG [VideoPublish] native video muted="
+                  << (muted == JNI_TRUE ? "true" : "false")
+                  << " trackMuted=" << (track->muted() ? "true" : "false")
+                  << " trackName=camera"
+                  << " trackSource=SOURCE_CAMERA"
+                  << std::endl;
+        return kStatusOk;
+    } catch (const std::exception& error) {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        setRawErrorLocked("NATIVE_EXCEPTION", std::string("Native video mute failed: ") + error.what(), "nativeSetVideoMuted", true);
+        return kStatusNativeException;
+    } catch (...) {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        setRawErrorLocked("NATIVE_EXCEPTION", "Native video mute failed", "nativeSetVideoMuted", true);
+        return kStatusNativeException;
+    }
 }
 
 extern "C" JNIEXPORT jstring JNICALL

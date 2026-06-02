@@ -684,6 +684,28 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
         }
     }
 
+    private fun logElementReferenceDump(label: String, events: List<MatrixRtcVisibilityEvent>, ownUserId: String) {
+        events
+            .filter { it.type == "org.matrix.msc3401.call.member" }
+            .filter { it.sender != ownUserId }
+            .filter(::isActiveMatrixRtcMember)
+            .forEach { event ->
+                println(
+                    "DEBUG [ElementReferenceDump] $label " +
+                        "event_type=${event.type} " +
+                        "state_key=${event.stateKey} " +
+                        "sender=${event.sender} " +
+                        "call_id=${jsonString(event.content, "call_id")?.ifBlank { "<blank>" }} " +
+                        "m.call.intent=${jsonString(event.content, "m.call.intent")} " +
+                        "capabilities=${event.content["capabilities"]} " +
+                        "foci_active=${event.content["foci_active"]} " +
+                        "foci_preferred=${event.content["foci_preferred"]} " +
+                        "focus_active=${event.content["focus_active"]} " +
+                        "expires=${jsonLong(event.content, "expires")}"
+                )
+            }
+    }
+
     private fun findReferenceMemberEvent(
         events: List<MatrixRtcVisibilityEvent>,
         ownUserId: String,
@@ -745,9 +767,13 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
             .sortedWith(compareBy<MatrixRtcVisibilityEvent> { it.stateKey != selectedStateKey }.thenBy { it.type != "m.call.member" })
             .firstOrNull()
 
-    private fun selectMatrixRtcPublishMode(reference: MatrixRtcVisibilityEvent?): MatrixRtcPublishMode {
-        if (MatrixRtcFeatureFlags.mirrorVisibleElementShape) {
-            println("DEBUG [MatrixRTCVisibilityAudit] publish mode=legacy-only reason=mirrorVisibleElementShape")
+    private fun selectMatrixRtcPublishMode(
+        reference: MatrixRtcVisibilityEvent?,
+        forceLegacyVideoShape: Boolean = false
+    ): MatrixRtcPublishMode {
+        if (MatrixRtcFeatureFlags.mirrorVisibleElementShape || forceLegacyVideoShape) {
+            val reason = if (forceLegacyVideoShape) "post-video-membership-mode" else "mirrorVisibleElementShape"
+            println("DEBUG [MatrixRTCVisibilityAudit] publish mode=legacy-only reason=$reason")
             return MatrixRtcPublishMode.LegacyOnly
         }
 
@@ -801,9 +827,14 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
         return selected
     }
 
-    private fun selectContentCallId(reference: MatrixRtcVisibilityEvent?, callId: String): String {
-        if (MatrixRtcFeatureFlags.mirrorVisibleElementShape) {
-            println("DEBUG [MatrixRTCVisibilityAudit] content call_id selected reason=mirrorVisibleElementShape orbit_call_id=<blank>")
+    private fun selectContentCallId(
+        reference: MatrixRtcVisibilityEvent?,
+        callId: String,
+        forceLegacyVideoShape: Boolean = false
+    ): String {
+        if (MatrixRtcFeatureFlags.mirrorVisibleElementShape || forceLegacyVideoShape) {
+            val reason = if (forceLegacyVideoShape) "post-video-membership-mode" else "mirrorVisibleElementShape"
+            println("DEBUG [MatrixRTCVisibilityAudit] content call_id selected reason=$reason orbit_call_id=<blank>")
             return ""
         }
 
@@ -940,11 +971,24 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
             val membershipId = livekitIdentity ?: "$userId:$deviceId"
             val beforeEvents = fetchMatrixRtcVisibilityEvents(roomId)
             logMatrixRtcVisibilityEvents("before_publish", beforeEvents)
+            logElementReferenceDump("before_publish", beforeEvents, userId)
             val reference = findReferenceMemberEvent(beforeEvents, userId, deviceId, membershipId)
             logSelectedReference(reference, userId)
             val stateKey = selectMembershipStateKey(reference, userId, deviceId, callId)
-            val jsonCallId = selectContentCallId(reference, callId)
-            val publishMode = selectMatrixRtcPublishMode(reference)
+            val videoMembershipMode = livekit.LiveKitFeatureFlags.videoMembershipMode
+            val forceLegacyVideoShape = video && (
+                videoMembershipMode == "intent-video" ||
+                    videoMembershipMode == "capabilities-video" ||
+                    videoMembershipMode == "element-reference"
+                )
+            val jsonCallId = if (video && videoMembershipMode == "element-reference") {
+                val referenceCallId = reference?.content?.let { jsonString(it, "call_id") } ?: ""
+                println("DEBUG [MatrixRTCVisibilityAudit] content call_id selected reason=element-reference element_reference_call_id=${referenceCallId.ifBlank { "<blank>" }}")
+                referenceCallId
+            } else {
+                selectContentCallId(reference, callId, forceLegacyVideoShape)
+            }
+            val publishMode = selectMatrixRtcPublishMode(reference, forceLegacyVideoShape)
             val shape = MatrixRtcMembershipShape(
                 stateKey = stateKey,
                 contentCallId = jsonCallId,
@@ -973,7 +1017,22 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
 
             val createdTs = getTimeMillis()
             val mirrorElementShape = MatrixRtcFeatureFlags.mirrorVisibleElementShape
-            val expiresMs = if (mirrorElementShape) 43200000L else 14400000L
+            val legacyElementShape = mirrorElementShape || forceLegacyVideoShape
+            val publishIntentVideo = video && videoMembershipMode == "intent-video"
+            val publishCapabilitiesVideo = video && videoMembershipMode == "capabilities-video"
+            val publishElementReference = video && videoMembershipMode == "element-reference"
+            val referenceIntent = reference?.content?.let { jsonString(it, "m.call.intent") }
+            val referenceFociPreferred = reference?.content?.get("foci_preferred")
+            val referenceFocusActive = reference?.content?.get("focus_active")
+            val videoIntent = when {
+                publishElementReference && !referenceIntent.isNullOrBlank() -> referenceIntent
+                publishIntentVideo && (referenceIntent == "video" || referenceIntent == "m.room") -> referenceIntent
+                publishIntentVideo -> "video"
+                legacyElementShape -> "audio"
+                video -> "video"
+                else -> "audio"
+            }
+            val expiresMs = if (legacyElementShape) 43200000L else 14400000L
             val payload = buildJsonObject {
                 put("application", "m.call")
                 put("call_id", jsonCallId) 
@@ -983,31 +1042,29 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                 put("membershipID", membershipId)
                 // MSC3401 strictly requires created_ts for focus selection
                 put("created_ts", createdTs)
-                val referenceIntent = reference?.content?.let { jsonString(it, "m.call.intent") }
-                // Only mirror the intent if it's "audio" or if we actually have video capability.
-                // Otherwise, force "audio" so older clients don't wait for a video track we'll never send.
-                val actualIntent = if (mirrorElementShape) {
-                    "audio"
-                } else if (referenceIntent != null && (video || referenceIntent == "audio")) {
-                    referenceIntent
-                } else {
-                    if (video) "video" else "audio"
-                }
-                put("m.call.intent", actualIntent)
+                put("m.call.intent", videoIntent)
                 put("scope", "m.room")
                 put("expires", expiresMs)
-                put("foci_preferred", buildJsonArray {
-                    add(buildJsonObject {
-                        put("livekit_service_url", context.defaultLiveKitServiceUrl)
-                        put("livekit_alias", roomId)
-                        put("type", "livekit")
+                if (publishElementReference && referenceFociPreferred != null) {
+                    put("foci_preferred", referenceFociPreferred)
+                } else {
+                    put("foci_preferred", buildJsonArray {
+                        add(buildJsonObject {
+                            put("livekit_service_url", context.defaultLiveKitServiceUrl)
+                            put("livekit_alias", roomId)
+                            put("type", "livekit")
+                        })
                     })
-                })
-                put("focus_active", buildJsonObject {
-                    put("type", "livekit")
-                    put("focus_selection", "oldest_membership")
-                })
-                if (!mirrorElementShape) {
+                }
+                if (publishElementReference && referenceFocusActive != null) {
+                    put("focus_active", referenceFocusActive)
+                } else {
+                    put("focus_active", buildJsonObject {
+                        put("type", "livekit")
+                        put("focus_selection", "oldest_membership")
+                    })
+                }
+                if (!legacyElementShape) {
                     // Add modern foci_active for newer clients too.
                     put("foci_active", buildJsonArray {
                         add(buildJsonObject {
@@ -1021,13 +1078,21 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                         put("audio", audio)
                         put("video", video)
                     })
+                } else if (publishCapabilitiesVideo) {
+                    put("capabilities", buildJsonObject {
+                        put("audio", audio)
+                        put("video", true)
+                    })
+                } else if (publishElementReference) {
+                    reference?.content?.get("foci_active")?.let { put("foci_active", it) }
+                    reference?.content?.get("capabilities")?.let { put("capabilities", it) }
                 }
             }
             val now = getTimeMillis()
             println(
                 "DEBUG [MatrixRTCVisibilityAudit] expiry created_ts=$createdTs expires=$expiresMs now=$now expires_remaining_ms=${createdTs + expiresMs - now}"
             )
-            println("DEBUG [MatrixCallsRepository] MatrixRTC membership details userId=$userId deviceId=$deviceId membershipID=$membershipId call_id=${jsonCallId.ifBlank { "<room>" }} roomId=$roomId intent=${if (video) "video" else "audio"} capabilitiesAudio=$audio capabilitiesVideo=$video")
+            println("DEBUG [MatrixCallsRepository] MatrixRTC membership details userId=$userId deviceId=$deviceId membershipID=$membershipId call_id=${jsonCallId.ifBlank { "<room>" }} roomId=$roomId intent=$videoIntent capabilitiesAudio=$audio capabilitiesVideo=${if (publishCapabilitiesVideo || !legacyElementShape) video else false} videoMembershipMode=$videoMembershipMode legacyElementShape=$legacyElementShape")
             println(
                 "DEBUG [MatrixRTCMapping] m.call.member state_key=$stateKey membershipID=$membershipId device_id=$deviceId call_id=${jsonCallId.ifBlank { "<room>" }} room_id=$roomId"
             )
@@ -1047,6 +1112,7 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
 
             val afterEvents = fetchMatrixRtcVisibilityEvents(roomId)
             logMatrixRtcVisibilityEvents("after_publish", afterEvents)
+            logElementReferenceDump("after_publish", afterEvents, userId)
             val orbitMember = findOwnMemberEvent(afterEvents, deviceId, membershipId, stateKey)
             println(
                 "DEBUG [MatrixRTCVisibilityAudit] orbit member visible=${orbitMember != null} selected_state_key=$stateKey selected_mode=${publishMode.label}"
@@ -1070,6 +1136,7 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
             for (ns in eventTypes) {
                 clearMatrixRtcMemberEvent(roomId, ns, stateKey)
                 println("DEBUG [MatrixRTCVisibilityAudit] leave published type=$ns state_key=$stateKey")
+                println("DEBUG [VideoPublish] membership cleared type=$ns state_key=$stateKey")
             }
             
             // Also cleanup the old device-only key if it exists

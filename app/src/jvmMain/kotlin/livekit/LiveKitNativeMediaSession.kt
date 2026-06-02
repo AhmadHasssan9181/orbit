@@ -66,6 +66,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             cancelPendingDeferreds(error)
             return NativeResult.failure(error)
         }
+        val videoPublishRequested = shouldPublishVideo()
         val matrixRtcMemberId = authResponse.matrixRtcMemberId
             ?: authResponse.identity
             ?: tokenResult.value.identity.orEmpty()
@@ -106,7 +107,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         bridge.setEventSink(this)
         connectedDeferred = CompletableDeferred()
         audioPublishedDeferred = CompletableDeferred()
-        videoPublishedDeferred = if (videoPolicy == JoinVideoPolicy.AudioOnly) null else CompletableDeferred()
+        videoPublishedDeferred = if (videoPublishRequested) CompletableDeferred() else null
         mediaReadyDeferred = CompletableDeferred()
 
         updateReadiness(
@@ -116,9 +117,9 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             videoPublished = false,
             acceptingAudioFrames = false,
             acceptingVideoFrames = false,
-            cameraRequested = videoPolicy != JoinVideoPolicy.AudioOnly,
+            cameraRequested = videoPublishRequested,
             cameraRequired = videoPolicy == JoinVideoPolicy.VideoRequired,
-            cameraState = if (videoPolicy == JoinVideoPolicy.AudioOnly) CameraPublishState.NotRequested else CameraPublishState.Probing,
+            cameraState = if (videoPublishRequested) CameraPublishState.Probing else CameraPublishState.NotRequested,
             joinedAsAudioOnlyFallback = false,
             tokenRefreshScheduled = false,
             lastError = null
@@ -204,10 +205,10 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             state = NativeMediaState.MediaReady,
             connected = true,
             audioPublished = true,
-            videoPublished = false,
+            videoPublished = readinessCache.videoPublished,
             acceptingAudioFrames = LiveKitNativeAudioBridge.acceptingFrames,
-            acceptingVideoFrames = false,
-            cameraRequested = videoPolicy != JoinVideoPolicy.AudioOnly,
+            acceptingVideoFrames = readinessCache.acceptingVideoFrames,
+            cameraRequested = videoPublishRequested,
             cameraRequired = videoPolicy == JoinVideoPolicy.VideoRequired,
             cameraState = readinessCache.cameraState,
             joinedAsAudioOnlyFallback = readinessCache.joinedAsAudioOnlyFallback,
@@ -272,6 +273,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         }
         refreshJob?.cancel()
         refreshJob = null
+        runCatching { LiveKitNativeVideoCapture.stopAndJoin() }
         runCatching { LiveKitNativeAudioBridge.nativeSetAcceptingFrames(false) }
         runCatching { LiveKitNativeAudioCapture.stopAndJoin() }
         runCatching { LiveKitNativeAudioPlayer.stop() }
@@ -369,6 +371,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             }
 
             is NativeMediaEvent.VideoPublished -> {
+                println("DEBUG [LiveKitNativeMediaSession] video published")
                 updateReadiness(
                     state = NativeMediaState.VideoPublished,
                     connected = true,
@@ -405,16 +408,18 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         }
     }
 
-    private fun handleOptionalVideoPublish(videoPolicy: JoinVideoPolicy, videoAllowed: Boolean): NativeResult<Unit> {
-        if (videoPolicy == JoinVideoPolicy.AudioOnly) {
+    private suspend fun handleOptionalVideoPublish(videoPolicy: JoinVideoPolicy, videoAllowed: Boolean): NativeResult<Unit> {
+        val videoRequested = shouldPublishVideo()
+        val videoRequired = videoPolicy == JoinVideoPolicy.VideoRequired
+        if (!videoRequested) {
             updateCameraFallback(CameraPublishState.NotRequested, joinedAsAudioOnlyFallback = false)
             return NativeResult.success(Unit)
         }
 
         println("DEBUG [LiveKitNativeMediaSession] camera probe started")
         if (!videoAllowed) {
-            updateCameraFallback(CameraPublishState.Unavailable, joinedAsAudioOnlyFallback = videoPolicy == JoinVideoPolicy.VideoOptional)
-            return if (videoPolicy == JoinVideoPolicy.VideoOptional) {
+            updateCameraFallback(CameraPublishState.Unavailable, joinedAsAudioOnlyFallback = !videoRequired)
+            return if (!videoRequired) {
                 println("DEBUG [LiveKitNativeMediaSession] video publish skipped; joined audio-only fallback")
                 NativeResult.success(Unit)
             } else {
@@ -429,20 +434,79 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             }
         }
 
-        updateCameraFallback(CameraPublishState.Unavailable, joinedAsAudioOnlyFallback = videoPolicy == JoinVideoPolicy.VideoOptional)
-        return if (videoPolicy == JoinVideoPolicy.VideoOptional) {
-            println("DEBUG [LiveKitNativeMediaSession] native video not implemented; joined audio-only fallback")
-            NativeResult.success(Unit)
-        } else {
-            NativeResult.failure(
-                NativeError(
-                    code = NativeErrorCode.PUBLISH_VIDEO_FAILED,
-                    message = "Native C++ video publish is not implemented yet",
-                    operation = "publishVideo",
-                    recoverable = false
-                )
-            )
+        updateReadiness(
+            state = NativeMediaState.PublishingVideo,
+            connected = readinessCache.connected,
+            audioPublished = readinessCache.audioPublished,
+            videoPublished = false,
+            acceptingAudioFrames = readinessCache.acceptingAudioFrames,
+            acceptingVideoFrames = false,
+            cameraRequested = true,
+            cameraRequired = videoRequired,
+            cameraState = CameraPublishState.Publishing,
+            joinedAsAudioOnlyFallback = false,
+            tokenRefreshScheduled = readinessCache.tokenRefreshScheduled,
+            lastError = null
+        )
+
+        val opened = LiveKitNativeVideoCapture.openForPublish()
+        val config = opened.value
+        if (!opened.ok || config == null) {
+            runCatching { LiveKitNativeVideoCapture.stopAndJoin() }
+            updateCameraFallback(cameraStateFromVideoError(opened.error), joinedAsAudioOnlyFallback = !videoRequired)
+            return if (!videoRequired) {
+                println("DEBUG [LiveKitNativeMediaSession] camera open failed; joined audio-only fallback: ${opened.error?.message}")
+                NativeResult.success(Unit)
+            } else {
+                NativeResult.failure(opened.error ?: unknownError("Camera capture failed to open", "openVideoCapture"))
+            }
         }
+
+        if (videoPublishedDeferred == null) {
+            videoPublishedDeferred = CompletableDeferred()
+        }
+
+        println(
+            "DEBUG [LiveKitNativeMediaSession] video publish started " +
+                "width=${config.width} height=${config.height} fps=${config.fps} format=${config.format}"
+        )
+        val publish = bridge.publishVideo(sessionId, epoch, config.width, config.height, config.fps, config.format)
+        if (!publish.ok) {
+            runCatching { LiveKitNativeVideoCapture.stopAndJoin() }
+            updateCameraFallback(CameraPublishState.Failed, joinedAsAudioOnlyFallback = !videoRequired)
+            return if (!videoRequired) {
+                println("DEBUG [LiveKitNativeMediaSession] native video publish failed; keeping audio-only: ${publish.error?.message}")
+                NativeResult.success(Unit)
+            } else {
+                NativeResult.failure(publish.error ?: unknownError("Native video publish failed", "nativePublishVideo"))
+            }
+        }
+
+        val videoPublished = awaitDeferred(videoPublishedDeferred, PUBLISH_TIMEOUT_MS, "publishVideo")
+        if (!videoPublished.ok) {
+            runCatching { LiveKitNativeVideoCapture.stopAndJoin() }
+            updateCameraFallback(CameraPublishState.Failed, joinedAsAudioOnlyFallback = !videoRequired)
+            return if (!videoRequired) {
+                println("DEBUG [LiveKitNativeMediaSession] native video publish event timed out; keeping audio-only")
+                NativeResult.success(Unit)
+            } else {
+                NativeResult.failure(videoPublished.error ?: unknownError("Native video publish timed out", "publishVideo"))
+            }
+        }
+
+        val framePush = LiveKitNativeVideoCapture.enableNativePush(sessionId, epoch, bridge, ::handleVideoCaptureFailure)
+        if (!framePush.ok) {
+            runCatching { LiveKitNativeVideoCapture.stopAndJoin() }
+            updateCameraFallback(CameraPublishState.Failed, joinedAsAudioOnlyFallback = !videoRequired)
+            return if (!videoRequired) {
+                println("DEBUG [LiveKitNativeMediaSession] video frame push failed to start; keeping audio-only: ${framePush.error?.message}")
+                NativeResult.success(Unit)
+            } else {
+                NativeResult.failure(framePush.error ?: unknownError("Video frame push failed to start", "enableVideoFramePush"))
+            }
+        }
+
+        return NativeResult.success(Unit)
     }
 
     private fun updateCameraFallback(cameraState: CameraPublishState, joinedAsAudioOnlyFallback: Boolean) {
@@ -461,6 +525,20 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             lastError = readinessCache.lastError
         )
     }
+
+    private fun shouldPublishVideo(): Boolean =
+        LiveKitFeatureFlags.videoPublish
+
+    private fun cameraStateFromVideoError(error: NativeError?): CameraPublishState =
+        when (error?.code) {
+            NativeErrorCode.CAMERA_PERMISSION_DENIED -> CameraPublishState.PermissionDenied
+            NativeErrorCode.CAMERA_DEVICE_BUSY -> CameraPublishState.DeviceBusy
+            NativeErrorCode.CAMERA_DRIVER_FAILURE -> CameraPublishState.DriverFailure
+            NativeErrorCode.CAMERA_CAPABILITY_UNAVAILABLE,
+            NativeErrorCode.CAMERA_MODE_REJECTED -> CameraPublishState.FormatRejected
+            NativeErrorCode.VIDEO_DEVICE_UNAVAILABLE -> CameraPublishState.Unavailable
+            else -> CameraPublishState.Failed
+        }
 
     private fun scheduleTokenRefresh(tokenResult: LiveKitTokenResult) {
         refreshJob?.cancel()
@@ -507,6 +585,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         println("DEBUG [LiveKitNativeMediaSession] token refresh started")
         println("DEBUG [LiveKitNativeMediaSession] mute state before reconnect: $desiredAudioMuted")
         updateNativeState(NativeMediaState.RefreshingToken)
+        runCatching { LiveKitNativeVideoCapture.stopAndJoin() }
         runCatching { LiveKitNativeAudioBridge.nativeSetAcceptingFrames(false) }
         runCatching { LiveKitNativeAudioCapture.stopAndJoin() }
 
@@ -529,7 +608,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         }
 
         val grantCheck = validateLiveKitGrants(tokenResult.value, lastVideoPolicy)
-        if (!grantCheck.ok) {
+        if (!grantCheck.ok || grantCheck.value == null) {
             handleNativeError(grantCheck.error ?: unknownError("Token refresh grant validation failed", "validateLiveKitGrants"))
             return
         }
@@ -537,6 +616,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         epoch += 1
         connectedDeferred = CompletableDeferred()
         audioPublishedDeferred = CompletableDeferred()
+        videoPublishedDeferred = if (shouldPublishVideo()) CompletableDeferred() else null
         mediaReadyDeferred = CompletableDeferred()
 
         println("DEBUG [LiveKitNativeMediaSession] native reconnect started")
@@ -578,15 +658,20 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         } else {
             println("DEBUG [LiveKitNativeMediaSession] native mute remains false after reconnect")
         }
+        val videoOutcome = handleOptionalVideoPublish(lastVideoPolicy, grantCheck.value.videoAllowed)
+        if (!videoOutcome.ok) {
+            handleNativeError(videoOutcome.error ?: unknownError("Video republish failed", "republishVideo"))
+            return
+        }
         LiveKitNativeAudioCapture.start(sessionId, epoch, bridge, ::handleCaptureFailure)
         updateReadiness(
             state = NativeMediaState.MediaReady,
             connected = true,
             audioPublished = true,
-            videoPublished = false,
+            videoPublished = readinessCache.videoPublished,
             acceptingAudioFrames = LiveKitNativeAudioBridge.acceptingFrames,
-            acceptingVideoFrames = false,
-            cameraRequested = lastVideoPolicy != JoinVideoPolicy.AudioOnly,
+            acceptingVideoFrames = readinessCache.acceptingVideoFrames,
+            cameraRequested = shouldPublishVideo(),
             cameraRequired = lastVideoPolicy == JoinVideoPolicy.VideoRequired,
             cameraState = readinessCache.cameraState,
             joinedAsAudioOnlyFallback = readinessCache.joinedAsAudioOnlyFallback,
@@ -690,6 +775,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
     }
 
     private fun handleNativeDisconnected(reason: String, recoverable: Boolean) {
+        runCatching { LiveKitNativeVideoCapture.stopAndJoin() }
         runCatching { LiveKitNativeAudioBridge.nativeSetAcceptingFrames(false) }
         runCatching { LiveKitNativeAudioCapture.stopAndJoin() }
         runCatching { LiveKitNativeAudioPlayer.stop() }
@@ -714,6 +800,24 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
 
     private fun handleCaptureFailure(error: NativeError) {
         handleNativeError(error)
+    }
+
+    private fun handleVideoCaptureFailure(error: NativeError) {
+        println("WARN [LiveKitNativeMediaSession] video capture failed after publish: ${error.code} ${error.message}")
+        updateReadiness(
+            state = readinessCache.state,
+            connected = readinessCache.connected,
+            audioPublished = readinessCache.audioPublished,
+            videoPublished = false,
+            acceptingAudioFrames = readinessCache.acceptingAudioFrames,
+            acceptingVideoFrames = false,
+            cameraRequested = readinessCache.cameraRequested,
+            cameraRequired = readinessCache.cameraRequired,
+            cameraState = cameraStateFromVideoError(error),
+            joinedAsAudioOnlyFallback = !readinessCache.cameraRequired,
+            tokenRefreshScheduled = readinessCache.tokenRefreshScheduled,
+            lastError = error
+        )
     }
 
     private fun handlePlaybackFailure(error: NativeError) {
