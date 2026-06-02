@@ -118,7 +118,15 @@ val orbitAudioJvmArgs = listOf(
     "orbit.livekit.dumpTonePublisherEnv",
     "orbit.matrixrtc.publishLegacyMember",
     "orbit.matrixrtc.publishMemberMode",
-    "orbit.matrixrtc.mirrorVisibleElementShape"
+    "orbit.matrixrtc.mirrorVisibleElementShape",
+    "orbit.video.inputDeviceName",
+    "orbit.video.inputDeviceIndex",
+    "orbit.video.requestedWidth",
+    "orbit.video.requestedHeight",
+    "orbit.video.requestedFps",
+    "orbit.video.publish",
+    "orbit.video.updateMembershipAfterPublish",
+    "orbit.video.membershipMode"
 ).mapNotNull { propertyName ->
     System.getProperty(propertyName)
         ?.takeIf { it.isNotBlank() }
