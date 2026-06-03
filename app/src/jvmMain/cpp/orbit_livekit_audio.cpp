@@ -2,6 +2,7 @@
 
 #include "livekit/livekit.h"
 #include "livekit/audio_processing_module.h"
+#include "livekit/video_stream.h"
 
 #include <algorithm>
 #include <atomic>
@@ -13,6 +14,7 @@
 #include <deque>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -63,6 +65,12 @@ std::mutex g_sinkMutex;
 jobject g_remoteAudioSink = nullptr;
 jmethodID g_remoteAudioSinkMethod = nullptr;
 
+std::mutex g_remoteVideoSinkMutex;
+jobject g_remoteVideoSink = nullptr;
+jmethodID g_remoteVideoTrackAddedMethod = nullptr;
+jmethodID g_remoteVideoFrameMethod = nullptr;
+jmethodID g_remoteVideoTrackRemovedMethod = nullptr;
+
 std::mutex g_mixedAudioSinkMutex;
 jobject g_mixedAudioSink = nullptr;
 jmethodID g_mixedAudioSinkMethod = nullptr;
@@ -83,7 +91,24 @@ struct RemoteAudioReader {
     std::atomic_bool running{true};
 };
 
+struct RemoteVideoReader {
+    jlong sessionId{1};
+    jlong epoch{0};
+    std::string participantIdentity;
+    std::string participantSid;
+    std::string publicationSid;
+    std::string trackSid;
+    std::string trackName;
+    std::string trackSource;
+    bool muted{false};
+    std::shared_ptr<livekit::VideoStream> stream;
+    std::thread thread;
+    std::atomic_bool running{true};
+    std::atomic_bool removedDispatched{false};
+};
+
 std::unordered_map<std::string, std::shared_ptr<RemoteAudioReader>> g_remoteAudioReaders;
+std::unordered_map<std::string, std::shared_ptr<RemoteVideoReader>> g_remoteVideoReaders;
 
 constexpr jint kSampleRate = 48000;
 constexpr jint kChannels = 1;
@@ -1122,8 +1147,436 @@ void stopRemoteReadersForParticipantLocked(const std::string& participantIdentit
 
 std::string trackSourceLabel(livekit::TrackSource source);
 std::string optionalTrackSourceLabel(const std::optional<livekit::TrackSource>& source);
+std::string trackKindLabel(livekit::TrackKind kind);
+std::string streamStateLabel(livekit::StreamState state);
 std::string audioFeaturesLabel(const std::vector<livekit::AudioTrackFeature>& features);
 std::string encryptionTypeLabel(livekit::EncryptionType type);
+
+bool hasRemoteVideoSink() {
+    std::lock_guard<std::mutex> lock(g_remoteVideoSinkMutex);
+    return g_remoteVideoSink != nullptr &&
+        g_remoteVideoTrackAddedMethod != nullptr &&
+        g_remoteVideoFrameMethod != nullptr &&
+        g_remoteVideoTrackRemovedMethod != nullptr;
+}
+
+std::string publicationTrackSid(const std::shared_ptr<livekit::TrackPublication>& publication) {
+    if (publication == nullptr) {
+        return {};
+    }
+    const auto track = publication->track();
+    if (track != nullptr && !track->sid().empty()) {
+        return track->sid();
+    }
+    return publication->sid();
+}
+
+void dispatchRemoteVideoTrackAdded(const std::shared_ptr<RemoteVideoReader>& reader) {
+    if (reader == nullptr || callbacksStopped("remote-video-track-added")) {
+        return;
+    }
+    if (!hasRemoteVideoSink()) {
+        logCallbackSkipOnce("remote-video-track-added", "sink missing");
+        return;
+    }
+
+    JNIEnv* env = nullptr;
+    bool attached = false;
+    if (!getJniEnv(&env, &attached, "remote-video-track-added") || env == nullptr) {
+        return;
+    }
+    logJniAttachSuccess("remote-video-track-added", attached);
+
+    jobject sink = nullptr;
+    jmethodID method = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_remoteVideoSinkMutex);
+        if (g_remoteVideoSink != nullptr && g_remoteVideoTrackAddedMethod != nullptr) {
+            sink = env->NewLocalRef(g_remoteVideoSink);
+            method = g_remoteVideoTrackAddedMethod;
+        }
+    }
+
+    if (sink != nullptr && method != nullptr) {
+        jstring participantIdentity = env->NewStringUTF(reader->participantIdentity.c_str());
+        jstring participantSid = env->NewStringUTF(reader->participantSid.c_str());
+        jstring publicationSid = env->NewStringUTF(reader->publicationSid.c_str());
+        jstring trackSid = env->NewStringUTF(reader->trackSid.c_str());
+        jstring trackName = env->NewStringUTF(reader->trackName.c_str());
+        jstring trackSource = env->NewStringUTF(reader->trackSource.c_str());
+        env->CallVoidMethod(
+            sink,
+            method,
+            reader->sessionId,
+            reader->epoch,
+            participantIdentity,
+            participantSid,
+            publicationSid,
+            trackSid,
+            trackName,
+            trackSource,
+            reader->muted ? JNI_TRUE : JNI_FALSE);
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        if (participantIdentity != nullptr) env->DeleteLocalRef(participantIdentity);
+        if (participantSid != nullptr) env->DeleteLocalRef(participantSid);
+        if (publicationSid != nullptr) env->DeleteLocalRef(publicationSid);
+        if (trackSid != nullptr) env->DeleteLocalRef(trackSid);
+        if (trackName != nullptr) env->DeleteLocalRef(trackName);
+        if (trackSource != nullptr) env->DeleteLocalRef(trackSource);
+        env->DeleteLocalRef(sink);
+    }
+
+    releaseJniEnv(attached);
+}
+
+void dispatchRemoteVideoTrackRemoved(const std::shared_ptr<RemoteVideoReader>& reader) {
+    if (reader == nullptr || callbacksStopped("remote-video-track-removed")) {
+        return;
+    }
+    if (!hasRemoteVideoSink()) {
+        logCallbackSkipOnce("remote-video-track-removed", "sink missing");
+        return;
+    }
+
+    JNIEnv* env = nullptr;
+    bool attached = false;
+    if (!getJniEnv(&env, &attached, "remote-video-track-removed") || env == nullptr) {
+        return;
+    }
+    logJniAttachSuccess("remote-video-track-removed", attached);
+
+    jobject sink = nullptr;
+    jmethodID method = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_remoteVideoSinkMutex);
+        if (g_remoteVideoSink != nullptr && g_remoteVideoTrackRemovedMethod != nullptr) {
+            sink = env->NewLocalRef(g_remoteVideoSink);
+            method = g_remoteVideoTrackRemovedMethod;
+        }
+    }
+
+    if (sink != nullptr && method != nullptr) {
+        jstring participantIdentity = env->NewStringUTF(reader->participantIdentity.c_str());
+        jstring trackSid = env->NewStringUTF(reader->trackSid.c_str());
+        env->CallVoidMethod(
+            sink,
+            method,
+            reader->sessionId,
+            reader->epoch,
+            participantIdentity,
+            trackSid);
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        if (participantIdentity != nullptr) env->DeleteLocalRef(participantIdentity);
+        if (trackSid != nullptr) env->DeleteLocalRef(trackSid);
+        env->DeleteLocalRef(sink);
+    }
+
+    releaseJniEnv(attached);
+}
+
+void notifyRemoteVideoTrackRemoved(const std::shared_ptr<RemoteVideoReader>& reader, const std::string& reason) {
+    if (reader == nullptr || reader->removedDispatched.exchange(true)) {
+        return;
+    }
+    std::cout << "DEBUG [RemoteVideo] render stopped "
+              << "reason=" << reason
+              << " participantIdentity=" << reader->participantIdentity
+              << " trackSid=" << reader->trackSid
+              << std::endl;
+    dispatchRemoteVideoTrackRemoved(reader);
+}
+
+void dispatchRemoteVideoFrame(
+    const std::shared_ptr<RemoteVideoReader>& reader,
+    const livekit::VideoFrameEvent& event,
+    std::uint64_t sequence) {
+    if (reader == nullptr || callbacksStopped("remote-video-frame")) {
+        return;
+    }
+    if (!hasRemoteVideoSink()) {
+        logCallbackSkipOnce("remote-video-frame", "sink missing");
+        return;
+    }
+
+    const auto& frame = event.frame;
+    const std::size_t byteLength = frame.dataSize();
+    if (frame.width() <= 0 || frame.height() <= 0 || byteLength == 0 ||
+        byteLength > static_cast<std::size_t>(std::numeric_limits<jsize>::max())) {
+        return;
+    }
+
+    JNIEnv* env = nullptr;
+    bool attached = false;
+    if (!getJniEnv(&env, &attached, "remote-video-frame") || env == nullptr) {
+        return;
+    }
+    logJniAttachSuccess("remote-video-frame", attached);
+
+    jobject sink = nullptr;
+    jmethodID method = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_remoteVideoSinkMutex);
+        if (g_remoteVideoSink != nullptr && g_remoteVideoFrameMethod != nullptr) {
+            sink = env->NewLocalRef(g_remoteVideoSink);
+            method = g_remoteVideoFrameMethod;
+        }
+    }
+
+    if (sink != nullptr && method != nullptr) {
+        const auto jByteLength = static_cast<jsize>(byteLength);
+        jbyteArray bytes = env->NewByteArray(jByteLength);
+        jstring participantIdentity = env->NewStringUTF(reader->participantIdentity.c_str());
+        jstring trackSid = env->NewStringUTF(reader->trackSid.c_str());
+        if (bytes != nullptr) {
+            env->SetByteArrayRegion(
+                bytes,
+                0,
+                jByteLength,
+                reinterpret_cast<const jbyte*>(frame.data()));
+            const auto timestampNs = event.timestamp_us > 0
+                ? static_cast<jlong>(event.timestamp_us * 1000LL)
+                : static_cast<jlong>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                      std::chrono::steady_clock::now().time_since_epoch()).count());
+            const jint strideY = frame.type() == livekit::VideoBufferType::RGBA
+                ? static_cast<jint>(frame.width() * 4)
+                : static_cast<jint>(0);
+            env->CallVoidMethod(
+                sink,
+                method,
+                reader->sessionId,
+                reader->epoch,
+                participantIdentity,
+                trackSid,
+                bytes,
+                static_cast<jint>(frame.width()),
+                static_cast<jint>(frame.height()),
+                static_cast<jint>(frame.type()),
+                strideY,
+                static_cast<jint>(0),
+                static_cast<jint>(0),
+                timestampNs,
+                static_cast<jint>(event.rotation));
+        }
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        if (bytes != nullptr) env->DeleteLocalRef(bytes);
+        if (participantIdentity != nullptr) env->DeleteLocalRef(participantIdentity);
+        if (trackSid != nullptr) env->DeleteLocalRef(trackSid);
+        env->DeleteLocalRef(sink);
+    }
+
+    releaseJniEnv(attached);
+    (void)sequence;
+}
+
+void stopVideoReader(const std::shared_ptr<RemoteVideoReader>& reader, const std::string& reason) {
+    if (reader == nullptr) {
+        return;
+    }
+
+    reader->running = false;
+    if (reader->stream != nullptr) {
+        reader->stream->close();
+    }
+    if (reader->thread.joinable()) {
+        if (reader->thread.get_id() == std::this_thread::get_id()) {
+            reader->thread.detach();
+        } else {
+            reader->thread.join();
+        }
+    }
+    notifyRemoteVideoTrackRemoved(reader, reason);
+}
+
+void stopAllRemoteVideoReadersLocked(const std::string& reason = "all") {
+    auto readers = std::move(g_remoteVideoReaders);
+    g_remoteVideoReaders.clear();
+    for (const auto& entry : readers) {
+        stopVideoReader(entry.second, reason);
+    }
+}
+
+void stopRemoteVideoReaderLocked(const std::string& trackSid, const std::string& reason) {
+    if (trackSid.empty()) {
+        return;
+    }
+    auto it = g_remoteVideoReaders.find(trackSid);
+    if (it == g_remoteVideoReaders.end()) {
+        return;
+    }
+
+    auto reader = it->second;
+    g_remoteVideoReaders.erase(it);
+    stopVideoReader(reader, reason);
+}
+
+void stopRemoteVideoReaderForPublicationLocked(
+    const std::shared_ptr<livekit::TrackPublication>& publication,
+    const std::string& reason) {
+    if (publication == nullptr) {
+        return;
+    }
+    const auto trackSid = publicationTrackSid(publication);
+    stopRemoteVideoReaderLocked(trackSid, reason);
+    if (trackSid != publication->sid()) {
+        stopRemoteVideoReaderLocked(publication->sid(), reason);
+    }
+}
+
+void stopRemoteVideoReadersForParticipantLocked(const std::string& participantIdentity, const std::string& reason) {
+    if (participantIdentity.empty()) {
+        return;
+    }
+
+    std::vector<std::shared_ptr<RemoteVideoReader>> readers;
+    for (auto it = g_remoteVideoReaders.begin(); it != g_remoteVideoReaders.end();) {
+        const auto& reader = it->second;
+        if (reader != nullptr && reader->participantIdentity == participantIdentity) {
+            readers.push_back(reader);
+            it = g_remoteVideoReaders.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    for (const auto& reader : readers) {
+        stopVideoReader(reader, reason);
+    }
+}
+
+void logRemoteVideoPublicationDetected(
+    const livekit::Participant* participant,
+    const std::shared_ptr<livekit::TrackPublication>& publication,
+    const std::shared_ptr<livekit::Track>& track,
+    const std::string& sourceLabel) {
+    if (publication == nullptr || publication->kind() != livekit::TrackKind::KIND_VIDEO) {
+        return;
+    }
+
+    std::cout << "DEBUG [RemoteVideo] RemoteVideo publication detected: "
+              << "source=" << sourceLabel
+              << " participantIdentity=" << (participant != nullptr ? participant->identity() : std::string{"<none>"})
+              << " participantSid=" << (participant != nullptr ? participant->sid() : std::string{"<none>"})
+              << " publicationSid=" << publication->sid()
+              << " trackSid=" << (track != nullptr ? track->sid() : std::string{"<not-subscribed>"})
+              << " trackName=" << (track != nullptr ? track->name() : publication->name())
+              << " trackSource=" << trackSourceLabel(publication->source())
+              << " muted=" << (publication->muted() ? "true" : "false")
+              << std::endl;
+}
+
+void startRemoteVideoReaderLocked(
+    const std::shared_ptr<livekit::Track>& track,
+    const livekit::Participant* participant,
+    const std::shared_ptr<livekit::TrackPublication>& publication) {
+    if (track == nullptr || track->kind() != livekit::TrackKind::KIND_VIDEO) {
+        return;
+    }
+    if (!hasRemoteVideoSink()) {
+        std::cout << "DEBUG [RemoteVideo] remote video sink missing; reader not started "
+                  << "trackSid=" << track->sid()
+                  << " participantIdentity=" << (participant != nullptr ? participant->identity() : std::string{"<none>"})
+                  << std::endl;
+        return;
+    }
+
+    const auto trackSid = track->sid();
+    if (trackSid.empty() || g_remoteVideoReaders.find(trackSid) != g_remoteVideoReaders.end()) {
+        return;
+    }
+
+    try {
+        livekit::VideoStream::Options options;
+        options.capacity = 2;
+        options.format = livekit::VideoBufferType::RGBA;
+
+        auto reader = std::make_shared<RemoteVideoReader>();
+        reader->sessionId = kRawSessionId;
+        reader->epoch = g_rawEpoch;
+        reader->participantIdentity = participant != nullptr ? participant->identity() : std::string{};
+        reader->participantSid = participant != nullptr ? participant->sid() : std::string{};
+        reader->publicationSid = publication != nullptr ? publication->sid() : std::string{};
+        reader->trackSid = trackSid;
+        reader->trackName = track->name();
+        reader->trackSource = publication != nullptr ? trackSourceLabel(publication->source()) : optionalTrackSourceLabel(track->source());
+        reader->muted = (publication != nullptr && publication->muted()) || track->muted();
+        reader->stream = livekit::VideoStream::fromTrack(track, options);
+        if (reader->stream == nullptr) {
+            std::cerr << "ERROR [RemoteVideo] VideoStream::fromTrack returned null "
+                      << "trackSid=" << trackSid << std::endl;
+            return;
+        }
+
+        const auto width = track->width().has_value()
+            ? static_cast<int>(track->width().value())
+            : (publication != nullptr ? static_cast<int>(publication->width()) : 0);
+        const auto height = track->height().has_value()
+            ? static_cast<int>(track->height().value())
+            : (publication != nullptr ? static_cast<int>(publication->height()) : 0);
+        std::cout << "DEBUG [RemoteVideo] RemoteVideo track subscribed: "
+                  << "participantIdentity=" << reader->participantIdentity
+                  << " trackSid=" << reader->trackSid
+                  << " width=" << width
+                  << " height=" << height
+                  << " trackName=" << reader->trackName
+                  << " trackSource=" << reader->trackSource
+                  << " streamState=" << streamStateLabel(track->streamState())
+                  << std::endl;
+
+        dispatchRemoteVideoTrackAdded(reader);
+        reader->thread = std::thread([reader] {
+            std::uint64_t sequence = 0;
+            livekit::VideoFrameEvent event;
+            while (reader->running.load() && reader->stream != nullptr && reader->stream->read(event)) {
+                if (!reader->running.load()) {
+                    break;
+                }
+                sequence += 1;
+                const auto& frame = event.frame;
+                const auto timestampNs = event.timestamp_us > 0
+                    ? static_cast<long long>(event.timestamp_us * 1000LL)
+                    : static_cast<long long>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::steady_clock::now().time_since_epoch()).count());
+                if (sequence <= 5 || sequence % 120 == 0) {
+                    std::cout << "DEBUG [RemoteVideo] frame "
+                              << "participantIdentity=" << reader->participantIdentity
+                              << " trackSid=" << reader->trackSid
+                              << " seq=" << sequence
+                              << " width=" << frame.width()
+                              << " height=" << frame.height()
+                              << " format=" << static_cast<int>(frame.type())
+                              << " bytes=" << frame.dataSize()
+                              << " timestampNs=" << timestampNs
+                              << std::endl;
+                }
+                dispatchRemoteVideoFrame(reader, event, sequence);
+            }
+            notifyRemoteVideoTrackRemoved(reader, "reader-ended");
+            std::cout << "DEBUG [RemoteVideo] reader thread exited "
+                      << "participantIdentity=" << reader->participantIdentity
+                      << " trackSid=" << reader->trackSid
+                      << std::endl;
+        });
+        g_remoteVideoReaders[trackSid] = reader;
+        std::cout << "DEBUG [RemoteVideo] Started remote video stream "
+                  << "participantIdentity=" << reader->participantIdentity
+                  << " trackSid=" << reader->trackSid
+                  << std::endl;
+    } catch (const std::exception& error) {
+        std::cerr << "ERROR [RemoteVideo] Failed to start remote video stream: "
+                  << error.what() << std::endl;
+    } catch (...) {
+        std::cerr << "ERROR [RemoteVideo] Failed to start remote video stream: unknown" << std::endl;
+    }
+}
 
 class OrbitAudioRoomDelegate final : public livekit::RoomDelegate {
 public:
@@ -1150,11 +1603,44 @@ public:
                   << std::endl;
     }
 
+    void onTrackPublished(livekit::Room&, const livekit::TrackPublishedEvent& event) override {
+        if (callbacksStopped("room-delegate")) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        logRemoteVideoPublicationDetected(
+            event.participant,
+            event.publication,
+            event.publication != nullptr ? event.publication->track() : nullptr,
+            "published");
+    }
+
+    void onTrackUnpublished(livekit::Room&, const livekit::TrackUnpublishedEvent& event) override {
+        if (callbacksStopped("room-delegate")) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        if (event.publication != nullptr && event.publication->kind() == livekit::TrackKind::KIND_VIDEO) {
+            std::cout << "DEBUG [RemoteVideo] remote video track unpublished "
+                      << "participantIdentity=" << (event.participant != nullptr ? event.participant->identity() : std::string{"<none>"})
+                      << " publicationSid=" << event.publication->sid()
+                      << " trackSid=" << publicationTrackSid(event.publication)
+                      << std::endl;
+            stopRemoteVideoReaderForPublicationLocked(event.publication, "unpublished");
+        }
+    }
+
     void onTrackSubscribed(livekit::Room&, const livekit::TrackSubscribedEvent& event) override {
         if (callbacksStopped("room-delegate")) {
             return;
         }
         std::lock_guard<std::mutex> lock(g_sessionMutex);
+        if (event.track != nullptr && event.track->kind() == livekit::TrackKind::KIND_VIDEO) {
+            logRemoteVideoPublicationDetected(event.participant, event.publication, event.track, "subscribed");
+            startRemoteVideoReaderLocked(event.track, event.participant, event.publication);
+            return;
+        }
+
         const std::string identity = event.participant != nullptr
             ? event.participant->identity()
             : std::string{};
@@ -1189,7 +1675,61 @@ public:
             return;
         }
         std::lock_guard<std::mutex> lock(g_sessionMutex);
-        stopRemoteReaderLocked(event.track->sid());
+        if (event.track->kind() == livekit::TrackKind::KIND_VIDEO) {
+            std::cout << "DEBUG [RemoteVideo] remote video track unsubscribed "
+                      << "participantIdentity=" << (event.participant != nullptr ? event.participant->identity() : std::string{"<none>"})
+                      << " trackSid=" << event.track->sid()
+                      << std::endl;
+            stopRemoteVideoReaderLocked(event.track->sid(), "unsubscribed");
+            stopRemoteVideoReaderForPublicationLocked(event.publication, "unsubscribed-publication");
+        } else {
+            stopRemoteReaderLocked(event.track->sid());
+        }
+    }
+
+    void onTrackSubscriptionFailed(livekit::Room&, const livekit::TrackSubscriptionFailedEvent& event) override {
+        if (callbacksStopped("room-delegate")) {
+            return;
+        }
+        std::cout << "WARN [RemoteVideo] track subscription failed "
+                  << "participantIdentity=" << (event.participant != nullptr ? event.participant->identity() : std::string{"<none>"})
+                  << " trackSid=" << event.track_sid
+                  << " error=" << event.error
+                  << std::endl;
+    }
+
+    void onTrackMuted(livekit::Room&, const livekit::TrackMutedEvent& event) override {
+        if (callbacksStopped("room-delegate")) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        if (event.publication != nullptr && event.publication->kind() == livekit::TrackKind::KIND_VIDEO) {
+            std::cout << "DEBUG [RemoteVideo] remote video track muted "
+                      << "participantIdentity=" << (event.participant != nullptr ? event.participant->identity() : std::string{"<none>"})
+                      << " publicationSid=" << event.publication->sid()
+                      << " trackSid=" << publicationTrackSid(event.publication)
+                      << std::endl;
+            stopRemoteVideoReaderForPublicationLocked(event.publication, "muted");
+        }
+    }
+
+    void onTrackUnmuted(livekit::Room&, const livekit::TrackUnmutedEvent& event) override {
+        if (callbacksStopped("room-delegate")) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        if (event.publication != nullptr && event.publication->kind() == livekit::TrackKind::KIND_VIDEO) {
+            const auto track = event.publication->track();
+            std::cout << "DEBUG [RemoteVideo] remote video track unmuted "
+                      << "participantIdentity=" << (event.participant != nullptr ? event.participant->identity() : std::string{"<none>"})
+                      << " publicationSid=" << event.publication->sid()
+                      << " trackSid=" << publicationTrackSid(event.publication)
+                      << std::endl;
+            logRemoteVideoPublicationDetected(event.participant, event.publication, track, "unmuted");
+            if (track != nullptr && track->remote()) {
+                startRemoteVideoReaderLocked(track, event.participant, event.publication);
+            }
+        }
     }
 
     void onParticipantDisconnected(livekit::Room&, const livekit::ParticipantDisconnectedEvent& event) override {
@@ -1201,6 +1741,7 @@ public:
         }
         std::lock_guard<std::mutex> lock(g_sessionMutex);
         stopRemoteReadersForParticipantLocked(event.participant->identity());
+        stopRemoteVideoReadersForParticipantLocked(event.participant->identity(), "participant-disconnected");
     }
 
     void onDisconnected(livekit::Room&, const livekit::DisconnectedEvent&) override {
@@ -1211,6 +1752,7 @@ public:
         g_acceptingFrames = false;
         g_micPublished = false;
         stopAllRemoteReadersLocked();
+        stopAllRemoteVideoReadersLocked("room-disconnected");
         g_connected = false;
     }
 };
@@ -1260,6 +1802,7 @@ void resetRoomLocked() {
         g_room->setDelegate(nullptr);
     }
     stopAllRemoteReadersLocked();
+    stopAllRemoteVideoReadersLocked("room-reset");
     g_audioTrack.reset();
     g_audioSource.reset();
     g_delegate.reset();
@@ -1852,6 +2395,11 @@ bool connectRoom(
                     continue;
                 }
                 const auto track = publication->track();
+                if (publication->kind() == livekit::TrackKind::KIND_VIDEO) {
+                    logRemoteVideoPublicationDetected(participant.get(), publication, track, "existing");
+                    startRemoteVideoReaderLocked(track, participant.get(), publication);
+                    continue;
+                }
                 const auto trackSource = track != nullptr ? track->source() : std::optional<livekit::TrackSource>{};
                 std::cout << "DEBUG [OrbitLiveKitAudio] existing remote audio publication "
                           << "participantIdentity=" << participant->identity()
@@ -2257,6 +2805,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeDestroySession(JNIEnv* env, jclass, jlo
             g_room->setDelegate(nullptr);
         }
         stopAllRemoteReadersLocked();
+        stopAllRemoteVideoReadersLocked("destroy-session");
     }
     g_audioMixer.stop();
     {
@@ -2281,6 +2830,16 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeDestroySession(JNIEnv* env, jclass, jlo
             env->DeleteGlobalRef(g_remoteAudioSink);
             g_remoteAudioSink = nullptr;
             g_remoteAudioSinkMethod = nullptr;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_remoteVideoSinkMutex);
+        if (g_remoteVideoSink != nullptr) {
+            env->DeleteGlobalRef(g_remoteVideoSink);
+            g_remoteVideoSink = nullptr;
+            g_remoteVideoTrackAddedMethod = nullptr;
+            g_remoteVideoFrameMethod = nullptr;
+            g_remoteVideoTrackRemovedMethod = nullptr;
         }
     }
     std::lock_guard<std::mutex> lock(g_sessionMutex);
@@ -2377,9 +2936,71 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetMixedAudioSink(JNIEnv* env, jclass, 
 }
 
 extern "C" JNIEXPORT jint JNICALL
-Java_livekit_OrbitLiveKitNativeRaw_nativeSetRemoteVideoSink(JNIEnv*, jclass, jobject) {
+Java_livekit_OrbitLiveKitNativeRaw_nativeSetRemoteVideoSink(JNIEnv* env, jclass, jobject sink) {
+    if (g_javaVm == nullptr) {
+        env->GetJavaVM(&g_javaVm);
+    }
+
+    if (sink == nullptr) {
+        {
+            std::lock_guard<std::mutex> lock(g_remoteVideoSinkMutex);
+            if (g_remoteVideoSink != nullptr) {
+                env->DeleteGlobalRef(g_remoteVideoSink);
+                g_remoteVideoSink = nullptr;
+            }
+            g_remoteVideoTrackAddedMethod = nullptr;
+            g_remoteVideoFrameMethod = nullptr;
+            g_remoteVideoTrackRemovedMethod = nullptr;
+        }
+        {
+            std::lock_guard<std::mutex> lock(g_sessionMutex);
+            stopAllRemoteVideoReadersLocked("sink-cleared");
+            clearRawErrorLocked();
+        }
+        return kStatusOk;
+    }
+
+    jobject newSink = env->NewGlobalRef(sink);
+    jclass sinkClass = env->GetObjectClass(sink);
+    jmethodID addedMethod = env->GetMethodID(
+        sinkClass,
+        "onRemoteVideoTrackAdded",
+        "(JJLjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Z)V");
+    jmethodID frameMethod = env->GetMethodID(
+        sinkClass,
+        "onRemoteVideoFrame",
+        "(JJLjava/lang/String;Ljava/lang/String;[BIIIIIIJI)V");
+    jmethodID removedMethod = env->GetMethodID(
+        sinkClass,
+        "onRemoteVideoTrackRemoved",
+        "(JJLjava/lang/String;Ljava/lang/String;)V");
+    env->DeleteLocalRef(sinkClass);
+
+    if (addedMethod == nullptr || frameMethod == nullptr || removedMethod == nullptr) {
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        env->DeleteGlobalRef(newSink);
+        std::lock_guard<std::mutex> sessionLock(g_sessionMutex);
+        setRawErrorLocked("NATIVE_EXCEPTION", "NativeRemoteVideoSink methods not found", "nativeSetRemoteVideoSink", false);
+        return kStatusNativeException;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_remoteVideoSinkMutex);
+        if (g_remoteVideoSink != nullptr) {
+            env->DeleteGlobalRef(g_remoteVideoSink);
+        }
+        g_remoteVideoSink = newSink;
+        g_remoteVideoTrackAddedMethod = addedMethod;
+        g_remoteVideoFrameMethod = frameMethod;
+        g_remoteVideoTrackRemovedMethod = removedMethod;
+    }
+
     std::lock_guard<std::mutex> lock(g_sessionMutex);
     clearRawErrorLocked();
+    std::cout << "DEBUG [RemoteVideo] native remote video sink installed" << std::endl;
     return kStatusOk;
 }
 
@@ -2524,6 +3145,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeDisconnect(
             g_room->setDelegate(nullptr);
         }
         stopAllRemoteReadersLocked();
+        stopAllRemoteVideoReadersLocked("native-disconnect");
         resetRoomLocked();
         clearRawErrorLocked();
         std::cout << "DEBUG [OrbitLiveKitAudio] disconnect cleanup completed" << std::endl;

@@ -545,7 +545,11 @@ private fun MainAppContent(
 
             if (shouldShowPopup) {
                 if (callManager.isGroupCall.value) {
-                    LiveKitVideoRenderer(modifier = Modifier.fillMaxSize())
+                    LiveKitGroupCallSurface(
+                        callManager = callManager,
+                        modifier = Modifier.fillMaxSize(),
+                        remoteFallbackName = callerName
+                    )
                 } else {
                     CallScreen(
                         callManager = callManager,

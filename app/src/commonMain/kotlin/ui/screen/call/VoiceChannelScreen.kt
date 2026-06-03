@@ -112,47 +112,10 @@ fun VoiceChannelScreen(
                 }
             } else {
                 // ACTIVE CALL UI
-                Box(modifier = Modifier.fillMaxSize()) {
-                    LiveKitVideoRenderer(modifier = Modifier.fillMaxSize())
-
-                    val isVideoEnabled by callManager.isLocalVideoEnabled.collectAsState()
-                    val isAudioEnabled by callManager.isLocalAudioEnabled.collectAsState()
-                    val isMutedVal = !isAudioEnabled
-                    val isScreenSharing by callManager.isScreenSharing.collectAsState()
-                    
-                    var isDeafened by remember { mutableStateOf(false) }
-                    var layoutMode by remember { mutableStateOf(CallLayoutMode.Grid) }
-                    var showSoundboard by remember { mutableStateOf(false) }
-                    var showScreenShareDialog by remember { mutableStateOf(false) }
-
-                    if (showScreenShareDialog) {
-                        ScreenShareDialog(
-                            callManager = callManager,
-                            onDismiss = { showScreenShareDialog = false },
-                            onSourceSelected = { source ->
-                                callManager.startScreenShare(source.id)
-                                showScreenShareDialog = false
-                            }
-                        )
-                    }
-
-                    CallControlsBar(
-                        callManager = callManager,
-                        isVideoEnabled = isVideoEnabled,
-                        isMuted = isMutedVal,
-                        isDeafened = isDeafened,
-                        isScreenSharing = isScreenSharing,
-                        layoutMode = layoutMode,
-                        showSoundboard = showSoundboard,
-                        onToggleDeafen = { isDeafened = !isDeafened },
-                        onLayoutModeToggle = {
-                            layoutMode = if (layoutMode == CallLayoutMode.Grid) CallLayoutMode.Focus else CallLayoutMode.Grid
-                        },
-                        onSoundboardToggle = { showSoundboard = !showSoundboard },
-                        onScreenShareClick = { showScreenShareDialog = true },
-                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp)
-                    )
-                }
+                LiveKitGroupCallSurface(
+                    callManager = callManager,
+                    modifier = Modifier.fillMaxSize()
+                )
             }
         }
     }

@@ -105,6 +105,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
 
         epoch += 1
         bridge.setEventSink(this)
+        configureRemoteVideoSink("connect")
         connectedDeferred = CompletableDeferred()
         audioPublishedDeferred = CompletableDeferred()
         videoPublishedDeferred = if (videoPublishRequested) CompletableDeferred() else null
@@ -277,6 +278,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         runCatching { LiveKitNativeAudioBridge.nativeSetAcceptingFrames(false) }
         runCatching { LiveKitNativeAudioCapture.stopAndJoin() }
         runCatching { LiveKitNativeAudioPlayer.stop() }
+        disableRemoteVideoSink("disconnect")
         if (sessionId != 0L) {
             bridge.disconnect(sessionId, epoch, userInitiated)
         }
@@ -529,6 +531,36 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
     private fun shouldPublishVideo(): Boolean =
         LiveKitFeatureFlags.videoPublish
 
+    private fun configureRemoteVideoSink(reason: String) {
+        if (!LiveKitFeatureFlags.videoRemoteRender) {
+            disableRemoteVideoSink("$reason-disabled")
+            return
+        }
+
+        LiveKitRemoteVideoFrameStore.clear("$reason-start")
+        val result = bridge.setRemoteVideoSink(LiveKitNativeRemoteVideoRenderer)
+        if (result.ok) {
+            println("DEBUG [LiveKitNativeMediaSession] remote video render sink enabled reason=$reason")
+        } else {
+            println(
+                "WARN [LiveKitNativeMediaSession] remote video render sink failed reason=$reason " +
+                    "message=${result.error?.message}"
+            )
+            LiveKitRemoteVideoFrameStore.clear("$reason-sink-failed")
+        }
+    }
+
+    private fun disableRemoteVideoSink(reason: String) {
+        val result = bridge.setRemoteVideoSink(null)
+        if (!result.ok) {
+            println(
+                "WARN [LiveKitNativeMediaSession] remote video render sink disable failed " +
+                    "reason=$reason message=${result.error?.message}"
+            )
+        }
+        LiveKitRemoteVideoFrameStore.clear(reason)
+    }
+
     private fun cameraStateFromVideoError(error: NativeError?): CameraPublishState =
         when (error?.code) {
             NativeErrorCode.CAMERA_PERMISSION_DENIED -> CameraPublishState.PermissionDenied
@@ -614,6 +646,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         }
 
         epoch += 1
+        configureRemoteVideoSink("reconnect")
         connectedDeferred = CompletableDeferred()
         audioPublishedDeferred = CompletableDeferred()
         videoPublishedDeferred = if (shouldPublishVideo()) CompletableDeferred() else null
@@ -779,6 +812,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         runCatching { LiveKitNativeAudioBridge.nativeSetAcceptingFrames(false) }
         runCatching { LiveKitNativeAudioCapture.stopAndJoin() }
         runCatching { LiveKitNativeAudioPlayer.stop() }
+        disableRemoteVideoSink("native-disconnected")
         val error = NativeError(
             code = if (recoverable) NativeErrorCode.DISCONNECTED else NativeErrorCode.USER_LEFT,
             message = reason,

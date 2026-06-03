@@ -42,6 +42,7 @@ class CallManager(
     val isLocalVideoEnabled = MutableStateFlow(false)
     val isLocalAudioEnabled = MutableStateFlow(true)
     val hasRemoteStream = MutableStateFlow(false)
+    val nativeMediaReadiness = MutableStateFlow<livekit.NativeMediaReadiness?>(null)
 
     private val _isScreenSharing = MutableStateFlow(false)
     val isScreenSharing: StateFlow<Boolean> = _isScreenSharing
@@ -121,6 +122,7 @@ class CallManager(
         webRtcClient.isGroupCall = true
         isLocalVideoEnabled.value = isVideo
         isLocalAudioEnabled.value = true
+        nativeMediaReadiness.value = null
         candidatesAllowedForCallId = null
         pendingLocalCandidates.clear()
         _callState.value = CallState.CONNECTING
@@ -160,6 +162,7 @@ class CallManager(
         webRtcClient.isGroupCall = false
         isVideoCall.value = false
         isLocalVideoEnabled.value = false
+        nativeMediaReadiness.value = null
         candidatesAllowedForCallId = null
         pendingLocalCandidates.clear()
     }
@@ -236,15 +239,15 @@ class CallManager(
                 false
             } else {
                 val value = readiness.value
+                nativeMediaReadiness.value = value
                 val ready = value.state == livekit.NativeMediaState.MediaReady &&
                     value.audioPublished &&
                     value.acceptingAudioFrames
                 if (!ready) {
                     println("DEBUG [CallManager] Native media not ready after join: $value")
                 } else {
-                    if (!value.videoPublished) {
-                        isLocalVideoEnabled.value = false
-                    }
+                    isLocalVideoEnabled.value = value.videoPublished
+                    isVideoCall.value = isVideoCall.value || value.videoPublished
                     val membershipMode = livekit.LiveKitFeatureFlags.videoMembershipMode
                     val membershipModeAllowsVideo = membershipMode == "intent-video" ||
                         membershipMode == "capabilities-video" ||
@@ -265,6 +268,7 @@ class CallManager(
                 ready
             }
         } catch (e: Exception) {
+            nativeMediaReadiness.value = null
             println("DEBUG [CallManager] Failed to connect native LiveKit media: ${e.message}")
             e.printStackTrace()
             false
@@ -280,6 +284,7 @@ class CallManager(
         isGroupCall.value = false
         isLocalVideoEnabled.value = isVideo
         isLocalAudioEnabled.value = true
+        nativeMediaReadiness.value = null
         candidatesAllowedForCallId = null
         pendingLocalCandidates.clear()
         _callState.value = CallState.CONNECTING
@@ -326,6 +331,7 @@ class CallManager(
         isGroupCall.value = false
         isLocalVideoEnabled.value = false
         isLocalAudioEnabled.value = true
+        nativeMediaReadiness.value = null
         candidatesAllowedForCallId = null
         pendingLocalCandidates.clear()
         pendingInviteSdp = sdp  // Store SDP; actual init happens when user answers
@@ -531,6 +537,7 @@ class CallManager(
         pendingLocalCandidates.clear()
         pendingInviteSdp = null
         hasRemoteStream.value = false
+        nativeMediaReadiness.value = null
     }
 
     fun toggleMute(isMuted: Boolean) {

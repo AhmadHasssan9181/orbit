@@ -28,6 +28,9 @@ actual object LiveKitFeatureFlags {
     actual val videoMembershipMode: String
         get() = "none"
 
+    actual val videoRemoteRender: Boolean
+        get() = false
+
     actual val dumpTonePublisherEnv: Boolean
         get() = false
 }

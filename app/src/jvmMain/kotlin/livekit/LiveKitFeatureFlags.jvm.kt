@@ -35,6 +35,9 @@ actual object LiveKitFeatureFlags {
             ?.takeIf { it.isNotBlank() }
             ?: "none"
 
+    actual val videoRemoteRender: Boolean
+        get() = boolProperty("orbit.video.remoteRender", false)
+
     actual val dumpTonePublisherEnv: Boolean
         get() = boolProperty("orbit.livekit.dumpTonePublisherEnv", false)
 
