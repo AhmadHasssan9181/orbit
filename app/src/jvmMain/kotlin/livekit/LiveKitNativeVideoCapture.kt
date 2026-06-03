@@ -175,6 +175,7 @@ object LiveKitNativeVideoCapture {
     fun stopAndJoin() {
         val capture = activeCapture
         activeCapture = null
+        LiveKitLocalVideoFrameStore.clear("capture-stop")
         capture?.stop()
     }
 
@@ -260,19 +261,13 @@ object LiveKitNativeVideoCapture {
                 return
             }
 
-            val nativeTarget = target
-            if (nativeTarget == null) {
-                runCatching { frame.release() }
-                return
-            }
-
             val seq = frameSeq.incrementAndGet()
             var i420: I420Buffer? = null
             val originalBuffer = runCatching { frame.buffer }.getOrNull()
+            val nativeTarget = target
             try {
                 val buffer = originalBuffer ?: return
                 i420 = buffer.toI420()
-                val packed = packI420(i420)
                 val timestampNs = if (frame.timestampNs > 0L) frame.timestampNs else System.nanoTime()
                 val monotonicNs = System.nanoTime()
                 if (firstFrameTimestampNs == 0L) firstFrameTimestampNs = timestampNs
@@ -281,6 +276,20 @@ object LiveKitNativeVideoCapture {
                     (seq - 1) * 1_000_000_000.0 / (lastFrameTimestampNs - firstFrameTimestampNs)
                 } else {
                     0.0
+                }
+                val i420Bytes = i420.width * i420.height +
+                    ((i420.width + 1) / 2) * ((i420.height + 1) / 2) * 2
+
+                if (seq == 1 || seq % 3 == 0) {
+                    LiveKitLocalVideoFrameStore.updateFrame(
+                        buffer = packRgba(i420),
+                        width = i420.width,
+                        height = i420.height,
+                        format = 0,
+                        strideY = i420.width * 4,
+                        timestampNs = timestampNs,
+                        rotation = frame.rotation
+                    )
                 }
 
                 if (seq <= FRAME_LOG_LIMIT) {
@@ -293,16 +302,18 @@ object LiveKitNativeVideoCapture {
                         fps=${"%.2f".format(Locale.US, fpsEstimate)}
                         sourceFormat=I420/${buffer.javaClass.simpleName}
                         livekitFormat=I420
-                        bytes=${packed.bytes}
+                        bytes=$i420Bytes
                         timestampNs=$timestampNs
                         monotonic=$monotonicNs
                         """.trimIndent()
                     )
                 }
 
-                val result = nativeTarget.bridge.pushVideoFrame(
-                    sessionId = nativeTarget.sessionId,
-                    epoch = nativeTarget.epoch,
+                val pushTarget = nativeTarget ?: return
+                val packed = packI420(i420)
+                val result = pushTarget.bridge.pushVideoFrame(
+                    sessionId = pushTarget.sessionId,
+                    epoch = pushTarget.epoch,
                     buffer = packed.buffer,
                     width = i420.width,
                     height = i420.height,
@@ -314,7 +325,7 @@ object LiveKitNativeVideoCapture {
                     rotation = frame.rotation
                 )
                 if (!result.ok && failureReported.compareAndSet(false, true)) {
-                    nativeTarget.onFailure(
+                    pushTarget.onFailure(
                         result.error ?: NativeError(
                             code = NativeErrorCode.VIDEO_CAPTURE_FAILED,
                             message = "Native video frame push failed",
@@ -324,7 +335,7 @@ object LiveKitNativeVideoCapture {
                     )
                 }
             } catch (error: Throwable) {
-                if (failureReported.compareAndSet(false, true)) {
+                if (nativeTarget != null && failureReported.compareAndSet(false, true)) {
                     nativeTarget.onFailure(
                         NativeError(
                             code = NativeErrorCode.VIDEO_CAPTURE_FAILED,
@@ -360,6 +371,41 @@ object LiveKitNativeVideoCapture {
                 .onFailure { println("WARN [VideoPublish] peer connection factory dispose failed: ${it.message}") }
             println("DEBUG [VideoPublish] capture stopped")
         }
+
+        private fun packRgba(buffer: I420Buffer): ByteArray {
+            val width = buffer.width
+            val height = buffer.height
+            val out = ByteArray(width * height * 4)
+            val yPlane = buffer.dataY
+            val uPlane = buffer.dataU
+            val vPlane = buffer.dataV
+            var outputIndex = 0
+            for (row in 0 until height) {
+                val yRow = row * buffer.strideY
+                val uvRow = (row / 2) * buffer.strideU
+                val vvRow = (row / 2) * buffer.strideV
+                for (column in 0 until width) {
+                    val y = yPlane.get(yRow + column).toInt() and 0xFF
+                    val u = uPlane.get(uvRow + (column / 2)).toInt() and 0xFF
+                    val v = vPlane.get(vvRow + (column / 2)).toInt() and 0xFF
+                    val c = y - 16
+                    val d = u - 128
+                    val e = v - 128
+                    val r = clampRgb((298 * c + 409 * e + 128) shr 8)
+                    val g = clampRgb((298 * c - 100 * d - 208 * e + 128) shr 8)
+                    val b = clampRgb((298 * c + 516 * d + 128) shr 8)
+                    out[outputIndex] = r.toByte()
+                    out[outputIndex + 1] = g.toByte()
+                    out[outputIndex + 2] = b.toByte()
+                    out[outputIndex + 3] = 0xFF.toByte()
+                    outputIndex += 4
+                }
+            }
+            return out
+        }
+
+        private fun clampRgb(value: Int): Int =
+            value.coerceIn(0, 255)
 
         private fun packI420(buffer: I420Buffer): PackedI420Frame {
             val width = buffer.width

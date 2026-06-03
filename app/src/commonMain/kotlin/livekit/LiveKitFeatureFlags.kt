@@ -10,5 +10,6 @@ expect object LiveKitFeatureFlags {
     val videoPublish: Boolean
     val videoUpdateMembershipAfterPublish: Boolean
     val videoMembershipMode: String
+    val videoRemoteRender: Boolean
     val dumpTonePublisherEnv: Boolean
 }

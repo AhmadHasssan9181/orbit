@@ -32,6 +32,9 @@ import dev.onvoid.webrtc.media.video.VideoTrack
 import dev.onvoid.webrtc.media.video.VideoTrackSink
 import dev.onvoid.webrtc.media.video.desktop.ScreenCapturer
 import dev.onvoid.webrtc.media.video.VideoDesktopSource
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -208,7 +211,13 @@ class JvmWebRtcClient : WebRtcClient {
                     }
 
                     livekit.LiveKitLocalTrack.startCapture(captureWidth, captureHeight)
-                    livekit.LiveKitClient.publishVideoTrack(livekit.LiveKitLocalTrack.getSourceHandle())
+                    CoroutineScope(Dispatchers.Default).launch {
+                        runCatching {
+                            livekit.LiveKitClient.publishVideoTrack(livekit.LiveKitLocalTrack.getSourceHandle())
+                        }.onFailure { e ->
+                            println("ERROR: [WebRTC] Failed to publish FFI video track: ${e.message}")
+                        }
+                    }
                 } else if (isVideoEnabled && usingNativeAudio) {
                     println("DEBUG: [WebRTC] Native C++ audio mode active; LiveKit video publish stays disabled for now")
                 } else if (isVideoEnabled && !allowFfiVideo) {
@@ -223,7 +232,13 @@ class JvmWebRtcClient : WebRtcClient {
                     }
                 } else if (allowFfiAudio) {
                     livekit.LiveKitLocalAudioTrack.startCapture()
-                    livekit.LiveKitClient.publishAudioTrack(livekit.LiveKitLocalAudioTrack.getSourceHandle())
+                    CoroutineScope(Dispatchers.Default).launch {
+                        runCatching {
+                            livekit.LiveKitClient.publishAudioTrack(livekit.LiveKitLocalAudioTrack.getSourceHandle())
+                        }.onFailure { e ->
+                            println("ERROR: [WebRTC] Failed to publish FFI audio track: ${e.message}")
+                        }
+                    }
                 } else {
                     println("DEBUG: [WebRTC] Raw FFI LiveKit audio is disabled by feature flag")
                 }

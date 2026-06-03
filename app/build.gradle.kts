@@ -126,7 +126,8 @@ val orbitAudioJvmArgs = listOf(
     "orbit.video.requestedFps",
     "orbit.video.publish",
     "orbit.video.updateMembershipAfterPublish",
-    "orbit.video.membershipMode"
+    "orbit.video.membershipMode",
+    "orbit.video.remoteRender"
 ).mapNotNull { propertyName ->
     System.getProperty(propertyName)
         ?.takeIf { it.isNotBlank() }
@@ -182,17 +183,27 @@ tasks.register("compileJniBridge") {
         val buildDir = file("build/jni")
         buildDir.mkdirs()
         
-        exec {
-            commandLine("cmake", "-S", cppDir.absolutePath, "-B", buildDir.absolutePath)
-        }
-        exec {
-            commandLine("cmake", "--build", buildDir.absolutePath, "--config", "Release")
-        }
-        
-        // Copy native bridge DLLs to the resources folder where the JVM loader can find them.
         val targetDir = file("src/jvmMain/resources/webrtc-deps")
         targetDir.mkdirs()
+        val audioDllExists = targetDir.resolve("orbit_livekit_audio.dll").exists()
+        val videoDllExists = targetDir.resolve("orbit_livekit_video.dll").exists()
 
+        try {
+            exec {
+                commandLine("cmake", "-S", cppDir.absolutePath, "-B", buildDir.absolutePath)
+            }
+            exec {
+                commandLine("cmake", "--build", buildDir.absolutePath, "--config", "Release")
+            }
+        } catch (e: Exception) {
+            if (audioDllExists && videoDllExists) {
+                println("WARN: [compileJniBridge] Native C++ build failed (${e.message}). Using existing prebuilt DLLs in resources.")
+                return@doLast
+            } else {
+                throw GradleException("Failed to compile C++ JNI bridge and no prebuilt DLLs found in resources: ${e.message}", e)
+            }
+        }
+        
         fun copyBuiltDll(dllName: String) {
             val outputDll = file("build/jni/Release/$dllName")
             if (!outputDll.exists()) {

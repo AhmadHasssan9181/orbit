@@ -54,12 +54,23 @@ interface NativeMixedAudioSink {
 }
 
 interface NativeRemoteVideoSink {
-    fun onRemoteVideoTrackAdded(sessionId: Long, epoch: Long, participantIdentity: String)
+    fun onRemoteVideoTrackAdded(
+        sessionId: Long,
+        epoch: Long,
+        participantIdentity: String,
+        participantSid: String,
+        publicationSid: String,
+        trackSid: String,
+        trackName: String,
+        trackSource: String,
+        muted: Boolean
+    )
 
     fun onRemoteVideoFrame(
         sessionId: Long,
         epoch: Long,
         participantIdentity: String,
+        trackSid: String,
         buffer: ByteArray,
         width: Int,
         height: Int,
@@ -71,5 +82,5 @@ interface NativeRemoteVideoSink {
         rotation: Int
     )
 
-    fun onRemoteVideoTrackRemoved(sessionId: Long, epoch: Long, participantIdentity: String)
+    fun onRemoteVideoTrackRemoved(sessionId: Long, epoch: Long, participantIdentity: String, trackSid: String)
 }

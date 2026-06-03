@@ -1,0 +1,76 @@
+package livekit
+
+object LiveKitNativeRemoteVideoRenderer : NativeRemoteVideoSink {
+    override fun onRemoteVideoTrackAdded(
+        sessionId: Long,
+        epoch: Long,
+        participantIdentity: String,
+        participantSid: String,
+        publicationSid: String,
+        trackSid: String,
+        trackName: String,
+        trackSource: String,
+        muted: Boolean
+    ) {
+        println(
+            "DEBUG [LiveKitNativeRemoteVideoRenderer] remote video track added " +
+                "sessionId=$sessionId epoch=$epoch participantIdentity=$participantIdentity " +
+                "participantSid=$participantSid publicationSid=$publicationSid trackSid=$trackSid " +
+                "trackName=$trackName trackSource=$trackSource muted=$muted"
+        )
+        LiveKitRemoteVideoFrameStore.trackStarted(participantIdentity, trackSid)
+    }
+
+    override fun onRemoteVideoFrame(
+        sessionId: Long,
+        epoch: Long,
+        participantIdentity: String,
+        trackSid: String,
+        buffer: ByteArray,
+        width: Int,
+        height: Int,
+        format: Int,
+        strideY: Int,
+        strideU: Int,
+        strideV: Int,
+        timestampNs: Long,
+        rotation: Int
+    ) {
+        if (width <= 0 || height <= 0 || buffer.isEmpty()) {
+            println(
+                "WARN [LiveKitNativeRemoteVideoRenderer] dropped empty remote video frame " +
+                    "participantIdentity=$participantIdentity trackSid=$trackSid width=$width " +
+                    "height=$height bytes=${buffer.size}"
+            )
+            return
+        }
+        LiveKitRemoteVideoFrameStore.updateFrame(
+            sessionId = sessionId,
+            epoch = epoch,
+            participantIdentity = participantIdentity,
+            trackSid = trackSid,
+            buffer = buffer,
+            width = width,
+            height = height,
+            format = format,
+            strideY = strideY,
+            strideU = strideU,
+            strideV = strideV,
+            timestampNs = timestampNs,
+            rotation = rotation
+        )
+    }
+
+    override fun onRemoteVideoTrackRemoved(
+        sessionId: Long,
+        epoch: Long,
+        participantIdentity: String,
+        trackSid: String
+    ) {
+        println(
+            "DEBUG [LiveKitNativeRemoteVideoRenderer] remote video track removed " +
+                "sessionId=$sessionId epoch=$epoch participantIdentity=$participantIdentity trackSid=$trackSid"
+        )
+        LiveKitRemoteVideoFrameStore.trackStopped(participantIdentity, trackSid)
+    }
+}
