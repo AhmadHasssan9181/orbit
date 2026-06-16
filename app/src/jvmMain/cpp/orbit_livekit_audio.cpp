@@ -1,6 +1,7 @@
 #include <jni.h>
 
 #include "livekit/livekit.h"
+#include "livekit/audio_processing_module.h"
 
 #include <algorithm>
 #include <atomic>
@@ -21,7 +22,7 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
-
+#include <queue>
 namespace {
 
 std::once_flag g_initializeOnce;
@@ -30,6 +31,7 @@ std::unique_ptr<livekit::Room> g_room;
 std::unique_ptr<livekit::RoomDelegate> g_delegate;
 std::shared_ptr<livekit::AudioSource> g_audioSource;
 std::shared_ptr<livekit::LocalAudioTrack> g_audioTrack;
+std::shared_ptr<livekit::AudioProcessingModule> g_audioProcessor;
 std::string g_matrixRtcMemberId;
 bool g_connected = false;
 bool g_micPublished = false;
@@ -181,7 +183,6 @@ public:
             std::lock_guard<std::mutex> lock(mutex_);
             source_ = source;
             running_ = source_ != nullptr;
-            hasLatest_ = false;
             lastStatsLog_ = std::chrono::steady_clock::now();
         }
         if (!source) {
@@ -196,8 +197,8 @@ public:
         {
             std::lock_guard<std::mutex> lock(mutex_);
             running_ = false;
-            hasLatest_ = false;
-            latest_ = AudioSourceFramePacket{};
+            std::queue<AudioSourceFramePacket> empty;
+            std::swap(queue_, empty);
         }
         cv_.notify_all();
         if (worker_.joinable()) {
@@ -226,15 +227,13 @@ public:
                 setLastCaptureError("audio source worker is not running");
                 return false;
             }
-            if (hasLatest_) {
+            if (queue_.size() > 50) { // Max 500ms buffering
                 framesDroppedDueBackpressure_.fetch_add(1, std::memory_order_relaxed);
+                queue_.pop(); // Drop oldest frame
             }
-            latest_.samples = std::move(samples);
-            latest_.sampleRate = sampleRate;
-            latest_.channels = channels;
-            latest_.samplesPerChannel = samplesPerChannel;
-            latest_.timestampNs = timestampNs;
-            hasLatest_ = true;
+            queue_.push(AudioSourceFramePacket{
+                std::move(samples), sampleRate, channels, samplesPerChannel, timestampNs
+            });
         }
         cv_.notify_one();
         return true;
@@ -267,13 +266,12 @@ private:
             std::shared_ptr<livekit::AudioSource> source;
             {
                 std::unique_lock<std::mutex> lock(mutex_);
-                cv_.wait(lock, [this] { return !running_ || hasLatest_; });
+                cv_.wait(lock, [this] { return !running_ || !queue_.empty(); });
                 if (!running_) {
                     break;
                 }
-                packet = std::move(latest_);
-                latest_ = AudioSourceFramePacket{};
-                hasLatest_ = false;
+                packet = std::move(queue_.front());
+                queue_.pop();
                 source = source_;
             }
 
@@ -317,6 +315,18 @@ private:
                     packet.sampleRate,
                     packet.channels,
                     packet.samplesPerChannel);
+                
+                {
+                    std::lock_guard<std::mutex> sessionLock(g_sessionMutex);
+                    if (g_audioProcessor) {
+                        try {
+                            g_audioProcessor->processStream(frame);
+                        } catch (const std::exception& e) {
+                            std::cerr << "ERROR [OrbitLiveKitAudio] processStream failed: " << e.what() << std::endl;
+                        }
+                    }
+                }
+
                 const auto frameSequence = ++workerFrameSequence_;
                 const auto& frameSamples = frame.data();
                 const auto pcmStats = computePcmDiagnostics(frameSamples.data(), frameSamples.size());
@@ -392,7 +402,7 @@ private:
                               << std::endl;
                 }
 
-                if (formatDiagnosticsLogged_ <= 10) {
+                if (frameSequence <= 10) {
                     std::cout << "DEBUG [OrbitLiveKitAudio] LiveKit AudioFrame("
                               << "buffer.size=" << frame.data().size()
                               << ", totalSamples=" << frame.totalSamples()
@@ -474,9 +484,8 @@ private:
     std::condition_variable cv_;
     std::thread worker_;
     bool running_{false};
-    bool hasLatest_{false};
     std::shared_ptr<livekit::AudioSource> source_;
-    AudioSourceFramePacket latest_;
+    std::queue<AudioSourceFramePacket> queue_;
     std::chrono::steady_clock::time_point lastStatsLog_{};
     std::string lastCaptureError_;
     int formatDiagnosticsLogged_{0};
@@ -1801,6 +1810,14 @@ Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(
 
         g_audioSourceWorker.stop();
         g_audioTrack.reset();
+        
+        livekit::AudioProcessingModule::Options apmOptions;
+        apmOptions.echo_cancellation = true;
+        apmOptions.noise_suppression = true;
+        apmOptions.auto_gain_control = true;
+        apmOptions.high_pass_filter = true;
+        g_audioProcessor = std::make_shared<livekit::AudioProcessingModule>(apmOptions);
+
         g_audioSource = std::make_shared<livekit::AudioSource>(
             static_cast<int>(sampleRate),
             static_cast<int>(channels),
@@ -1833,6 +1850,9 @@ Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(
 
         g_audioTrack = livekit::LocalAudioTrack::createLocalAudioTrack("audio", g_audioSource);
         if (g_audioTrack == nullptr) {
+            g_audioTrack = nullptr;
+            g_audioProcessor = nullptr;
+            g_micPublished = false;
             g_audioSource.reset();
             std::cerr << "ERROR [OrbitLiveKitAudio] Native C++ microphone track creation failed" << std::endl;
             return JNI_FALSE;

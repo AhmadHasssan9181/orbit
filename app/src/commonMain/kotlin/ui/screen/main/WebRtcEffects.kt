@@ -156,8 +156,8 @@ fun WebRtcEffects(
             repository.leaveGroupCall(roomId, callId)
         }
 
-        callManager.onUpdateGroupCallMembershipCapabilities = { roomId, callId, audio, video ->
-            repository.updateGroupCallMembershipCapabilities(roomId, callId, audio, video)
+        callManager.onUpdateGroupCallMembershipCapabilities = { roomId, callId, audio, video, identity ->
+            repository.updateGroupCallMembershipCapabilities(roomId, callId, audio, video, identity)
         }
 
         // --- ICE Candidate Batching Logic ---

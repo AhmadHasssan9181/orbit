@@ -271,7 +271,7 @@ object LiveKitNativeAudioCapture {
         val captureGain = orbitAudioConfig("orbit.audio.captureGain", "ORBIT_AUDIO_CAPTURE_GAIN")
             ?.toDoubleOrNull()
             ?.coerceIn(0.0, 100.0)
-            ?: 1.0
+            ?: 8.0
         println("DEBUG [LiveKitNativeAudioCapture] audio flags: testTone=$testTone testToneStereo=$testToneStereo captureGain=$captureGain inputDeviceName=${overrideName.ifBlank { "<none>" }} publishChannels=${configuredPublishChannels()}")
         if (testTone) {
             runTestToneCaptureLoop()
@@ -678,13 +678,16 @@ object LiveKitNativeAudioCapture {
     private fun scoreInputMixer(searchableText: String): Int {
         val text = searchableText.lowercase()
         var score = 0
-        if ("microphone" in text || Regex("""\bmic\b""").containsMatchIn(text)) score += 220
-        if ("array" in text) score += 70
-        if ("headset" in text) score += 70
-        if ("usb" in text || "webcam" in text || "camera" in text) score += 60
+        if ("microphone" in text || Regex("""\bmic\b""").containsMatchIn(text)) score += 100
+        if ("headset" in text) score += 150
+        if ("usb" in text) score += 150
+        if ("array" in text) score += 50
+        if ("webcam" in text || "camera" in text) score += 30
         if ("input" in text || "capture" in text || "communications" in text) score += 40
         if ("realtek" in text || "intel" in text) score += 20
+        
         if ("primary sound capture" in text || "default" in text || "java sound" in text) score -= 60
+        if ("virtual" in text || "cable" in text || "voicemeeter" in text || "droidcam" in text || "camo" in text) score -= 200
         if ("stereo mix" in text || "what u hear" in text || "wave out" in text || "loopback" in text || "monitor" in text) score -= 160
         if ("speaker" in text || "headphones" in text || "output" in text || "playback" in text || "renderer" in text || "hdmi" in text || "display audio" in text) score -= 220
         return score
@@ -742,14 +745,15 @@ object LiveKitNativeAudioCapture {
         }
     }
 
+
     private fun applyCaptureGain(buffer: ByteArray, byteLength: Int, gain: Double) {
         var index = 0
         while (index + 1 < byteLength) {
             val value = readInt16LittleEndian(buffer, index)
-            val amplified = (value.toDouble() * gain).roundToInt()
-                .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
-            buffer[index] = (amplified and 0xff).toByte()
-            buffer[index + 1] = ((amplified shr 8) and 0xff).toByte()
+            val amplified = (value * gain).roundToInt()
+            val outShort = amplified.coerceIn(-32768, 32767)
+            buffer[index] = (outShort and 0xff).toByte()
+            buffer[index + 1] = ((outShort shr 8) and 0xff).toByte()
             index += 2
         }
     }

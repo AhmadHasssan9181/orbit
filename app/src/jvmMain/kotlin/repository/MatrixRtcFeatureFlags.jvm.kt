@@ -10,7 +10,7 @@ actual object MatrixRtcFeatureFlags {
             ?.takeIf { it.isNotBlank() }
 
     actual val mirrorVisibleElementShape: Boolean
-        get() = boolProperty("orbit.matrixrtc.mirrorVisibleElementShape", false)
+        get() = boolProperty("orbit.matrixrtc.mirrorVisibleElementShape", true)
 
     private fun boolProperty(key: String, defaultValue: Boolean): Boolean =
         when (System.getProperty(key)?.trim()?.lowercase()) {
