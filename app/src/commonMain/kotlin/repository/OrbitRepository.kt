@@ -69,9 +69,10 @@ interface OrbitCallsRepository {
     fun observeActiveCall(channelId: String): Flow<CallEvent.Invite?>
     fun observeActiveGroupCall(channelId: String): Flow<String?>
     fun observeCallMembers(channelId: String): Flow<List<OrbitUser>>
-    suspend fun startGroupCall(roomId: String, callId: String, isVideo: Boolean = false)
+    suspend fun startGroupCall(roomId: String, callId: String)
     suspend fun endGroupCall(roomId: String, callId: String)
-    suspend fun joinGroupCall(roomId: String, callId: String, isVideo: Boolean = false)
+    suspend fun joinGroupCall(roomId: String, callId: String)
+    suspend fun updateGroupCallMembershipCapabilities(roomId: String, callId: String, audio: Boolean, video: Boolean, livekitIdentity: String? = null)
     suspend fun leaveGroupCall(roomId: String, callId: String)
     suspend fun fetchLiveKitToken(roomId: String, callId: String, livekitServiceUrl: String): livekit.LiveKitAuthResponse
     val activeCallsFlow: kotlinx.coroutines.flow.StateFlow<Map<String, String>>

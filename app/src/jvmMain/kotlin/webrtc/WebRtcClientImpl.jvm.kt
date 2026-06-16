@@ -1,6 +1,5 @@
 package webrtc
 
-
 import dev.onvoid.webrtc.CreateSessionDescriptionObserver
 import dev.onvoid.webrtc.PeerConnectionFactory
 import dev.onvoid.webrtc.PeerConnectionObserver
@@ -37,33 +36,18 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import repository.TurnServer
 import kotlin.math.abs
 
 class JvmWebRtcClient : WebRtcClient {
-    private val scope = CoroutineScope(Dispatchers.Default)
-
     private val _onIceCandidate = MutableSharedFlow<IceCandidateModel>(extraBufferCapacity = 10)
     override val onIceCandidate: SharedFlow<IceCandidateModel> = _onIceCandidate
 
     private val _onRemoteDescription = MutableSharedFlow<SessionDescriptionModel>(extraBufferCapacity = 10)
     override val onRemoteDescription: SharedFlow<SessionDescriptionModel> = _onRemoteDescription
 
-    private val _onStreamAdded = MutableStateFlow(false)
-    override val onStreamAdded: StateFlow<Boolean> = _onStreamAdded
-
-    init {
-        scope.launch {
-            livekit.LiveKitClient.participants.collect { parts ->
-                if (isGroupCall) {
-                    _onStreamAdded.value = parts.isNotEmpty()
-                }
-            }
-        }
-    }
+    private val _onStreamAdded = MutableSharedFlow<Boolean>(extraBufferCapacity = 10)
+    override val onStreamAdded: SharedFlow<Boolean> = _onStreamAdded
 
     private var factory: PeerConnectionFactory? = null
     private var audioDeviceModule: OrbitAudioDeviceModule? = null
@@ -81,7 +65,6 @@ class JvmWebRtcClient : WebRtcClient {
     override var isVirtualBackgroundEnabled: Boolean = false
     private var localVideoSource: VideoDeviceSource? = null
     private var isVideoCaptureRunning = false
-    private var isLiveKitVideoPublished = false
 
     private var remoteVideoTrack: VideoTrack? = null
     private var remoteScreenVideoTrack: VideoTrack? = null
@@ -209,9 +192,12 @@ class JvmWebRtcClient : WebRtcClient {
                 }
                 isLiveKitMediaStarted = true
                 println("DEBUG: [WebRTC] Redirecting local media to LiveKit Data Plane")
-                
-                if (isVideoEnabled) {
-                    // 1. Start standard camera capture but don't add to peer connection
+
+                val usingNativeAudio = livekit.LiveKitNativeAudioSession.isConnected
+                val allowFfiAudio = livekit.LiveKitFeatureFlags.ffiFallback && livekit.LiveKitFeatureFlags.ffiAudio
+                val allowFfiVideo = livekit.LiveKitFeatureFlags.ffiFallback && livekit.LiveKitFeatureFlags.ffiVideo
+
+                if (isVideoEnabled && !usingNativeAudio && allowFfiVideo) {
                     startVideoCapture()
 
                     if (cameraVideoTrack == null) {
@@ -221,33 +207,28 @@ class JvmWebRtcClient : WebRtcClient {
                         cameraVideoTrack?.addSink(livekit.LiveKitLocalTrack.sink)
                     }
 
-                    // 3. Publish the LiveKit native source and THEN start capture
-                    CoroutineScope(Dispatchers.IO).launch {
-                        try {
-                            val info = livekit.LiveKitClient.publishVideoTrack(livekit.LiveKitLocalTrack.getSourceHandle())
-                            if (info != null) {
-                                livekit.LiveKitLocalTrack.startCapture(captureWidth, captureHeight)
-                                isLiveKitVideoPublished = true
-                            }
-                        } catch (e: Exception) {
-                            println("ERROR: [WebRTC] Failed to publish video track: ${e.message}")
-                        }
+                    livekit.LiveKitLocalTrack.startCapture(captureWidth, captureHeight)
+                    livekit.LiveKitClient.publishVideoTrack(livekit.LiveKitLocalTrack.getSourceHandle())
+                } else if (isVideoEnabled && usingNativeAudio) {
+                    println("DEBUG: [WebRTC] Native C++ audio mode active; LiveKit video publish stays disabled for now")
+                } else if (isVideoEnabled && !allowFfiVideo) {
+                    println("DEBUG: [WebRTC] Raw FFI LiveKit video is disabled by feature flag")
+                }
+
+                if (usingNativeAudio) {
+                    if (livekit.LiveKitNativeAudioSession.startPublishing()) {
+                        _onStreamAdded.tryEmit(true)
+                    } else {
+                        println("ERROR: [WebRTC] Failed to start native C++ LiveKit audio")
                     }
+                } else if (allowFfiAudio) {
+                    livekit.LiveKitLocalAudioTrack.startCapture()
+                    livekit.LiveKitClient.publishAudioTrack(livekit.LiveKitLocalAudioTrack.getSourceHandle())
+                } else {
+                    println("DEBUG: [WebRTC] Raw FFI LiveKit audio is disabled by feature flag")
                 }
                 
-                // 4. Publish audio and THEN start capture
-                CoroutineScope(Dispatchers.IO).launch {
-                    try {
-                        val info = livekit.LiveKitClient.publishAudioTrack(livekit.LiveKitLocalAudioTrack.getSourceHandle())
-                        if (info != null) {
-                            livekit.LiveKitLocalAudioTrack.startCapture()
-                        }
-                    } catch (e: Exception) {
-                        println("ERROR: [WebRTC] Failed to publish audio track: ${e.message}")
-                    }
-                }
-                
-                println("DEBUG: [WebRTC] Group call local media publishing started")
+                println("DEBUG: [WebRTC] Group call local media started and published to LiveKit")
                 return
             }
             
@@ -313,13 +294,15 @@ class JvmWebRtcClient : WebRtcClient {
                 captureHeight = capability.height
             }
 
-            try {
-                localVideoSource = VideoDeviceSource()
-                localVideoSource?.setVideoCaptureDevice(device)
+            val videoSource = VideoDeviceSource().apply {
+                setVideoCaptureDevice(device)
                 if (capability != null) {
-                    localVideoSource?.setVideoCaptureCapability(capability)
+                    setVideoCaptureCapability(capability)
                 }
-                localVideoSource?.start()
+            }
+
+            try {
+                videoSource.start()
                 isVideoCaptureRunning = true
                 println("DEBUG: [WebRTC] videoSource started")
                 
@@ -328,17 +311,18 @@ class JvmWebRtcClient : WebRtcClient {
                     val modelPath = extractModelToTempFile("selfie_segmentation.onnx")
                     if (modelPath != null) {
                         println("DEBUG: [WebRTC] Injecting video processor with model: $modelPath")
-                        OrbitVideoEngine.injectVideoProcessor(localVideoSource!!, modelPath)
+                        OrbitVideoEngine.injectVideoProcessor(videoSource, modelPath)
                     }
                 }
             } catch (t: Throwable) {
                 println("ERROR: [WebRTC] Failed to start videoSource: ${t.message}")
                 t.printStackTrace()
-                try { localVideoSource?.dispose() } catch (e: Exception) {}
+                try { videoSource.dispose() } catch (e: Exception) {}
                 return
             }
 
-            val videoTrack = f.createVideoTrack("videoTrack", localVideoSource)
+            val videoTrack = f.createVideoTrack("videoTrack", videoSource)
+            localVideoSource = videoSource
             cameraVideoTrack = videoTrack
             println("DEBUG: [WebRTC] cameraVideoTrack created: ${videoTrack.getId()}")
             
@@ -481,9 +465,15 @@ class JvmWebRtcClient : WebRtcClient {
     }
 
     override fun stopLocalMedia() {
+        if (isGroupCall) {
+            runCatching { livekit.LiveKitNativeAudioSession.stopPublishing() }
+            runCatching { livekit.LiveKitLocalAudioTrack.stopCapture() }
+            runCatching { cameraVideoTrack?.removeSink(livekit.LiveKitLocalTrack.sink) }
+            isLiveKitMediaStarted = false
+        }
+
         stopVideoCapture(disposeTrack = true)
         stopScreenShare()
-        isLiveKitVideoPublished = false
 
         localAudioSender?.let { sender ->
             runCatching { peerConnection?.removeTrack(sender) }
@@ -591,32 +581,14 @@ class JvmWebRtcClient : WebRtcClient {
     }
 
     override fun toggleMute(isMuted: Boolean) {
+        if (isGroupCall && livekit.LiveKitNativeAudioSession.isConnected) {
+            livekit.LiveKitNativeAudioSession.setMuted(isMuted)
+            return
+        }
         localAudioTrack?.setEnabled(!isMuted)
-        livekit.LiveKitLocalAudioTrack.isMuted = isMuted
     }
 
     override fun toggleVideo(isVideoEnabled: Boolean) {
-        if (isGroupCall) {
-            if (isVideoEnabled) {
-                startVideoCapture()
-                if (cameraVideoTrack != null) {
-                    println("DEBUG: [WebRTC] Toggling video ON for LiveKit, adding sink and publishing")
-                    if (!isLiveKitVideoPublished) {
-                        cameraVideoTrack?.addSink(livekit.LiveKitLocalTrack.sink)
-                        livekit.LiveKitLocalTrack.startCapture(captureWidth, captureHeight)
-                        CoroutineScope(Dispatchers.IO).launch {
-                            val info = livekit.LiveKitClient.publishVideoTrack(livekit.LiveKitLocalTrack.getSourceHandle())
-                            if (info != null) isLiveKitVideoPublished = true
-                        }
-                    }
-                }
-            } else {
-                println("DEBUG: [WebRTC] Toggling video OFF for LiveKit")
-                stopVideoCapture(disposeTrack = false)
-            }
-            return
-        }
-
         if (cameraVideoTrack == null && isVideoEnabled) {
             startVideoCapture()
             // If screen share is active, startVideoCapture won't swap it in. 
@@ -708,6 +680,7 @@ class JvmWebRtcClient : WebRtcClient {
     override fun endCall() {
         try {
             stopLocalMedia()
+            runCatching { livekit.LiveKitNativeAudioSession.disconnect() }
             isLiveKitMediaStarted = false // Reset LiveKit media guard
             
             // Explicitly remove sinks to prevent native threads from calling back during shutdown
@@ -742,7 +715,7 @@ class JvmWebRtcClient : WebRtcClient {
     }
 
     override fun getLocalVideoRenderer(): Any? = localRenderer
-    override fun getRemoteVideoRenderer(): Any? = if (isGroupCall) "livekit_remote" else remoteRenderer
+    override fun getRemoteVideoRenderer(): Any? = remoteRenderer
     override fun getRemoteScreenRenderer(): Any? = if (remoteScreenVideoTrack != null) remoteScreenRenderer else null
 
     override fun setStreamAudioEnabled(enabled: Boolean) {

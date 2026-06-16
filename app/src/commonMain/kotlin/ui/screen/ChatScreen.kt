@@ -55,8 +55,19 @@ fun ChatScreen(
     val scope = rememberCoroutineScope()
 
     val callState by callManager?.callState?.collectAsState(initial = webrtc.CallState.IDLE) ?: remember { mutableStateOf(webrtc.CallState.IDLE) }
-    val isCallActiveInRoom = callManager?.activeRoomId == channel.id && callState != webrtc.CallState.IDLE && callState != webrtc.CallState.ENDED
+    val isGroupCall by callManager?.isGroupCall?.collectAsState(initial = false) ?: remember { mutableStateOf(false) }
+    val activeRoomId by callManager?.activeRoomIdFlow?.collectAsState(initial = null) ?: remember { mutableStateOf<String?>(null) }
+    val isCallActiveInRoom = (activeRoomId == channel.id || activeRoomId == channel.matrixRoomId) &&
+        callState != webrtc.CallState.IDLE &&
+        callState != webrtc.CallState.ENDED
     val showVoiceChannelUi = channel.type == ChannelType.VOICE && windowSize.isExpanded
+    var pendingGroupJoinCallId by remember(channel.id) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(callState, activeRoomId) {
+        if (callState != webrtc.CallState.CONNECTING) {
+            pendingGroupJoinCallId = null
+        }
+    }
 
     Row(
         modifier = modifier
@@ -79,6 +90,46 @@ fun ChatScreen(
                     channel = channel,
                     modifier = Modifier.weight(1f).fillMaxWidth()
                 )
+            } else if (isCallActiveInRoom && isGroupCall && callManager != null) {
+                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    LiveKitVideoRenderer(modifier = Modifier.fillMaxSize())
+
+                    val isVideoEnabled by callManager.isLocalVideoEnabled.collectAsState()
+                    val isAudioEnabled by callManager.isLocalAudioEnabled.collectAsState()
+                    val isScreenSharing by callManager.isScreenSharing.collectAsState()
+                    var isDeafened by remember { mutableStateOf(false) }
+                    var layoutMode by remember { mutableStateOf(CallLayoutMode.Grid) }
+                    var showSoundboard by remember { mutableStateOf(false) }
+                    var showScreenShareDialog by remember { mutableStateOf(false) }
+
+                    if (showScreenShareDialog) {
+                        ScreenShareDialog(
+                            callManager = callManager,
+                            onDismiss = { showScreenShareDialog = false },
+                            onSourceSelected = { source ->
+                                callManager.startScreenShare(source.id)
+                                showScreenShareDialog = false
+                            }
+                        )
+                    }
+
+                    CallControlsBar(
+                        callManager = callManager,
+                        isVideoEnabled = isVideoEnabled,
+                        isMuted = !isAudioEnabled,
+                        isDeafened = isDeafened,
+                        isScreenSharing = isScreenSharing,
+                        layoutMode = layoutMode,
+                        showSoundboard = showSoundboard,
+                        onToggleDeafen = { isDeafened = !isDeafened },
+                        onLayoutModeToggle = {
+                            layoutMode = if (layoutMode == CallLayoutMode.Grid) CallLayoutMode.Focus else CallLayoutMode.Grid
+                        },
+                        onSoundboardToggle = { showSoundboard = !showSoundboard },
+                        onScreenShareClick = { showScreenShareDialog = true },
+                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp)
+                    )
+                }
             } else {
 
                 if (activeGroupCallUrl != null) {
@@ -86,16 +137,31 @@ fun ChatScreen(
                         url = activeGroupCallUrl,
                         roomId = channel.id,
                         onJoinCall = { url ->
-                            val callId = if (url.startsWith("matrix-call://")) {
-                                val urlContent = url.substringAfter("://")
-                                if (urlContent.contains("/")) urlContent.substringAfterLast("/") else urlContent
-                            } else url
-                            scope.launch {
-                                (repository as? repository.MatrixOrbitRepository)?.joinGroupCall(channel.matrixRoomId, callId)
-                                callManager?.joinGroupCall(channel.matrixRoomId, callId, false)
+                            val matrixRepository = repository as? repository.MatrixOrbitRepository
+                            val target = parseGroupCallJoinTarget(
+                                url = url,
+                                fallbackLiveKitUrl = matrixRepository?.context?.defaultLiveKitServiceUrl
+                            )
+                            if (pendingGroupJoinCallId != null || callState == webrtc.CallState.CONNECTING) {
+                                println("DEBUG [ChatScreen] Ignoring duplicate MatrixRTC join click for ${target.callId}")
+                            } else {
+                                pendingGroupJoinCallId = target.callId
+                                scope.launch {
+                                    val livekitUrl = target.livekitUrl
+                                    if (matrixRepository == null || livekitUrl.isNullOrBlank()) {
+                                        println("ERROR [ChatScreen] Cannot join MatrixRTC call inside Orbit; missing Matrix repository or LiveKit URL for $url")
+                                        pendingGroupJoinCallId = null
+                                        return@launch
+                                    }
+                                    callManager?.joinGroupCall(channel.matrixRoomId, target.callId, false, livekitUrl) {
+                                        matrixRepository.fetchLiveKitToken(channel.matrixRoomId, target.callId, livekitUrl)
+                                    }
+                                }
                             }
                         },
-                        modifier = Modifier.fillMaxWidth().padding(16.dp)
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        enabled = pendingGroupJoinCallId == null && callState != webrtc.CallState.CONNECTING,
+                        joining = pendingGroupJoinCallId != null || callState == webrtc.CallState.CONNECTING
                     )
                 }
 
@@ -144,5 +210,24 @@ fun ChatScreen(
             }
         }
     }
+}
+
+private data class GroupCallJoinTarget(
+    val callId: String,
+    val livekitUrl: String?
+)
+
+private fun parseGroupCallJoinTarget(url: String, fallbackLiveKitUrl: String?): GroupCallJoinTarget {
+    if (url.startsWith("matrix-call://")) {
+        val urlContent = url.substringAfter("://")
+        val callId = urlContent.substringAfterLast("/", urlContent).ifBlank { "m.call" }
+        return GroupCallJoinTarget(callId = callId, livekitUrl = fallbackLiveKitUrl)
+    }
+
+    val callId = url.substringAfter("?callId=", missingDelimiterValue = "m.call")
+        .substringBefore("&")
+        .ifBlank { "m.call" }
+    val livekitUrl = url.substringBefore("?").ifBlank { fallbackLiveKitUrl }
+    return GroupCallJoinTarget(callId = callId, livekitUrl = livekitUrl)
 }
 
