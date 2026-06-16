@@ -61,6 +61,7 @@ class CallManager(
     var sendCandidate: (suspend (roomId: String, callId: String, candidate: IceCandidateModel) -> Unit)? = null
     var sendHangup: (suspend (roomId: String, callId: String) -> Unit)? = null
     var onLeaveGroupCall: (suspend (roomId: String, callId: String) -> Unit)? = null
+    var onUpdateGroupCallMembershipCapabilities: (suspend (roomId: String, callId: String, audio: Boolean, video: Boolean, livekitIdentity: String?) -> Unit)? = null
 
     private val pendingLocalCandidates = mutableListOf<IceCandidateModel>()
     private var candidatesAllowedForCallId: String? = null
@@ -102,7 +103,8 @@ class CallManager(
         livekitTokenFetcher: (suspend () -> livekit.LiveKitAuthResponse)? = null
     ) {
         if (callState.value != CallState.IDLE && this.callId == callId) {
-            println("DEBUG [CallManager] Already in call $callId, ignoring join request")
+            println("DEBUG [CallManager] Already in call $callId, ensuring native media session is ready")
+            ensureNativeMediaSessionStarted(roomId, callId, isVideo, livekitUrl, livekitTokenFetcher)
             return
         }
         if (isJoiningGroupCall) {
@@ -126,45 +128,135 @@ class CallManager(
         scope.launch {
             try {
                 if (livekitUrl != null && livekitTokenFetcher != null) {
-                    try {
-                        loadIceServers()
-                        var effectiveIceServers = iceServers
-                        if (effectiveIceServers.isEmpty()) {
-                            println("DEBUG [CallManager] No Matrix ICE servers found, injecting fallback STUN")
-                            effectiveIceServers = listOf(repository.TurnServer(listOf("stun:stun.l.google.com:19302"), null, null))
-                        }
-
-                        println("DEBUG [CallManager] Fetching LiveKit token for url: $livekitUrl")
-                        val authResponse = livekitTokenFetcher()
-                        println("DEBUG [CallManager] Token and SFU URL fetched. Connecting to LiveKit at ${authResponse.serverUrl}...")
-                        livekit.connectToLiveKit(authResponse.serverUrl, authResponse.token, effectiveIceServers)
-
-                        // Trigger local media capture (diverted to LiveKit in WebRtcClientImpl)
-                        webRtcClient.startLocalMedia(isVideo)
-                        
+                    val mediaReady = connectNativeGroupMedia(roomId, callId, isVideo, livekitUrl, livekitTokenFetcher)
+                    if (mediaReady) {
                         _callState.value = CallState.CONNECTED
-                        println("DEBUG [CallManager] LiveKit call state set to CONNECTED")
-                        return@launch
-                    } catch (e: Exception) {
-                        println("DEBUG [CallManager] Failed to connect to LiveKit: ${e.message}")
-                        e.printStackTrace()
-                        _callState.value = CallState.IDLE
-                        return@launch
+                        println("DEBUG [CallManager] LiveKit call state set to CONNECTED after MediaReady")
+                    } else {
+                        failGroupJoin()
                     }
+                    return@launch
                 }
 
-                loadIceServers()
-                webRtcClient.initialize(iceServers)
-                webRtcClient.startLocalMedia(isVideo)
-
-                // For group calls, we don't send an invite. We send a m.call.member event via repository.
-                // This is usually handled by the repository when we call joinGroupCall there.
-                _callState.value = CallState.CONNECTED
+                val error = livekit.NativeError(
+                    code = livekit.NativeErrorCode.CONNECT_FAILED,
+                    message = "MatrixRTC group call requires LiveKit URL and token fetcher",
+                    operation = "joinGroupCall",
+                    recoverable = false
+                )
+                println("ERROR [CallManager] ${error.code} ${error.operation}: ${error.message}")
+                failGroupJoin()
             } finally {
                 isJoiningGroupCall = false
             }
         }
     }
+
+    private fun failGroupJoin() {
+        _callState.value = CallState.IDLE
+        activeRoomId = null
+        callId = null
+        isGroupCall.value = false
+        webRtcClient.isGroupCall = false
+        isVideoCall.value = false
+        isLocalVideoEnabled.value = false
+        candidatesAllowedForCallId = null
+        pendingLocalCandidates.clear()
+    }
+
+    private fun ensureNativeMediaSessionStarted(
+        roomId: String,
+        callId: String,
+        isVideo: Boolean,
+        livekitUrl: String?,
+        livekitTokenFetcher: (suspend () -> livekit.LiveKitAuthResponse)?
+    ) {
+        if (isJoiningGroupCall) return
+        scope.launch {
+            val ready = livekit.ensureLiveKitMediaReady()
+            if (ready.ok) {
+                if (_callState.value != CallState.CONNECTED) {
+                    _callState.value = CallState.CONNECTED
+                }
+                return@launch
+            }
+
+            if (livekitUrl == null || livekitTokenFetcher == null) {
+                val error = livekit.NativeError(
+                    code = livekit.NativeErrorCode.CONNECT_FAILED,
+                    message = "MatrixRTC group call requires LiveKit URL and token fetcher",
+                    operation = "ensureNativeMediaSessionStarted",
+                    recoverable = false
+                )
+                println("ERROR [CallManager] ${error.code} ${error.operation}: ${error.message}")
+                failGroupJoin()
+                return@launch
+            }
+
+            isJoiningGroupCall = true
+            try {
+                if (connectNativeGroupMedia(roomId, callId, isVideo, livekitUrl, livekitTokenFetcher)) {
+                    _callState.value = CallState.CONNECTED
+                }
+            } finally {
+                isJoiningGroupCall = false
+            }
+        }
+    }
+
+    private suspend fun connectNativeGroupMedia(
+        roomId: String,
+        callId: String,
+        isVideo: Boolean,
+        livekitUrl: String,
+        livekitTokenFetcher: suspend () -> livekit.LiveKitAuthResponse
+    ): Boolean {
+        return try {
+            loadIceServers()
+            var effectiveIceServers = iceServers
+            if (effectiveIceServers.isEmpty()) {
+                println("DEBUG [CallManager] No Matrix ICE servers found, injecting fallback STUN")
+                effectiveIceServers = listOf(repository.TurnServer(listOf("stun:stun.l.google.com:19302"), null, null))
+            }
+
+            println("DEBUG [CallManager] Fetching LiveKit token for url: $livekitUrl")
+            val authResponse = livekitTokenFetcher()
+            println("DEBUG [CallManager] Token and SFU URL fetched. Publishing MatrixRTC membership before native media...")
+            onUpdateGroupCallMembershipCapabilities?.invoke(roomId, callId, true, false, authResponse.identity)
+            println("DEBUG [CallManager] MatrixRTC membership publish requested before native media. Connecting native media at ${authResponse.serverUrl}...")
+            val readiness = livekit.connectAndPublishToLiveKit(
+                authResponse = authResponse,
+                isVideo = isVideo,
+                iceServers = effectiveIceServers,
+                refreshTokenFetcher = livekitTokenFetcher
+            )
+
+            if (!readiness.ok || readiness.value == null) {
+                println("DEBUG [CallManager] Native media failed: ${readiness.error?.code} ${readiness.error?.message}")
+                false
+            } else {
+                val value = readiness.value
+                val ready = value.state == livekit.NativeMediaState.MediaReady &&
+                    value.audioPublished &&
+                    value.acceptingAudioFrames
+                if (!ready) {
+                    println("DEBUG [CallManager] Native media not ready after join: $value")
+                } else {
+                    if (!value.videoPublished) {
+                        isLocalVideoEnabled.value = false
+                    }
+                    println("DEBUG [CallManager] publishing MatrixRTC membership after MediaReady audio=true video=${value.videoPublished}")
+                    onUpdateGroupCallMembershipCapabilities?.invoke(roomId, callId, true, value.videoPublished, authResponse.identity)
+                }
+                ready
+            }
+        } catch (e: Exception) {
+            println("DEBUG [CallManager] Failed to connect native LiveKit media: ${e.message}")
+            e.printStackTrace()
+            false
+        }
+    }
+
     fun startCall(roomId: String, isVideo: Boolean) {
         val newCallId = "call_${System.currentTimeMillis()}"
         activeRoomId = roomId
@@ -396,6 +488,9 @@ class CallManager(
         val wasGroupCall = isGroupCall.value
 
         _callState.value = CallState.ENDED
+        if (wasGroupCall) {
+            livekit.disconnectFromLiveKit(userInitiated = true)
+        }
         webRtcClient.stopLocalMedia()
         webRtcClient.endCall()
 

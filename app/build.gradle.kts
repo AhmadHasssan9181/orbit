@@ -107,6 +107,24 @@ dependencies {
     add("kspJvm", "androidx.room:room-compiler:2.7.0-alpha11")
 }
 
+val orbitAudioJvmArgs = listOf(
+    "orbit.audio.testTone",
+    "orbit.audio.testToneStereo",
+    "orbit.audio.inputDeviceName",
+    "orbit.audio.captureGain",
+    "orbit.audio.selfTestDurationMs",
+    "orbit.audio.autoProbeDurationMs",
+    "orbit.livekit.audioSourceQueueMs",
+    "orbit.livekit.dumpTonePublisherEnv",
+    "orbit.matrixrtc.publishLegacyMember",
+    "orbit.matrixrtc.publishMemberMode",
+    "orbit.matrixrtc.mirrorVisibleElementShape"
+).mapNotNull { propertyName ->
+    System.getProperty(propertyName)
+        ?.takeIf { it.isNotBlank() }
+        ?.let { "-D$propertyName=$it" }
+}
+
 android {
     namespace = "com.noobdev.orbit"
     compileSdk = 34
@@ -137,7 +155,12 @@ compose.desktop {
         jvmArgs += listOf(
             "--add-opens", "java.base/java.lang=ALL-UNNAMED"
         )
+        jvmArgs += orbitAudioJvmArgs
     }
+}
+
+tasks.withType<JavaExec>().configureEach {
+    jvmArgs(orbitAudioJvmArgs)
 }
 
 room {
@@ -158,19 +181,80 @@ tasks.register("compileJniBridge") {
             commandLine("cmake", "--build", buildDir.absolutePath, "--config", "Release")
         }
         
-        // Copy the resulting DLL to the resources folder where loadLibrary can find it
-        val dllName = "orbit_livekit_video.dll"
-        val outputDll = file("build/jni/Release/$dllName")
+        // Copy native bridge DLLs to the resources folder where the JVM loader can find them.
         val targetDir = file("src/jvmMain/resources/webrtc-deps")
         targetDir.mkdirs()
 
-        if (!outputDll.exists()) {
-            // Fallback for non-Release builds or different generators
-            file("build/jni").walkTopDown().find { it.name == dllName }?.let {
-                it.copyTo(targetDir.resolve(dllName), overwrite = true)
+        fun copyBuiltDll(dllName: String) {
+            val outputDll = file("build/jni/Release/$dllName")
+            if (!outputDll.exists()) {
+                // Fallback for non-Release builds or different generators.
+                file("build/jni").walkTopDown().find { it.name == dllName }?.let {
+                    it.copyTo(targetDir.resolve(dllName), overwrite = true)
+                }
+            } else {
+                outputDll.copyTo(targetDir.resolve(dllName), overwrite = true)
             }
+        }
+
+        copyBuiltDll("orbit_livekit_video.dll")
+        copyBuiltDll("orbit_livekit_audio.dll")
+
+        // The prebuilt LiveKit C++ SDK ships runtime DLLs next to its package.
+        file("build/jni/_deps/livekit-sdk").walkTopDown()
+            .filter { it.isFile && it.extension.equals("dll", ignoreCase = true) }
+            .forEach { sdkDll ->
+                val targetDll = targetDir.resolve(sdkDll.name)
+                try {
+                    sdkDll.copyTo(targetDll, overwrite = true)
+                } catch (existing: FileAlreadyExistsException) {
+                    if (targetDll.exists() && targetDll.length() == sdkDll.length()) {
+                        println("Skipping unchanged LiveKit SDK DLL already in resources: ${sdkDll.name}")
+                    } else {
+                        throw existing
+                    }
+                }
+            }
+    }
+}
+
+tasks.register("runLiveKitTonePublisher") {
+    dependsOn("compileJniBridge")
+
+    doLast {
+        val url = (findProperty("livekitUrl") as String?) ?: System.getenv("ORBIT_LIVEKIT_URL")
+        val token = (findProperty("livekitToken") as String?) ?: System.getenv("ORBIT_LIVEKIT_TOKEN")
+        val seconds = ((findProperty("toneSeconds") as String?)
+            ?: System.getenv("ORBIT_LIVEKIT_TONE_SECONDS")
+            ?: "120")
+        val channels = ((findProperty("toneChannels") as String?)
+            ?: System.getenv("ORBIT_LIVEKIT_TONE_CHANNELS")
+            ?: "2")
+
+        if (url.isNullOrBlank() || token.isNullOrBlank()) {
+            throw GradleException(
+                "Set ORBIT_LIVEKIT_URL and ORBIT_LIVEKIT_TOKEN, or pass -PlivekitUrl=... -PlivekitToken=..."
+            )
+        }
+
+        val exeName = if (org.gradle.internal.os.OperatingSystem.current().isWindows) {
+            "orbit_livekit_tone_publisher.exe"
         } else {
-            outputDll.copyTo(targetDir.resolve(dllName), overwrite = true)
+            "orbit_livekit_tone_publisher"
+        }
+        val candidates = listOf(
+            file("build/jni/Release/$exeName"),
+            file("build/jni/$exeName")
+        )
+        val executable = candidates.firstOrNull { it.exists() }
+            ?: throw GradleException("Cannot find $exeName. Run :app:compileJniBridge first.")
+
+        exec {
+            environment("ORBIT_LIVEKIT_URL", url)
+            environment("ORBIT_LIVEKIT_TOKEN", token)
+            environment("ORBIT_LIVEKIT_TONE_SECONDS", seconds)
+            environment("ORBIT_LIVEKIT_TONE_CHANNELS", channels)
+            commandLine(executable.absolutePath)
         }
     }
 }

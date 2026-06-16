@@ -26,8 +26,14 @@ import ui.screen.media.*
 import ui.screen.main.*
 
 @Composable
-internal fun GroupCallBanner(url: String, roomId: String, onJoinCall: (String) -> Unit, modifier: Modifier = Modifier) {
-    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+internal fun GroupCallBanner(
+    url: String,
+    roomId: String,
+    onJoinCall: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    joining: Boolean = false
+) {
     Row(
         modifier = modifier
             .background(Accent.copy(alpha = 0.1f), RoundedCornerShape(12.dp))
@@ -40,18 +46,13 @@ internal fun GroupCallBanner(url: String, roomId: String, onJoinCall: (String) -
             Text("Click to join the ongoing group call.", color = Text_Muted, fontSize = 13.sp)
         }
         Button(
-            onClick = { 
-                if (url.startsWith("matrix-call://")) {
-                    onJoinCall(url)
-                } else {
-                    uriHandler.openUri(url)
-                }
-            }, 
+            onClick = { onJoinCall(url) },
+            enabled = enabled,
             colors = ButtonDefaults.buttonColors(containerColor = Accent)
         ) {
             Icon(Icons.Filled.Call, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
-            Text("Join Call")
+            Text(if (joining) "Joining..." else "Join Call")
         }
     }
 }
