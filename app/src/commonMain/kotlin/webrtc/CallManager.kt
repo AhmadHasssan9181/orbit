@@ -61,7 +61,7 @@ class CallManager(
     var sendCandidate: (suspend (roomId: String, callId: String, candidate: IceCandidateModel) -> Unit)? = null
     var sendHangup: (suspend (roomId: String, callId: String) -> Unit)? = null
     var onLeaveGroupCall: (suspend (roomId: String, callId: String) -> Unit)? = null
-    var onUpdateGroupCallMembershipCapabilities: (suspend (roomId: String, callId: String, audio: Boolean, video: Boolean) -> Unit)? = null
+    var onUpdateGroupCallMembershipCapabilities: (suspend (roomId: String, callId: String, audio: Boolean, video: Boolean, livekitIdentity: String?) -> Unit)? = null
 
     private val pendingLocalCandidates = mutableListOf<IceCandidateModel>()
     private var candidatesAllowedForCallId: String? = null
@@ -222,7 +222,7 @@ class CallManager(
             println("DEBUG [CallManager] Fetching LiveKit token for url: $livekitUrl")
             val authResponse = livekitTokenFetcher()
             println("DEBUG [CallManager] Token and SFU URL fetched. Publishing MatrixRTC membership before native media...")
-            onUpdateGroupCallMembershipCapabilities?.invoke(roomId, callId, true, false)
+            onUpdateGroupCallMembershipCapabilities?.invoke(roomId, callId, true, false, authResponse.identity)
             println("DEBUG [CallManager] MatrixRTC membership publish requested before native media. Connecting native media at ${authResponse.serverUrl}...")
             val readiness = livekit.connectAndPublishToLiveKit(
                 authResponse = authResponse,
@@ -246,7 +246,7 @@ class CallManager(
                         isLocalVideoEnabled.value = false
                     }
                     println("DEBUG [CallManager] publishing MatrixRTC membership after MediaReady audio=true video=${value.videoPublished}")
-                    onUpdateGroupCallMembershipCapabilities?.invoke(roomId, callId, true, value.videoPublished)
+                    onUpdateGroupCallMembershipCapabilities?.invoke(roomId, callId, true, value.videoPublished, authResponse.identity)
                 }
                 ready
             }

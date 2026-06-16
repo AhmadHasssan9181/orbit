@@ -8,5 +8,5 @@ actual object MatrixRtcFeatureFlags {
         get() = null
 
     actual val mirrorVisibleElementShape: Boolean
-        get() = false
+        get() = true
 }

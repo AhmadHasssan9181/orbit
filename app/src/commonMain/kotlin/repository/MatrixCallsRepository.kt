@@ -624,7 +624,7 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
     }
 
     private fun isUnexpiredMatrixRtcMember(event: MatrixRtcVisibilityEvent): Boolean =
-        expiresRemainingMs(event)?.let { it > 0 } ?: false
+        expiresRemainingMs(event)?.let { it > 0 } ?: true
 
     private fun hasNonNullContentField(content: JsonObject, key: String): Boolean {
         val value = content[key] ?: return false
@@ -928,16 +928,16 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
         publishGroupCallMembership(roomId, callId, audio = true, video = false)
     }
 
-    override suspend fun updateGroupCallMembershipCapabilities(roomId: String, callId: String, audio: Boolean, video: Boolean) {
+    override suspend fun updateGroupCallMembershipCapabilities(roomId: String, callId: String, audio: Boolean, video: Boolean, livekitIdentity: String?) {
         println("DEBUG [MatrixCallsRepository] publishing MatrixRTC membership audio=$audio video=$video")
-        publishGroupCallMembership(roomId, callId, audio = audio, video = video)
+        publishGroupCallMembership(roomId, callId, audio = audio, video = video, livekitIdentity = livekitIdentity)
     }
 
-    private suspend fun publishGroupCallMembership(roomId: String, callId: String, audio: Boolean, video: Boolean) {
+    private suspend fun publishGroupCallMembership(roomId: String, callId: String, audio: Boolean, video: Boolean, livekitIdentity: String? = null) {
         val userId = context.userId ?: return
         val deviceId = context.deviceId ?: "ORBIT_DESKTOP"
         try {
-            val membershipId = "$userId:$deviceId"
+            val membershipId = livekitIdentity ?: "$userId:$deviceId"
             val beforeEvents = fetchMatrixRtcVisibilityEvents(roomId)
             logMatrixRtcVisibilityEvents("before_publish", beforeEvents)
             val reference = findReferenceMemberEvent(beforeEvents, userId, deviceId, membershipId)
@@ -983,7 +983,17 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                 put("membershipID", membershipId)
                 // MSC3401 strictly requires created_ts for focus selection
                 put("created_ts", createdTs)
-                put("m.call.intent", if (mirrorElementShape) "audio" else if (video) "video" else "audio")
+                val referenceIntent = reference?.content?.let { jsonString(it, "m.call.intent") }
+                // Only mirror the intent if it's "audio" or if we actually have video capability.
+                // Otherwise, force "audio" so older clients don't wait for a video track we'll never send.
+                val actualIntent = if (mirrorElementShape) {
+                    "audio"
+                } else if (referenceIntent != null && (video || referenceIntent == "audio")) {
+                    referenceIntent
+                } else {
+                    if (video) "video" else "audio"
+                }
+                put("m.call.intent", actualIntent)
                 put("scope", "m.room")
                 put("expires", expiresMs)
                 put("foci_preferred", buildJsonArray {
