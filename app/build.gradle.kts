@@ -181,6 +181,7 @@ tasks.register("compileJniBridge") {
     doLast {
         val cppDir = file("src/jvmMain/cpp")
         val buildDir = file("build/jni")
+        buildDir.deleteRecursively()
         buildDir.mkdirs()
         
         val targetDir = file("src/jvmMain/resources/webrtc-deps")
@@ -188,12 +189,41 @@ tasks.register("compileJniBridge") {
         val audioDllExists = targetDir.resolve("orbit_livekit_audio.dll").exists()
         val videoDllExists = targetDir.resolve("orbit_livekit_video.dll").exists()
 
-        try {
-            exec {
-                commandLine("cmake", "-S", cppDir.absolutePath, "-B", buildDir.absolutePath)
+        var vsBat = listOf(
+            file("D:/vs studio/VC/Auxiliary/Build/vcvars64.bat"),
+            file("D:/vs studio/Common7/Tools/VsDevCmd.bat"),
+            file("D:/Visual Studio/VC/Auxiliary/Build/vcvars64.bat"),
+            file("D:/Microsoft Visual Studio/VC/Auxiliary/Build/vcvars64.bat"),
+            file("C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Auxiliary/Build/vcvars64.bat"),
+            file("C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Auxiliary/Build/vcvars64.bat"),
+            file("C:/Program Files/Microsoft Visual Studio/2022/Professional/VC/Auxiliary/Build/vcvars64.bat"),
+            file("C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Auxiliary/Build/vcvars64.bat")
+        ).firstOrNull { it.exists() }
+
+        if (vsBat == null && System.getProperty("os.name").lowercase().contains("windows")) {
+            runCatching {
+                val dDrive = file("D:/")
+                if (dDrive.exists()) {
+                    vsBat = dDrive.walkTopDown().maxDepth(6).firstOrNull { it.name.equals("vcvars64.bat", ignoreCase = true) && !it.absolutePath.contains("vsstudioorig", ignoreCase = true) }
+                        ?: dDrive.walkTopDown().maxDepth(6).firstOrNull { it.name.equals("vcvars64.bat", ignoreCase = true) }
+                }
             }
-            exec {
-                commandLine("cmake", "--build", buildDir.absolutePath, "--config", "Release")
+        }
+
+        val vsBatFile = vsBat
+        try {
+            if (vsBatFile != null && System.getProperty("os.name").lowercase().contains("windows")) {
+                println("DEBUG [compileJniBridge] Using Visual Studio environment: ${vsBatFile.absolutePath}")
+                exec {
+                    commandLine("cmd", "/c", "\"${vsBatFile.absolutePath}\" && cmake -S \"${cppDir.absolutePath}\" -B \"${buildDir.absolutePath}\" -DCMAKE_BUILD_TYPE=Release -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL && cmake --build \"${buildDir.absolutePath}\" --config Release")
+                }
+            } else {
+                exec {
+                    commandLine("cmake", "-S", cppDir.absolutePath, "-B", buildDir.absolutePath, "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL")
+                }
+                exec {
+                    commandLine("cmake", "--build", buildDir.absolutePath, "--config", "Release")
+                }
             }
         } catch (e: Exception) {
             if (audioDllExists && videoDllExists) {

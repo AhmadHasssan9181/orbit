@@ -51,10 +51,12 @@ object LiveKitTokenProvider {
         }.fold(
             onSuccess = { it.toTokenResult() },
             onFailure = { error ->
+                println("ERROR [LiveKitTokenProvider] fetchToken failed with exception: ${error.javaClass.name}: ${error.message}")
+                error.printStackTrace()
                 NativeResult.failure(
                     NativeError(
                         code = NativeErrorCode.AUTH_FAILED,
-                        message = error.message ?: "Failed to fetch LiveKit token",
+                        message = "${error.javaClass.simpleName}: ${error.message ?: "Failed to fetch LiveKit token"}",
                         operation = "fetchLiveKitToken",
                         recoverable = true
                     )
@@ -115,9 +117,11 @@ object LiveKitTokenProvider {
             contentType(ContentType.Application.Json)
             setBody(buildJsonObject { })
         }
+        println("DEBUG [LiveKitTokenProvider] OpenID response status: ${openIdResponse.status.value}")
         
         if (openIdResponse.status.value !in 200..299) {
             val errBody = openIdResponse.bodyAsText()
+            println("ERROR [LiveKitTokenProvider] OpenID request failed status=${openIdResponse.status.value} body=$errBody")
             throw Exception("Failed to fetch OpenID token (status ${openIdResponse.status.value}): $errBody")
         }
         
@@ -150,9 +154,11 @@ object LiveKitTokenProvider {
             println("DEBUG [LiveKitTokenProvider] Request Body: $requestBody")
             setBody(requestBody.toString())
         }
+        println("DEBUG [LiveKitTokenProvider] /get_token response status: ${lkResponse.status.value}")
         
         if (lkResponse.status.value !in 200..299) {
             val errBody = lkResponse.bodyAsText()
+            println("ERROR [LiveKitTokenProvider] /get_token failed status=${lkResponse.status.value} body=$errBody")
             // Fallback for older deployments
             if (lkResponse.status.value == 404) {
                 println("DEBUG [LiveKitTokenProvider] /get_token returned 404, falling back to legacy /sfu/get body")
@@ -199,9 +205,11 @@ object LiveKitTokenProvider {
             println("DEBUG [LiveKitTokenProvider] Request Body: $requestBody")
             setBody(requestBody.toString())
         }
+        println("DEBUG [LiveKitTokenProvider] /sfu/get response status: ${lkResponse.status.value}")
         
         if (lkResponse.status.value !in 200..299) {
             val errBody = lkResponse.bodyAsText()
+            println("ERROR [LiveKitTokenProvider] /sfu/get failed status=${lkResponse.status.value} body=$errBody")
             throw Exception("Failed to fetch LiveKit JWT via legacy (status ${lkResponse.status.value}): $errBody")
         }
         

@@ -23,20 +23,20 @@ actual object LiveKitFeatureFlags {
         get() = boolProperty("orbit.livekit.videoRequired", false)
 
     actual val videoPublish: Boolean
-        get() = boolProperty("orbit.video.publish", false)
+        get() = boolProperty("orbit.video.publish", true)
 
     actual val videoUpdateMembershipAfterPublish: Boolean
-        get() = boolProperty("orbit.video.updateMembershipAfterPublish", false)
+        get() = boolProperty("orbit.video.updateMembershipAfterPublish", true)
 
     actual val videoMembershipMode: String
         get() = System.getProperty("orbit.video.membershipMode")
             ?.trim()
             ?.lowercase()
             ?.takeIf { it.isNotBlank() }
-            ?: "none"
+            ?: "element-reference"
 
     actual val videoRemoteRender: Boolean
-        get() = boolProperty("orbit.video.remoteRender", false)
+        get() = boolProperty("orbit.video.remoteRender", true)
 
     actual val dumpTonePublisherEnv: Boolean
         get() = boolProperty("orbit.livekit.dumpTonePublisherEnv", false)

@@ -27,7 +27,7 @@ object LiveKitNativeAudioCapture {
     const val SAMPLES_PER_CHANNEL = 480
     const val FRAME_BYTES = 960
     private const val BYTES_PER_SAMPLE = 2
-    private const val CAPTURE_BUFFER_FRAMES = 4
+    private const val CAPTURE_BUFFER_FRAMES = 25
     private const val CAPTURE_BUFFER_BYTES = FRAME_BYTES * CAPTURE_BUFFER_FRAMES
     private const val TEST_TONE_HZ = 1000.0
     private const val TEST_TONE_PEAK = 12_000

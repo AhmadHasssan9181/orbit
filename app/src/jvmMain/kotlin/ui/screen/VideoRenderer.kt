@@ -37,7 +37,9 @@ actual fun VideoRenderer(renderer: Any?, modifier: Modifier) {
             )
         }
         is LiveKitVideoTileRenderer.Remote -> {
-            val frame by LiveKitRemoteVideoFrameStore.latestFrame.collectAsState()
+            val cameraFrame by LiveKitRemoteVideoFrameStore.latestCameraFrame.collectAsState()
+            val fallbackFrame by LiveKitRemoteVideoFrameStore.latestFrame.collectAsState()
+            val frame = cameraFrame ?: fallbackFrame
             val matchingFrame = frame?.takeIf { current ->
                 renderer.participantIdentity == null || current.participantIdentity == renderer.participantIdentity
             }
@@ -45,6 +47,18 @@ actual fun VideoRenderer(renderer: Any?, modifier: Modifier) {
                 image = matchingFrame?.toBufferedImage(),
                 modifier = modifier,
                 contentScale = ContentScale.Crop,
+                fallbackText = ""
+            )
+        }
+        is LiveKitVideoTileRenderer.RemoteScreenShare -> {
+            val frame by LiveKitRemoteVideoFrameStore.latestScreenShareFrame.collectAsState()
+            val matchingFrame = frame?.takeIf { current ->
+                renderer.participantIdentity == null || current.participantIdentity == renderer.participantIdentity
+            }
+            LiveKitFrameRenderer(
+                image = matchingFrame?.toBufferedImage(),
+                modifier = modifier,
+                contentScale = ContentScale.Fit,
                 fallbackText = ""
             )
         }

@@ -502,7 +502,7 @@ class JvmWebRtcClient : WebRtcClient {
     override fun startScreenShare(data: Any?) {
         val sourceId = data as? String
         try {
-            val pConn = peerConnection ?: return
+            if (!isGroupCall && peerConnection == null) return
             val f = factory ?: return
 
             val screenCapturer = ScreenCapturer()
@@ -529,18 +529,27 @@ class JvmWebRtcClient : WebRtcClient {
                 
                 val screenTrack = f.createVideoTrack("screenTrack_${System.currentTimeMillis()}", screenSource)
                 screenTrack.setEnabled(true)
-                
-                if (localVideoSender != null) {
-                    localVideoSender?.replaceTrack(screenTrack)
-                } else {
-                    localVideoSender = pConn.addTrack(screenTrack, listOf("mediaStream"))
-                }
-                
                 screenVideoTrack = screenTrack
-                localVideoTrack = screenTrack
-                localRenderer?.isScreenShare = true
-                (localRenderer as? VideoTrackSink)?.let { sink ->
-                    screenTrack.addSink(sink)
+                
+                if (isGroupCall) {
+                    println("DEBUG [WebRTC] Starting screen share in Group Call (LiveKit)")
+                    screenTrack.addSink(livekit.LiveKitLocalScreenShareTrack.sink)
+                    livekit.LiveKitLocalScreenShareTrack.startCapture(1920, 1080)
+                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                        livekit.LiveKitClient.publishScreenShareTrack(livekit.LiveKitLocalScreenShareTrack.getSourceHandle())
+                    }
+                } else {
+                    val pConn = peerConnection ?: return
+                    if (localVideoSender != null) {
+                        localVideoSender?.replaceTrack(screenTrack)
+                    } else {
+                        localVideoSender = pConn.addTrack(screenTrack, listOf("mediaStream"))
+                    }
+                    localVideoTrack = screenTrack
+                    localRenderer?.isScreenShare = true
+                    (localRenderer as? VideoTrackSink)?.let { sink ->
+                        screenTrack.addSink(sink)
+                    }
                 }
                 
                 _isScreenSharing.tryEmit(true)
@@ -555,7 +564,14 @@ class JvmWebRtcClient : WebRtcClient {
 
     override fun stopScreenShare() {
         try {
-            val pConn = peerConnection ?: return
+            if (isGroupCall && _isScreenSharing.value) {
+                println("DEBUG [WebRTC] Stopping screen share in Group Call (LiveKit)")
+                runCatching {
+                    livekit.LiveKitLocalScreenShareTrack.stopCapture()
+                    livekit.LiveKitClient.unpublishScreenShareTrack()
+                }
+            }
+            if (!isGroupCall && peerConnection == null) return
             
             (localRenderer as? VideoTrackSink)?.let { sink ->
                 runCatching { screenVideoTrack?.removeSink(sink) }
@@ -568,20 +584,23 @@ class JvmWebRtcClient : WebRtcClient {
             runCatching { screenVideoTrack?.dispose() }
             screenVideoTrack = null
             
-            // Resume camera if it was enabled
-            if (cameraVideoTrack != null) {
-                localVideoSender?.replaceTrack(cameraVideoTrack)
-                localVideoTrack = cameraVideoTrack
-                localRenderer?.isScreenShare = false
-                (localRenderer as? VideoTrackSink)?.let { sink ->
-                    cameraVideoTrack?.addSink(sink)
+            val pConn = peerConnection
+            if (pConn != null) {
+                // Resume camera if it was enabled
+                if (cameraVideoTrack != null) {
+                    localVideoSender?.replaceTrack(cameraVideoTrack)
+                    localVideoTrack = cameraVideoTrack
+                    localRenderer?.isScreenShare = false
+                    (localRenderer as? VideoTrackSink)?.let { sink ->
+                        cameraVideoTrack?.addSink(sink)
+                    }
+                } else {
+                    localVideoSender?.let { sender ->
+                        runCatching { pConn.removeTrack(sender) }
+                    }
+                    localVideoSender = null
+                    localVideoTrack = null
                 }
-            } else {
-                localVideoSender?.let { sender ->
-                    runCatching { pConn.removeTrack(sender) }
-                }
-                localVideoSender = null
-                localVideoTrack = null
             }
             
             // Stop sharing system audio

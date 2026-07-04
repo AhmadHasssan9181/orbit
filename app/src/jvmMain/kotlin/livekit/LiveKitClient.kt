@@ -398,4 +398,61 @@ object LiveKitClient {
             }
         }
     }
+
+    var activeScreenSharePublicationSid: String? = null
+
+    suspend fun publishScreenShareTrack(sourceHandle: Long): livekit.proto.Track.OwnedTrackPublication? {
+        val localParticipantHandle = activeLocalParticipantHandle ?: run {
+            println("ERROR [LiveKitClient] No active local participant to publish screenshare track")
+            return null
+        }
+
+        val trackReq = livekit.proto.Track.CreateVideoTrackRequest.newBuilder()
+            .setName("screenshare")
+            .setSourceHandle(sourceHandle)
+            .build()
+        val trackRes = request(FfiRequest.newBuilder().setCreateVideoTrack(trackReq).build())
+        val trackHandle = trackRes?.createVideoTrack?.track?.handle?.id ?: run {
+            println("ERROR [LiveKitClient] Failed to create screenshare track from source")
+            return null
+        }
+
+        println("DEBUG [LiveKitClient] Publishing screenshare track: $trackHandle (LocalParticipant: $localParticipantHandle)")
+        val pub = suspendCancellableCoroutine<livekit.proto.Track.OwnedTrackPublication?> { cont ->
+            try {
+                val publishReq = livekit.proto.Room.PublishTrackRequest.newBuilder()
+                    .setLocalParticipantHandle(localParticipantHandle)
+                    .setTrackHandle(trackHandle)
+                    .setOptions(livekit.proto.Room.TrackPublishOptions.newBuilder()
+                        .setSource(livekit.proto.Track.TrackSource.SOURCE_SCREENSHARE)
+                        .build())
+                    .build()
+                val res = request(FfiRequest.newBuilder().setPublishTrack(publishReq).build())
+                val asyncId = res?.publishTrack?.asyncId ?: return@suspendCancellableCoroutine
+                println("DEBUG [LiveKitClient] PublishScreenShareTrack response: hasRes=${res.hasPublishTrack()} asyncId=$asyncId")
+                pendingPublishes[asyncId] = cont
+                cont.invokeOnCancellation { pendingPublishes.remove(asyncId) }
+            } catch (e: Exception) {
+                println("ERROR [LiveKitClient] Exception in publishScreenShareTrack: ${e.message}")
+                e.printStackTrace()
+                cont.resumeWithException(e)
+            }
+        }
+        if (pub != null) {
+            activeScreenSharePublicationSid = pub.info.sid
+        }
+        return pub
+    }
+
+    fun unpublishScreenShareTrack() {
+        val sid = activeScreenSharePublicationSid ?: return
+        val localParticipantHandle = activeLocalParticipantHandle ?: return
+        println("DEBUG [LiveKitClient] Unpublishing screenshare track: $sid")
+        val unpubReq = livekit.proto.Room.UnpublishTrackRequest.newBuilder()
+            .setLocalParticipantHandle(localParticipantHandle)
+            .setTrackSid(sid)
+            .build()
+        request(FfiRequest.newBuilder().setUnpublishTrack(unpubReq).build())
+        activeScreenSharePublicationSid = null
+    }
 }
