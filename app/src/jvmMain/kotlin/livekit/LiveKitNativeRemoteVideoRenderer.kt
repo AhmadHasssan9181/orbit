@@ -18,7 +18,7 @@ object LiveKitNativeRemoteVideoRenderer : NativeRemoteVideoSink {
                 "participantSid=$participantSid publicationSid=$publicationSid trackSid=$trackSid " +
                 "trackName=$trackName trackSource=$trackSource muted=$muted"
         )
-        LiveKitRemoteVideoFrameStore.trackStarted(participantIdentity, trackSid)
+        LiveKitRemoteVideoFrameStore.trackStarted(participantIdentity, trackSid, trackSource, trackName)
     }
 
     override fun onRemoteVideoFrame(

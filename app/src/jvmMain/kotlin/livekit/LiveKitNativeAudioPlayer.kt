@@ -1,9 +1,12 @@
 package livekit
 
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 import javax.sound.sampled.AudioFormat
 import javax.sound.sampled.AudioSystem
 import javax.sound.sampled.DataLine
 import javax.sound.sampled.SourceDataLine
+import kotlinx.coroutines.*
 
 object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
     private val lock = Any()
@@ -16,6 +19,10 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
     @Volatile private var errorSink: ((NativeError) -> Unit)? = null
     @Volatile private var playbackErrorReported = false
 
+    private val audioQueue = LinkedBlockingQueue<ByteArray>(100) // Buffer up to ~1 sec without blocking C++
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private var playerJob: Job? = null
+
     fun start(
         sessionId: Long,
         epoch: Long,
@@ -27,7 +34,33 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
         bridge = nativeBridge
         errorSink = onError
         playbackErrorReported = false
+        audioQueue.clear()
+        startPlayerLoop()
         nativeBridge.setMixedAudioSink(this)
+    }
+
+    private fun startPlayerLoop() {
+        playerJob?.cancel()
+        playerJob = scope.launch {
+            println("DEBUG [LiveKitNativeAudioPlayer] Async playback loop started")
+            while (isActive) {
+                val pcm = audioQueue.poll(50, TimeUnit.MILLISECONDS) ?: continue
+                val (sr, ch) = synchronized(lock) { currentSampleRate to currentChannels }
+                if (sr <= 0 || ch <= 0) continue
+                val out = synchronized(lock) { ensureLine(sr, ch) } ?: continue
+                runCatching {
+                    out.write(pcm, 0, pcm.size)
+                }.onFailure { error ->
+                    synchronized(lock) {
+                        reportPlaybackError(
+                            code = NativeErrorCode.REMOTE_AUDIO_FAILED,
+                            message = error.message ?: "JVM audio playback write failed"
+                        )
+                        closeLine()
+                    }
+                }
+            }
+        }
     }
 
     fun stop() {
@@ -36,6 +69,9 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
         errorSink = null
         expectedSessionId = 0L
         expectedEpoch = 0L
+        playerJob?.cancel()
+        playerJob = null
+        audioQueue.clear()
         closeLine()
     }
 
@@ -52,16 +88,17 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
         if (pcm.isEmpty() || sampleRate <= 0 || channels <= 0 || samplesPerChannel <= 0) return
 
         synchronized(lock) {
-            val out = ensureLine(sampleRate, channels) ?: return
-            runCatching {
-                out.write(pcm, 0, pcm.size)
-            }.onFailure { error ->
-                reportPlaybackError(
-                    code = NativeErrorCode.REMOTE_AUDIO_FAILED,
-                    message = error.message ?: "JVM audio playback write failed"
-                )
-                closeLine()
+            if (currentSampleRate != sampleRate || currentChannels != channels) {
+                currentSampleRate = sampleRate
+                currentChannels = channels
+                ensureLine(sampleRate, channels)
             }
+        }
+
+        if (!audioQueue.offer(pcm.copyOf())) {
+            // Queue full: drop oldest frame to maintain low latency without blocking native C++
+            audioQueue.poll()
+            audioQueue.offer(pcm.copyOf())
         }
     }
 
@@ -85,7 +122,8 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
 
         return runCatching {
             (AudioSystem.getLine(info) as SourceDataLine).also { newLine ->
-                newLine.open(format)
+                val bufferSize = sampleRate * channels * 2 / 4 // 250ms buffer
+                newLine.open(format, bufferSize)
                 newLine.start()
                 line = newLine
                 currentSampleRate = sampleRate

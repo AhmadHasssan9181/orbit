@@ -37,6 +37,8 @@ fun LiveKitGroupCallSurface(
     val isScreenSharing by callManager.isScreenSharing.collectAsState()
     val localFrame by LiveKitLocalVideoFrameStore.latestFrame.collectAsState()
     val remoteFrame by LiveKitRemoteVideoFrameStore.latestFrame.collectAsState()
+    val remoteCameraFrame by LiveKitRemoteVideoFrameStore.latestCameraFrame.collectAsState()
+    val remoteScreenShareFrame by LiveKitRemoteVideoFrameStore.latestScreenShareFrame.collectAsState()
     val remoteTracks by LiveKitRemoteVideoFrameStore.activeTracks.collectAsState()
     val tokens = rememberCosmicTokens()
 
@@ -112,12 +114,13 @@ fun LiveKitGroupCallSurface(
             } else {
                 null
             }
-            val remoteRenderer = if (remoteFrame != null) {
-                LiveKitVideoTileRenderer.Remote(remoteFrame?.participantIdentity)
+            val hasScreenShare = remoteTracks.values.any { it.isScreenShare } || remoteScreenShareFrame != null
+            val remoteRenderer = if (remoteCameraFrame != null || (!hasScreenShare && remoteFrame != null)) {
+                LiveKitVideoTileRenderer.Remote(remoteTileName)
             } else {
                 null
             }
-            val nodes = listOf(
+            val nodes = mutableListOf(
                 RenderNode(
                     id = "local",
                     name = "You",
@@ -135,6 +138,17 @@ fun LiveKitGroupCallSurface(
                     avatarColor = 0xFFF23F42.toInt()
                 )
             )
+            if (hasScreenShare) {
+                nodes.add(
+                    RenderNode(
+                        id = "remote_screen",
+                        name = "${remoteTileName}'s Screen",
+                        renderer = if (remoteScreenShareFrame != null) LiveKitVideoTileRenderer.RemoteScreenShare(remoteTileName) else null,
+                        isScreenShare = true,
+                        avatarColor = 0xFFF23F42.toInt()
+                    )
+                )
+            }
 
             CallGrid(
                 nodes = nodes,

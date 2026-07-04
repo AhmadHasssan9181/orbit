@@ -112,3 +112,110 @@ object LiveKitLocalTrack {
 
     external fun getBufferAddress(buffer: ByteBuffer): Long
 }
+
+object LiveKitLocalScreenShareTrack {
+    private var sourceHandle: Long = 0
+    private var isStarted = false
+    private var startTimeNs: Long = 0
+    private var frameCount: Int = 0
+
+    val sink = object : VideoTrackSink {
+        override fun onVideoFrame(frame: WrtcVideoFrame) {
+            if (!isStarted) return
+            
+            val buffer = frame.buffer as? I420Buffer ?: return
+            
+            val yAddr = LiveKitLocalTrack.getBufferAddress(buffer.dataY)
+            val uAddr = LiveKitLocalTrack.getBufferAddress(buffer.dataU)
+            val vAddr = LiveKitLocalTrack.getBufferAddress(buffer.dataV)
+            
+            if (yAddr == 0L || uAddr == 0L || vAddr == 0L) return
+
+            val rawTsNs = System.nanoTime()
+            if (startTimeNs == 0L) startTimeNs = rawTsNs
+            val tsUs = (rawTsNs - startTimeNs) / 1000
+
+            frameCount++
+            if (frameCount % 30 == 0) {
+                println("DEBUG [LiveKitLocalScreenShareTrack] Sending screenshare frame #$frameCount tsUs=$tsUs size=${buffer.width}x${buffer.height}")
+            }
+
+            val videoBufferInfo = livekit.proto.VideoFrame.VideoBufferInfo.newBuilder()
+                .setType(livekit.proto.VideoFrame.VideoBufferType.I420)
+                .setWidth(buffer.width)
+                .setHeight(buffer.height)
+                .setDataPtr(yAddr)
+                .addComponents(livekit.proto.VideoFrame.VideoBufferInfo.ComponentInfo.newBuilder()
+                    .setDataPtr(yAddr)
+                    .setStride(buffer.strideY)
+                    .setSize(buffer.strideY * buffer.height)
+                    .build())
+                .addComponents(livekit.proto.VideoFrame.VideoBufferInfo.ComponentInfo.newBuilder()
+                    .setDataPtr(uAddr)
+                    .setStride(buffer.strideU)
+                    .setSize(buffer.strideU * ((buffer.height + 1) / 2))
+                    .build())
+                .addComponents(livekit.proto.VideoFrame.VideoBufferInfo.ComponentInfo.newBuilder()
+                    .setDataPtr(vAddr)
+                    .setStride(buffer.strideV)
+                    .setSize(buffer.strideV * ((buffer.height + 1) / 2))
+                    .build())
+                .build()
+
+            val rotNum = when (frame.rotation) {
+                0 -> 0
+                90 -> 1
+                180 -> 2
+                270 -> 3
+                else -> 0
+            }
+
+            val captureReq = livekit.proto.VideoFrame.CaptureVideoFrameRequest.newBuilder()
+                .setSourceHandle(sourceHandle)
+                .setBuffer(videoBufferInfo)
+                .setRotation(livekit.proto.VideoFrame.VideoRotation.forNumber(rotNum))
+                .setTimestampUs(tsUs)
+                .build()
+                
+            val request = livekit.proto.Ffi.FfiRequest.newBuilder()
+                .setCaptureVideoFrame(captureReq)
+                .build()
+                
+            LiveKitClient.request(request)
+        }
+    }
+
+    fun startCapture(width: Int, height: Int) {
+        if (isStarted) return
+        startTimeNs = 0
+        frameCount = 0
+        
+        val sourceReq = livekit.proto.VideoFrame.NewVideoSourceRequest.newBuilder()
+            .setType(livekit.proto.VideoFrame.VideoSourceType.VIDEO_SOURCE_NATIVE)
+            .setResolution(livekit.proto.VideoFrame.VideoSourceResolution.newBuilder()
+                .setWidth(width)
+                .setHeight(height)
+                .build())
+            .build()
+            
+        val sourceRes = LiveKitClient.request(livekit.proto.Ffi.FfiRequest.newBuilder()
+            .setNewVideoSource(sourceReq)
+            .build())
+            
+        sourceHandle = sourceRes?.newVideoSource?.source?.handle?.id ?: 0
+        
+        if (sourceHandle != 0L) {
+            isStarted = true
+            println("DEBUG [LiveKitLocalScreenShareTrack] Created native screenshare video source with handle: $sourceHandle")
+        } else {
+            println("ERROR [LiveKitLocalScreenShareTrack] Failed to create native screenshare video source")
+        }
+    }
+    
+    fun stopCapture() {
+        isStarted = false
+        sourceHandle = 0
+    }
+
+    fun getSourceHandle(): Long = sourceHandle
+}
