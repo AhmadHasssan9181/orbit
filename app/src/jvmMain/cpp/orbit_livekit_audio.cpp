@@ -79,6 +79,21 @@ std::string g_shareAudioPublicationSid;
 bool g_shareAudioPublished = false;
 std::atomic_bool g_shareLoopbackActive{false};
 std::thread g_shareLoopbackThread;
+// True when the share-audio capture fell back to full-device loopback because
+// the OS rejected process-loopback exclusion (pre-24H2 Windows).
+std::atomic_bool g_shareLoopbackFullDeviceFallback{false};
+// Set once the loopback thread has resolved which capture mode it got.
+std::atomic_bool g_shareLoopbackModeResolved{false};
+// Share-audio echo cancellation: cached JVM upcall into livekit.ShareAudioAec,
+// which subtracts Orbit's own playout from full-device loopback captures and
+// feeds cleaned frames back via nativeFeedProcessedShareAudioFrame.
+jclass g_shareAecRouterClass = nullptr;
+jmethodID g_shareAecOnFrameMethod = nullptr;
+// Raw publisher source handed to the AEC round-trip. Deliberately NOT guarded
+// by g_sessionMutex: teardown clears it before joining the loopback thread,
+// and the source outlives every in-flight feed call because destruction only
+// happens after join returns. Keeps the loopback path mutex-free.
+std::atomic<livekit::AudioSource*> g_shareAudioFeedTarget{nullptr};
 bool g_videoFrameDroppedNotReadyLogged = false;
 int g_videoPushDiagnosticsLogged = 0;
 std::int64_t g_lastVideoTimestampNs = 0;
@@ -97,6 +112,8 @@ jmethodID g_remoteAudioSinkMethod = nullptr;
 
 std::mutex g_remoteVideoSinkMutex;
 jobject g_remoteVideoSink = nullptr;
+jmethodID g_remoteParticipantConnectedMethod = nullptr;
+jmethodID g_remoteParticipantDisconnectedMethod = nullptr;
 jmethodID g_remoteVideoTrackAddedMethod = nullptr;
 jmethodID g_remoteVideoFrameMethod = nullptr;
 jmethodID g_remoteVideoTrackRemovedMethod = nullptr;
@@ -207,6 +224,8 @@ struct ParticipantPcmQueue {
 };
 
 void dispatchMixedAudioFrame(const std::vector<std::int16_t>& samples, std::int64_t timestampNs);
+void dispatchRemoteParticipantConnected(const std::string& participantIdentity, const std::string& participantSid);
+void dispatchRemoteParticipantDisconnected(const std::string& participantIdentity, const std::string& participantSid);
 
 struct PcmDiagnostics {
     double rms{0.0};
@@ -743,6 +762,38 @@ public:
         }
     }
 
+// Convert input PCM at inSampleRate to outSampleRate using linear interpolation
+inline std::vector<std::int16_t> resampleLinear(
+    const std::int16_t* inSamples,
+    std::size_t inCount,
+    int inSampleRate,
+    int outSampleRate) {
+    if (inSamples == nullptr || inCount == 0 || inSampleRate <= 0 || outSampleRate <= 0) {
+        return {};
+    }
+    if (inSampleRate == outSampleRate) {
+        return std::vector<std::int16_t>(inSamples, inSamples + inCount);
+    }
+    const std::size_t outCount = static_cast<std::size_t>(
+        (static_cast<double>(inCount) * outSampleRate) / inSampleRate);
+    if (outCount == 0) {
+        return {};
+    }
+    std::vector<std::int16_t> outSamples(outCount);
+    const double ratio = static_cast<double>(inCount) / static_cast<double>(outCount);
+    for (std::size_t i = 0; i < outCount; ++i) {
+        const double inIdx = i * ratio;
+        const std::size_t idx0 = static_cast<std::size_t>(inIdx);
+        const std::size_t idx1 = std::min(idx0 + 1, inCount - 1);
+        const double frac = inIdx - idx0;
+        const double s0 = static_cast<double>(inSamples[idx0]);
+        const double s1 = static_cast<double>(inSamples[idx1]);
+        const double val = s0 + frac * (s1 - s0);
+        outSamples[i] = static_cast<std::int16_t>(std::clamp(val, -32768.0, 32767.0));
+    }
+    return outSamples;
+}
+
     void pushParticipantFrame(
         const std::string& identity,
         const std::int16_t* pcm,
@@ -752,7 +803,7 @@ public:
         std::int64_t timestampNs) {
         if (identity.empty() ||
             pcm == nullptr ||
-            sampleRate != kSampleRate ||
+            sampleRate <= 0 ||
             samplesPerChannel <= 0 ||
             channels <= 0) {
             return;
@@ -765,7 +816,7 @@ public:
             if (existing == nullptr) {
                 existing = std::make_shared<ParticipantPcmQueue>(identity);
                 std::cout << "DEBUG [OrbitLiveKitAudio] remote audio participant added: "
-                          << identity << std::endl;
+                          << identity << " inSampleRate=" << sampleRate << " inChannels=" << channels << std::endl;
             }
             existing->active = true;
             queue = existing;
@@ -785,12 +836,21 @@ public:
             }
         }
 
+        std::vector<std::int16_t> resampledMono;
+        const std::int16_t* finalSamples = mono.data();
+        std::size_t finalCount = mono.size();
+        if (sampleRate != kSampleRate) {
+            resampledMono = resampleLinear(mono.data(), mono.size(), sampleRate, kSampleRate);
+            finalSamples = resampledMono.data();
+            finalCount = resampledMono.size();
+        }
+
         {
             std::lock_guard<std::mutex> queueLock(queue->queueMutex);
-            while (queue->pcm.size() + mono.size() > kMaxParticipantQueueSamples && !queue->pcm.empty()) {
+            while (queue->pcm.size() + finalCount > kMaxParticipantQueueSamples && !queue->pcm.empty()) {
                 queue->pcm.pop_front();
             }
-            queue->pcm.insert(queue->pcm.end(), mono.begin(), mono.end());
+            queue->pcm.insert(queue->pcm.end(), finalSamples, finalSamples + finalCount);
             if (queue->pcm.size() >= kTargetParticipantQueueSamples) {
                 queue->targetDepthPrimed = true;
             }
@@ -881,6 +941,31 @@ private:
             std::cout << "DEBUG [OrbitLiveKitAudio] mixed audio callback started" << std::endl;
         }
 
+        // Periodic energy metering: proves whether decoded remote audio with
+        // real signal reaches the mixer and leaves it non-silent.
+        mixStatFrames_ += 1;
+        {
+            double inAcc = 0.0;
+            double outAcc = 0.0;
+            for (int i = 0; i < kSamplesPerChannel; ++i) {
+                const double in = static_cast<double>(accumulator[static_cast<std::size_t>(i)]);
+                const double out = static_cast<double>(mixed[static_cast<std::size_t>(i)]);
+                inAcc += in * in;
+                outAcc += out * out;
+            }
+            mixStatInEma_ = 0.9 * mixStatInEma_ + 0.1 * std::sqrt(inAcc / kSamplesPerChannel);
+            mixStatOutEma_ = 0.9 * mixStatOutEma_ + 0.1 * std::sqrt(outAcc / kSamplesPerChannel);
+            if (mixStatFrames_ % 500 == 0) {
+                const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count();
+                std::cout << "MIXSTAT ts=" << nowMs
+                          << " participants=" << activeParticipants
+                          << " inRms=" << static_cast<long long>(mixStatInEma_)
+                          << " outRms=" << static_cast<long long>(mixStatOutEma_)
+                          << std::endl;
+            }
+        }
+
         const auto timestampNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
         dispatchMixedAudioFrame(mixed, static_cast<std::int64_t>(timestampNs));
@@ -905,6 +990,9 @@ void mixLoop() {
 
     std::atomic_bool running_{false};
     std::atomic_bool mixedCallbackStartedLogged_{false};
+    std::int64_t mixStatFrames_{0};
+    double mixStatInEma_{0.0};
+    double mixStatOutEma_{0.0};
     std::thread worker_;
     std::mutex mutex_;
     std::unordered_map<std::string, std::shared_ptr<ParticipantPcmQueue>> participants_;
@@ -1195,7 +1283,12 @@ void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track, const
         auto reader = std::make_shared<RemoteAudioReader>();
         reader->trackSid = trackSid;
         reader->participantIdentity = participantIdentity.empty() ? track->sid() : participantIdentity;
-        g_audioMixer.addParticipant(reader->participantIdentity);
+        // Mixer queues are keyed by TRACK SID, not participant identity: an
+        // Element user sharing screen-with-audio has TWO audio tracks, and
+        // both feeding one identity-keyed queue doubles its inflow (garbled
+        // playback) and lets either track's teardown rip the shared queue
+        // away from the other.
+        g_audioMixer.addParticipant(reader->trackSid);
         reader->stream = livekit::AudioStream::fromTrack(track, options);
         reader->thread = std::thread([reader] {
             livekit::AudioFrameEvent event;
@@ -1210,21 +1303,28 @@ void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track, const
                 const auto timestampNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
                     std::chrono::steady_clock::now().time_since_epoch()).count();
                 g_audioMixer.pushParticipantFrame(
-                    reader->participantIdentity,
+                    reader->trackSid,
                     samples.data(),
                     event.frame.sampleRate(),
                     event.frame.samplesPerChannel(),
                     event.frame.numChannels(),
                     static_cast<std::int64_t>(timestampNs));
             }
-            std::unique_lock<std::mutex> lock(g_sessionMutex, std::try_to_lock);
-            if (lock.owns_lock()) {
-                auto it = g_remoteAudioReaders.find(reader->trackSid);
-                if (it != g_remoteAudioReaders.end() && it->second == reader) {
-                    g_audioMixer.removeParticipant(reader->participantIdentity);
-                    g_remoteAudioReaders.erase(it);
-                    std::cout << "DEBUG [OrbitLiveKitAudio] Remote audio reader exited for track "
-                              << reader->trackSid << std::endl;
+            {
+                // try_to_lock is required: stopRemoteReaderLocked /
+                // stopAllRemoteReadersLocked erase us from the map and then
+                // join this thread WHILE holding g_sessionMutex. A blocking
+                // acquisition here would deadlock every teardown that
+                // coincides with a reader exiting.
+                std::unique_lock<std::mutex> lock(g_sessionMutex, std::try_to_lock);
+                if (lock.owns_lock()) {
+                    auto it = g_remoteAudioReaders.find(reader->trackSid);
+                    if (it != g_remoteAudioReaders.end() && it->second == reader) {
+                        g_audioMixer.removeParticipant(reader->trackSid);
+                        g_remoteAudioReaders.erase(it);
+                        std::cout << "DEBUG [OrbitLiveKitAudio] Remote audio reader exited for track "
+                                  << reader->trackSid << std::endl;
+                    }
                 }
             }
             std::cout << "DEBUG [OrbitLiveKitAudio] reader thread exited track="
@@ -1248,7 +1348,7 @@ void stopRemoteReaderLocked(const std::string& trackSid) {
     auto reader = it->second;
     g_remoteAudioReaders.erase(it);
     if (reader != nullptr) {
-        g_audioMixer.removeParticipant(reader->participantIdentity);
+        g_audioMixer.removeParticipant(reader->trackSid);
         stopReader(reader);
     }
 }
@@ -1269,8 +1369,8 @@ void stopRemoteReadersForParticipantLocked(const std::string& participantIdentit
         }
     }
 
-    g_audioMixer.removeParticipant(participantIdentity);
     for (const auto& reader : readers) {
+        g_audioMixer.removeParticipant(reader->trackSid);
         stopReader(reader);
     }
 }
@@ -1288,6 +1388,94 @@ bool hasRemoteVideoSink() {
         g_remoteVideoTrackAddedMethod != nullptr &&
         g_remoteVideoFrameMethod != nullptr &&
         g_remoteVideoTrackRemovedMethod != nullptr;
+}
+
+void dispatchRemoteParticipantConnected(const std::string& participantIdentity, const std::string& participantSid) {
+    if (participantIdentity.empty() || callbacksStopped("remote-participant-connected")) {
+        return;
+    }
+
+    JNIEnv* env = nullptr;
+    bool attached = false;
+    if (!getJniEnv(&env, &attached, "remote-participant-connected") || env == nullptr) {
+        return;
+    }
+    logJniAttachSuccess("remote-participant-connected", attached);
+
+    jobject sink = nullptr;
+    jmethodID method = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_remoteVideoSinkMutex);
+        if (g_remoteVideoSink != nullptr && g_remoteParticipantConnectedMethod != nullptr) {
+            sink = env->NewLocalRef(g_remoteVideoSink);
+            method = g_remoteParticipantConnectedMethod;
+        }
+    }
+
+    if (sink != nullptr && method != nullptr) {
+        jstring jIdentity = env->NewStringUTF(participantIdentity.c_str());
+        jstring jSid = env->NewStringUTF(participantSid.c_str());
+        env->CallVoidMethod(
+            sink,
+            method,
+            kRawSessionId,
+            g_rawEpoch,
+            jIdentity,
+            jSid);
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        if (jIdentity != nullptr) env->DeleteLocalRef(jIdentity);
+        if (jSid != nullptr) env->DeleteLocalRef(jSid);
+        env->DeleteLocalRef(sink);
+    }
+
+    releaseJniEnv(attached);
+}
+
+void dispatchRemoteParticipantDisconnected(const std::string& participantIdentity, const std::string& participantSid) {
+    if (participantIdentity.empty() || callbacksStopped("remote-participant-disconnected")) {
+        return;
+    }
+
+    JNIEnv* env = nullptr;
+    bool attached = false;
+    if (!getJniEnv(&env, &attached, "remote-participant-disconnected") || env == nullptr) {
+        return;
+    }
+    logJniAttachSuccess("remote-participant-disconnected", attached);
+
+    jobject sink = nullptr;
+    jmethodID method = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_remoteVideoSinkMutex);
+        if (g_remoteVideoSink != nullptr && g_remoteParticipantDisconnectedMethod != nullptr) {
+            sink = env->NewLocalRef(g_remoteVideoSink);
+            method = g_remoteParticipantDisconnectedMethod;
+        }
+    }
+
+    if (sink != nullptr && method != nullptr) {
+        jstring jIdentity = env->NewStringUTF(participantIdentity.c_str());
+        jstring jSid = env->NewStringUTF(participantSid.c_str());
+        env->CallVoidMethod(
+            sink,
+            method,
+            kRawSessionId,
+            g_rawEpoch,
+            jIdentity,
+            jSid);
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        if (jIdentity != nullptr) env->DeleteLocalRef(jIdentity);
+        if (jSid != nullptr) env->DeleteLocalRef(jSid);
+        env->DeleteLocalRef(sink);
+    }
+
+    releaseJniEnv(attached);
 }
 
 std::string publicationTrackSid(const std::shared_ptr<livekit::TrackPublication>& publication) {
@@ -1733,23 +1921,55 @@ public:
                   << std::endl;
     }
 
+    void onParticipantConnected(livekit::Room&, const livekit::ParticipantConnectedEvent& event) override {
+        if (callbacksStopped("room-delegate")) {
+            return;
+        }
+        if (event.participant == nullptr) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        const std::string identity = event.participant->identity();
+        const std::string sid = event.participant->sid();
+        std::cout << "DEBUG [OrbitLiveKitAudio] remote participant connected identity="
+                  << identity << " sid=" << sid << std::endl;
+        dispatchRemoteParticipantConnected(identity, sid);
+
+        for (const auto& publicationEntry : event.participant->trackPublications()) {
+            const auto& publication = publicationEntry.second;
+            if (publication == nullptr || !publication->subscribed()) {
+                continue;
+            }
+            const auto track = publication->track();
+            if (publication->kind() == livekit::TrackKind::KIND_VIDEO) {
+                logRemoteVideoPublicationDetected(event.participant, publication, track, "participant-connected");
+                startRemoteVideoReaderLocked(track, event.participant, publication);
+            } else if (publication->kind() == livekit::TrackKind::KIND_AUDIO) {
+                startRemoteReaderLocked(track, identity);
+            }
+        }
+    }
+
     void onTrackPublished(livekit::Room&, const livekit::TrackPublishedEvent& event) override {
         if (callbacksStopped("room-delegate")) {
             return;
         }
         std::lock_guard<std::mutex> lock(g_sessionMutex);
+        if (event.participant != nullptr) {
+            dispatchRemoteParticipantConnected(event.participant->identity(), event.participant->sid());
+        }
         logRemoteVideoPublicationDetected(
             event.participant,
             event.publication,
             event.publication != nullptr ? event.publication->track() : nullptr,
             "published");
-        // BUG-B fix: with auto_subscribe the subscription completes asynchronously;
-        // by the time this event fires the publication can already be subscribed
-        // (e.g. tracks that existed at join). Don't rely on a later TrackSubscribed.
-        if (event.publication != nullptr &&
-            event.publication->kind() == livekit::TrackKind::KIND_VIDEO &&
-            event.publication->subscribed()) {
-            startRemoteVideoReaderLocked(event.publication->track(), event.participant, event.publication);
+        if (event.publication != nullptr && event.publication->subscribed()) {
+            if (event.publication->kind() == livekit::TrackKind::KIND_VIDEO) {
+                startRemoteVideoReaderLocked(event.publication->track(), event.participant, event.publication);
+            } else if (event.publication->kind() == livekit::TrackKind::KIND_AUDIO) {
+                const std::string identity = event.participant != nullptr ? event.participant->identity() : std::string{};
+                startRemoteReaderLocked(event.publication->track(), identity);
+            }
         }
     }
 
@@ -1765,6 +1985,8 @@ public:
                       << " trackSid=" << publicationTrackSid(event.publication)
                       << std::endl;
             stopRemoteVideoReaderForPublicationLocked(event.publication, "unpublished");
+        } else if (event.publication != nullptr && event.publication->kind() == livekit::TrackKind::KIND_AUDIO) {
+            stopRemoteReaderLocked(publicationTrackSid(event.publication));
         }
     }
 
@@ -1773,6 +1995,9 @@ public:
             return;
         }
         std::lock_guard<std::mutex> lock(g_sessionMutex);
+        if (event.participant != nullptr) {
+            dispatchRemoteParticipantConnected(event.participant->identity(), event.participant->sid());
+        }
         if (event.track != nullptr && event.track->kind() == livekit::TrackKind::KIND_VIDEO) {
             logRemoteVideoPublicationDetected(event.participant, event.publication, event.track, "subscribed");
             startRemoteVideoReaderLocked(event.track, event.participant, event.publication);
@@ -1878,8 +2103,13 @@ public:
             return;
         }
         std::lock_guard<std::mutex> lock(g_sessionMutex);
-        stopRemoteReadersForParticipantLocked(event.participant->identity());
-        stopRemoteVideoReadersForParticipantLocked(event.participant->identity(), "participant-disconnected");
+        const std::string identity = event.participant->identity();
+        const std::string sid = event.participant->sid();
+        std::cout << "DEBUG [OrbitLiveKitAudio] remote participant disconnected identity="
+                  << identity << " sid=" << sid << std::endl;
+        dispatchRemoteParticipantDisconnected(identity, sid);
+        stopRemoteReadersForParticipantLocked(identity);
+        stopRemoteVideoReadersForParticipantLocked(identity, "participant-disconnected");
     }
 
     void onDisconnected(livekit::Room&, const livekit::DisconnectedEvent&) override {
@@ -1900,8 +2130,11 @@ public:
 // separate SOURCE_SCREENSHARE_AUDIO track instead. Never takes g_sessionMutex —
 // teardown joins this thread before touching the shared source.
 void stopShareLoopbackThread() {
+    g_shareAudioFeedTarget.store(nullptr, std::memory_order_release);
     if (!g_shareLoopbackActive.load(std::memory_order_acquire)) return;
     g_shareLoopbackActive.store(false, std::memory_order_release);
+    g_shareLoopbackFullDeviceFallback.store(false, std::memory_order_release);
+    g_shareLoopbackModeResolved.store(false, std::memory_order_release);
     if (g_shareLoopbackThread.joinable()) {
         if (g_shareLoopbackThread.get_id() == std::this_thread::get_id()) {
             g_shareLoopbackThread.detach();
@@ -1949,14 +2182,75 @@ public:
     }
 };
 
+void resolveShareAecCallback(JNIEnv* env) {
+    if (env == nullptr) return;
+    if (g_shareAecRouterClass != nullptr && g_shareAecOnFrameMethod != nullptr) return;
+    jclass localClass = env->FindClass("livekit/ShareAudioAec");
+    if (localClass == nullptr) {
+        env->ExceptionClear();
+        std::cerr << "WARN [ScreenShareAudioPublish] ShareAudioAec class not found; echo cancellation unavailable" << std::endl;
+        return;
+    }
+    jmethodID method = env->GetStaticMethodID(localClass, "onLoopbackFrame", "([B)V");
+    if (method == nullptr) {
+        env->ExceptionClear();
+        env->DeleteLocalRef(localClass);
+        std::cerr << "WARN [ScreenShareAudioPublish] ShareAudioAec.onLoopbackFrame not found; echo cancellation unavailable" << std::endl;
+        return;
+    }
+    g_shareAecRouterClass = static_cast<jclass>(env->NewGlobalRef(localClass));
+    env->DeleteLocalRef(localClass);
+    g_shareAecOnFrameMethod = method;
+    std::cout << "DEBUG [ScreenShareAudioPublish] share-audio AEC upcall resolved" << std::endl;
+}
+
+void dispatchShareLoopbackFrame(
+    JNIEnv* env,
+    std::vector<std::int16_t>&& frameSamples,
+    const std::shared_ptr<livekit::AudioSource>& source) {
+    if (env != nullptr && g_shareAecRouterClass != nullptr && g_shareAecOnFrameMethod != nullptr) {
+        jbyteArray pcm = env->NewByteArray(static_cast<jsize>(frameSamples.size() * 2));
+        if (pcm == nullptr) {
+            if (env->ExceptionCheck() == JNI_TRUE) env->ExceptionClear();
+            return;
+        }
+        env->SetByteArrayRegion(
+            pcm, 0, static_cast<jsize>(frameSamples.size() * 2),
+            reinterpret_cast<const jbyte*>(frameSamples.data()));
+        if (env->ExceptionCheck() == JNI_TRUE) {
+            env->ExceptionClear();
+            env->DeleteLocalRef(pcm);
+            return;
+        }
+        env->CallStaticVoidMethod(g_shareAecRouterClass, g_shareAecOnFrameMethod, pcm);
+        if (env->ExceptionCheck() == JNI_TRUE) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        env->DeleteLocalRef(pcm);
+        return;
+    }
+    // No JVM/AEC upcall available: ship the raw captured frame like before.
+    try {
+        livekit::AudioFrame frame(std::move(frameSamples), kSampleRate, 2, kSamplesPerChannel);
+        source->captureFrame(frame, kAudioSourceCaptureTimeoutMs);
+    } catch (...) {
+        // Consumer not ready or transient overflow; drop and continue.
+    }
+}
+
 void shareAudioLoopbackMain(std::shared_ptr<livekit::AudioSource> source) {
     CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    g_shareLoopbackFullDeviceFallback.store(false, std::memory_order_release);
+    g_shareLoopbackModeResolved.store(false, std::memory_order_release);
 
     IMMDeviceEnumerator* enumerator = NULL;
     IMMDevice* device = NULL;
     IAudioClient* audioClient = NULL;
     IAudioCaptureClient* captureClient = NULL;
     WAVEFORMATEX* mixFormat = NULL;
+    JNIEnv* aecEnv = nullptr;
+    bool aecAttached = false;
 
     HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), NULL, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator), (void**)&enumerator);
     if (FAILED(hr)) goto cleanup;
@@ -1986,14 +2280,19 @@ void shareAudioLoopbackMain(std::shared_ptr<livekit::AudioSource> source) {
                 if (SUCCEEDED(activator.result) && activator.audioClient != NULL) {
                     audioClient = activator.audioClient;
                     audioClient->AddRef();
+                    g_shareLoopbackFullDeviceFallback.store(false, std::memory_order_release);
                     std::cout << "DEBUG [ScreenShareAudioPublish] process-loopback activated; own-process tree EXCLUDED from capture" << std::endl;
                 } else {
+                    g_shareLoopbackFullDeviceFallback.store(true, std::memory_order_release);
                     std::cout << "WARN [ScreenShareAudioPublish] process-loopback activation failed hr=0x"
                               << std::hex << activator.result << std::dec
                               << " (EXCLUDE mode needs Windows 11 24H2+); falling back to FULL-DEVICE loopback which WILL capture Orbit's own playback" << std::endl;
                 }
+                g_shareLoopbackModeResolved.store(true, std::memory_order_release);
                 asyncOp->Release();
             } else {
+                g_shareLoopbackFullDeviceFallback.store(true, std::memory_order_release);
+                g_shareLoopbackModeResolved.store(true, std::memory_order_release);
                 std::cout << "WARN [ScreenShareAudioPublish] ActivateAudioInterfaceAsync failed hr=0x"
                           << std::hex << asyncHr << std::dec
                           << "; falling back to FULL-DEVICE loopback which WILL capture Orbit's own playback" << std::endl;
@@ -2016,6 +2315,16 @@ void shareAudioLoopbackMain(std::shared_ptr<livekit::AudioSource> source) {
 
     audioClient->Start();
     {
+        // Attach once for the whole capture loop; the AEC round-trip happens
+        // per frame but thread attach/detach must not.
+        JNIEnv* aecEnvLocal = nullptr;
+        bool aecAttachedLocal = false;
+        if (getJniEnv(&aecEnvLocal, &aecAttachedLocal, "share-audio-aec")) {
+            aecEnv = aecEnvLocal;
+            aecAttached = aecAttachedLocal;
+            resolveShareAecCallback(aecEnv);
+        }
+
         const int captureRate = mixFormat->nSamplesPerSec;
         const int captureChannels = mixFormat->nChannels;
         std::deque<std::int16_t> accumulation;
@@ -2075,16 +2384,7 @@ void shareAudioLoopbackMain(std::shared_ptr<livekit::AudioSource> source) {
                         accumulation.erase(
                             accumulation.begin(),
                             accumulation.begin() + (std::ptrdiff_t)(kSamplesPerChannel * 2));
-                        try {
-                            livekit::AudioFrame frame(
-                                std::move(frameSamples),
-                                kSampleRate,
-                                2,
-                                kSamplesPerChannel);
-                            source->captureFrame(frame, kAudioSourceCaptureTimeoutMs);
-                        } catch (...) {
-                            // Consumer not ready or transient overflow; drop and continue.
-                        }
+                        dispatchShareLoopbackFrame(aecEnv, std::move(frameSamples), source);
                     }
 
                     // Bound drift if the consumer stalls for a long time (~500 ms).
@@ -2103,6 +2403,7 @@ void shareAudioLoopbackMain(std::shared_ptr<livekit::AudioSource> source) {
     }
 
 cleanup:
+    releaseJniEnv(aecAttached);
     if (captureClient) captureClient->Release();
     if (audioClient) audioClient->Release();
     if (mixFormat) CoTaskMemFree(mixFormat);
@@ -2791,10 +3092,15 @@ bool connectRoom(
             }
         }
 
+        if (g_mixedAudioSink != nullptr) {
+            g_audioMixer.start();
+        }
+
         for (const auto& participant : g_room->remoteParticipants()) {
             if (participant == nullptr) {
                 continue;
             }
+            dispatchRemoteParticipantConnected(participant->identity(), participant->sid());
             for (const auto& publicationEntry : participant->trackPublications()) {
                 const auto& publication = publicationEntry.second;
                 if (publication == nullptr || !publication->subscribed()) {
@@ -3244,6 +3550,8 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeDestroySession(JNIEnv* env, jclass, jlo
         if (g_remoteVideoSink != nullptr) {
             env->DeleteGlobalRef(g_remoteVideoSink);
             g_remoteVideoSink = nullptr;
+            g_remoteParticipantConnectedMethod = nullptr;
+            g_remoteParticipantDisconnectedMethod = nullptr;
             g_remoteVideoTrackAddedMethod = nullptr;
             g_remoteVideoFrameMethod = nullptr;
             g_remoteVideoTrackRemovedMethod = nullptr;
@@ -3302,35 +3610,47 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetMixedAudioSink(JNIEnv* env, jclass, 
         env->GetJavaVM(&g_javaVm);
     }
 
-    g_audioMixer.stop();
+    if (sink == nullptr) {
+        {
+            std::lock_guard<std::mutex> lock(g_mixedAudioSinkMutex);
+            if (g_mixedAudioSink != nullptr) {
+                env->DeleteGlobalRef(g_mixedAudioSink);
+                g_mixedAudioSink = nullptr;
+            }
+            g_mixedAudioSinkMethod = nullptr;
+        }
+        g_audioMixer.stop();
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        clearRawErrorLocked();
+        return kStatusOk;
+    }
+
+    jobject newSink = env->NewGlobalRef(sink);
+    jclass sinkClass = env->GetObjectClass(sink);
+    jmethodID method = env->GetMethodID(
+        sinkClass,
+        "onMixedAudioFrame",
+        "(JJ[BIIIJ)V");
+    env->DeleteLocalRef(sinkClass);
+
+    if (method == nullptr) {
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        env->DeleteGlobalRef(newSink);
+        std::lock_guard<std::mutex> sessionLock(g_sessionMutex);
+        setRawErrorLocked("NATIVE_EXCEPTION", "NativeMixedAudioSink.onMixedAudioFrame not found", "nativeSetMixedAudioSink", false);
+        return kStatusNativeException;
+    }
+
     {
         std::lock_guard<std::mutex> lock(g_mixedAudioSinkMutex);
         if (g_mixedAudioSink != nullptr) {
             env->DeleteGlobalRef(g_mixedAudioSink);
-            g_mixedAudioSink = nullptr;
-            g_mixedAudioSinkMethod = nullptr;
         }
-
-        if (sink != nullptr) {
-            jobject newSink = env->NewGlobalRef(sink);
-            jclass sinkClass = env->GetObjectClass(sink);
-            jmethodID method = env->GetMethodID(sinkClass, "onMixedAudioFrame", "(JJ[BIIIJ)V");
-            env->DeleteLocalRef(sinkClass);
-
-            if (method == nullptr) {
-                if (env->ExceptionCheck()) {
-                    env->ExceptionDescribe();
-                    env->ExceptionClear();
-                }
-                env->DeleteGlobalRef(newSink);
-                std::lock_guard<std::mutex> sessionLock(g_sessionMutex);
-                setRawErrorLocked("NATIVE_EXCEPTION", "NativeMixedAudioSink.onMixedAudioFrame not found", "nativeSetMixedAudioSink", false);
-                return kStatusNativeException;
-            }
-
-            g_mixedAudioSink = newSink;
-            g_mixedAudioSinkMethod = method;
-        }
+        g_mixedAudioSink = newSink;
+        g_mixedAudioSinkMethod = method;
     }
 
     if (sink != nullptr) {
@@ -3355,6 +3675,8 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetRemoteVideoSink(JNIEnv* env, jclass,
                 env->DeleteGlobalRef(g_remoteVideoSink);
                 g_remoteVideoSink = nullptr;
             }
+            g_remoteParticipantConnectedMethod = nullptr;
+            g_remoteParticipantDisconnectedMethod = nullptr;
             g_remoteVideoTrackAddedMethod = nullptr;
             g_remoteVideoFrameMethod = nullptr;
             g_remoteVideoTrackRemovedMethod = nullptr;
@@ -3369,6 +3691,14 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetRemoteVideoSink(JNIEnv* env, jclass,
 
     jobject newSink = env->NewGlobalRef(sink);
     jclass sinkClass = env->GetObjectClass(sink);
+    jmethodID partConnectedMethod = env->GetMethodID(
+        sinkClass,
+        "onRemoteParticipantConnected",
+        "(JJLjava/lang/String;Ljava/lang/String;)V");
+    jmethodID partDisconnectedMethod = env->GetMethodID(
+        sinkClass,
+        "onRemoteParticipantDisconnected",
+        "(JJLjava/lang/String;Ljava/lang/String;)V");
     jmethodID addedMethod = env->GetMethodID(
         sinkClass,
         "onRemoteVideoTrackAdded",
@@ -3383,7 +3713,8 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetRemoteVideoSink(JNIEnv* env, jclass,
         "(JJLjava/lang/String;Ljava/lang/String;)V");
     env->DeleteLocalRef(sinkClass);
 
-    if (addedMethod == nullptr || frameMethod == nullptr || removedMethod == nullptr) {
+    if (partConnectedMethod == nullptr || partDisconnectedMethod == nullptr ||
+        addedMethod == nullptr || frameMethod == nullptr || removedMethod == nullptr) {
         if (env->ExceptionCheck()) {
             env->ExceptionDescribe();
             env->ExceptionClear();
@@ -3400,6 +3731,8 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetRemoteVideoSink(JNIEnv* env, jclass,
             env->DeleteGlobalRef(g_remoteVideoSink);
         }
         g_remoteVideoSink = newSink;
+        g_remoteParticipantConnectedMethod = partConnectedMethod;
+        g_remoteParticipantDisconnectedMethod = partDisconnectedMethod;
         g_remoteVideoTrackAddedMethod = addedMethod;
         g_remoteVideoFrameMethod = frameMethod;
         g_remoteVideoTrackRemovedMethod = removedMethod;
@@ -4173,6 +4506,10 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePublishScreenShareAudio(
 
         stopShareLoopbackThread();
         g_shareLoopbackActive.store(true, std::memory_order_release);
+        // Resolve the AEC upcall on this (JVM-attached) thread so the loopback
+        // thread can use it from its very first frame.
+        resolveShareAecCallback(env);
+        g_shareAudioFeedTarget.store(g_shareAudioSource.get(), std::memory_order_release);
         g_shareLoopbackThread = std::thread(shareAudioLoopbackMain, g_shareAudioSource);
         g_shareAudioPublished = true;
         std::cout << "DEBUG [MatrixRTCMapping] native screenshare audio published"
@@ -4197,6 +4534,42 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePublishScreenShareAudio(
         g_shareAudioPublished = false;
         setRawErrorLocked("PUBLISH_AUDIO_FAILED", "Native C++ screenshare audio publish failed", "nativePublishScreenShareAudio", true);
         return kStatusPublishAudioFailed;
+    }
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_livekit_OrbitLiveKitNativeRaw_nativeGetShareLoopbackMode(JNIEnv*, jclass) {
+    if (!g_shareLoopbackModeResolved.load(std::memory_order_acquire)) return 0; // pending
+    return g_shareLoopbackFullDeviceFallback.load(std::memory_order_acquire) ? 2 : 1;
+}
+
+// Down-call from livekit.ShareAudioAec: pushes one echo-cancelled 10 ms stereo
+// frame back into the share publisher source. Must NOT take g_sessionMutex —
+// teardown joins the loopback thread while holding it, and this call runs on
+// that thread.
+extern "C" JNIEXPORT void JNICALL
+Java_livekit_OrbitLiveKitNativeRaw_nativeFeedProcessedShareAudioFrame(
+    JNIEnv* env,
+    jclass,
+    jbyteArray pcm) {
+    if (pcm == nullptr) return;
+    livekit::AudioSource* source = g_shareAudioFeedTarget.load(std::memory_order_acquire);
+    if (source == nullptr) return;
+    const jsize byteLength = env->GetArrayLength(pcm);
+    if (byteLength <= 0 || (byteLength % 2) != 0) return;
+    std::vector<std::int16_t> samples(static_cast<std::size_t>(byteLength / 2));
+    env->GetByteArrayRegion(pcm, 0, byteLength, reinterpret_cast<jbyte*>(samples.data()));
+    if (env->ExceptionCheck() == JNI_TRUE) {
+        env->ExceptionClear();
+        return;
+    }
+    const int samplesPerChannel = static_cast<int>(samples.size() / 2);
+    if (samplesPerChannel <= 0) return;
+    try {
+        livekit::AudioFrame frame(std::move(samples), kSampleRate, 2, samplesPerChannel);
+        source->captureFrame(frame, kAudioSourceCaptureTimeoutMs);
+    } catch (...) {
+        // Consumer not ready or transient overflow; drop.
     }
 }
 
@@ -4473,17 +4846,16 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeRescanRemoteVideoTracks(JNIEnv*, jclass
     if (g_room == nullptr || !g_connected) {
         return kStatusOk;
     }
-    int started = 0;
+    int startedVideo = 0;
+    int startedAudio = 0;
     for (const auto& participant : g_room->remoteParticipants()) {
         if (participant == nullptr) {
             continue;
         }
+        dispatchRemoteParticipantConnected(participant->identity(), participant->sid());
         for (const auto& publicationEntry : participant->trackPublications()) {
             const auto& publication = publicationEntry.second;
             if (publication == nullptr || !publication->subscribed()) {
-                continue;
-            }
-            if (publication->kind() != livekit::TrackKind::KIND_VIDEO) {
                 continue;
             }
             const auto track = publication->track();
@@ -4491,16 +4863,27 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeRescanRemoteVideoTracks(JNIEnv*, jclass
                 continue;
             }
             const auto trackSid = track->sid();
-            if (trackSid.empty() || g_remoteVideoReaders.find(trackSid) != g_remoteVideoReaders.end()) {
+            if (trackSid.empty()) {
                 continue;
             }
-            logRemoteVideoPublicationDetected(participant.get(), publication, track, "rescan");
-            startRemoteVideoReaderLocked(track, participant.get(), publication);
-            started += 1;
+            if (publication->kind() == livekit::TrackKind::KIND_VIDEO) {
+                if (g_remoteVideoReaders.find(trackSid) == g_remoteVideoReaders.end()) {
+                    logRemoteVideoPublicationDetected(participant.get(), publication, track, "rescan");
+                    startRemoteVideoReaderLocked(track, participant.get(), publication);
+                    startedVideo += 1;
+                }
+            } else if (publication->kind() == livekit::TrackKind::KIND_AUDIO) {
+                if (g_remoteAudioReaders.find(trackSid) == g_remoteAudioReaders.end()) {
+                    std::cout << "DEBUG [OrbitLiveKitAudio] rescan starting missing audio reader trackSid=" << trackSid << std::endl;
+                    startRemoteReaderLocked(track, participant->identity());
+                    startedAudio += 1;
+                }
+            }
         }
     }
-    if (started > 0) {
-        std::cout << "DEBUG [RemoteVideo] rescan recovered missing readers count=" << started << std::endl;
+    if (startedVideo > 0 || startedAudio > 0) {
+        std::cout << "DEBUG [OrbitLiveKitAudio] rescan recovered missing readers video="
+                  << startedVideo << " audio=" << startedAudio << std::endl;
     }
     return kStatusOk;
 }

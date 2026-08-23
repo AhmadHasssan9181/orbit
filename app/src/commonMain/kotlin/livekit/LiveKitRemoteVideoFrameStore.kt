@@ -63,11 +63,24 @@ object LiveKitRemoteVideoFrameStore {
     val activeTracks: StateFlow<Map<String, LiveKitRemoteVideoTrackState>> = _activeTracks
     private val _framesByTrack = MutableStateFlow<Map<String, LiveKitRemoteVideoFrame>>(emptyMap())
     val framesByTrack: StateFlow<Map<String, LiveKitRemoteVideoFrame>> = _framesByTrack
+    private val _remoteParticipants = MutableStateFlow<Set<String>>(emptySet())
+    val remoteParticipants: StateFlow<Set<String>> = _remoteParticipants
 
     private var sequence: Long = 0L
     private var activeTrackSid: String? = null
 
+    fun participantConnected(participantIdentity: String) {
+        if (participantIdentity.isBlank()) return
+        _remoteParticipants.value = _remoteParticipants.value + participantIdentity
+    }
+
+    fun participantDisconnected(participantIdentity: String) {
+        if (participantIdentity.isBlank()) return
+        _remoteParticipants.value = _remoteParticipants.value - participantIdentity
+    }
+
     fun trackStarted(participantIdentity: String, trackSid: String, trackSource: String = "", trackName: String = "") {
+        participantConnected(participantIdentity)
         _activeTracks.value = _activeTracks.value + (
             trackSid to LiveKitRemoteVideoTrackState(
                 participantIdentity = participantIdentity,
@@ -168,6 +181,7 @@ object LiveKitRemoteVideoFrameStore {
         activeTrackSid = null
         _activeTracks.value = emptyMap()
         _framesByTrack.value = emptyMap()
+        _remoteParticipants.value = emptySet()
         _latestFrame.value = null
         _latestCameraFrame.value = null
         _latestScreenShareFrame.value = null

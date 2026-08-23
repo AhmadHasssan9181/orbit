@@ -54,6 +54,20 @@ interface NativeMixedAudioSink {
 }
 
 interface NativeRemoteVideoSink {
+    fun onRemoteParticipantConnected(
+        sessionId: Long,
+        epoch: Long,
+        participantIdentity: String,
+        participantSid: String
+    )
+
+    fun onRemoteParticipantDisconnected(
+        sessionId: Long,
+        epoch: Long,
+        participantIdentity: String,
+        participantSid: String
+    )
+
     fun onRemoteVideoTrackAdded(
         sessionId: Long,
         epoch: Long,

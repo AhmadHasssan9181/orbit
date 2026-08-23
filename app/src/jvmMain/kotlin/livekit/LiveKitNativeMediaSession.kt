@@ -344,14 +344,36 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         val result = bridge.publishScreenShareAudio(sessionId, epoch)
         if (result.ok) {
             println("DEBUG [LiveKitNativeMediaSession] screenshare audio published (system loopback)")
+            applyLoopbackDuckIfNeeded()
         } else {
             println("WARN [LiveKitNativeMediaSession] screenshare audio publish failed: ${result.error?.message}")
+        }
+    }
+
+    // On Windows builds without process-loopback exclusion the share capture is
+    // full-device: our own playback would be re-transmitted in an endless loop.
+    // Ducking playback keeps loop gain below unity so echoes decay instead.
+    private fun applyLoopbackDuckIfNeeded() {
+        scope.launch {
+            repeat(20) {
+                delay(100)
+                when (bridge.shareLoopbackMode()) {
+                    2 -> {
+                        LiveKitNativeAudioPlayer.setLoopbackDuckEnabled(true)
+                        println("WARN [LiveKitNativeMediaSession] share-audio loopback captured full device; ducking own playback to limit echo (Windows 11 24H2+ enables clean exclusion)")
+                        return@launch
+                    }
+                    1 -> return@launch
+                }
+            }
         }
     }
 
     fun unpublishScreenShareAudio() {
         if (sessionId == 0L) return
         val result = bridge.unpublishScreenShareAudio(sessionId, epoch)
+        LiveKitNativeAudioPlayer.setLoopbackDuckEnabled(false)
+        ShareAudioAec.reset()
         if (result.ok) {
             println("DEBUG [LiveKitNativeMediaSession] screenshare audio unpublished")
         } else {

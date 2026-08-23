@@ -80,11 +80,13 @@ fun LiveKitGroupCallSurface(
     val isMinimized by callManager.isMinimized.collectAsState()
     val localFrame by LiveKitLocalVideoFrameStore.latestFrame.collectAsState()
     val activeTracks by LiveKitRemoteVideoFrameStore.activeTracks.collectAsState()
+    val remoteParticipants by LiveKitRemoteVideoFrameStore.remoteParticipants.collectAsState()
     val isVideoIntent by callManager.isVideoCall.collectAsState()
     val members by callManager.groupCallMembers.collectAsState()
     val tokens = rememberCosmicTokens()
 
     if (isMinimized) {
+        val totalParticipants = (members.map { it.id } + remoteParticipants).filter { it.isNotBlank() }.distinct().size
         GroupCallMiniView(
             connection = groupConnection,
             callName = remoteFallbackName,
@@ -93,7 +95,7 @@ fun LiveKitGroupCallSurface(
                 isVideoIntent,
                 groupConnection.attempt
             ),
-            participantCount = members.size,
+            participantCount = if (totalParticipants > 0) totalParticipants else 1,
             accentColor = tokens.Accent,
             onRestore = { callManager.isMinimized.value = false },
             onLeave = { callManager.endCall() },
@@ -139,6 +141,7 @@ fun LiveKitGroupCallSurface(
 
             fun tileName(identity: String?): String =
                 memberInfoFor(members, identity)?.displayName?.takeIf { it.isNotBlank() }
+                    ?: memberInfoFor(members, identity)?.username?.takeIf { it.isNotBlank() }
                     ?: identityDisplayName(identity).takeIf { it != "Participant" }
                     ?: remoteFallbackName
 
@@ -189,22 +192,25 @@ fun LiveKitGroupCallSurface(
                         )
                     )
                 }
-                members
-                    .filter { member ->
-                        member.id != selfId && member.id !in identitiesWithVideo
-                    }
-                    .forEach { member ->
-                        add(
-                            RenderNode(
-                                id = "remote_voice_${member.id}",
-                                name = member.displayName.ifBlank { member.username },
-                                renderer = null,
-                                isScreenShare = false,
-                                avatarUrl = member.avatarUrl,
-                                avatarColor = member.avatarColor
-                            )
+                val voiceIdentities = (members.map { it.id } + remoteParticipants)
+                    .filter { id -> id.isNotBlank() && id != selfId && id !in identitiesWithVideo }
+                    .distinct()
+
+                voiceIdentities.forEach { identity ->
+                    val member = memberInfoFor(members, identity)
+                    val displayName = member?.displayName?.ifBlank { member.username }
+                        ?: identityDisplayName(identity)
+                    add(
+                        RenderNode(
+                            id = "remote_voice_$identity",
+                            name = displayName,
+                            renderer = null,
+                            isScreenShare = false,
+                            avatarUrl = member?.avatarUrl,
+                            avatarColor = member?.avatarColor ?: identityColor(identity)
                         )
-                    }
+                    )
+                }
             }
 
             CallGrid(
