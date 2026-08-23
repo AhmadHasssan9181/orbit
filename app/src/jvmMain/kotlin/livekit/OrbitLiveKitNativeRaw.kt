@@ -109,8 +109,16 @@ object OrbitLiveKitNativeRaw {
     @JvmStatic
     external fun nativePublishScreenShareAudio(sessionId: Long, epoch: Long): Int
 
+    /** 0 = pending, 1 = own process excluded, 2 = full-device fallback. */
+    @JvmStatic
+    external fun nativeGetShareLoopbackMode(): Int
+
     @JvmStatic
     external fun nativeUnpublishScreenShareAudio(sessionId: Long, epoch: Long): Int
+
+    /** Receives one echo-cancelled share-loopback PCM frame from [ShareAudioAec]. */
+    @JvmStatic
+    external fun nativeFeedProcessedShareAudioFrame(pcm: ByteArray)
 
     @JvmStatic
     external fun nativePushScreenShareFrame(

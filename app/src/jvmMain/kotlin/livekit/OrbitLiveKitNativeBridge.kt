@@ -108,6 +108,9 @@ class OrbitLiveKitNativeBridge(
     fun unpublishScreenShareAudio(sessionId: Long, epoch: Long): NativeResult<Unit> =
         statusToResult(sessionId, raw.nativeUnpublishScreenShareAudio(sessionId, epoch), "nativeUnpublishScreenShareAudio")
 
+    /** 0 = pending, 1 = own process excluded, 2 = full-device fallback. */
+    fun shareLoopbackMode(): Int = raw.nativeGetShareLoopbackMode()
+
     fun pushScreenShareFrame(
         sessionId: Long,
         epoch: Long,

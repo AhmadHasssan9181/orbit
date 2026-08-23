@@ -53,6 +53,18 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
         println("DEBUG [LiveKitNativeAudioPlayer] output volume=$clamped")
     }
 
+    // Full-device share-audio loopback (Windows without process-loopback exclusion)
+    // re-captures our own playback and feeds it back forever. Ducking keeps loop
+    // gain below unity so repetitions decay instead of building up.
+    @Volatile private var loopbackDuckFactor = 1f
+
+    fun setLoopbackDuckEnabled(enabled: Boolean) {
+        val next = if (enabled) 0.3f else 1f
+        if (loopbackDuckFactor == next) return
+        loopbackDuckFactor = next
+        println("DEBUG [LiveKitNativeAudioPlayer] share-loopback playback duck=$next")
+    }
+
     private val audioQueue = LinkedBlockingQueue<ByteArray>(100) // Buffer up to ~1 sec without blocking C++
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var playerJob: Job? = null
@@ -103,8 +115,11 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
                     if (OrbitApm.enabled) {
                         OrbitApm.processRender(pcm, sr, ch)
                     }
-                    val vol = outputVolume
+                    val vol = outputVolume * loopbackDuckFactor
                     val outPcm = if (vol != 1f) applyOutputVolume(pcm, vol) else pcm
+                    // Reference must match what actually hits the speakers so the
+                    // share-path AEC subtracts exactly Orbit's audible contribution.
+                    ShareAudioAec.processRender(outPcm, sr, ch)
                     out.write(outPcm, 0, outPcm.size)
                     CallPathStats.onPlayerFramePlayed()
                 }.onFailure { error ->

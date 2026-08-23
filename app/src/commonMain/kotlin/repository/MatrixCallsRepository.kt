@@ -393,7 +393,12 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                             }
                         }
                     }
-                    flow.value = currentMembers
+                    // The poll is authoritative once it yields anyone; an empty
+                    // result is a transient scan gap, not "everyone left" —
+                    // publishing it would blank the participant list mid-call.
+                    if (currentMembers.isNotEmpty()) {
+                        flow.value = currentMembers
+                    }
                 }
             } catch (e: Exception) {}
         }

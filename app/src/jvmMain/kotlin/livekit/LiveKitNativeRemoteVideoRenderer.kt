@@ -1,6 +1,34 @@
 package livekit
 
 object LiveKitNativeRemoteVideoRenderer : NativeRemoteVideoSink {
+    override fun onRemoteParticipantConnected(
+        sessionId: Long,
+        epoch: Long,
+        participantIdentity: String,
+        participantSid: String
+    ) {
+        if (participantIdentity.isBlank()) return
+        println(
+            "DEBUG [LiveKitNativeRemoteVideoRenderer] remote participant connected " +
+                "sessionId=$sessionId epoch=$epoch participantIdentity=$participantIdentity participantSid=$participantSid"
+        )
+        LiveKitRemoteVideoFrameStore.participantConnected(participantIdentity)
+    }
+
+    override fun onRemoteParticipantDisconnected(
+        sessionId: Long,
+        epoch: Long,
+        participantIdentity: String,
+        participantSid: String
+    ) {
+        if (participantIdentity.isBlank()) return
+        println(
+            "DEBUG [LiveKitNativeRemoteVideoRenderer] remote participant disconnected " +
+                "sessionId=$sessionId epoch=$epoch participantIdentity=$participantIdentity participantSid=$participantSid"
+        )
+        LiveKitRemoteVideoFrameStore.participantDisconnected(participantIdentity)
+    }
+
     override fun onRemoteVideoTrackAdded(
         sessionId: Long,
         epoch: Long,
@@ -18,6 +46,7 @@ object LiveKitNativeRemoteVideoRenderer : NativeRemoteVideoSink {
                 "participantSid=$participantSid publicationSid=$publicationSid trackSid=$trackSid " +
                 "trackName=$trackName trackSource=$trackSource muted=$muted"
         )
+        LiveKitRemoteVideoFrameStore.participantConnected(participantIdentity)
         LiveKitRemoteVideoFrameStore.trackStarted(participantIdentity, trackSid, trackSource, trackName)
     }
 
