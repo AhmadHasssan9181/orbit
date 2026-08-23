@@ -36,6 +36,15 @@ actual fun VideoRenderer(renderer: Any?, modifier: Modifier) {
                 fallbackText = ""
             )
         }
+        is LiveKitVideoTileRenderer.LocalScreenShare -> {
+            val preview by livekit.LiveKitLocalScreenShareTrack.previewFrame.collectAsState()
+            LiveKitFrameRenderer(
+                image = rememberLocalSharePreviewImage(preview),
+                modifier = modifier,
+                contentScale = ContentScale.Fit,
+                fallbackText = "Sharing your screen…"
+            )
+        }
         is LiveKitVideoTileRenderer.Remote -> {
             val cameraFrame by LiveKitRemoteVideoFrameStore.latestCameraFrame.collectAsState()
             val fallbackFrame by LiveKitRemoteVideoFrameStore.latestFrame.collectAsState()

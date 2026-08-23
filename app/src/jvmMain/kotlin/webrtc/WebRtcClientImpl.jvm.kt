@@ -603,6 +603,7 @@ class JvmWebRtcClient : WebRtcClient {
             if (isGroupCall && _isScreenSharing.value) {
                 println("DEBUG [WebRTC] Stopping screen share in Group Call (LiveKit)")
                 livekit.LiveKitNativeMediaSession.disarmScreenSharePublish()
+                livekit.LiveKitLocalScreenShareTrack.clearPreview()
             }
             if (!isGroupCall && peerConnection == null) return
             

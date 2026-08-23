@@ -74,6 +74,12 @@ internal fun rememberLocalFrameImage(frame: LiveKitLocalVideoFrame?): ImageBitma
     }
 
 @Composable
+internal fun rememberLocalSharePreviewImage(frame: livekit.LiveKitLocalScreenShareTrack.LocalSharePreviewFrame?): ImageBitmap? =
+    rememberConvertedRgbaFrame(frame) { f ->
+        rgbaToBufferedImage(f.buffer, f.width, f.height, 0, f.width * 4, "local-share", "preview")
+    }
+
+@Composable
 private fun <T : Any> rememberConvertedRgbaFrame(
     frame: T?,
     convert: (T) -> BufferedImage
