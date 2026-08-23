@@ -923,11 +923,17 @@ fun ScreenShareDialog(
 ) {
     var sources by remember { mutableStateOf<List<webrtc.DesktopSourceModel>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
+    var loadError by remember { mutableStateOf<String?>(null) }
     var shareSystemAudio by remember { mutableStateOf(false) }
     val tokens = rememberCosmicTokens()
 
     LaunchedEffect(Unit) {
-        sources = callManager.getDesktopSources()
+        runCatching { callManager.getDesktopSources() }
+            .onSuccess {
+                sources = it
+                if (it.isEmpty()) loadError = "No screens or windows were found to share."
+            }
+            .onFailure { loadError = "Could not enumerate screens: ${it.message ?: it::class.simpleName}" }
         isLoading = false
     }
 
@@ -945,6 +951,15 @@ fun ScreenShareDialog(
             if (isLoading) {
                 Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = tokens.Accent, strokeWidth = 3.dp)
+                }
+            } else if (loadError != null) {
+                Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
+                    Text(
+                        loadError ?: "",
+                        color = Color.White.copy(alpha = 0.7f),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 24.dp)
+                    )
                 }
             } else {
                 Column {

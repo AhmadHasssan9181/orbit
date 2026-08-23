@@ -339,6 +339,21 @@ class JvmWebRtcClient : WebRtcClient {
         }
     }
 
+    private var shareCaptureFactory: PeerConnectionFactory? = null
+
+    // Group calls run the native C++ engine and never build the P2P factory, but
+    // startScreenShare needs a factory purely to pump local capture frames into
+    // the native share sink. Create a lightweight audio-less one on first use.
+    private fun obtainShareFactory(): PeerConnectionFactory {
+        factory?.let { return it }
+        shareCaptureFactory?.let { return it }
+        WebrtcNativeDepsLoader.load()
+        val created = PeerConnectionFactory()
+        shareCaptureFactory = created
+        println("DEBUG [WebRTC] created capture-only PeerConnectionFactory for group screen share")
+        return created
+    }
+
     private fun createFactory(): PeerConnectionFactory {
         return runCatching {
             WebrtcNativeDepsLoader.load()
@@ -476,13 +491,16 @@ class JvmWebRtcClient : WebRtcClient {
 
     override fun startScreenShare(data: Any?) {
         val sourceId = data as? String
+        println("DEBUG [WebRTC] startScreenShare invoked sourceId=$sourceId isGroupCall=$isGroupCall factory=${factory != null} peerConnection=${peerConnection != null}")
         try {
-            if (!isGroupCall && peerConnection == null) return
-            val f = factory ?: return
+            if (!isGroupCall && peerConnection == null) {
+                println("WARN [WebRTC] startScreenShare aborted: P2P mode with no peer connection")
+                return
+            }
+            val f = obtainShareFactory()
 
             val screenCapturer = ScreenCapturer()
             val windowCapturer = dev.onvoid.webrtc.media.video.desktop.WindowCapturer()
-            
             val screenSources = screenCapturer.desktopSources
             val windowSources = windowCapturer.desktopSources
             

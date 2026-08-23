@@ -947,6 +947,7 @@ class CallManager(
     }
 
     fun startScreenShare(data: Any? = null) {
+        println("DEBUG [CallManager] startScreenShare requested data=$data group=${isGroupCall.value} state=${_callState.value}")
         scope.launch(Dispatchers.Default) {
             webRtcClient.startScreenShare(data)
             // Screen sharing often changes resolution/streams, trigger re-negotiation (P2P only)
