@@ -25,6 +25,12 @@ expect fun setLiveKitPlaybackMuted(muted: Boolean)
 // Virtual background: blur the group-path camera frames (applied at next camera open)
 expect fun setLiveKitVirtualBackground(enabled: Boolean)
 
+// BUG-A fix: mid-call camera publish/unpublish for the native group path.
+// enableCamera lazily opens capture + publishes the camera track (republish-safe);
+// disableCamera mutes the track and stops frame push.
+expect suspend fun enableLiveKitCamera(): NativeResult<Unit>
+expect fun disableLiveKitCamera()
+
 // Soundboard: synthesized effects mixed into the outgoing mic frames (group path)
 // and played locally; stopAll cancels anything still queued or rendering.
 expect fun playSoundEffect(effectId: String)

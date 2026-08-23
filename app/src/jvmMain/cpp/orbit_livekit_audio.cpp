@@ -1743,6 +1743,14 @@ public:
             event.publication,
             event.publication != nullptr ? event.publication->track() : nullptr,
             "published");
+        // BUG-B fix: with auto_subscribe the subscription completes asynchronously;
+        // by the time this event fires the publication can already be subscribed
+        // (e.g. tracks that existed at join). Don't rely on a later TrackSubscribed.
+        if (event.publication != nullptr &&
+            event.publication->kind() == livekit::TrackKind::KIND_VIDEO &&
+            event.publication->subscribed()) {
+            startRemoteVideoReaderLocked(event.publication->track(), event.participant, event.publication);
+        }
     }
 
     void onTrackUnpublished(livekit::Room&, const livekit::TrackUnpublishedEvent& event) override {
@@ -4433,6 +4441,59 @@ extern "C" JNIEXPORT jstring JNICALL
 Java_livekit_OrbitLiveKitNativeRaw_nativeGetLastErrorJson(JNIEnv* env, jclass, jlong) {
     std::lock_guard<std::mutex> lock(g_sessionMutex);
     return env->NewStringUTF(g_rawLastErrorJson.c_str());
+}
+
+// BUG-B fix: idempotent rescan of remote participants' video publications.
+// Reader startup previously depended solely on delegate events; a TrackSubscribed
+// landing before the sink was armed or a subscription completing after the
+// post-connect scan left the track with no frame reader forever. The Kotlin
+// session calls this periodically; startRemoteVideoReaderLocked skips tracks
+// that already have a reader, so re-invocation is safe.
+extern "C" JNIEXPORT jint JNICALL
+Java_livekit_OrbitLiveKitNativeRaw_nativeRescanRemoteVideoTracks(JNIEnv*, jclass, jlong sessionId, jlong epoch) {
+    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    if (!isRawSessionValid(sessionId)) {
+        setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativeRescanRemoteVideoTracks", false);
+        return kStatusStaleEvent;
+    }
+    if (epoch != g_rawEpoch) {
+        setRawErrorLocked("STALE_EVENT", "Stale native media epoch", "nativeRescanRemoteVideoTracks", true);
+        return kStatusStaleEvent;
+    }
+    clearRawErrorLocked();
+    if (g_room == nullptr || !g_connected) {
+        return kStatusOk;
+    }
+    int started = 0;
+    for (const auto& participant : g_room->remoteParticipants()) {
+        if (participant == nullptr) {
+            continue;
+        }
+        for (const auto& publicationEntry : participant->trackPublications()) {
+            const auto& publication = publicationEntry.second;
+            if (publication == nullptr || !publication->subscribed()) {
+                continue;
+            }
+            if (publication->kind() != livekit::TrackKind::KIND_VIDEO) {
+                continue;
+            }
+            const auto track = publication->track();
+            if (track == nullptr) {
+                continue;
+            }
+            const auto trackSid = track->sid();
+            if (trackSid.empty() || g_remoteVideoReaders.find(trackSid) != g_remoteVideoReaders.end()) {
+                continue;
+            }
+            logRemoteVideoPublicationDetected(participant.get(), publication, track, "rescan");
+            startRemoteVideoReaderLocked(track, participant.get(), publication);
+            started += 1;
+        }
+    }
+    if (started > 0) {
+        std::cout << "DEBUG [RemoteVideo] rescan recovered missing readers count=" << started << std::endl;
+    }
+    return kStatusOk;
 }
 
 extern "C" JNIEXPORT jstring JNICALL

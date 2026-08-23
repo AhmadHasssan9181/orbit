@@ -176,7 +176,8 @@ object LiveKitNativeVideoCapture {
         sessionId: Long,
         epoch: Long,
         bridge: OrbitLiveKitNativeBridge,
-        onFailure: (NativeError) -> Unit
+        onFailure: (NativeError) -> Unit,
+        onActualDimensions: ((width: Int, height: Int) -> Unit)? = null
     ): NativeResult<Unit> {
         val capture = activeCapture
             ?: return NativeResult.failure(
@@ -187,7 +188,7 @@ object LiveKitNativeVideoCapture {
                     recoverable = true
                 )
             )
-        capture.enableNativePush(sessionId, epoch, bridge, onFailure)
+        capture.enableNativePush(sessionId, epoch, bridge, onFailure, onActualDimensions)
         return NativeResult.success(Unit)
     }
 
@@ -255,6 +256,9 @@ object LiveKitNativeVideoCapture {
         private val frameSeq = AtomicInteger(0)
         private val failureReported = AtomicBoolean(false)
 
+        @Volatile private var reportedWidth = 0
+        @Volatile private var reportedHeight = 0
+
         @Volatile
         private var target: NativeVideoTarget? = null
 
@@ -265,9 +269,16 @@ object LiveKitNativeVideoCapture {
             sessionId: Long,
             epoch: Long,
             bridge: OrbitLiveKitNativeBridge,
-            onFailure: (NativeError) -> Unit
+            onFailure: (NativeError) -> Unit,
+            onActualDimensions: ((width: Int, height: Int) -> Unit)? = null
         ) {
-            target = NativeVideoTarget(sessionId, epoch, bridge, onFailure)
+            target = NativeVideoTarget(
+                sessionId = sessionId,
+                epoch = epoch,
+                bridge = bridge,
+                onFailure = onFailure,
+                onActualDimensions = onActualDimensions
+            )
             println(
                 "DEBUG [VideoPublish] frame push enabled camera=${config.cameraName} " +
                     "width=${config.width} height=${config.height} fps=${config.fps}"
@@ -298,6 +309,23 @@ object LiveKitNativeVideoCapture {
                 }
                 val i420Bytes = i420.width * i420.height +
                     ((i420.width + 1) / 2) * ((i420.height + 1) / 2) * 2
+
+                // Some camera drivers ignore the requested capability and deliver
+                // their own mode (e.g. 1080p despite a 640x360 request). Report the
+                // real dimensions whenever they change so the session can republish
+                // to match — the native side rejects frames that don't match the
+                // declared source. NOT gated on seq==1: capture starts producing
+                // frames before the push target is attached, so frame #1 is long
+                // gone by the time enableNativePress attaches the callback.
+                val dimCallback = nativeTarget?.onActualDimensions
+                if (dimCallback != null &&
+                    (reportedWidth != i420.width || reportedHeight != i420.height)
+                ) {
+                    reportedWidth = i420.width
+                    reportedHeight = i420.height
+                    println("DEBUG [VideoPublish] actual camera dimensions ${i420.width}x${i420.height}")
+                    dimCallback(i420.width, i420.height)
+                }
 
                 if (seq == 1 || seq % 3 == 0) {
                     LiveKitLocalVideoFrameStore.updateFrame(
@@ -470,7 +498,8 @@ object LiveKitNativeVideoCapture {
         val sessionId: Long,
         val epoch: Long,
         val bridge: OrbitLiveKitNativeBridge,
-        val onFailure: (NativeError) -> Unit
+        val onFailure: (NativeError) -> Unit,
+        val onActualDimensions: ((width: Int, height: Int) -> Unit)?
     )
 
     private data class PackedI420Frame(

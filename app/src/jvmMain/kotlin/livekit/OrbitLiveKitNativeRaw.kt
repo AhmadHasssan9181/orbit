@@ -23,6 +23,9 @@ object OrbitLiveKitNativeRaw {
     external fun nativeSetRemoteVideoSink(sink: NativeRemoteVideoSink?): Int
 
     @JvmStatic
+    external fun nativeRescanRemoteVideoTracks(sessionId: Long, epoch: Long): Int
+
+    @JvmStatic
     external fun nativeConnectAsync(
         sessionId: Long,
         epoch: Long,

@@ -54,6 +54,13 @@ actual fun setLiveKitVirtualBackground(enabled: Boolean) {
     LiveKitNativeVideoCapture.setVirtualBackgroundEnabled(enabled)
 }
 
+actual suspend fun enableLiveKitCamera(): NativeResult<Unit> =
+    LiveKitNativeMediaSession.enableCamera()
+
+actual fun disableLiveKitCamera() {
+    LiveKitNativeMediaSession.disableCamera()
+}
+
 actual fun playSoundEffect(effectId: String) {
     SoundboardMixer.play(effectId)
 }

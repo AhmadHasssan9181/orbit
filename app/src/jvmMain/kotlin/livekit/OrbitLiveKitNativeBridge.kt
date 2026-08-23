@@ -34,6 +34,11 @@ class OrbitLiveKitNativeBridge(
     fun setRemoteVideoSink(sink: NativeRemoteVideoSink?): NativeResult<Unit> =
         statusToResult(0L, raw.nativeSetRemoteVideoSink(sink), "nativeSetRemoteVideoSink")
 
+    // BUG-B fix: idempotent rescan that starts frame readers for subscribed remote
+    // video tracks the event-driven path missed (safe to call repeatedly).
+    fun rescanRemoteVideoTracks(sessionId: Long, epoch: Long): NativeResult<Unit> =
+        statusToResult(sessionId, raw.nativeRescanRemoteVideoTracks(sessionId, epoch), "nativeRescanRemoteVideoTracks")
+
     fun connectAsync(sessionId: Long, epoch: Long, url: String, token: String, identity: String): NativeResult<Unit> =
         statusToResult(sessionId, raw.nativeConnectAsync(sessionId, epoch, url, token, identity), "nativeConnectAsync")
 
