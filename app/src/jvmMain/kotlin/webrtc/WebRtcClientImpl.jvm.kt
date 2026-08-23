@@ -640,6 +640,11 @@ class JvmWebRtcClient : WebRtcClient {
     }
 
     override fun toggleVideo(isVideoEnabled: Boolean) {
+        if (isGroupCall && livekit.LiveKitNativeMediaSession.isConnected) {
+            // Group calls publish video through the native LiveKit session
+            // (CallManager routes the toggle there); never touch P2P tracks.
+            return
+        }
         if (cameraVideoTrack == null && isVideoEnabled) {
             startVideoCapture()
             // If screen share is active, startVideoCapture won't swap it in. 

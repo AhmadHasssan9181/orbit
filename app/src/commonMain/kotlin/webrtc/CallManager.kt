@@ -93,6 +93,10 @@ class CallManager(
     var onLeaveGroupCall: (suspend (roomId: String, callId: String) -> Unit)? = null
     var onUpdateGroupCallMembershipCapabilities: (suspend (roomId: String, callId: String, audio: Boolean, video: Boolean, livekitIdentity: String?) -> Boolean)? = null
 
+    // LiveKit identity of the current group-call join; reused for membership
+    // re-affirmation when the camera is toggled mid-call.
+    private var groupCallLivekitIdentity: String? = null
+
     private val pendingLocalCandidates = mutableListOf<IceCandidateModel>()
     // Remote ICE candidates can arrive before our setRemoteDescription completes
     // (peerConnection is null then and would silently drop them) — buffer until it's set.
@@ -352,6 +356,7 @@ class CallManager(
                 return false
             }
             println("DEBUG [CallManager] Token and SFU URL fetched. Publishing MatrixRTC membership before native media...")
+            groupCallLivekitIdentity = authResponse.identity
             val membershipVisible = onUpdateGroupCallMembershipCapabilities
                 ?.invoke(roomId, callId, true, false, authResponse.identity) ?: true
             groupConnectionTracker.onMembershipPublished(membershipVisible)
@@ -813,6 +818,7 @@ class CallManager(
         pendingInviteSdp = null
         hasRemoteStream.value = false
         nativeMediaReadiness.value = null
+        groupCallLivekitIdentity = null
     }
 
     fun toggleMute(isMuted: Boolean) {
@@ -823,8 +829,46 @@ class CallManager(
     fun toggleVideo(isVideoEnabled: Boolean) {
         val wasVideo = isVideoCall.value
         isVideoCall.value = isVideoCall.value || isVideoEnabled
+
+        if (isGroupCall.value && _callState.value == CallState.CONNECTED) {
+            // Group calls have no P2P sender; publish/unpublish through the native
+            // LiveKit session instead (joins are audio-only, camera is lazy).
+            scope.launch {
+                if (isVideoEnabled) {
+                    val result = livekit.enableLiveKitCamera()
+                    if (result.ok) {
+                        isLocalVideoEnabled.value = true
+                        val room = activeRoomId ?: return@launch
+                        val cId = callId ?: return@launch
+                        val membershipMode = livekit.LiveKitFeatureFlags.videoMembershipMode
+                        val membershipModeAllowsVideo = membershipMode == "intent-video" ||
+                            membershipMode == "capabilities-video" ||
+                            membershipMode == "element-reference"
+                        if (livekit.LiveKitFeatureFlags.videoUpdateMembershipAfterPublish && membershipModeAllowsVideo) {
+                            runCatching {
+                                onUpdateGroupCallMembershipCapabilities?.invoke(
+                                    room,
+                                    cId,
+                                    true,
+                                    true,
+                                    groupCallLivekitIdentity
+                                )
+                            }.onFailure { println("WARN [CallManager] membership video re-affirm failed: ${it.message}") }
+                        }
+                    } else {
+                        println("ERROR [CallManager] group camera enable failed: ${result.error?.code} ${result.error?.message}")
+                        isLocalVideoEnabled.value = false
+                    }
+                } else {
+                    livekit.disableLiveKitCamera()
+                    isLocalVideoEnabled.value = false
+                }
+            }
+            return
+        }
+
         isLocalVideoEnabled.value = isVideoEnabled
-        
+
         if (!isGroupCall.value && isVideoEnabled && !wasVideo && _callState.value == CallState.CONNECTED) {
             // Transition from voice to video requires re-negotiation ONLY for P2P
             scope.launch {

@@ -7,13 +7,16 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 
 object LiveKitNativeMediaSession : NativeMediaEventSink {
     private const val CONNECT_TIMEOUT_MS = 15_000L
     private const val PUBLISH_TIMEOUT_MS = 10_000L
     private const val RECONNECT_TIMEOUT_MS = 15_000L
     private const val MAX_CONSECUTIVE_RECONNECTS = 3
+    private const val REMOTE_VIDEO_RESCAN_INTERVAL_MS = 2_000L
 
     private val bridge = OrbitLiveKitNativeBridge()
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -28,6 +31,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
     private var screenShareHeight = 0
     private var screenShareFps = 30
     private var screenShareMaxBitrateBps = 0
+    @Volatile private var screenShareFirstFrameLogged = false
     private var connectedDeferred: CompletableDeferred<NativeResult<Unit>>? = null
     private var audioPublishedDeferred: CompletableDeferred<NativeResult<Unit>>? = null
     private var videoPublishedDeferred: CompletableDeferred<NativeResult<Unit>>? = null
@@ -36,6 +40,16 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
     private var refreshJob: Job? = null
     private var lastAuthResponse: LiveKitAuthResponse? = null
     private var lastVideoPolicy: JoinVideoPolicy = JoinVideoPolicy.AudioOnly
+    @Volatile private var lastVideoAllowed: Boolean = false
+    // BUG-A fix: true while the camera capture pipeline is open and pushing frames.
+    @Volatile private var cameraPushEnabled: Boolean = false
+    // Dimensions the camera track was PUBLISHED with. Some drivers ignore the
+    // requested capability; the native side rejects frames that don't match the
+    // declared source, so the first real frame triggers a republish if they differ.
+    @Volatile private var publishedCameraWidth = 0
+    @Volatile private var publishedCameraHeight = 0
+    @Volatile private var publishedCameraFps = 30
+    private val cameraToggleMutex = kotlinx.coroutines.sync.Mutex()
     private var lastRefreshTokenFetcher: (suspend () -> LiveKitAuthResponse)? = null
     @Volatile private var desiredAudioMuted: Boolean = false
     @Volatile private var lastAudioBitrateKbps: Int = 64
@@ -44,6 +58,11 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
     // the owner (CallManager) can restore UI stage + re-affirm MatrixRTC membership.
     private var reconnectAttempts = 0
     var onReconnected: (() -> Unit)? = null
+
+    // BUG-B fix: periodic reader rescan so remote video/screen-share tracks whose
+    // subscription completed outside the event-driven startup windows still get
+    // a frame reader (idempotent on the native side).
+    private var remoteVideoRescanJob: Job? = null
 
     @Volatile
     private var readinessCache = emptyReadiness()
@@ -84,6 +103,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             return NativeResult.failure(error)
         }
         val videoPublishRequested = shouldPublishVideo()
+        lastVideoAllowed = grantCheck.value.videoAllowed
         val matrixRtcMemberId = authResponse.matrixRtcMemberId
             ?: authResponse.identity
             ?: tokenResult.value.identity.orEmpty()
@@ -225,6 +245,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         }
 
         scheduleTokenRefresh(tokenResult.value)
+        startRemoteVideoRescan()
         updateReadiness(
             state = NativeMediaState.MediaReady,
             connected = true,
@@ -300,6 +321,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         screenShareMaxBitrateBps = maxBitrateBps
         screenShareWidth = 0
         screenShareHeight = 0
+        screenShareFirstFrameLogged = false
         screenShareArmed = true
         println("DEBUG [LiveKitNativeMediaSession] screenshare publish armed fps=$screenShareFps maxBitrateBps=$maxBitrateBps")
     }
@@ -339,6 +361,10 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
 
     fun pushScreenShareFrame(buffer: java.nio.ByteBuffer, width: Int, height: Int, timestampNs: Long, rotation: Int): Boolean {
         if (!screenShareArmed || width <= 0 || height <= 0) return false
+        if (!screenShareFirstFrameLogged) {
+            screenShareFirstFrameLogged = true
+            println("DEBUG [LiveKitNativeMediaSession] first share frame received ${width}x${height} (armed)")
+        }
         if (width != screenShareWidth || height != screenShareHeight) {
             if (screenShareWidth != 0) {
                 runCatching { bridge.unpublishScreenShare(sessionId, epoch) }
@@ -373,7 +399,12 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         }
         refreshJob?.cancel()
         refreshJob = null
+        remoteVideoRescanJob?.cancel()
+        remoteVideoRescanJob = null
         runCatching { LiveKitNativeVideoCapture.stopAndJoin() }
+        cameraPushEnabled = false
+        publishedCameraWidth = 0
+        publishedCameraHeight = 0
         runCatching { LiveKitNativeAudioBridge.nativeSetAcceptingFrames(false) }
         runCatching { LiveKitNativeAudioCapture.stopAndJoin() }
         runCatching { LiveKitNativeAudioPlayer.stop() }
@@ -588,6 +619,9 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
                 NativeResult.failure(publish.error ?: unknownError("Native video publish failed", "nativePublishVideo"))
             }
         }
+        publishedCameraWidth = config.width
+        publishedCameraHeight = config.height
+        publishedCameraFps = config.fps
 
         val videoPublished = awaitDeferred(videoPublishedDeferred, PUBLISH_TIMEOUT_MS, "publishVideo")
         if (!videoPublished.ok) {
@@ -601,8 +635,14 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             }
         }
 
-        val framePush = LiveKitNativeVideoCapture.enableNativePush(sessionId, epoch, bridge, ::handleVideoCaptureFailure)
+        // Arm before attaching the push target: capture frames are already flowing,
+        // and the first-frame dimension callback must not be dropped in the gap.
+        cameraPushEnabled = true
+        val framePush = LiveKitNativeVideoCapture.enableNativePush(
+            sessionId, epoch, bridge, ::handleVideoCaptureFailure, ::handleActualCameraDimensions
+        )
         if (!framePush.ok) {
+            cameraPushEnabled = false
             runCatching { LiveKitNativeVideoCapture.stopAndJoin() }
             updateCameraFallback(CameraPublishState.Failed, joinedAsAudioOnlyFallback = !videoRequired)
             return if (!videoRequired) {
@@ -614,6 +654,145 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         }
 
         return NativeResult.success(Unit)
+    }
+
+    // Camera drivers sometimes ignore the requested capture capability and deliver
+    // their own mode. The native video source rejects mismatched frames outright,
+    // so republish the track with whatever dimensions actually arrive (republish is
+    // safe: the C++ side unpublishes the previous camera track first).
+    private fun handleActualCameraDimensions(width: Int, height: Int) {
+        if (!cameraPushEnabled) return
+        if (width == publishedCameraWidth && height == publishedCameraHeight) return
+        println(
+            "WARN [LiveKitNativeMediaSession] camera delivers ${width}x${height} but track was published " +
+                "${publishedCameraWidth}x${publishedCameraHeight}; republishing with actual dimensions"
+        )
+        val videoMaxBitrateBps = System.getProperty("orbit.video.maxBitrateKbps")
+            ?.trim()?.takeIf { it.isNotEmpty() }?.toIntOrNull()?.takeIf { it > 0 }?.times(1000) ?: 0
+        val result = bridge.publishVideo(sessionId, epoch, width, height, publishedCameraFps, 5, videoMaxBitrateBps)
+        if (!result.ok) {
+            println("ERROR [LiveKitNativeMediaSession] camera dimension-mismatch republish failed: ${result.error?.code} ${result.error?.message}")
+            return
+        }
+        publishedCameraWidth = width
+        publishedCameraHeight = height
+        println("DEBUG [LiveKitNativeMediaSession] camera republished at ${width}x${height} fps=$publishedCameraFps")
+    }
+
+    // BUG-A fix: mid-call camera publish for the native group path. Joins are
+    // audio-only by default; the UI "Turn On Camera" toggle routes here instead
+    // of the P2P engine (which has no sender in group mode). Republish-safe: the
+    // C++ side unpublishes any previous camera track before creating a new one.
+    suspend fun enableCamera(): NativeResult<Unit> = cameraToggleMutex.withLock {
+        if (sessionId == 0L || !readinessCache.connected) {
+            return NativeResult.failure(unknownError("No connected native media session", "enableCamera"))
+        }
+        if (!LiveKitFeatureFlags.videoPublish) {
+            return NativeResult.failure(unknownError("Video publishing is disabled", "enableCamera"))
+        }
+        if (!lastVideoAllowed) {
+            return NativeResult.failure(
+                NativeError(
+                    code = NativeErrorCode.PUBLISH_VIDEO_FAILED,
+                    message = "Camera publishing is not allowed by LiveKit grants",
+                    operation = "publishVideo",
+                    recoverable = false
+                )
+            )
+        }
+        if (readinessCache.videoPublished && cameraPushEnabled) {
+            return NativeResult.success(Unit)
+        }
+
+        println("DEBUG [LiveKitNativeMediaSession] mid-call camera enable started")
+        updateReadiness(
+            state = readinessCache.state,
+            connected = true,
+            audioPublished = readinessCache.audioPublished,
+            videoPublished = false,
+            acceptingAudioFrames = readinessCache.acceptingAudioFrames,
+            acceptingVideoFrames = false,
+            cameraRequested = true,
+            cameraRequired = false,
+            cameraState = CameraPublishState.Publishing,
+            joinedAsAudioOnlyFallback = false,
+            tokenRefreshScheduled = readinessCache.tokenRefreshScheduled,
+            lastError = null
+        )
+
+        val opened = LiveKitNativeVideoCapture.openForPublish()
+        val config = opened.value
+        if (!opened.ok || config == null) {
+            runCatching { LiveKitNativeVideoCapture.stopAndJoin() }
+            updateCameraFallback(cameraStateFromVideoError(opened.error), joinedAsAudioOnlyFallback = false)
+            return NativeResult.failure(opened.error ?: unknownError("Camera capture failed to open", "openVideoCapture"))
+        }
+
+        videoPublishedDeferred = CompletableDeferred()
+
+        val videoMaxBitrateBps = System.getProperty("orbit.video.maxBitrateKbps")
+            ?.trim()?.takeIf { it.isNotEmpty() }?.toIntOrNull()?.takeIf { it > 0 }?.times(1000) ?: 0
+        println(
+            "DEBUG [LiveKitNativeMediaSession] mid-call camera publish " +
+                "width=${config.width} height=${config.height} fps=${config.fps} format=${config.format} " +
+                "videoMaxBitrateBps=$videoMaxBitrateBps"
+        )
+        val publish = bridge.publishVideo(sessionId, epoch, config.width, config.height, config.fps, config.format, videoMaxBitrateBps)
+        if (!publish.ok) {
+            runCatching { LiveKitNativeVideoCapture.stopAndJoin() }
+            updateCameraFallback(CameraPublishState.Failed, joinedAsAudioOnlyFallback = false)
+            return NativeResult.failure(publish.error ?: unknownError("Native video publish failed", "nativePublishVideo"))
+        }
+        publishedCameraWidth = config.width
+        publishedCameraHeight = config.height
+        publishedCameraFps = config.fps
+
+        val videoPublished = awaitDeferred(videoPublishedDeferred, PUBLISH_TIMEOUT_MS, "enableCamera")
+        if (!videoPublished.ok) {
+            runCatching { LiveKitNativeVideoCapture.stopAndJoin() }
+            updateCameraFallback(CameraPublishState.Failed, joinedAsAudioOnlyFallback = false)
+            return NativeResult.failure(videoPublished.error ?: unknownError("Native video publish timed out", "enableCamera"))
+        }
+
+        // Arm before attaching the push target (see handleOptionalVideoPublish).
+        cameraPushEnabled = true
+        val framePush = LiveKitNativeVideoCapture.enableNativePush(
+            sessionId, epoch, bridge, ::handleVideoCaptureFailure, ::handleActualCameraDimensions
+        )
+        if (!framePush.ok) {
+            cameraPushEnabled = false
+            runCatching { LiveKitNativeVideoCapture.stopAndJoin() }
+            updateCameraFallback(CameraPublishState.Failed, joinedAsAudioOnlyFallback = false)
+            return NativeResult.failure(framePush.error ?: unknownError("Video frame push failed to start", "enableVideoFramePush"))
+        }
+
+        // disableCamera() mutes the published track; a fresh republish creates an
+        // unmuted track but be explicit in case the old one survived.
+        bridge.setVideoMuted(sessionId, epoch, false)
+        println("DEBUG [LiveKitNativeMediaSession] mid-call camera enabled ${config.width}x${config.height} fps=${config.fps}")
+        NativeResult.success(Unit)
+    }
+
+    fun disableCamera() {
+        if (sessionId == 0L || !cameraPushEnabled) return
+        bridge.setVideoMuted(sessionId, epoch, true)
+        cameraPushEnabled = false
+        runCatching { LiveKitNativeVideoCapture.stopAndJoin() }
+        updateReadiness(
+            state = readinessCache.state,
+            connected = readinessCache.connected,
+            audioPublished = readinessCache.audioPublished,
+            videoPublished = false,
+            acceptingAudioFrames = readinessCache.acceptingAudioFrames,
+            acceptingVideoFrames = false,
+            cameraRequested = true,
+            cameraRequired = readinessCache.cameraRequired,
+            cameraState = CameraPublishState.NotRequested,
+            joinedAsAudioOnlyFallback = false,
+            tokenRefreshScheduled = readinessCache.tokenRefreshScheduled,
+            lastError = null
+        )
+        println("DEBUG [LiveKitNativeMediaSession] camera disabled (track muted, capture stopped)")
     }
 
     private fun updateCameraFallback(cameraState: CameraPublishState, joinedAsAudioOnlyFallback: Boolean) {
@@ -635,6 +814,19 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
 
     private fun shouldPublishVideo(): Boolean =
         LiveKitFeatureFlags.videoPublish && lastVideoPolicy != JoinVideoPolicy.AudioOnly
+
+    private fun startRemoteVideoRescan() {
+        remoteVideoRescanJob?.cancel()
+        remoteVideoRescanJob = scope.launch {
+            while (isActive) {
+                delay(REMOTE_VIDEO_RESCAN_INTERVAL_MS)
+                if (sessionId == 0L || !readinessCache.connected) break
+                // Result intentionally ignored: stale-epoch during a reconnect window
+                // self-heals on the next tick; terminal teardown cancels this job.
+                bridge.rescanRemoteVideoTracks(sessionId, epoch)
+            }
+        }
+    }
 
     private fun configureRemoteVideoSink(reason: String) {
         if (!LiveKitFeatureFlags.videoRemoteRender) {
@@ -738,6 +930,9 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         println("DEBUG [LiveKitNativeMediaSession] mute state before reconnect: $desiredAudioMuted")
         updateNativeState(NativeMediaState.Reconnecting)
         runCatching { LiveKitNativeVideoCapture.stopAndJoin() }
+        cameraPushEnabled = false
+        publishedCameraWidth = 0
+        publishedCameraHeight = 0
         runCatching { LiveKitNativeAudioBridge.nativeSetAcceptingFrames(false) }
         runCatching { LiveKitNativeAudioCapture.stopAndJoin() }
 
@@ -764,6 +959,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             handleNativeError(grantCheck.error ?: unknownError("Token refresh grant validation failed", "validateLiveKitGrants"))
             return
         }
+        lastVideoAllowed = grantCheck.value.videoAllowed
 
         epoch += 1
         configureRemoteVideoSink("reconnect")
@@ -848,6 +1044,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         )
         mediaReadyDeferred?.complete(NativeResult.success(Unit))
         scheduleTokenRefresh(tokenResult.value)
+        startRemoteVideoRescan()
         clearCompletedDeferreds()
         reconnectAttempts = 0
         runCatching { onReconnected?.invoke() }
