@@ -1986,8 +1986,17 @@ void shareAudioLoopbackMain(std::shared_ptr<livekit::AudioSource> source) {
                 if (SUCCEEDED(activator.result) && activator.audioClient != NULL) {
                     audioClient = activator.audioClient;
                     audioClient->AddRef();
+                    std::cout << "DEBUG [ScreenShareAudioPublish] process-loopback activated; own-process tree EXCLUDED from capture" << std::endl;
+                } else {
+                    std::cout << "WARN [ScreenShareAudioPublish] process-loopback activation failed hr=0x"
+                              << std::hex << activator.result << std::dec
+                              << " (EXCLUDE mode needs Windows 11 24H2+); falling back to FULL-DEVICE loopback which WILL capture Orbit's own playback" << std::endl;
                 }
                 asyncOp->Release();
+            } else {
+                std::cout << "WARN [ScreenShareAudioPublish] ActivateAudioInterfaceAsync failed hr=0x"
+                          << std::hex << asyncHr << std::dec
+                          << "; falling back to FULL-DEVICE loopback which WILL capture Orbit's own playback" << std::endl;
             }
             CoTaskMemFree(deviceId);
         }

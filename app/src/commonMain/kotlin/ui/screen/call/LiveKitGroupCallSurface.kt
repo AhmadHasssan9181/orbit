@@ -154,6 +154,16 @@ fun LiveKitGroupCallSurface(
                         avatarColor = 0xFF5865F2.toInt()
                     )
                 )
+                if (isScreenSharing) {
+                    add(
+                        RenderNode(
+                            id = "local_share",
+                            name = "Your Screen",
+                            renderer = livekit.LiveKitVideoTileRenderer.LocalScreenShare,
+                            isScreenShare = true
+                        )
+                    )
+                }
                 cameraTracks.forEach { track ->
                     add(
                         RenderNode(
