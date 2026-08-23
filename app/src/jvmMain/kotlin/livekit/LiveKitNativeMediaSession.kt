@@ -1170,6 +1170,12 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
     }
 
     private fun handleCaptureFailure(error: NativeError) {
+        if (error.code == NativeErrorCode.MIC_INPUT_TOO_LOW) {
+            // Near-silence is not a capture failure: OS mic level/mute or the user
+            // simply not talking yet. Failing the session ejected people from calls.
+            println("WARN [LiveKitNativeMediaSession] mic input near-silent (check OS mic level/mute); keeping call alive")
+            return
+        }
         handleNativeError(error)
     }
 
