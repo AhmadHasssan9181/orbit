@@ -3,7 +3,6 @@ plugins {
     kotlin("plugin.serialization")
     id("org.jetbrains.compose")
     id("org.jetbrains.kotlin.plugin.compose")
-    id("com.android.application")
     id("com.google.devtools.ksp")
     id("androidx.room")
 }
@@ -11,15 +10,6 @@ plugins {
 kotlin {
     sourceSets.all {
         languageSettings.optIn("kotlin.time.ExperimentalTime")
-    }
-
-    androidTarget {
-        compilations.all {
-            kotlinOptions {
-                jvmTarget = "17"
-                freeCompilerArgs += "-Xskip-metadata-version-check"
-            }
-        }
     }
 
     jvm {
@@ -69,13 +59,9 @@ kotlin {
             }
         }
 
-        val androidMain by getting {
+        val commonTest by getting {
             dependencies {
-                implementation("io.ktor:ktor-client-okhttp:3.0.1")
-                implementation("androidx.activity:activity-compose:1.8.2")
-                implementation("androidx.core:core-splashscreen:1.0.1")
-                implementation("com.google.android.material:material:1.11.0")
-                implementation("io.getstream:stream-webrtc-android:1.1.2")
+                implementation(kotlin("test"))
             }
         }
 
@@ -89,7 +75,6 @@ kotlin {
                 implementation(project(":webrtc-java-lib"))
                 implementation("net.java.dev.jna:jna:5.14.0")
                 implementation("net.java.dev.jna:jna-platform:5.14.0")
-                implementation("com.google.protobuf:protobuf-java:4.29.3")
                 
                 // VLCJ for Native Video Playback
                 implementation("uk.co.caprica:vlcj:4.8.2")
@@ -101,9 +86,8 @@ kotlin {
     }
 }
 
-// KSP per-target (CRITICAL for KMP)
+// KSP for the JVM target
 dependencies {
-    add("kspAndroid", "androidx.room:room-compiler:2.7.0-alpha11")
     add("kspJvm", "androidx.room:room-compiler:2.7.0-alpha11")
 }
 
@@ -119,6 +103,8 @@ val orbitAudioJvmArgs = listOf(
     "orbit.matrixrtc.publishLegacyMember",
     "orbit.matrixrtc.publishMemberMode",
     "orbit.matrixrtc.mirrorVisibleElementShape",
+    "orbit.apm.enabled",
+    "orbit.apm.delayMs",
     "orbit.video.inputDeviceName",
     "orbit.video.inputDeviceIndex",
     "orbit.video.requestedWidth",
@@ -132,30 +118,6 @@ val orbitAudioJvmArgs = listOf(
     System.getProperty(propertyName)
         ?.takeIf { it.isNotBlank() }
         ?.let { "-D$propertyName=$it" }
-}
-
-android {
-    namespace = "com.noobdev.orbit"
-    compileSdk = 34
-
-    defaultConfig {
-        resourceConfigurations.addAll(listOf("en"))
-        minSdk = 24
-        targetSdk = 34
-        applicationId = "com.noobdev.orbit"
-        versionCode = 1
-        versionName = "1.0"
-    }
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    lint {
-        abortOnError = false
-        checkReleaseBuilds = false
-    }
 }
 
 compose.desktop {

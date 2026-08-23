@@ -1,5 +1,14 @@
 #include <jni.h>
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <mmdeviceapi.h>
+#include <audioclient.h>
+#include <audioclientactivationparams.h>
+#include <objbase.h>
+
 #include "livekit/livekit.h"
 #include "livekit/video_stream.h"
 
@@ -36,8 +45,15 @@ std::shared_ptr<livekit::VideoSource> g_videoSource;
 std::shared_ptr<livekit::LocalVideoTrack> g_videoTrack;
 std::string g_matrixRtcMemberId;
 bool g_connected = false;
-bool g_micPublished = false;
-bool g_acceptingFrames = false;
+// Atomic so the audio-source worker can gate frames without contending on
+// g_sessionMutex — a try-lock fallback here used to default to "capture anyway",
+// letting live PCM into the AudioSource while the user was muted.
+std::atomic<bool> g_micPublished{false};
+std::atomic<bool> g_acceptingFrames{false};
+// Last-known mute intent for g_audioTrack; refreshed opportunistically whenever
+// the worker does win the session mutex, and written authoritatively by
+// nativeSetAudioMuted. Fail-closed input for the worker's mute gate.
+std::atomic<bool> g_micTrackMutedCache{false};
 bool g_videoPublished = false;
 bool g_acceptingVideoFrames = false;
 bool g_cameraRequested = false;
@@ -47,6 +63,22 @@ int g_videoFps = 0;
 int g_videoFormat = 0;
 std::string g_videoPublicationSid;
 std::string g_videoLocalTrackSid;
+std::shared_ptr<livekit::VideoSource> g_screenShareSource;
+std::shared_ptr<livekit::LocalVideoTrack> g_screenShareTrack;
+int g_screenShareWidth = 0;
+int g_screenShareHeight = 0;
+int g_screenShareFps = 0;
+std::string g_screenSharePublicationSid;
+bool g_screenSharePublished = false;
+bool g_acceptingScreenShareFrames = false;
+bool g_screenShareFrameDroppedNotReadyLogged = false;
+int g_screenSharePushDiagnosticsLogged = 0;
+std::shared_ptr<livekit::AudioSource> g_shareAudioSource;
+std::shared_ptr<livekit::LocalAudioTrack> g_shareAudioTrack;
+std::string g_shareAudioPublicationSid;
+bool g_shareAudioPublished = false;
+std::atomic_bool g_shareLoopbackActive{false};
+std::thread g_shareLoopbackThread;
 bool g_videoFrameDroppedNotReadyLogged = false;
 int g_videoPushDiagnosticsLogged = 0;
 std::int64_t g_lastVideoTimestampNs = 0;
@@ -116,8 +148,18 @@ constexpr jint kSamplesPerChannel = 480;
 constexpr jint kFrameBytes = 960;
 constexpr jint kBytesPerSample = static_cast<jint>(sizeof(std::int16_t));
 constexpr int kAudioSourceCaptureTimeoutMs = 0;
-constexpr std::size_t kTargetParticipantQueueSamples = kSamplesPerChannel * 6; // 60 ms target playout depth
-constexpr std::size_t kMaxParticipantQueueSamples = kSamplesPerChannel * 12; // 120 ms
+constexpr std::size_t kTargetParticipantQueueSamples = kSamplesPerChannel * 8; // 80 ms target playout depth
+constexpr std::size_t kMaxParticipantQueueSamples = kSamplesPerChannel * 16; // 160 ms burst headroom
+constexpr int kDefaultAudioMaxBitrateBps = 64000;
+constexpr int kMinAudioMaxBitrateBps = 8000;
+constexpr int kMaxAudioMaxBitrateBps = 512000;
+constexpr int kDefaultVideoMaxBitrateBps = 1200000;
+constexpr int kMinVideoMaxBitrateBps = 150000;
+constexpr int kMaxVideoMaxBitrateBps = 6000000;
+constexpr int kDefaultScreenShareMaxBitrateBps = 2500000;
+constexpr int kMinScreenShareMaxBitrateBps = 300000;
+constexpr int kMaxScreenShareMaxBitrateBps = 8000000;
+constexpr int kDefaultShareAudioMaxBitrateBps = 128000;
 constexpr jlong kRawSessionId = 1;
 jlong g_rawEpoch = 0;
 bool g_rawDisconnecting = false;
@@ -127,7 +169,12 @@ bool isSupportedAudioChannels(jint channels) {
 }
 
 bool isSupportedAudioSourceQueueMs(jint queueSizeMs) {
-    return queueSizeMs == 10;
+    // 0 = SDK real-time mode (captureFrame consumes synchronously, recommended
+    // for self-paced producers like our worker); 10 = legacy buffered mode kept
+    // for the property override. Buffered mode BLOCKS captureFrame until the
+    // SDK drains its queue in real time, which stacked with the worker's own
+    // 10 ms pacing to a ~31 ms/frame cycle and ~68% mic frame loss.
+    return queueSizeMs == 0 || queueSizeMs == 10;
 }
 
 jint audioFrameBytes(jint channels, jint samplesPerChannel = kSamplesPerChannel) {
@@ -259,6 +306,21 @@ public:
         int samplesPerChannel,
         std::int64_t timestampNs) {
         framesReceivedFromKotlin_.fetch_add(1, std::memory_order_relaxed);
+        const auto nowNs = std::chrono::steady_clock::now().time_since_epoch().count();
+        const auto prevEnqueueNs = lastEnqueueSteadyNs_.exchange(nowNs, std::memory_order_relaxed);
+        if (prevEnqueueNs != 0 && nowNs > prevEnqueueNs) {
+            const auto intervalNs = static_cast<std::uint64_t>(nowNs - prevEnqueueNs);
+            enqIntervalTotalNs_.fetch_add(intervalNs, std::memory_order_relaxed);
+            enqIntervalCount_.fetch_add(1, std::memory_order_relaxed);
+            auto prevMin = enqIntervalMinNs_.load(std::memory_order_relaxed);
+            while (intervalNs < prevMin &&
+                   !enqIntervalMinNs_.compare_exchange_weak(prevMin, intervalNs, std::memory_order_relaxed)) {
+            }
+            auto prevMax = enqIntervalMaxNs_.load(std::memory_order_relaxed);
+            while (intervalNs > prevMax &&
+                   !enqIntervalMaxNs_.compare_exchange_weak(prevMax, intervalNs, std::memory_order_relaxed)) {
+            }
+        }
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (!running_ || source_ == nullptr) {
@@ -267,6 +329,7 @@ public:
             }
             if (hasLatest_) {
                 framesDroppedDueBackpressure_.fetch_add(1, std::memory_order_relaxed);
+                logBackpressureDropThrottled();
             }
             latest_.samples = std::move(samples);
             latest_.sampleRate = sampleRate;
@@ -280,6 +343,25 @@ public:
     }
 
 private:
+    // C2: backpressure drops used to be silent counters — a stalled JVM capture
+    // thread looked like "connected but silent". Alarm (throttled to 1/s) on every drop.
+    void logBackpressureDropThrottled() {
+        const auto nowNs = std::chrono::steady_clock::now().time_since_epoch().count();
+        auto prevNs = lastBackpressureWarnNs_.load(std::memory_order_relaxed);
+        constexpr auto kThrottleNs = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+            std::chrono::seconds(1)).count();
+        if (prevNs != 0 && nowNs - prevNs < kThrottleNs) {
+            return;
+        }
+        if (!lastBackpressureWarnNs_.compare_exchange_strong(prevNs, nowNs, std::memory_order_relaxed)) {
+            return;
+        }
+        std::cerr << "WARN [OrbitLiveKitAudio] MIC_BACKPRESSURE_DROP operation=nativePushAudioFrame"
+                  << " message=\"JVM mic frame dropped; native worker still held the previous frame\""
+                  << " totalDropped=" << framesDroppedDueBackpressure_.load(std::memory_order_relaxed)
+                  << std::endl;
+    }
+
     void resetStats() {
         framesReceivedFromKotlin_ = 0;
         framesSubmittedToLiveKit_ = 0;
@@ -290,6 +372,16 @@ private:
         workerFramesSilent_ = 0;
         workerFramesCaptured_ = 0;
         workerFramesSkippedMuted_ = 0;
+        captureTotalNs_ = 0;
+        captureMaxNs_ = 0;
+        captureCount_ = 0;
+        sleepTotalNs_ = 0;
+        sleepCount_ = 0;
+        lastEnqueueSteadyNs_ = 0;
+        enqIntervalTotalNs_ = 0;
+        enqIntervalCount_ = 0;
+        enqIntervalMinNs_ = UINT64_MAX;
+        enqIntervalMaxNs_ = 0;
         formatDiagnosticsLogged_ = 0;
         preCaptureDiagnosticsLogged_ = 0;
         workerFrameSequence_ = 0;
@@ -299,7 +391,6 @@ private:
 
     void run() {
         using clock = std::chrono::steady_clock;
-        auto nextSubmit = clock::now();
 
         while (true) {
             AudioSourceFramePacket packet;
@@ -316,14 +407,13 @@ private:
                 source = source_;
             }
 
-            const auto now = clock::now();
-            if (nextSubmit > now) {
-                std::this_thread::sleep_until(nextSubmit);
-            } else if (now - nextSubmit > std::chrono::milliseconds(kFrameMs * 2)) {
-                nextSubmit = now;
-            }
-            nextSubmit += std::chrono::milliseconds(kFrameMs);
-
+            // NO consumer-side pacing here. In queue_size_ms==0 real-time mode
+            // captureFrame() costs ~0.07 ms (measured), and the producer is already
+            // hardware-paced at exactly one frame per 10 ms (blocking TargetDataLine
+            // read). A fixed kFrameMs sleep on top made the consumer run ~5 % slower
+            // than the producer, so the single slot perpetually overwrote — measured
+            // ~50 % frame loss ("stingy" voice). The cv-wait alone provides correct
+            // backpressure: bursts are drained immediately instead of dropped.
             if (source == nullptr || packet.samples.empty()) {
                 logStatsIfDue(false);
                 continue;
@@ -366,21 +456,24 @@ private:
                     workerFramesSilent_.fetch_add(1, std::memory_order_relaxed);
                 }
 
-                bool acceptingFrames = true;
-                bool micPublished = true;
-                bool trackMuted = false;
-                bool stateRead = false;
+                // Lock-free gate: atomics are the primary source of truth. The session
+                // mutex is only tried opportunistically to refresh the track-mute cache;
+                // on contention we fall back to the last known mute intent instead of
+                // defaulting to "capture anyway".
+                const bool acceptingFrames = g_acceptingFrames.load(std::memory_order_relaxed);
+                const bool micPublished = g_micPublished.load(std::memory_order_relaxed);
+                bool trackMuted;
                 {
                     std::unique_lock<std::mutex> sessionLock(g_sessionMutex, std::try_to_lock);
-                    if (sessionLock.owns_lock()) {
-                        acceptingFrames = g_acceptingFrames;
-                        micPublished = g_micPublished;
-                        trackMuted = g_audioTrack != nullptr && g_audioTrack->muted();
-                        stateRead = true;
+                    if (sessionLock.owns_lock() && g_audioTrack != nullptr) {
+                        trackMuted = g_audioTrack->muted();
+                        g_micTrackMutedCache.store(trackMuted, std::memory_order_relaxed);
+                    } else {
+                        trackMuted = g_micTrackMutedCache.load(std::memory_order_relaxed);
                     }
                 }
 
-                if (stateRead && (trackMuted || !acceptingFrames)) {
+                if (trackMuted || !acceptingFrames || !micPublished) {
                     if (trackMuted) {
                         workerFramesSkippedMuted_.fetch_add(1, std::memory_order_relaxed);
                     }
@@ -391,7 +484,7 @@ private:
                                   << " acceptingFrames=" << (acceptingFrames ? "true" : "false")
                                   << " micPublished=" << (micPublished ? "true" : "false")
                                   << " trackMuted=" << (trackMuted ? "true" : "false")
-                                  << " stateRead=" << (stateRead ? "true" : "false")
+                                  << " stateRead=true"
                                   << std::endl;
                     }
                     logStatsIfDue(false);
@@ -427,7 +520,6 @@ private:
                               << " acceptingFrames=" << (acceptingFrames ? "true" : "false")
                               << " micPublished=" << (micPublished ? "true" : "false")
                               << " trackMuted=" << (trackMuted ? "true" : "false")
-                              << " stateRead=" << (stateRead ? "true" : "false")
                               << std::endl;
                 }
 
@@ -442,7 +534,16 @@ private:
                               << std::endl;
                 }
                 framesSubmittedToLiveKit_.fetch_add(1, std::memory_order_relaxed);
+                const auto captureStartNs = clock::now().time_since_epoch().count();
                 source->captureFrame(frame, kAudioSourceCaptureTimeoutMs);
+                const auto captureCostNs = static_cast<std::uint64_t>(
+                    clock::now().time_since_epoch().count() - captureStartNs);
+                captureTotalNs_.fetch_add(captureCostNs, std::memory_order_relaxed);
+                captureCount_.fetch_add(1, std::memory_order_relaxed);
+                auto prevMaxNs = captureMaxNs_.load(std::memory_order_relaxed);
+                while (captureCostNs > prevMaxNs &&
+                       !captureMaxNs_.compare_exchange_weak(prevMaxNs, captureCostNs, std::memory_order_relaxed)) {
+                }
                 framesAcceptedByLiveKit_.fetch_add(1, std::memory_order_relaxed);
                 workerFramesCaptured_.fetch_add(1, std::memory_order_relaxed);
                 setLastCaptureError("");
@@ -494,6 +595,9 @@ private:
         }
 
         const auto error = lastCaptureError();
+        const auto captureCount = captureCount_.load(std::memory_order_relaxed);
+        const auto sleepCount = sleepCount_.load(std::memory_order_relaxed);
+        const auto enqCount = enqIntervalCount_.load(std::memory_order_relaxed);
         std::cout << "DEBUG [OrbitLiveKitAudio] audio source stats: received="
                   << framesReceivedFromKotlin_.load(std::memory_order_relaxed)
                   << " submitted=" << framesSubmittedToLiveKit_.load(std::memory_order_relaxed)
@@ -504,6 +608,16 @@ private:
                   << " workerFramesSilent=" << workerFramesSilent_.load(std::memory_order_relaxed)
                   << " workerFramesCaptured=" << workerFramesCaptured_.load(std::memory_order_relaxed)
                   << " workerFramesSkippedMuted=" << workerFramesSkippedMuted_.load(std::memory_order_relaxed)
+                  << " captureAvgMs=" << (captureCount > 0
+                        ? (captureTotalNs_.load(std::memory_order_relaxed) / captureCount) / 1e6 : 0.0)
+                  << " captureMaxMs=" << captureMaxNs_.load(std::memory_order_relaxed) / 1e6
+                  << " sleepAvgMs=" << (sleepCount > 0
+                        ? (sleepTotalNs_.load(std::memory_order_relaxed) / sleepCount) / 1e6 : 0.0)
+                  << " pushAvgMs=" << (enqCount > 0
+                        ? (enqIntervalTotalNs_.load(std::memory_order_relaxed) / enqCount) / 1e6 : 0.0)
+                  << " pushMinMs=" << (enqIntervalMinNs_.load(std::memory_order_relaxed) == UINT64_MAX ? 0.0
+                        : enqIntervalMinNs_.load(std::memory_order_relaxed) / 1e6)
+                  << " pushMaxMs=" << enqIntervalMaxNs_.load(std::memory_order_relaxed) / 1e6
                   << " lastCaptureError=" << (error.empty() ? "<none>" : error)
                   << std::endl;
     }
@@ -528,10 +642,21 @@ private:
     std::atomic<std::uint64_t> framesAcceptedByLiveKit_{0};
     std::atomic<std::uint64_t> framesTimedOut_{0};
     std::atomic<std::uint64_t> framesDroppedDueBackpressure_{0};
+    std::atomic<std::int64_t> lastBackpressureWarnNs_{0};
     std::atomic<std::uint64_t> workerFramesWithTonePeakGreaterThan1000_{0};
     std::atomic<std::uint64_t> workerFramesSilent_{0};
     std::atomic<std::uint64_t> workerFramesCaptured_{0};
     std::atomic<std::uint64_t> workerFramesSkippedMuted_{0};
+    std::atomic<std::uint64_t> captureTotalNs_{0};
+    std::atomic<std::uint64_t> captureMaxNs_{0};
+    std::atomic<std::uint32_t> captureCount_{0};
+    std::atomic<std::uint64_t> sleepTotalNs_{0};
+    std::atomic<std::uint32_t> sleepCount_{0};
+    std::atomic<std::int64_t> lastEnqueueSteadyNs_{0};
+    std::atomic<std::uint64_t> enqIntervalTotalNs_{0};
+    std::atomic<std::uint32_t> enqIntervalCount_{0};
+    std::atomic<std::uint64_t> enqIntervalMinNs_{UINT64_MAX};
+    std::atomic<std::uint64_t> enqIntervalMaxNs_{0};
 };
 
 NativeAudioSourceWorker g_audioSourceWorker;
@@ -729,12 +854,26 @@ private:
             return;
         }
 
-        const double divisor = std::sqrt(static_cast<double>(activeParticipants));
+        // Full-loudness downmix: every participant contributes at unity gain. Sums that would
+        // clip run through a soft-knee limiter instead of the old sqrt(N) attenuation, which
+        // made each added speaker ~3 dB quieter even when nobody was actually overlapping.
+        constexpr double kLimiterKnee = 24576.0; // -2.5 dBFS
+        constexpr double kLimiterCeiling = 32767.0;
+        auto limitSample = [kLimiterKnee, kLimiterCeiling](std::int32_t value) -> std::int16_t {
+            const double x = static_cast<double>(value);
+            if (x < kLimiterKnee && x > -kLimiterKnee) {
+                return static_cast<std::int16_t>(x);
+            }
+            const double sign = x < 0 ? -1.0 : 1.0;
+            const double over = std::abs(x) - kLimiterKnee;
+            const double limited = kLimiterKnee +
+                (kLimiterCeiling - kLimiterKnee) * std::tanh(over / (kLimiterCeiling - kLimiterKnee));
+            return static_cast<std::int16_t>(sign * limited);
+        };
+
         std::vector<std::int16_t> mixed(kSamplesPerChannel, 0);
         for (int i = 0; i < kSamplesPerChannel; ++i) {
-            const auto scaled = static_cast<std::int32_t>(accumulator[i] / divisor);
-            mixed[static_cast<std::size_t>(i)] = static_cast<std::int16_t>(
-                std::clamp(scaled, -32768, 32767));
+            mixed[static_cast<std::size_t>(i)] = limitSample(accumulator[static_cast<std::size_t>(i)]);
         }
 
         if (!mixedCallbackStartedLogged_) {
@@ -1748,6 +1887,213 @@ public:
     }
 };
 
+// Dedicated system-audio capture for the group-call screen-share audio track.
+// The fork ADM's loopback mixes into the mic PCM (P2P only); this thread feeds a
+// separate SOURCE_SCREENSHARE_AUDIO track instead. Never takes g_sessionMutex —
+// teardown joins this thread before touching the shared source.
+void stopShareLoopbackThread() {
+    if (!g_shareLoopbackActive.load(std::memory_order_acquire)) return;
+    g_shareLoopbackActive.store(false, std::memory_order_release);
+    if (g_shareLoopbackThread.joinable()) {
+        if (g_shareLoopbackThread.get_id() == std::this_thread::get_id()) {
+            g_shareLoopbackThread.detach();
+        } else {
+            g_shareLoopbackThread.join();
+        }
+    }
+}
+
+class ShareAudioClientActivator : public IActivateAudioInterfaceCompletionHandler {
+public:
+    HANDLE event = NULL;
+    IAudioClient* audioClient = nullptr;
+    HRESULT result = E_FAIL;
+
+    ShareAudioClientActivator() { event = CreateEvent(NULL, FALSE, FALSE, NULL); }
+    ~ShareAudioClientActivator() {
+        if (event) CloseHandle(event);
+        if (audioClient) audioClient->Release();
+    }
+
+    STDMETHODIMP QueryInterface(REFIID riid, void** ppv) override {
+        if (riid == __uuidof(IUnknown) || riid == __uuidof(IActivateAudioInterfaceCompletionHandler)) {
+            *ppv = static_cast<IActivateAudioInterfaceCompletionHandler*>(this);
+            return S_OK;
+        }
+        *ppv = NULL;
+        return E_NOINTERFACE;
+    }
+    STDMETHODIMP_(ULONG) AddRef() override { return 1; }
+    STDMETHODIMP_(ULONG) Release() override { return 1; }
+
+    STDMETHODIMP ActivateCompleted(IActivateAudioInterfaceAsyncOperation* operation) override {
+        HRESULT activateResult = E_FAIL;
+        IUnknown* unknown = NULL;
+        result = operation->GetActivateResult(&activateResult, &unknown);
+        if (SUCCEEDED(result) && SUCCEEDED(activateResult) && unknown != NULL) {
+            result = unknown->QueryInterface(__uuidof(IAudioClient), (void**)&audioClient);
+            unknown->Release();
+        } else {
+            result = activateResult;
+        }
+        SetEvent(event);
+        return S_OK;
+    }
+};
+
+void shareAudioLoopbackMain(std::shared_ptr<livekit::AudioSource> source) {
+    CoInitializeEx(NULL, COINIT_MULTITHREADED);
+
+    IMMDeviceEnumerator* enumerator = NULL;
+    IMMDevice* device = NULL;
+    IAudioClient* audioClient = NULL;
+    IAudioCaptureClient* captureClient = NULL;
+    WAVEFORMATEX* mixFormat = NULL;
+
+    HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), NULL, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator), (void**)&enumerator);
+    if (FAILED(hr)) goto cleanup;
+    hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
+    if (FAILED(hr)) goto cleanup;
+
+    {
+        // Prefer process-loopback (excludes our own playback) on builds that support it.
+        AUDIOCLIENT_ACTIVATION_PARAMS params = {};
+        params.ActivationType = AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK;
+        params.ProcessLoopbackParams.ProcessLoopbackMode = PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE;
+        params.ProcessLoopbackParams.TargetProcessId = GetCurrentProcessId();
+
+        PROPVARIANT activateParams = {};
+        activateParams.vt = VT_BLOB;
+        activateParams.blob.cbSize = sizeof(params);
+        activateParams.blob.pBlobData = (BYTE*)&params;
+
+        LPWSTR deviceId = NULL;
+        hr = device->GetId(&deviceId);
+        if (SUCCEEDED(hr)) {
+            ShareAudioClientActivator activator;
+            IActivateAudioInterfaceAsyncOperation* asyncOp = NULL;
+            HRESULT asyncHr = ActivateAudioInterfaceAsync(deviceId, __uuidof(IAudioClient), &activateParams, &activator, &asyncOp);
+            if (SUCCEEDED(asyncHr) && asyncOp) {
+                WaitForSingleObject(activator.event, 2000);
+                if (SUCCEEDED(activator.result) && activator.audioClient != NULL) {
+                    audioClient = activator.audioClient;
+                    audioClient->AddRef();
+                }
+                asyncOp->Release();
+            }
+            CoTaskMemFree(deviceId);
+        }
+    }
+
+    if (audioClient == NULL) {
+        hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, NULL, (void**)&audioClient);
+        if (FAILED(hr)) goto cleanup;
+    }
+
+    hr = audioClient->GetMixFormat(&mixFormat);
+    if (FAILED(hr)) goto cleanup;
+    hr = audioClient->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK, 0, 0, mixFormat, NULL);
+    if (FAILED(hr)) goto cleanup;
+    hr = audioClient->GetService(__uuidof(IAudioCaptureClient), (void**)&captureClient);
+    if (FAILED(hr)) goto cleanup;
+
+    audioClient->Start();
+    {
+        const int captureRate = mixFormat->nSamplesPerSec;
+        const int captureChannels = mixFormat->nChannels;
+        std::deque<std::int16_t> accumulation;
+
+        std::cout << "DEBUG [ScreenShareAudioPublish] loopback started sampleRate="
+                  << captureRate << " channels=" << captureChannels << std::endl;
+
+        while (g_shareLoopbackActive.load(std::memory_order_acquire)) {
+            Sleep(10);
+
+            UINT32 packetLength = 0;
+            if (FAILED(captureClient->GetNextPacketSize(&packetLength))) break;
+
+            while (packetLength != 0) {
+                BYTE* data = nullptr;
+                UINT32 framesAvailable = 0;
+                DWORD flags = 0;
+                if (FAILED(captureClient->GetBuffer(&data, &framesAvailable, &flags, NULL, NULL))) break;
+
+                std::vector<std::int16_t> pcm16;
+                if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {
+                    pcm16.assign((std::size_t)framesAvailable * captureChannels, 0);
+                } else if (mixFormat->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+                           ((WAVEFORMATEXTENSIBLE*)mixFormat)->SubFormat == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT) {
+                    float* floatData = (float*)data;
+                    pcm16.reserve((std::size_t)framesAvailable * captureChannels);
+                    for (UINT32 i = 0; i < framesAvailable * (UINT32)captureChannels; i++) {
+                        float sample = data ? floatData[i] : 0.0f;
+                        if (sample > 1.0f) sample = 1.0f;
+                        if (sample < -1.0f) sample = -1.0f;
+                        pcm16.push_back((std::int16_t)(sample * 32767.0f));
+                    }
+                } else if (data != nullptr) {
+                    const std::int16_t* int16Data = (const std::int16_t*)data;
+                    pcm16.assign(int16Data, int16Data + (std::size_t)framesAvailable * captureChannels);
+                }
+
+                if (!pcm16.empty()) {
+                    // Nearest-neighbor resample to 48 kHz stereo.
+                    const int targetFrames = (int)((long long)framesAvailable * 48000 / captureRate);
+                    std::vector<std::int16_t> resampled((std::size_t)targetFrames * 2, 0);
+                    for (int i = 0; i < targetFrames; i++) {
+                        int srcIdx = (int)((long long)i * captureRate / 48000);
+                        if (srcIdx >= (int)framesAvailable) srcIdx = (int)framesAvailable - 1;
+                        for (int c = 0; c < 2; c++) {
+                            int srcChannel = captureChannels > c ? c : 0;
+                            resampled[(std::size_t)i * 2 + c] = pcm16[(std::size_t)srcIdx * captureChannels + srcChannel];
+                        }
+                    }
+                    accumulation.insert(accumulation.end(), resampled.begin(), resampled.end());
+
+                    // Chunk to exact 10 ms LiveKit frames: 480 samples x 2 channels.
+                    while (accumulation.size() >= (std::size_t)kSamplesPerChannel * 2) {
+                        std::vector<std::int16_t> frameSamples(
+                            accumulation.begin(),
+                            accumulation.begin() + (std::ptrdiff_t)(kSamplesPerChannel * 2));
+                        accumulation.erase(
+                            accumulation.begin(),
+                            accumulation.begin() + (std::ptrdiff_t)(kSamplesPerChannel * 2));
+                        try {
+                            livekit::AudioFrame frame(
+                                std::move(frameSamples),
+                                kSampleRate,
+                                2,
+                                kSamplesPerChannel);
+                            source->captureFrame(frame, kAudioSourceCaptureTimeoutMs);
+                        } catch (...) {
+                            // Consumer not ready or transient overflow; drop and continue.
+                        }
+                    }
+
+                    // Bound drift if the consumer stalls for a long time (~500 ms).
+                    const std::size_t maxQueued = (std::size_t)kSampleRate * 2 / 2;
+                    if (accumulation.size() > maxQueued) {
+                        accumulation.erase(accumulation.begin(), accumulation.end() - maxQueued);
+                    }
+                }
+
+                captureClient->ReleaseBuffer(framesAvailable);
+                if (FAILED(captureClient->GetNextPacketSize(&packetLength))) break;
+            }
+        }
+        audioClient->Stop();
+        std::cout << "DEBUG [ScreenShareAudioPublish] loopback stopped" << std::endl;
+    }
+
+cleanup:
+    if (captureClient) captureClient->Release();
+    if (audioClient) audioClient->Release();
+    if (mixFormat) CoTaskMemFree(mixFormat);
+    if (device) device->Release();
+    if (enumerator) enumerator->Release();
+    CoUninitialize();
+}
+
 void resetRoomLocked() {
     g_acceptingFrames = false;
     if (g_videoSource != nullptr || g_videoTrack != nullptr || g_videoPublished || g_acceptingVideoFrames) {
@@ -1788,6 +2134,58 @@ void resetRoomLocked() {
     g_videoFrameDroppedNotReadyLogged = false;
     g_videoPushDiagnosticsLogged = 0;
     g_lastVideoTimestampNs = 0;
+    if (g_screenShareSource != nullptr || g_screenShareTrack != nullptr || g_screenSharePublished) {
+        std::cout << "DEBUG [ScreenSharePublish] stop requested reason=room-reset" << std::endl;
+    }
+    g_acceptingScreenShareFrames = false;
+    if (g_room != nullptr && g_room->localParticipant() != nullptr && !g_screenSharePublicationSid.empty()) {
+        try {
+            std::cout << "DEBUG [ScreenSharePublish] unpublish started publicationSid="
+                      << g_screenSharePublicationSid
+                      << " reason=room-reset"
+                      << std::endl;
+            g_room->localParticipant()->unpublishTrack(g_screenSharePublicationSid);
+        } catch (const std::exception& error) {
+            std::cerr << "WARN [ScreenSharePublish] unpublish failed publicationSid="
+                      << g_screenSharePublicationSid
+                      << " message=" << error.what()
+                      << std::endl;
+        } catch (...) {
+            std::cerr << "WARN [ScreenSharePublish] unpublish failed publicationSid="
+                      << g_screenSharePublicationSid
+                      << " message=unknown"
+                      << std::endl;
+        }
+    }
+    g_screenShareTrack.reset();
+    g_screenShareSource.reset();
+    g_screenSharePublished = false;
+    g_screenShareWidth = 0;
+    g_screenShareHeight = 0;
+    g_screenShareFps = 0;
+    g_screenSharePublicationSid.clear();
+    g_screenShareFrameDroppedNotReadyLogged = false;
+    g_screenSharePushDiagnosticsLogged = 0;
+    if (g_shareAudioPublished || g_shareAudioTrack != nullptr || !g_shareAudioPublicationSid.empty()) {
+        std::cout << "DEBUG [ScreenShareAudioPublish] stop requested reason=room-reset" << std::endl;
+    }
+    stopShareLoopbackThread();
+    if (g_room != nullptr && g_room->localParticipant() != nullptr && !g_shareAudioPublicationSid.empty()) {
+        try {
+            g_room->localParticipant()->unpublishTrack(g_shareAudioPublicationSid);
+        } catch (const std::exception& error) {
+            std::cerr << "WARN [ScreenShareAudioPublish] unpublish failed publicationSid="
+                      << g_shareAudioPublicationSid
+                      << " message=" << error.what()
+                      << std::endl;
+        } catch (...) {
+            std::cerr << "WARN [ScreenShareAudioPublish] unpublish failed message=unknown" << std::endl;
+        }
+    }
+    g_shareAudioTrack.reset();
+    g_shareAudioSource.reset();
+    g_shareAudioPublished = false;
+    g_shareAudioPublicationSid.clear();
     g_audioSourceWorker.stop();
     if (g_room != nullptr) {
         g_room->setDelegate(nullptr);
@@ -2464,7 +2862,7 @@ Java_livekit_LiveKitNativeAudioBridge_nativeDisconnect(JNIEnv*, jclass) {
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(
-    JNIEnv*, jclass, jint sampleRate, jint channels, jint frameMs, jint queueSizeMs, jboolean expectedTestTone) {
+    JNIEnv*, jclass, jint sampleRate, jint channels, jint frameMs, jint queueSizeMs, jboolean expectedTestTone, jint maxBitrateBps) {
     std::cout << "DEBUG [OrbitLiveKitAudio] mic publish started" << std::endl;
     if (sampleRate != kSampleRate ||
         !isSupportedAudioChannels(channels) ||
@@ -2475,7 +2873,7 @@ Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(
         g_micPublished = false;
         g_publishedAudioChannels = 0;
         g_expectedTestTone = false;
-        std::cerr << "ERROR [OrbitLiveKitAudio] Invalid audio publish format; expected 48000 Hz, 1 or 2 channels, 10 ms, queueSizeMs 10" << std::endl;
+        std::cerr << "ERROR [OrbitLiveKitAudio] Invalid audio publish format; expected 48000 Hz, 1 or 2 channels, 10 ms, queueSizeMs 0 or 10" << std::endl;
         return JNI_FALSE;
     }
 
@@ -2513,8 +2911,16 @@ Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(
                   << " samplesPerChannel=" << kSamplesPerChannel
                   << " bytesPerFrame=" << audioFrameBytes(channels)
                   << std::endl;
+        int effectiveMaxBitrateBps = maxBitrateBps > 0 ? static_cast<int>(maxBitrateBps) : kDefaultAudioMaxBitrateBps;
+        if (effectiveMaxBitrateBps < kMinAudioMaxBitrateBps) effectiveMaxBitrateBps = kMinAudioMaxBitrateBps;
+        if (effectiveMaxBitrateBps > kMaxAudioMaxBitrateBps) effectiveMaxBitrateBps = kMaxAudioMaxBitrateBps;
         livekit::TrackPublishOptions publishOptions;
         publishOptions.source = livekit::TrackSource::SOURCE_MICROPHONE;
+        publishOptions.dtx = true;
+        publishOptions.red = true;
+        livekit::AudioEncodingOptions audioEncoding;
+        audioEncoding.max_bitrate = static_cast<std::uint64_t>(effectiveMaxBitrateBps);
+        publishOptions.audio_encoding = audioEncoding;
 
         std::cout << "DEBUG [OrbitLiveKitAudio] audio publish options: "
                   << "trackName=audio"
@@ -2523,6 +2929,9 @@ Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(
                   << " trackSourceLabel=" << trackSourceLabel(livekit::TrackSource::SOURCE_MICROPHONE)
                   << " source=SOURCE_MICROPHONE"
                   << " channels=" << channels
+                  << " maxBitrateBps=" << effectiveMaxBitrateBps
+                  << " dtx=true"
+                  << " red=true"
                   << " expectedTestTone=" << (g_expectedTestTone.load(std::memory_order_relaxed) ? "true" : "false")
                   << std::endl;
 
@@ -2545,6 +2954,7 @@ Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(
         if (g_audioTrack->muted()) {
             g_audioTrack->unmute();
         }
+        g_micTrackMutedCache.store(false, std::memory_order_relaxed);
         g_audioSourceWorker.start(g_audioSource);
         g_micPublished = true;
         g_acceptingFrames = true;
@@ -3148,7 +3558,8 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePublishAudio(
     jint sampleRate,
     jint channels,
     jint queueSizeMs,
-    jboolean expectedTestTone) {
+    jboolean expectedTestTone,
+    jint maxBitrateBps) {
     if (!isRawSessionValid(sessionId)) {
         std::lock_guard<std::mutex> lock(g_sessionMutex);
         setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativePublishAudio", false);
@@ -3162,7 +3573,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePublishAudio(
     }
 
     const jboolean published =
-        Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(env, nullptr, sampleRate, channels, kFrameMs, queueSizeMs, expectedTestTone);
+        Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(env, nullptr, sampleRate, channels, kFrameMs, queueSizeMs, expectedTestTone, maxBitrateBps);
     if (published == JNI_TRUE) {
         dispatchSimpleNativeEvent(env, "livekit/NativeMediaEvent$AudioPublished", sessionId, epoch);
         return kStatusOk;
@@ -3231,7 +3642,8 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePublishVideo(
     jint width,
     jint height,
     jint fps,
-    jint format) {
+    jint format,
+    jint maxBitrateBps) {
     std::lock_guard<std::mutex> lock(g_sessionMutex);
     if (!isRawSessionValid(sessionId)) {
         setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativePublishVideo", false);
@@ -3310,7 +3722,11 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePublishVideo(
 
         livekit::TrackPublishOptions publishOptions;
         publishOptions.source = livekit::TrackSource::SOURCE_CAMERA;
+        int effectiveVideoMaxBitrateBps = maxBitrateBps > 0 ? static_cast<int>(maxBitrateBps) : kDefaultVideoMaxBitrateBps;
+        if (effectiveVideoMaxBitrateBps < kMinVideoMaxBitrateBps) effectiveVideoMaxBitrateBps = kMinVideoMaxBitrateBps;
+        if (effectiveVideoMaxBitrateBps > kMaxVideoMaxBitrateBps) effectiveVideoMaxBitrateBps = kMaxVideoMaxBitrateBps;
         livekit::VideoEncodingOptions videoEncoding;
+        videoEncoding.max_bitrate = static_cast<std::uint64_t>(effectiveVideoMaxBitrateBps);
         videoEncoding.max_framerate = static_cast<double>(g_videoFps);
         publishOptions.video_encoding = videoEncoding;
 
@@ -3321,6 +3737,8 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePublishVideo(
                   << " height=" << g_videoHeight
                   << " fps=" << g_videoFps
                   << " format=I420"
+                  << " maxBitrateBps=" << effectiveVideoMaxBitrateBps
+                  << " simulcast=false"
                   << std::endl;
         g_room->localParticipant()->publishTrack(g_videoTrack, publishOptions);
         std::cout << "VideoPublish publishTrack returned success "
@@ -3510,6 +3928,412 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePushVideoFrame(
 }
 
 extern "C" JNIEXPORT jint JNICALL
+Java_livekit_OrbitLiveKitNativeRaw_nativePublishScreenShare(
+    JNIEnv* env,
+    jclass,
+    jlong sessionId,
+    jlong epoch,
+    jint width,
+    jint height,
+    jint fps,
+    jint maxBitrateBps) {
+    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    if (!isRawSessionValid(sessionId)) {
+        setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativePublishScreenShare", false);
+        return kStatusStaleEvent;
+    }
+    g_rawEpoch = epoch;
+    clearRawErrorLocked();
+
+    if (width <= 0 || height <= 0 || fps <= 0) {
+        setRawErrorLocked("CAMERA_MODE_REJECTED", "Invalid screen share publish dimensions", "nativePublishScreenShare", true);
+        return kStatusPublishVideoFailed;
+    }
+
+    if (!g_connected || g_room == nullptr || g_room->localParticipant() == nullptr) {
+        setRawErrorLocked("PUBLISH_VIDEO_FAILED", "Cannot publish screen share before room connect", "nativePublishScreenShare", true);
+        return kStatusPublishVideoFailed;
+    }
+
+    if (g_screenShareSource != nullptr && (width != g_screenShareWidth || height != g_screenShareHeight)) {
+        // Resolution changed since last share: republish on top of the previous track.
+        g_acceptingScreenShareFrames = false;
+        if (!g_screenSharePublicationSid.empty()) {
+            try {
+                g_room->localParticipant()->unpublishTrack(g_screenSharePublicationSid);
+            } catch (...) {
+            }
+        }
+        g_screenShareTrack.reset();
+        g_screenShareSource.reset();
+        g_screenSharePublicationSid.clear();
+        g_screenSharePublished = false;
+    }
+
+    try {
+        int effectiveShareMaxBitrateBps = maxBitrateBps > 0 ? static_cast<int>(maxBitrateBps) : kDefaultScreenShareMaxBitrateBps;
+        if (effectiveShareMaxBitrateBps < kMinScreenShareMaxBitrateBps) effectiveShareMaxBitrateBps = kMinScreenShareMaxBitrateBps;
+        if (effectiveShareMaxBitrateBps > kMaxScreenShareMaxBitrateBps) effectiveShareMaxBitrateBps = kMaxScreenShareMaxBitrateBps;
+
+        if (g_screenShareSource == nullptr) {
+            g_screenShareWidth = static_cast<int>(width);
+            g_screenShareHeight = static_cast<int>(height);
+            g_screenShareFps = static_cast<int>(fps);
+            g_screenShareSource = std::make_shared<livekit::VideoSource>(g_screenShareWidth, g_screenShareHeight);
+            g_screenShareTrack = livekit::LocalVideoTrack::createLocalVideoTrack("screenshare", g_screenShareSource);
+            if (g_screenShareTrack == nullptr) {
+                g_screenShareSource.reset();
+                setRawErrorLocked("PUBLISH_VIDEO_FAILED", "Native C++ screenshare track creation failed", "nativePublishScreenShare", true);
+                return kStatusPublishVideoFailed;
+            }
+
+            livekit::TrackPublishOptions publishOptions;
+            publishOptions.source = livekit::TrackSource::SOURCE_SCREENSHARE;
+            livekit::VideoEncodingOptions videoEncoding;
+            videoEncoding.max_bitrate = static_cast<std::uint64_t>(effectiveShareMaxBitrateBps);
+            videoEncoding.max_framerate = static_cast<double>(g_screenShareFps);
+            publishOptions.video_encoding = videoEncoding;
+
+            std::cout << "ScreenSharePublish started "
+                      << "trackName=screenshare "
+                      << "trackSource=SOURCE_SCREENSHARE "
+                      << "width=" << g_screenShareWidth
+                      << " height=" << g_screenShareHeight
+                      << " fps=" << g_screenShareFps
+                      << " format=I420"
+                      << " maxBitrateBps=" << effectiveShareMaxBitrateBps
+                      << std::endl;
+            g_room->localParticipant()->publishTrack(g_screenShareTrack, publishOptions);
+
+            const auto publication = g_screenShareTrack->publication();
+            if (g_screenShareSource == nullptr || g_screenShareTrack == nullptr || publication == nullptr) {
+                g_screenShareTrack.reset();
+                g_screenShareSource.reset();
+                setRawErrorLocked("PUBLISH_VIDEO_FAILED", "Native C++ screenshare publish returned no publication", "nativePublishScreenShare", true);
+                return kStatusPublishVideoFailed;
+            }
+
+            if (g_screenShareTrack->muted()) {
+                g_screenShareTrack->unmute();
+            }
+            g_screenSharePublicationSid = publication->sid();
+            g_screenSharePublished = true;
+        }
+
+        g_acceptingScreenShareFrames = true;
+        g_screenShareFrameDroppedNotReadyLogged = false;
+        g_screenSharePushDiagnosticsLogged = 0;
+        std::cout << "ScreenSharePublish accepting frames "
+                  << "publicationSid=" << (g_screenSharePublicationSid.empty() ? std::string{"<none>"} : g_screenSharePublicationSid)
+                  << std::endl;
+    } catch (const std::exception& error) {
+        g_acceptingScreenShareFrames = false;
+        g_screenShareTrack.reset();
+        g_screenShareSource.reset();
+        g_screenSharePublicationSid.clear();
+        g_screenSharePublished = false;
+        setRawErrorLocked("PUBLISH_VIDEO_FAILED", std::string("Native C++ screenshare publish failed: ") + error.what(), "nativePublishScreenShare", true);
+        return kStatusPublishVideoFailed;
+    } catch (...) {
+        g_acceptingScreenShareFrames = false;
+        g_screenShareTrack.reset();
+        g_screenShareSource.reset();
+        g_screenSharePublicationSid.clear();
+        g_screenSharePublished = false;
+        setRawErrorLocked("PUBLISH_VIDEO_FAILED", "Native C++ screenshare publish failed", "nativePublishScreenShare", true);
+        return kStatusPublishVideoFailed;
+    }
+
+    return kStatusOk;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_livekit_OrbitLiveKitNativeRaw_nativeUnpublishScreenShare(
+    JNIEnv* env,
+    jclass,
+    jlong sessionId,
+    jlong epoch) {
+    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    if (!isRawSessionValid(sessionId)) {
+        setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativeUnpublishScreenShare", false);
+        return kStatusStaleEvent;
+    }
+    clearRawErrorLocked();
+
+    g_acceptingScreenShareFrames = false;
+    if (g_room != nullptr && g_room->localParticipant() != nullptr && !g_screenSharePublicationSid.empty()) {
+        try {
+            std::cout << "DEBUG [ScreenSharePublish] unpublish started publicationSid="
+                      << g_screenSharePublicationSid
+                      << " reason=share-stopped"
+                      << std::endl;
+            g_room->localParticipant()->unpublishTrack(g_screenSharePublicationSid);
+            std::cout << "DEBUG [ScreenSharePublish] unpublish success" << std::endl;
+        } catch (const std::exception& error) {
+            std::cerr << "WARN [ScreenSharePublish] unpublish failed message=" << error.what() << std::endl;
+        } catch (...) {
+            std::cerr << "WARN [ScreenSharePublish] unpublish failed message=unknown" << std::endl;
+        }
+    }
+    g_screenShareTrack.reset();
+    g_screenShareSource.reset();
+    g_screenSharePublished = false;
+    g_screenShareWidth = 0;
+    g_screenShareHeight = 0;
+    g_screenShareFps = 0;
+    g_screenSharePublicationSid.clear();
+    g_screenShareFrameDroppedNotReadyLogged = false;
+    g_screenSharePushDiagnosticsLogged = 0;
+    return kStatusOk;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_livekit_OrbitLiveKitNativeRaw_nativePublishScreenShareAudio(
+    JNIEnv* env,
+    jclass,
+    jlong sessionId,
+    jlong epoch) {
+    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    if (!isRawSessionValid(sessionId)) {
+        setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativePublishScreenShareAudio", false);
+        return kStatusStaleEvent;
+    }
+    g_rawEpoch = epoch;
+    clearRawErrorLocked();
+
+    if (g_shareAudioPublished && g_shareAudioTrack != nullptr && g_shareAudioSource != nullptr) {
+        std::cout << "DEBUG [ScreenShareAudioPublish] already active; reusing track" << std::endl;
+        return kStatusOk;
+    }
+
+    if (!g_connected || g_room == nullptr || g_room->localParticipant() == nullptr) {
+        setRawErrorLocked("PUBLISH_AUDIO_FAILED", "Cannot publish screen share audio before room connect", "nativePublishScreenShareAudio", true);
+        return kStatusPublishAudioFailed;
+    }
+
+    try {
+        g_shareAudioSource = std::make_shared<livekit::AudioSource>(kSampleRate, 2, 0);
+        g_shareAudioTrack = livekit::LocalAudioTrack::createLocalAudioTrack("screenshare_audio", g_shareAudioSource);
+        if (g_shareAudioTrack == nullptr) {
+            g_shareAudioSource.reset();
+            setRawErrorLocked("PUBLISH_AUDIO_FAILED", "Native C++ screenshare audio track creation failed", "nativePublishScreenShareAudio", true);
+            return kStatusPublishAudioFailed;
+        }
+
+        // Music-mode preset: DTX off and a higher Opus budget than the mic track;
+        // this source bypasses the APM entirely (frames are pushed, not captured
+        // from the device), so no NS/AGC can pump or gate it.
+        livekit::TrackPublishOptions publishOptions;
+        publishOptions.source = livekit::TrackSource::SOURCE_SCREENSHARE_AUDIO;
+        publishOptions.dtx = false;
+        publishOptions.red = true;
+        livekit::AudioEncodingOptions audioEncoding;
+        audioEncoding.max_bitrate = static_cast<std::uint64_t>(kDefaultShareAudioMaxBitrateBps);
+        publishOptions.audio_encoding = audioEncoding;
+
+        std::cout << "DEBUG [ScreenShareAudioPublish] publishing "
+                  << "trackName=screenshare_audio"
+                  << " source=SOURCE_SCREENSHARE_AUDIO"
+                  << " sampleRate=" << kSampleRate
+                  << " channels=2"
+                  << " maxBitrateBps=" << kDefaultShareAudioMaxBitrateBps
+                  << " dtx=false red=true"
+                  << std::endl;
+
+        g_room->localParticipant()->publishTrack(g_shareAudioTrack, publishOptions);
+
+        const auto publication = g_shareAudioTrack->publication();
+        if (g_shareAudioSource == nullptr || g_shareAudioTrack == nullptr || publication == nullptr) {
+            g_shareAudioTrack.reset();
+            g_shareAudioSource.reset();
+            setRawErrorLocked("PUBLISH_AUDIO_FAILED", "Native C++ screenshare audio publish returned no publication", "nativePublishScreenShareAudio", true);
+            return kStatusPublishAudioFailed;
+        }
+        if (g_shareAudioTrack->muted()) {
+            g_shareAudioTrack->unmute();
+        }
+        g_shareAudioPublicationSid = publication->sid();
+
+        stopShareLoopbackThread();
+        g_shareLoopbackActive.store(true, std::memory_order_release);
+        g_shareLoopbackThread = std::thread(shareAudioLoopbackMain, g_shareAudioSource);
+        g_shareAudioPublished = true;
+        std::cout << "DEBUG [MatrixRTCMapping] native screenshare audio published"
+                  << " publishedTrackSid=" << publication->sid()
+                  << " publishedTrackName=" << publication->name()
+                  << " publishedTrackSource=" << trackSourceLabel(publication->source())
+                  << std::endl;
+        return kStatusOk;
+    } catch (const std::exception& error) {
+        stopShareLoopbackThread();
+        g_shareAudioTrack.reset();
+        g_shareAudioSource.reset();
+        g_shareAudioPublicationSid.clear();
+        g_shareAudioPublished = false;
+        setRawErrorLocked("PUBLISH_AUDIO_FAILED", std::string("Native C++ screenshare audio publish failed: ") + error.what(), "nativePublishScreenShareAudio", true);
+        return kStatusPublishAudioFailed;
+    } catch (...) {
+        stopShareLoopbackThread();
+        g_shareAudioTrack.reset();
+        g_shareAudioSource.reset();
+        g_shareAudioPublicationSid.clear();
+        g_shareAudioPublished = false;
+        setRawErrorLocked("PUBLISH_AUDIO_FAILED", "Native C++ screenshare audio publish failed", "nativePublishScreenShareAudio", true);
+        return kStatusPublishAudioFailed;
+    }
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_livekit_OrbitLiveKitNativeRaw_nativeUnpublishScreenShareAudio(
+    JNIEnv* env,
+    jclass,
+    jlong sessionId,
+    jlong epoch) {
+    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    if (!isRawSessionValid(sessionId)) {
+        setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativeUnpublishScreenShareAudio", false);
+        return kStatusStaleEvent;
+    }
+    clearRawErrorLocked();
+
+    if (g_shareAudioPublished || !g_shareAudioPublicationSid.empty()) {
+        std::cout << "DEBUG [ScreenShareAudioPublish] unpublish started reason=share-audio-stopped" << std::endl;
+    }
+    stopShareLoopbackThread();
+    if (g_room != nullptr && g_room->localParticipant() != nullptr && !g_shareAudioPublicationSid.empty()) {
+        try {
+            g_room->localParticipant()->unpublishTrack(g_shareAudioPublicationSid);
+            std::cout << "DEBUG [ScreenShareAudioPublish] unpublish success" << std::endl;
+        } catch (const std::exception& error) {
+            std::cerr << "WARN [ScreenShareAudioPublish] unpublish failed message=" << error.what() << std::endl;
+        } catch (...) {
+            std::cerr << "WARN [ScreenShareAudioPublish] unpublish failed message=unknown" << std::endl;
+        }
+    }
+    g_shareAudioTrack.reset();
+    g_shareAudioSource.reset();
+    g_shareAudioPublished = false;
+    g_shareAudioPublicationSid.clear();
+    return kStatusOk;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_livekit_OrbitLiveKitNativeRaw_nativePushScreenShareFrame(
+    JNIEnv* env,
+    jclass,
+    jlong sessionId,
+    jlong epoch,
+    jobject buffer,
+    jint width,
+    jint height,
+    jint format,
+    jint strideY,
+    jint strideU,
+    jint strideV,
+    jlong timestampNs,
+    jint rotation) {
+    constexpr jint kVideoFormatI420 = 5;
+    std::shared_ptr<livekit::VideoSource> source;
+    {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        if (!isRawSessionValid(sessionId)) {
+            setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativePushScreenShareFrame", false);
+            return kStatusStaleEvent;
+        }
+        if (epoch != g_rawEpoch) {
+            setRawErrorLocked("STALE_EVENT", "Stale native media epoch", "nativePushScreenShareFrame", true);
+            return kStatusStaleEvent;
+        }
+        if (!g_acceptingScreenShareFrames || g_screenShareSource == nullptr) {
+            if (!g_screenShareFrameDroppedNotReadyLogged) {
+                g_screenShareFrameDroppedNotReadyLogged = true;
+                std::cout << "DEBUG [ScreenSharePublish] frame dropped; share source not ready" << std::endl;
+            }
+            clearRawErrorLocked();
+            return kStatusOk;
+        }
+        if (format != kVideoFormatI420 || width != g_screenShareWidth || height != g_screenShareHeight) {
+            setRawErrorLocked("VIDEO_CAPTURE_FAILED", "Screen share frame dimensions do not match published source", "nativePushScreenShareFrame", true);
+            return kStatusVideoCaptureFailed;
+        }
+        source = g_screenShareSource;
+    }
+
+    if (buffer == nullptr || source == nullptr) {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        setRawErrorLocked("VIDEO_CAPTURE_FAILED", "Missing screen share frame buffer or source", "nativePushScreenShareFrame", true);
+        return kStatusVideoCaptureFailed;
+    }
+
+    void* data = env->GetDirectBufferAddress(buffer);
+    const jlong capacity = env->GetDirectBufferCapacity(buffer);
+    if (data == nullptr || capacity <= 0) {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        setRawErrorLocked("VIDEO_CAPTURE_FAILED", "Screen share frame buffer must be direct", "nativePushScreenShareFrame", true);
+        return kStatusVideoCaptureFailed;
+    }
+
+    const int chromaWidth = (static_cast<int>(width) + 1) / 2;
+    const int chromaHeight = (static_cast<int>(height) + 1) / 2;
+    const std::size_t expectedBytes =
+        static_cast<std::size_t>(width) * static_cast<std::size_t>(height) +
+        static_cast<std::size_t>(chromaWidth) * static_cast<std::size_t>(chromaHeight) * 2U;
+
+    if (strideY != width || strideU != chromaWidth || strideV != chromaWidth ||
+        static_cast<std::size_t>(capacity) < expectedBytes) {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        setRawErrorLocked("VIDEO_CAPTURE_FAILED", "Screen share packed I420 frame layout is invalid", "nativePushScreenShareFrame", true);
+        return kStatusVideoCaptureFailed;
+    }
+
+    try {
+        std::vector<std::uint8_t> frameData(expectedBytes);
+        std::memcpy(frameData.data(), data, expectedBytes);
+        livekit::VideoFrame frame(
+            static_cast<int>(width),
+            static_cast<int>(height),
+            livekit::VideoBufferType::I420,
+            std::move(frameData));
+
+        livekit::VideoRotation nativeRotation = livekit::VideoRotation::VIDEO_ROTATION_0;
+        if (rotation == 90) {
+            nativeRotation = livekit::VideoRotation::VIDEO_ROTATION_90;
+        } else if (rotation == 180) {
+            nativeRotation = livekit::VideoRotation::VIDEO_ROTATION_180;
+        } else if (rotation == 270) {
+            nativeRotation = livekit::VideoRotation::VIDEO_ROTATION_270;
+        }
+        const auto timestampUs = static_cast<std::int64_t>(timestampNs / 1000LL);
+        source->captureFrame(frame, timestampUs, nativeRotation);
+
+        {
+            std::lock_guard<std::mutex> lock(g_sessionMutex);
+            if (g_screenSharePushDiagnosticsLogged < 4) {
+                g_screenSharePushDiagnosticsLogged += 1;
+                std::cout << "DEBUG [ScreenSharePublish] frame #"
+                          << g_screenSharePushDiagnosticsLogged
+                          << " width=" << width
+                          << " height=" << height
+                          << " bytes=" << expectedBytes
+                          << " timestampUs=" << timestampUs
+                          << " trackName=screenshare"
+                          << " trackSource=SOURCE_SCREENSHARE"
+                          << std::endl;
+            }
+        }
+        return kStatusOk;
+    } catch (const std::exception& error) {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        setRawErrorLocked("VIDEO_CAPTURE_FAILED", std::string("Native screenshare captureFrame failed: ") + error.what(), "nativePushScreenShareFrame", true);
+        return kStatusVideoCaptureFailed;
+    } catch (...) {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        setRawErrorLocked("VIDEO_CAPTURE_FAILED", "Native screenshare captureFrame failed", "nativePushScreenShareFrame", true);
+        return kStatusVideoCaptureFailed;
+    }
+}
+
+extern "C" JNIEXPORT jint JNICALL
 Java_livekit_OrbitLiveKitNativeRaw_nativeSetAudioMuted(JNIEnv*, jclass, jlong sessionId, jlong epoch, jboolean muted) {
     std::shared_ptr<livekit::LocalAudioTrack> track;
     {
@@ -3527,6 +4351,10 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetAudioMuted(JNIEnv*, jclass, jlong se
     }
 
     if (track == nullptr) {
+        std::cout << "WARN [OrbitLiveKitAudio] nativeSetAudioMuted ignored: no audio track published"
+                  << " sessionId=" << sessionId
+                  << " muted=" << (muted == JNI_TRUE ? "true" : "false")
+                  << std::endl;
         return kStatusOk;
     }
 
@@ -3536,6 +4364,10 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetAudioMuted(JNIEnv*, jclass, jlong se
         } else {
             track->unmute();
         }
+        // Authoritative write of the worker's fail-closed mute gate input; the
+        // worker only refreshes this opportunistically when it wins the session
+        // mutex.
+        g_micTrackMutedCache.store(muted == JNI_TRUE, std::memory_order_relaxed);
         std::cout << "DEBUG [OrbitLiveKitAudio] native mic muted="
                   << (muted == JNI_TRUE ? "true" : "false")
                   << " trackMuted=" << (track->muted() ? "true" : "false")

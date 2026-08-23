@@ -3,8 +3,12 @@ package ui.screen.chat
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import kotlinx.datetime.Clock
+import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.Instant
+import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
+import kotlinx.datetime.minus
 import kotlinx.datetime.toLocalDateTime
 import ui.model.OrbitMessage
 import ui.model.UserStatus
@@ -20,8 +24,14 @@ import ui.screen.main.*
 @Composable
 internal fun formatTimestamp(ts: Instant): String {
     val use24Hour = ui.theme.LocalUse24HourClock.current
-    val dt    = ts.toLocalDateTime(TimeZone.currentSystemDefault())
-    
+    val dateFormat = ui.theme.LocalDateFormat.current
+    val tz = TimeZone.currentSystemDefault()
+    val dt = ts.toLocalDateTime(tz)
+    val today = kotlinx.datetime.Instant
+        .fromEpochMilliseconds(System.currentTimeMillis())
+        .toLocalDateTime(tz)
+        .date
+
     val timeStr = if (use24Hour) {
         val h24 = dt.hour.toString().padStart(2, '0')
         val min = dt.minute.toString().padStart(2, '0')
@@ -32,7 +42,24 @@ internal fun formatTimestamp(ts: Instant): String {
         val min   = dt.minute.toString().padStart(2, '0')
         "$h12:$min $amPm"
     }
-    return "Today at $timeStr"
+
+    return when {
+        dt.date == today -> "Today at $timeStr"
+        dt.date == today.minus(1, DateTimeUnit.DAY) -> "Yesterday at $timeStr"
+        else -> "${formatDate(dt.date, dateFormat)} $timeStr"
+    }
+}
+
+private fun formatDate(date: LocalDate, pattern: String): String {
+    val d = date.dayOfMonth.toString().padStart(2, '0')
+    val m = date.monthNumber.toString().padStart(2, '0')
+    val y = date.year.toString()
+    return when (pattern.uppercase()) {
+        "MM/DD/YYYY" -> "$m/$d/$y"
+        "YYYY-MM-DD" -> "$y-$m-$d"
+        "D MMM YYYY" -> "$d ${date.month.name.take(3)} $y"
+        else -> "$d/$m/$y"
+    }
 }
 
 @Composable

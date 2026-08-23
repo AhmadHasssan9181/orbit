@@ -42,13 +42,28 @@ internal fun MessageList(
     val coroutineScope = rememberCoroutineScope()
     val reduceMotion = ui.theme.LocalReduceMotion.current
 
-    LaunchedEffect(messages.size) {
-        if (grouped.isNotEmpty()) {
+    // Only auto-scroll when the user is already at (or near) the bottom, or on first load /
+    // channel switch — never yank the viewport while they're reading history.
+    var scrolledForChannelKey by remember { mutableStateOf<String?>(null) }
+    val channelKey = messages.firstOrNull()?.id
+    val isNearBottom by remember {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: 0
+            lastVisible >= info.totalItemsCount - 2
+        }
+    }
+
+    LaunchedEffect(messages.size, channelKey) {
+        if (grouped.isEmpty()) return@LaunchedEffect
+        val isFirstLoad = scrolledForChannelKey != channelKey
+        if (isFirstLoad || isNearBottom) {
             if (reduceMotion) {
                 listState.scrollToItem(grouped.size - 1)
             } else {
                 listState.animateScrollToItem(grouped.size - 1)
             }
+            scrolledForChannelKey = channelKey
         }
     }
     

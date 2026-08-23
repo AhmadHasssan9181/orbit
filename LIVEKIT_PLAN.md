@@ -234,8 +234,8 @@ These files were already written and will be ported directly into Orbit:
 
 - [x] After `LiveKitLocalTrack.startCapture()` is running, call `LiveKitClient.publishVideoTrack()`
 - [x] Inside `publishVideoTrack()`, build and send a `PublishTrackRequest` via the JNA `request()` function
-- [ ] Repeat for audio: create a `livekit::AudioSource`, hook it into the microphone input, and send a `PublishTrackRequest` for the audio track
-- [ ] **Verify:** Join from Element on another device. Confirm Element can see and hear you from Orbit.
+- [x] ~~Repeat for audio: create a `livekit::AudioSource`, hook it into the microphone input, and send a `PublishTrackRequest` for the audio track~~ **SUPERSEDED 2026-08-22** — audio publishing was built natively in `orbit_livekit_audio.cpp` (`nativePublishAudio` with per-call Opus maxBitrate/dtx/red, see CALLS_MASTER_PLAN D5); mic frames flow via `nativePushAudioFrame`. Do NOT build a separate JNA AudioSource path.
+- [ ] **Verify:** Join from Element on another device. Confirm Element can see and hear you from Orbit. *(still open — runtime cross-app verification pending for the whole stack)*
 
 **Goal:** Remote participants, including Element users, can see and hear Orbit in the group call.
 

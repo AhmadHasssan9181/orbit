@@ -18,16 +18,47 @@ fun WebRtcEffects(
 ): CallManager {
     val webRtcClient = remember { createWebRtcClient() }
     val callManager = remember { CallManager(webRtcClient, scope) }
+
+    // Register app-wide call keybinds (dispatched from the root Window key handler).
+    DisposableEffect(callManager) {
+        CallShortcuts.onToggleMute = {
+            if (callManager.callState.value != CallState.IDLE) {
+                callManager.toggleMute(callManager.isLocalAudioEnabled.value)
+            }
+        }
+        CallShortcuts.onToggleDeafen = {
+            if (callManager.callState.value != CallState.IDLE) {
+                callManager.toggleDeafen()
+            }
+        }
+        onDispose {
+            CallShortcuts.onToggleMute = null
+            CallShortcuts.onToggleDeafen = null
+        }
+    }
     
     val orbitZeroEnabled by settingsManager.orbitZeroAiNoiseSuppression.collectAsState(true)
     val attenuation by settingsManager.attenuation.collectAsState(0f)
     val inputDevice by settingsManager.inputDevice.collectAsState("Default")
     val outputDevice by settingsManager.outputDevice.collectAsState("Default")
     val cameraDevice by settingsManager.cameraDevice.collectAsState("Default")
+    val audioBitrateKbps by settingsManager.audioBitrate.collectAsState(64f)
+    val nsEnabled by settingsManager.noiseSuppression.collectAsState(true)
+    val ecEnabled by settingsManager.echoCancellation.collectAsState(true)
+    val agcEnabled by settingsManager.autoGainControl.collectAsState(true)
+    val inputVolume by settingsManager.inputVolume.collectAsState(100f)
+    val outputVolume by settingsManager.outputVolume.collectAsState(100f)
+    val mirrorVideo by settingsManager.mirrorVideo.collectAsState(true)
+    val videoBackground by settingsManager.videoBackground.collectAsState("None")
+    val sfuOverrideUrl by settingsManager.liveKitServiceUrl.collectAsState("")
 
 
     LaunchedEffect(orbitZeroEnabled) {
         webRtcClient.setOrbitZeroEnabled(orbitZeroEnabled)
+    }
+    // Part I: SFU endpoint chain (settings override → .well-known rtc_foci → dev fallback).
+    LaunchedEffect(sfuOverrideUrl, repository) {
+        repository.configureCallEndpoints(sfuOverrideUrl.takeIf { it.isNotBlank() })
     }
     LaunchedEffect(attenuation) {
         webRtcClient.setAttenuationStrength(attenuation / 100f)
@@ -40,6 +71,31 @@ fun WebRtcEffects(
     }
     LaunchedEffect(cameraDevice) {
         callManager.setVideoCaptureDevice(cameraDevice)
+    }
+    LaunchedEffect(audioBitrateKbps) {
+        callManager.audioBitrateKbps = audioBitrateKbps.toInt().coerceIn(8, 384)
+    }
+
+    // Settings are the source of truth for voice processing at launch; the in-call
+    // More Options menu can override them for the session.
+    LaunchedEffect(nsEnabled, ecEnabled, agcEnabled) {
+        callManager.setAudioOptions(nsEnabled, ecEnabled, agcEnabled)
+    }
+    LaunchedEffect(inputVolume) {
+        callManager.setMicVolume(inputVolume / 100f)
+    }
+    LaunchedEffect(outputVolume) {
+        callManager.setPlaybackVolume(outputVolume / 100f)
+    }
+    LaunchedEffect(mirrorVideo) {
+        callManager.setMirrorVideo(mirrorVideo)
+    }
+    // Only "Blur" maps to the engine's virtual background; "Custom Image" is not implemented yet.
+    LaunchedEffect(videoBackground) {
+        val wantBlur = videoBackground == "Blur"
+        if (callManager.isVirtualBackgroundEnabled.value != wantBlur) {
+            callManager.toggleVirtualBackground()
+        }
     }
 
     LaunchedEffect(callManager, repository) {
@@ -55,6 +111,9 @@ fun WebRtcEffects(
                 .getOrElse { emptyList() }
         }
 
+        // Group-call roster: MatrixRTC membership flow feeds the call surface tiles
+        callManager.groupMembersProvider = { roomId -> repository.observeCallMembers(roomId) }
+
         // Warm the TURN/STUN config early, and CallManager refreshes it again before each call.
         scope.launch {
             callManager.iceServers = callManager.refreshIceServers?.invoke().orEmpty()
@@ -64,14 +123,19 @@ fun WebRtcEffects(
         scope.launch {
             repository.observeCallEvents().collect { event ->
                 println("DEBUG: [WebRTC] observeCallEvents received: ${event::class.simpleName} (callId=${event.callId})")
-                val ownPartyId = CredentialManager.deviceId
-                if (ownPartyId != null && event.partyId == ownPartyId) return@collect
-                
-                val user = repository.getCurrentUser()
-                if (user != null && event.senderId == user.id) return@collect
+                // H4: drop own-device echoes + other-devices-of-ours (multi-device noise guard).
+                if (webrtc.CallEventGate.shouldIgnore(
+                        senderId = event.senderId,
+                        partyId = event.partyId,
+                        ownDeviceId = CredentialManager.deviceId,
+                        ownUserId = repository.getCurrentUser()?.id
+                    )
+                ) {
+                    return@collect
+                }
 
                 when (event) {
-                    is repository.CallEvent.Invite -> callManager.handleCallInvite(event.roomId, event.callId, event.sdp)
+                    is repository.CallEvent.Invite -> callManager.handleCallInvite(event.roomId, event.callId, event.sdp, event.lifetimeMs)
                     is repository.CallEvent.Answer -> {
                         callManager.handleCallAnswer(event.sdp)
                         event.partyId?.let { selectedPartyId ->
@@ -178,7 +242,7 @@ fun WebRtcEffects(
                         println("DEBUG: [WebRTC] Sending ${toSend.size} local ICE candidates")
                         repository.sendCallEvent(roomId, "m.call.candidates", buildJsonObject {
                             put("call_id", callId)
-                            put("version", 0)
+                            put("version", "1")
             
                             put("candidates", buildJsonArray {
                                 toSend.forEach { cand ->

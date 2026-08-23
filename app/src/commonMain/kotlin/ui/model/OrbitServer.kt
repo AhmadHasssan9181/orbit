@@ -21,3 +21,9 @@ data class ChannelCategory(
     val name: String,
     val channelId: String // references first channel in this category
 )
+
+/** Human-friendly label for a raw category id ("dm" → "Direct Messages"). */
+fun categoryDisplayName(categoryId: String): String = when (categoryId.lowercase()) {
+    "dm", "dms" -> "Direct Messages"
+    else -> categoryId.replaceFirstChar { it.uppercase() }
+}

@@ -45,6 +45,10 @@ target_link_libraries(orbit_livekit_audio PRIVATE
     LiveKit::livekit
 )
 
+if(WIN32)
+    target_link_libraries(orbit_livekit_audio PRIVATE mmdevapi.lib)
+endif()
+
 add_executable(orbit_livekit_tone_publisher
     livekit_tone_publisher.cpp
 )

@@ -98,7 +98,8 @@ fun CompactLayout(
                             repository = repository,
                             onChannelClick = onChannelClick,
                             onOpenSettings = onOpenSettings,
-                            isLoadingChannels = isLoadingChannels
+                            isLoadingChannels = isLoadingChannels,
+                            onCreateRoom = onCreateRoom
                         )
                     } else {
                         CompactEmptyDMs()
@@ -156,7 +157,8 @@ fun CompactChannelList(
     repository: repository.OrbitRepository,
     onChannelClick: (String) -> Unit,
     onOpenSettings: () -> Unit,
-    isLoadingChannels: Boolean
+    isLoadingChannels: Boolean,
+    onCreateRoom: (() -> Unit)? = null
 ) {
     val tokens = rememberCosmicTokens()
 
@@ -178,9 +180,11 @@ fun CompactChannelList(
                     fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
                 )
             )
-            IconButton(onClick = {}) {
-                Icon(Icons.Default.Edit, contentDescription = "New Chat",
-                    tint = tokens.Text_Muted, modifier = Modifier.size(20.dp))
+            if (onCreateRoom != null) {
+                IconButton(onClick = onCreateRoom) {
+                    Icon(Icons.Default.Edit, contentDescription = "New Chat",
+                        tint = tokens.Text_Muted, modifier = Modifier.size(20.dp))
+                }
             }
         }
 
@@ -285,7 +289,7 @@ fun CompactServerList(
             val categories = channels.mapNotNull { it.categoryId }.distinct()
                 .map { catId ->
                     val firstCh = channels.firstOrNull { it.categoryId == catId }
-                    ChannelCategory(id = catId, name = catId.takeLast(8), channelId = firstCh?.id ?: "")
+                    ChannelCategory(id = catId, name = ui.model.categoryDisplayName(catId), channelId = firstCh?.id ?: "")
                 }
             ChannelDrawer(
                 server = selectedServer,

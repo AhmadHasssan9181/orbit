@@ -27,6 +27,15 @@ object LiveKitNativeVideoCapture {
     @Volatile
     private var activeCapture: ActiveCapture? = null
 
+    // Virtual background: injected into the capture source at next camera open
+    // using the same ONNX segmentation processor as the P2P engine.
+    @Volatile
+    private var virtualBackgroundEnabled = false
+
+    fun setVirtualBackgroundEnabled(enabled: Boolean) {
+        virtualBackgroundEnabled = enabled
+    }
+
     fun openForPublish(): NativeResult<VideoPublishConfig> {
         stopAndJoin()
 
@@ -121,6 +130,16 @@ object LiveKitNativeVideoCapture {
             sink.capture = capture
             source.start()
             captureStarted = true
+            if (virtualBackgroundEnabled) {
+                val modelPath = webrtc.extractModelToTempFile("selfie_segmentation.onnx")
+                if (modelPath != null) {
+                    runCatching { webrtc.OrbitVideoEngine.injectVideoProcessor(source, modelPath) }
+                        .onSuccess { println("DEBUG [VideoPublish] virtual background processor injected") }
+                        .onFailure { println("WARN [VideoPublish] virtual background injection failed: ${it.message}") }
+                } else {
+                    println("WARN [VideoPublish] virtual background model missing; capturing unblurred")
+                }
+            }
             activeCapture = capture
             println(
                 """

@@ -8,8 +8,10 @@ import javax.sound.sampled.DataLine
 import javax.sound.sampled.Line
 import javax.sound.sampled.Mixer
 import javax.sound.sampled.TargetDataLine
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
+import kotlin.math.tanh
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -48,9 +50,30 @@ object LiveKitNativeAudioCapture {
     @Volatile private var lowInputMaxPeak = 0
     @Volatile private var lowInputWarningLogged = false
     @Volatile private var gainLogged = false
+    @Volatile private var apmLogged = false
     @Volatile private var preparedMixerKey: MixerKey? = null
     @Volatile private var preparedProbeResult: MicProbeResult? = null
     @Volatile private var preparedOverrideName: String = ""
+    @Volatile private var inputDeviceOverride = ""
+    @Volatile private var userVolumeFactor = 1f
+
+    // Voice & Video settings: runtime input-device selection. Substring-matched against
+    // JavaSound mixer names when the capture line opens (next call).
+    fun setInputDeviceOverride(name: String) {
+        val trimmed = name.trim()
+        val next = if (trimmed.isEmpty() || trimmed.equals("Default", ignoreCase = true)) "" else trimmed
+        if (inputDeviceOverride == next) return
+        inputDeviceOverride = next
+        println("DEBUG [LiveKitNativeAudioCapture] input device override=\"$next\" (applies on next capture start)")
+    }
+
+    // Multiplies the fixed capture gain / post-APM signal; 1.0 leaves levels untouched.
+    fun setUserInputVolume(volume: Float) {
+        val clamped = volume.coerceIn(0f, 2f)
+        if (userVolumeFactor == clamped) return
+        userVolumeFactor = clamped
+        println("DEBUG [LiveKitNativeAudioCapture] user input volume=$clamped")
+    }
 
     private const val LOW_INPUT_MESSAGE =
         "Captured microphone PCM is near silence. Check Windows mic level or select another input device."
@@ -101,6 +124,7 @@ object LiveKitNativeAudioCapture {
         this.epoch = epoch
         bridge = nativeBridge
         failureSink = onFailure
+        CallPathStats.ensureReporter()
         diagnosticFramesLogged = 0
         diagnosticReadsLogged = 0
         lowInputFramesObserved = 0
@@ -108,6 +132,7 @@ object LiveKitNativeAudioCapture {
         lowInputMaxPeak = 0
         lowInputWarningLogged = false
         gainLogged = false
+        apmLogged = false
         started = true
         captureJob = scope.launch {
             runCaptureLoop()
@@ -268,11 +293,13 @@ object LiveKitNativeAudioCapture {
         val testTone = configuredTestTone()
         val testToneStereo = configuredTestToneStereo()
         val overrideName = configuredInputDeviceName()
-        val captureGain = orbitAudioConfig("orbit.audio.captureGain", "ORBIT_AUDIO_CAPTURE_GAIN")
+        val explicitCaptureGain = orbitAudioConfig("orbit.audio.captureGain", "ORBIT_AUDIO_CAPTURE_GAIN")
             ?.toDoubleOrNull()
             ?.coerceIn(0.0, 100.0)
-            ?: 8.0
-        println("DEBUG [LiveKitNativeAudioCapture] audio flags: testTone=$testTone testToneStereo=$testToneStereo captureGain=$captureGain inputDeviceName=${overrideName.ifBlank { "<none>" }} publishChannels=${configuredPublishChannels()}")
+        // With the APM active, AGC2 owns loudness; the old ×8 default boost is
+        // only a fallback for the unprocessed path.
+        val captureGain = explicitCaptureGain ?: if (OrbitApm.enabled) 1.0 else 8.0
+        println("DEBUG [LiveKitNativeAudioCapture] audio flags: testTone=$testTone testToneStereo=$testToneStereo captureGain=$captureGain apm=${OrbitApm.enabled} inputDeviceName=${overrideName.ifBlank { "<none>" }} publishChannels=${configuredPublishChannels()}")
         if (testTone) {
             runTestToneCaptureLoop()
             return
@@ -311,27 +338,112 @@ object LiveKitNativeAudioCapture {
 
         val line = selectedLine.line
         activeLine = line
+        // C1: when the device refused the pipeline format, the line opens at its
+        // native format and every chunk converts through the resampler.
+        val openFormat = selectedLine.openFormat ?: format
+        val resampler = if (
+            PcmResampler.needsConversion(
+                openFormat.sampleRate.toInt(),
+                openFormat.channels,
+                openFormat.isBigEndian,
+                SAMPLE_RATE,
+                CHANNELS
+            )
+        ) {
+            println("DEBUG [LiveKitNativeAudioCapture] SRC active ${openFormat.toDebugString()} -> ${SAMPLE_RATE} Hz/${CHANNELS} ch")
+            PcmResampler(openFormat.sampleRate.toInt(), openFormat.channels, openFormat.isBigEndian, SAMPLE_RATE)
+        } else {
+            null
+        }
+        // ~One output frame of source per read keeps pushes evenly paced; a large
+        // burst read would trip the single-slot native backpressure and drop frames.
+        val srcFrameBytes = maxOf(1, openFormat.frameSize)
+        val srcChunkBytes = if (resampler == null) {
+            0
+        } else {
+            maxOf(
+                srcFrameBytes,
+                kotlin.math.ceil(SAMPLES_PER_CHANNEL * (openFormat.sampleRate.toFloat() / SAMPLE_RATE)).toInt() * srcFrameBytes
+            )
+        }
+        val srcChunk = ByteArray(srcChunkBytes)
         try {
-            line.open(format, CAPTURE_BUFFER_BYTES)
+            line.open(openFormat, CAPTURE_BUFFER_BYTES)
             line.start()
             runCatching { line.flush() }
             logSelectedInputLine(selectedLine, line)
             println("DEBUG [LiveKitNativeAudioCapture] capture line flushed after start available=${line.available()} bufferSize=${line.bufferSize}")
             println("DEBUG [LiveKitNativeAudioCapture] Recording loop started")
 
+            // A device that vanishes mid-call makes line.read return 0 immediately —
+            // an unbounded `continue` here would hot-spin at 100% CPU with a "live"
+            // call and nothing captured. Bail out via failureSink after a burst of
+            // consecutive empty reads.
+            var consecutiveEmptyReads = 0
             while (started && kotlinx.coroutines.currentCoroutineContext().isActive) {
-                val requested = FRAME_BYTES - frameOffset
-                val read = line.read(heapBuffer, frameOffset, requested)
-                logReadDiagnostics(line, FRAME_BYTES, requested, read)
-                if (read <= 0) continue
-
-                frameOffset += read
-                if (frameOffset < FRAME_BYTES) continue
-                frameOffset = 0
+                if (resampler == null) {
+                    val requested = FRAME_BYTES - frameOffset
+                    val read = line.read(heapBuffer, frameOffset, requested)
+                    logReadDiagnostics(line, FRAME_BYTES, requested, read)
+                    if (read <= 0) {
+                        CallPathStats.onMicReadStall()
+                        consecutiveEmptyReads += 1
+                        if (consecutiveEmptyReads == 25) {
+                            println("WARN [LiveKitNativeAudioCapture] mic read repeatedly returned $read (${consecutiveEmptyReads}x) — device may be gone")
+                        }
+                        if (consecutiveEmptyReads >= 100) {
+                            failureSink?.invoke(
+                                NativeError(
+                                    code = NativeErrorCode.AUDIO_DEVICE_UNAVAILABLE,
+                                    message = "Microphone stopped delivering samples ($consecutiveEmptyReads empty reads)",
+                                    operation = "JVM_MIC_CAPTURE",
+                                    recoverable = true
+                                )
+                            )
+                            break
+                        }
+                        continue
+                    }
+                    consecutiveEmptyReads = 0
+                    frameOffset += read
+                    if (frameOffset < FRAME_BYTES) continue
+                    frameOffset = 0
+                } else {
+                    val read = line.read(srcChunk, 0, srcChunk.size)
+                    logReadDiagnostics(line, srcChunk.size, srcChunk.size, read)
+                    if (read <= 0) {
+                        CallPathStats.onMicReadStall()
+                        consecutiveEmptyReads += 1
+                        if (consecutiveEmptyReads == 25) {
+                            println("WARN [LiveKitNativeAudioCapture] resampled mic read repeatedly returned $read (${consecutiveEmptyReads}x) — device may be gone")
+                        }
+                        if (consecutiveEmptyReads >= 100) {
+                            failureSink?.invoke(
+                                NativeError(
+                                    code = NativeErrorCode.AUDIO_DEVICE_UNAVAILABLE,
+                                    message = "Microphone stopped delivering samples ($consecutiveEmptyReads empty reads)",
+                                    operation = "JVM_MIC_CAPTURE",
+                                    recoverable = true
+                                )
+                            )
+                            break
+                        }
+                        continue
+                    }
+                    consecutiveEmptyReads = 0
+                    resampler.push(srcChunk, read)
+                    if (!resampler.pullFrame(heapBuffer, 0, SAMPLES_PER_CHANNEL)) continue
+                }
 
                 val rawStats = pcmStats(heapBuffer, FRAME_BYTES)
                 observeInputLevel(rawStats)
-                if (!muted && captureGain != 1.0 && rawStats.peak > 0) {
+                if (!muted && OrbitApm.enabled && OrbitApm.ensureStarted()) {
+                    OrbitApm.processCapture(heapBuffer, FRAME_BYTES, SAMPLE_RATE, CHANNELS)
+                    if (!apmLogged) {
+                        println("DEBUG [LiveKitNativeAudioCapture] APM capture chain active (aec3+ns+agc2+hpf)")
+                        apmLogged = true
+                    }
+                } else if (!muted && captureGain != 1.0 && rawStats.peak > 0) {
                     applyCaptureGain(heapBuffer, FRAME_BYTES, captureGain)
                     if (!gainLogged) {
                         val gainedStats = pcmStats(heapBuffer, FRAME_BYTES)
@@ -339,10 +451,22 @@ object LiveKitNativeAudioCapture {
                         gainLogged = true
                     }
                 }
-                logCapturedFrame(heapBuffer, FRAME_BYTES, muted, rawStats, captureGain)
-                if (muted) {
-                    heapBuffer.fill(0, 0, FRAME_BYTES)
+                if (!muted && userVolumeFactor != 1f) {
+                    applyCaptureGain(heapBuffer, FRAME_BYTES, userVolumeFactor.toDouble())
                 }
+                if (muted) {
+                    // C2: transmission gating is owned by the native track mute
+                    // (nativeSetAudioMuted + C++ worker skip) — no JVM-side zero-fill,
+                    // so a stuck JVM boolean can no longer cause permanent silence.
+                    CallPathStats.onMicFrameMuted()
+                }
+                // Soundboard effects mix into the frame; whether anything transmits
+                // is decided by the native mute flag alone.
+                SoundboardMixer.drainMix(SAMPLES_PER_CHANNEL)?.let { effect ->
+                    mixEffectIntoFrame(heapBuffer, FRAME_BYTES, effect)
+                }
+                logCapturedFrame(heapBuffer, FRAME_BYTES, muted, rawStats, captureGain)
+                CallPathStats.onMicFrameRead()
 
                 if (!LiveKitNativeAudioBridge.acceptingFrames) {
                     continue
@@ -363,10 +487,12 @@ object LiveKitNativeAudioCapture {
                 )
                 if (result == null || result.ok) {
                     consecutivePushFailures = 0
+                    CallPathStats.onPushOk()
                     continue
                 }
 
                 consecutivePushFailures += 1
+                CallPathStats.onPushFail()
                 if (consecutivePushFailures >= 3) {
                     val error = result.error ?: NativeError(
                         code = NativeErrorCode.AUDIO_CAPTURE_FAILED,
@@ -381,6 +507,16 @@ object LiveKitNativeAudioCapture {
         } catch (error: Throwable) {
             if (started) {
                 println("ERROR [LiveKitNativeAudioCapture] Capture failed: ${error.message}")
+                // C1: a failed open/start used to be swallowed here — the call looked
+                // live while nothing was ever captured. Surface it loudly instead.
+                failureSink?.invoke(
+                    NativeError(
+                        code = NativeErrorCode.AUDIO_DEVICE_UNAVAILABLE,
+                        message = error.message ?: error::class.simpleName.orEmpty(),
+                        operation = "JVM_MIC_CAPTURE",
+                        recoverable = true
+                    )
+                )
             }
         } finally {
             runCatching { line.stop() }
@@ -604,8 +740,15 @@ object LiveKitNativeAudioCapture {
             usableCandidates
         }
 
-        if (overrideName.isNotBlank() && candidatesToProbe.isEmpty()) {
-            println("ERROR [LiveKitNativeAudioCapture] orbit.audio.inputDeviceName did not match a usable input mixer: $overrideName")
+        if (candidatesToProbe.isEmpty()) {
+            if (overrideName.isNotBlank()) {
+                println("ERROR [LiveKitNativeAudioCapture] orbit.audio.inputDeviceName did not match a usable input mixer: $overrideName")
+                return null
+            }
+            // C1: no device advertises the 48 kHz pipeline format — open one at its
+            // native format and resample, instead of failing the call.
+            openResampledFallbackLine(candidates, format)?.let { return it }
+            println("ERROR [LiveKitNativeAudioCapture] no input mixer supports a convertible PCM format")
             return null
         }
 
@@ -662,9 +805,13 @@ object LiveKitNativeAudioCapture {
 
         if (overrideName.isNotBlank()) return null
 
+        // C1: probes found no usable 48 kHz line — try a native-format + resample
+        // open before degrading to the system default.
+        openResampledFallbackLine(candidates, format)?.let { return it }
+
         val desiredInfo = DataLine.Info(TargetDataLine::class.java, format)
         return if (AudioSystem.isLineSupported(desiredInfo)) {
-            println("WARN [LiveKitNativeAudioCapture] Falling back to system default TargetDataLine after mixer probe")
+            println("WARN [LiveKitNativeAudioCapture] MIC_FALLBACK_DEFAULT operation=JVM_MIC_CAPTURE message=\"Falling back to system default TargetDataLine after mixer probe failed; if input stays silent, select another device in Settings > Voice & Video\"")
             SelectedInputLine(
                 line = AudioSystem.getLine(desiredInfo) as TargetDataLine,
                 mixerInfo = null,
@@ -673,6 +820,55 @@ object LiveKitNativeAudioCapture {
                 probeResult = selectedProbe
             )
         } else null
+    }
+
+    /**
+     * C1 SRC fallback: open a mixer at its best natively advertised PCM_SIGNED 16-bit
+     * format (rate nearest the pipeline rate, mono preferred). The capture loop detects
+     * the format mismatch and converts through [PcmResampler].
+     */
+    private fun openResampledFallbackLine(
+        candidates: List<InputMixerCandidate>,
+        targetFormat: AudioFormat
+    ): SelectedInputLine? {
+        val targetRate = targetFormat.sampleRate.toInt()
+        val ordered = candidates
+            .sortedWith(
+                compareByDescending<InputMixerCandidate> { it.score }
+                    .thenBy { it.mixerInfo.name }
+            )
+        for (candidate in ordered) {
+            val advertised = candidate.supportedFormats.mapNotNull { f ->
+                if (f.encoding != AudioFormat.Encoding.PCM_SIGNED || f.sampleSizeInBits != 16) {
+                    return@mapNotNull null
+                }
+                Pair(f.sampleRate.toInt(), f.channels)
+            }.distinct()
+            val picked = PcmResampler.pickNativeFormat(advertised, targetRate) ?: continue
+            val nativeFormat = AudioFormat(
+                picked.first.toFloat(),
+                16,
+                picked.second,
+                true,
+                false
+            )
+            val desiredInfo = DataLine.Info(TargetDataLine::class.java, nativeFormat)
+            val mixer = runCatching { AudioSystem.getMixer(candidate.mixerInfo) }.getOrNull() ?: continue
+            if (!runCatching { mixer.isLineSupported(desiredInfo) }.getOrDefault(false)) continue
+            val line = openLineForCandidate(nativeFormat, candidate) ?: continue
+            println(
+                "WARN [LiveKitNativeAudioCapture] RESAMPLED_INPUT operation=JVM_MIC_CAPTURE message=\"No device supports ${targetFormat.toDebugString()}; opened ${candidate.mixerInfo.name} at ${nativeFormat.toDebugString()} and converting to ${targetRate} Hz mono\""
+            )
+            return SelectedInputLine(
+                line = line,
+                mixerInfo = candidate.mixerInfo,
+                defaultMixer = false,
+                overrideMatch = candidate.overrideMatch,
+                probeResult = null,
+                openFormat = nativeFormat
+            )
+        }
+        return null
     }
 
     private fun scoreInputMixer(searchableText: String): Int {
@@ -746,17 +942,54 @@ object LiveKitNativeAudioCapture {
     }
 
 
-    private fun applyCaptureGain(buffer: ByteArray, byteLength: Int, gain: Double) {
+    private fun mixEffectIntoFrame(buffer: ByteArray, byteLength: Int, effect: FloatArray) {
+        // Additive mono mix into every channel; effect samples are already volume-scaled.
         var index = 0
+        var sampleIndex = 0
         while (index + 1 < byteLength) {
-            val value = readInt16LittleEndian(buffer, index)
-            val amplified = (value * gain).roundToInt()
-            val outShort = amplified.coerceIn(-32768, 32767)
-            buffer[index] = (outShort and 0xff).toByte()
-            buffer[index + 1] = ((outShort shr 8) and 0xff).toByte()
-            index += 2
+            val add = if (sampleIndex < effect.size) effect[sampleIndex] else break
+            val current = readInt16LittleEndian(buffer, index)
+            val mixed = (current + add * 32767f).toInt().coerceIn(-32768, 32767)
+            buffer[index] = (mixed and 0xff).toByte()
+            buffer[index + 1] = ((mixed shr 8) and 0xff).toByte()
+            index += BYTES_PER_SAMPLE
+            sampleIndex += 1
         }
     }
+
+    private fun applyCaptureGain(buffer: ByteArray, byteLength: Int, gain: Double) {
+        // Float-domain gain followed by a soft-knee limiter. The old int16 multiply + coerce
+        // hard-clipped any voice that peaked above ~1/gain, which is exactly the "muffled/distorted"
+        // symptom; with the knee, loud speech saturates smoothly and quiet speech is untouched.
+        var index = 0
+        var limitedSamples = 0
+        while (index + 1 < byteLength) {
+            val value = readInt16LittleEndian(buffer, index)
+            val amplified = value * gain
+            val outShort = softLimit(amplified)
+            if (abs(amplified) > SOFT_LIMIT_KNEE) {
+                limitedSamples += 1
+            }
+            buffer[index] = (outShort.toInt() and 0xff).toByte()
+            buffer[index + 1] = ((outShort.toInt() shr 8) and 0xff).toByte()
+            index += 2
+        }
+        CallPathStats.onMicClippedSamples(limitedSamples)
+    }
+
+    private fun softLimit(value: Double): Short {
+        if (abs(value) <= SOFT_LIMIT_KNEE) {
+            return value.roundToInt().coerceIn(-32768, 32767).toShort()
+        }
+        val sign = if (value < 0.0) -1.0 else 1.0
+        val over = abs(value) - SOFT_LIMIT_KNEE
+        val limited = SOFT_LIMIT_KNEE +
+            (SOFT_LIMIT_CEILING - SOFT_LIMIT_KNEE) * tanh(over / (SOFT_LIMIT_CEILING - SOFT_LIMIT_KNEE))
+        return (sign * limited).roundToInt().toShort()
+    }
+
+    private const val SOFT_LIMIT_KNEE = 24_568.0 // ~-2.5 dBFS
+    private const val SOFT_LIMIT_CEILING = 32_767.0
 
     private fun writeTestToneFrame(buffer: ByteArray, startingPhase: Double, phaseStep: Double, channels: Int): Double {
         var phase = startingPhase
@@ -839,7 +1072,9 @@ object LiveKitNativeAudioCapture {
     }
 
     private fun configuredInputDeviceName(): String =
-        orbitAudioConfig("orbit.audio.inputDeviceName", "ORBIT_AUDIO_INPUT_DEVICE_NAME").orEmpty()
+        inputDeviceOverride.ifBlank {
+            orbitAudioConfig("orbit.audio.inputDeviceName", "ORBIT_AUDIO_INPUT_DEVICE_NAME").orEmpty()
+        }
 
     private fun orbitAudioConfig(propertyName: String, environmentName: String): String? =
         System.getProperty(propertyName)
@@ -958,7 +1193,10 @@ object LiveKitNativeAudioCapture {
         val mixerInfo: Mixer.Info?,
         val defaultMixer: Boolean,
         val overrideMatch: Boolean,
-        val probeResult: MicProbeResult?
+        val probeResult: MicProbeResult?,
+        // Null = open at the 48 kHz pipeline format; non-null = device-native format
+        // the capture loop converts to the pipeline rate via PcmResampler (C1).
+        val openFormat: AudioFormat? = null
     )
 
     @Suppress("unused")

@@ -229,11 +229,24 @@ internal fun MessageActionBtn(
 
 @Composable
 private fun MessageAvatar(message: OrbitMessage) {
-    OrbitDefaultAvatar(
-        label = message.username,
-        seed = message.userId,
-        modifier = Modifier.size(36.dp)
-    )
+    val member = ui.theme.LocalRoomMembers.current.firstOrNull {
+        it.id == message.userId || message.userId.endsWith(it.id) || it.id.endsWith(message.userId)
+    }
+    if (member?.avatarUrl != null) {
+        coil3.compose.AsyncImage(
+            model = member.avatarUrl,
+            contentDescription = member.displayName,
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            modifier = Modifier.size(36.dp).clip(androidx.compose.foundation.shape.CircleShape)
+        )
+    } else {
+        OrbitDefaultAvatar(
+            label = member?.displayName ?: message.username,
+            seed = message.userId,
+            color = member?.avatarColor?.let { Color(it) },
+            modifier = Modifier.size(36.dp)
+        )
+    }
 }
 
 @Composable

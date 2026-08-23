@@ -1,22 +1,11 @@
 package livekit
 
-actual suspend fun connectToLiveKit(url: String, token: String, iceServers: List<repository.TurnServer>) {
-    if (LiveKitFeatureFlags.cppMedia) {
-        throw IllegalStateException("MatrixRTC native media must use connectAndPublishToLiveKit")
-    }
-
-    if (!LiveKitFeatureFlags.ffiFallback) {
-        throw IllegalStateException("Raw FFI LiveKit media owner is disabled for MatrixRTC group calls")
-    }
-
-    LiveKitClient.connect(url, token, iceServers)
-}
-
 actual suspend fun connectAndPublishToLiveKit(
     authResponse: LiveKitAuthResponse,
     isVideo: Boolean,
     iceServers: List<repository.TurnServer>,
-    refreshTokenFetcher: (suspend () -> LiveKitAuthResponse)?
+    refreshTokenFetcher: (suspend () -> LiveKitAuthResponse)?,
+    audioBitrateKbps: Int
 ): NativeResult<NativeMediaReadiness> {
     if (!LiveKitFeatureFlags.cppMedia) {
         return NativeResult.failure(
@@ -38,13 +27,71 @@ actual suspend fun connectAndPublishToLiveKit(
         } else {
             JoinVideoPolicy.AudioOnly
         },
-        refreshTokenFetcher = refreshTokenFetcher
+        refreshTokenFetcher = refreshTokenFetcher,
+        audioBitrateKbps = audioBitrateKbps
     )
 }
 
 actual suspend fun ensureLiveKitMediaReady(): NativeResult<NativeMediaReadiness> =
     LiveKitNativeMediaSession.ensureMediaReady()
 
+actual fun liveKitCurrentReadiness(): NativeMediaReadiness? =
+    if (LiveKitFeatureFlags.cppMedia) LiveKitNativeMediaSession.currentReadiness() else null
+
+actual fun setLiveKitReconnectedListener(listener: (() -> Unit)?) {
+    LiveKitNativeMediaSession.onReconnected = listener
+}
+
 actual fun disconnectFromLiveKit(userInitiated: Boolean) {
     LiveKitNativeMediaSession.disconnect(userInitiated = userInitiated)
+}
+
+actual fun setLiveKitPlaybackMuted(muted: Boolean) {
+    LiveKitNativeAudioPlayer.setOutputMuted(muted)
+}
+
+actual fun setLiveKitVirtualBackground(enabled: Boolean) {
+    LiveKitNativeVideoCapture.setVirtualBackgroundEnabled(enabled)
+}
+
+actual fun playSoundEffect(effectId: String) {
+    SoundboardMixer.play(effectId)
+}
+
+actual fun stopSoundEffects() {
+    SoundboardMixer.stopAll()
+}
+
+actual fun setSoundEffectVolume(volume: Float) {
+    SoundboardMixer.setVolume(volume)
+}
+
+actual fun soundboardAddCustomSound(displayName: String, bytes: ByteArray): String? =
+    SoundboardMixer.addCustomSound(displayName, bytes)
+
+actual fun soundboardRemoveCustomSound(id: String) {
+    SoundboardMixer.removeCustomSound(id)
+}
+
+actual fun soundboardCustomSounds(): kotlinx.coroutines.flow.StateFlow<List<SoundboardCustomSound>> =
+    SoundboardMixer.customSounds
+
+actual fun setLiveKitInputDevice(deviceName: String) {
+    LiveKitNativeAudioCapture.setInputDeviceOverride(deviceName)
+}
+
+actual fun setLiveKitOutputDevice(deviceName: String) {
+    LiveKitNativeAudioPlayer.setOutputDeviceName(deviceName)
+}
+
+actual fun setLiveKitInputVolume(volume: Float) {
+    LiveKitNativeAudioCapture.setUserInputVolume(volume)
+}
+
+actual fun setLiveKitOutputVolume(volume: Float) {
+    LiveKitNativeAudioPlayer.setOutputVolume(volume)
+}
+
+actual fun setLiveKitAudioProcessingOptions(noiseSuppression: Boolean, echoCancellation: Boolean, autoGainControl: Boolean) {
+    OrbitApm.setAudioProcessingOptions(noiseSuppression, echoCancellation, autoGainControl)
 }

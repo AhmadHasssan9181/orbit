@@ -58,6 +58,9 @@ internal fun UserProfileBar(
     val isAudioEnabledState = callManager?.isLocalAudioEnabled?.collectAsState(initial = true)
         ?: remember { mutableStateOf(true) }
     val isAudioEnabled by isAudioEnabledState
+    val isDeafenedState = callManager?.isDeafened?.collectAsState(initial = false)
+        ?: remember { mutableStateOf(false) }
+    val isDeafened by isDeafenedState
     val profileInteractionSource = remember { MutableInteractionSource() }
     val isProfileHovered by profileInteractionSource.collectIsHoveredAsState()
     val profileShape = RoundedCornerShape(10.dp)
@@ -180,7 +183,12 @@ internal fun UserProfileBar(
                 })
             }
         }
-        BarIconBtn(icon = Icons.Default.Headset, desc = "Deafen", onClick = {})
+        BarIconBtn(
+            icon = if (isDeafened) Icons.Default.HeadsetOff else Icons.Default.Headset,
+            desc = if (isDeafened) "Undeafen" else "Deafen",
+            activeTint = if (isDeafened) Color(0xFFF23F42) else null,
+            onClick = { callManager?.toggleDeafen() }
+        )
         BarIconBtn(icon = Icons.Default.Settings, desc = "Settings", onClick = onSettingsClick)
     }
 }

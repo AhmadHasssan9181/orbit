@@ -2,13 +2,18 @@ package livekit
 
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import javax.sound.sampled.AudioFormat
 import javax.sound.sampled.AudioSystem
 import javax.sound.sampled.DataLine
+import javax.sound.sampled.Mixer
 import javax.sound.sampled.SourceDataLine
+import kotlin.math.roundToInt
 import kotlinx.coroutines.*
 
 object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
+    private const val UNDERRUN_WINDOW_NS = 250_000_000L
+
     private val lock = Any()
     private var line: SourceDataLine? = null
     private var currentSampleRate = 0
@@ -18,10 +23,40 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
     @Volatile private var bridge: OrbitLiveKitNativeBridge? = null
     @Volatile private var errorSink: ((NativeError) -> Unit)? = null
     @Volatile private var playbackErrorReported = false
+    @Volatile private var outputMuted = false
+    @Volatile private var outputDeviceName = ""
+    @Volatile private var outputVolume = 1f
+
+    // Deafen support: keep draining the queue but stop writing to the speaker line,
+    // so mic capture/publish stays up and no backlog builds up.
+    fun setOutputMuted(muted: Boolean) {
+        if (outputMuted == muted) return
+        outputMuted = muted
+        println("DEBUG [LiveKitNativeAudioPlayer] playback output muted=$muted")
+    }
+
+    // Voice & Video settings: substring match against JavaSound mixer names.
+    // Applies when the next playback line is opened (next call or device change).
+    fun setOutputDeviceName(name: String) {
+        val trimmed = name.trim()
+        val next = if (trimmed.isEmpty() || trimmed.equals("Default", ignoreCase = true)) "" else trimmed
+        if (outputDeviceName == next) return
+        outputDeviceName = next
+        closeLine()
+        println("DEBUG [LiveKitNativeAudioPlayer] output device override=\"$next\"")
+    }
+
+    fun setOutputVolume(volume: Float) {
+        val clamped = volume.coerceIn(0f, 2f)
+        if (outputVolume == clamped) return
+        outputVolume = clamped
+        println("DEBUG [LiveKitNativeAudioPlayer] output volume=$clamped")
+    }
 
     private val audioQueue = LinkedBlockingQueue<ByteArray>(100) // Buffer up to ~1 sec without blocking C++
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var playerJob: Job? = null
+    private val lastPcmAtNs = AtomicLong(0L)
 
     fun start(
         sessionId: Long,
@@ -34,7 +69,10 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
         bridge = nativeBridge
         errorSink = onError
         playbackErrorReported = false
+        // Preserve outputMuted across restarts (e.g. reconnect): un-deafening is
+        // owned by CallManager, which explicitly clears it on call end.
         audioQueue.clear()
+        CallPathStats.ensureReporter()
         startPlayerLoop()
         nativeBridge.setMixedAudioSink(this)
     }
@@ -44,13 +82,33 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
         playerJob = scope.launch {
             println("DEBUG [LiveKitNativeAudioPlayer] Async playback loop started")
             while (isActive) {
-                val pcm = audioQueue.poll(50, TimeUnit.MILLISECONDS) ?: continue
+                val pcm = audioQueue.poll(50, TimeUnit.MILLISECONDS)
+                if (pcm == null) {
+                    CallPathStats.onPlayerIdle()
+                    continue
+                }
+                if (outputMuted) continue // Deafened: discard frame, keep queue draining
+                lastPcmAtNs.set(System.nanoTime())
                 val (sr, ch) = synchronized(lock) { currentSampleRate to currentChannels }
                 if (sr <= 0 || ch <= 0) continue
                 val out = synchronized(lock) { ensureLine(sr, ch) } ?: continue
                 runCatching {
-                    out.write(pcm, 0, pcm.size)
+                    // True underrun = output line fully drained while remote frames are still flowing
+                    val available = runCatching { out.available() }.getOrDefault(-1)
+                    if (available >= out.bufferSize &&
+                        System.nanoTime() - lastPcmAtNs.get() < UNDERRUN_WINDOW_NS
+                    ) {
+                        CallPathStats.onPlayerUnderrun()
+                    }
+                    if (OrbitApm.enabled) {
+                        OrbitApm.processRender(pcm, sr, ch)
+                    }
+                    val vol = outputVolume
+                    val outPcm = if (vol != 1f) applyOutputVolume(pcm, vol) else pcm
+                    out.write(outPcm, 0, outPcm.size)
+                    CallPathStats.onPlayerFramePlayed()
                 }.onFailure { error ->
+                    CallPathStats.onPlayerWriteFailure()
                     synchronized(lock) {
                         reportPlaybackError(
                             code = NativeErrorCode.REMOTE_AUDIO_FAILED,
@@ -99,6 +157,7 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
             // Queue full: drop oldest frame to maintain low latency without blocking native C++
             audioQueue.poll()
             audioQueue.offer(pcm.copyOf())
+            CallPathStats.onPlayerDroppedOldest()
         }
     }
 
@@ -121,8 +180,14 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
         }
 
         return runCatching {
-            (AudioSystem.getLine(info) as SourceDataLine).also { newLine ->
-                val bufferSize = sampleRate * channels * 2 / 4 // 250ms buffer
+            val mixer = resolveOutputMixer(info)
+            (if (mixer != null) {
+                println("DEBUG [LiveKitNativeAudioPlayer] playback line on mixer=${mixer.name}")
+                AudioSystem.getSourceDataLine(format, mixer)
+            } else {
+                AudioSystem.getLine(info) as SourceDataLine
+            }).also { newLine ->
+                val bufferSize = sampleRate * channels * 2 / 12 // ~83 ms buffer (was 250 ms — added latency)
                 newLine.open(format, bufferSize)
                 newLine.start()
                 line = newLine
@@ -137,6 +202,31 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
             )
             null
         }
+    }
+
+    private fun resolveOutputMixer(info: DataLine.Info): Mixer.Info? {
+        if (outputDeviceName.isBlank()) return null
+        return AudioSystem.getMixerInfo().firstOrNull { candidate ->
+            ("${candidate.name} ${candidate.description}").contains(outputDeviceName, ignoreCase = true) &&
+                runCatching { AudioSystem.getMixer(candidate).isLineSupported(info) }.getOrDefault(false)
+        } ?: run {
+            println("WARN [LiveKitNativeAudioPlayer] output device \"$outputDeviceName\" matched no mixer, using default")
+            null
+        }
+    }
+
+    // Scales int16 little-endian PCM in place. Queue frames are private per loop
+    // iteration (enqueued as copies), so mutation is safe.
+    private fun applyOutputVolume(pcm: ByteArray, factor: Float): ByteArray {
+        var i = 0
+        while (i + 1 < pcm.size) {
+            val sample = (((pcm[i + 1].toInt()) shl 8) or (pcm[i].toInt() and 0xFF)).toShort().toInt()
+            val scaled = (sample * factor).roundToInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+            pcm[i] = (scaled and 0xFF).toByte()
+            pcm[i + 1] = ((scaled shr 8) and 0xFF).toByte()
+            i += 2
+        }
+        return pcm
     }
 
     private fun reportPlaybackError(code: NativeErrorCode, message: String) {

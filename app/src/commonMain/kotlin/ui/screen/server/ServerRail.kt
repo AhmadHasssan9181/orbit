@@ -229,7 +229,7 @@ fun ServerRail(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Explore,
-                        contentDescription = "Discover",
+                        contentDescription = "Join a server",
                         tint = if (isHovered) AccentLight else Text_Muted,
                         modifier = Modifier.size(21.dp)
                     )
@@ -328,25 +328,6 @@ private fun WhatsAppRail(selectedTab: String, onTabClick: (String) -> Unit, modi
             LiteRailItem(OrbitIcons.Call, "Calls", isSelected = selectedTab == "Calls", onClick = { onTabClick("Calls") })
             LiteRailItem(Icons.Default.DonutLarge, "Status", isSelected = selectedTab == "Status", onClick = { onTabClick("Status") })
             LiteRailItem(OrbitIcons.Members, "Groups", isSelected = selectedTab == "Communities", onClick = { onTabClick("Communities") })
-        }
-
-        // Bottom section
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            LiteRailItem(Icons.Default.Archive, "Archive", isSelected = false, onClick = {})
-            LiteRailItem(Icons.Default.Settings, "Settings", isSelected = false, onClick = {})
-            // Profile avatar
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .clip(CircleShape)
-                    .background(Brush.linearGradient(listOf(Accent, AccentLight))),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("YO", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-            }
         }
     }
 }

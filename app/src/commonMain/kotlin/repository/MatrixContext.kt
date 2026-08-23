@@ -168,6 +168,9 @@ class MatrixContext(val homeserverUrl: String) {
     val globalActiveCalls = MutableStateFlow<Map<String, String>>(emptyMap())
     val authStatusFlow = MutableStateFlow<AuthStatus>(AuthStatus.Authenticated)
 
+    // Room ids whose call-related state changed; group-call observers re-resolve on tick.
+    val groupCallStateChanges = MutableSharedFlow<String>(extraBufferCapacity = 64)
+
     val liveMessageStates = mutableMapOf<String, LiveMessageState>()
     val activeCalls = mutableMapOf<String, MutableStateFlow<CallEvent.Invite?>>()
     val activeGroupCalls = mutableMapOf<String, MutableStateFlow<String?>>()
@@ -176,7 +179,60 @@ class MatrixContext(val homeserverUrl: String) {
     val roomMetadataCache = mutableMapOf<String, RoomMetadata>()
     private val joinedMemberCountCache = mutableMapOf<String, Int>()
 
+    // Part I: the public matrix.org SFU is a DEV FALLBACK only. Resolution order:
+    // settings override → homeserver .well-known org.matrix.msc4143.rtc_foci → this.
     val defaultLiveKitServiceUrl = "https://livekit-jwt.call.matrix.org"
+
+    @Volatile
+    var liveKitServiceUrlOverride: String? = null
+
+    @Volatile
+    var wellKnownRtcFocusUrl: String? = null
+        private set
+
+    /** Non-suspend read of the current endpoint chain; call [refreshWellKnownRtcFoci] at startup. */
+    fun effectiveLiveKitServiceUrl(): String =
+        liveKitServiceUrlOverride?.takeIf { it.isNotBlank() }
+            ?: wellKnownRtcFocusUrl?.takeIf { it.isNotBlank() }
+            ?: defaultLiveKitServiceUrl
+
+    /**
+     * Fetches `GET /.well-known/matrix/client` and extracts the first LiveKit
+     * focus from `org.matrix.msc4143.rtc_foci` (the mechanism Element uses to
+     * point clients at a self-hosted SFU). Failures keep the previous value.
+     */
+    suspend fun refreshWellKnownRtcFoci() {
+        try {
+            val base = if (homeserverUrl.startsWith("http")) {
+                homeserverUrl.trimEnd('/')
+            } else {
+                "https://${homeserverUrl.trimEnd('/')}"
+            }
+            val host = base.removePrefix("https://").removePrefix("http://")
+            val response = httpClient.get("https://$host/.well-known/matrix/client")
+            if (response.status.value !in 200..299) {
+                println("DEBUG [MatrixContext] .well-known/matrix.client status=${response.status.value}; keeping current SFU config")
+                return
+            }
+            val body = response.body<JsonObject>()
+            val foci = body["org.matrix.msc4143.rtc_foci"] as? JsonArray
+            val focusUrl = foci?.firstNotNullOfOrNull { entry ->
+                val obj = entry as? JsonObject ?: return@firstNotNullOfOrNull null
+                if (obj["type"]?.jsonPrimitive?.content == "livekit") {
+                    obj["livekit_service_url"]?.jsonPrimitive?.content
+                        ?: obj["livekit_service_url"]?.toString()
+                } else null
+            }
+            if (!focusUrl.isNullOrBlank()) {
+                println("DEBUG [MatrixContext] .well-known rtc_foci LiveKit focus: $focusUrl")
+                wellKnownRtcFocusUrl = focusUrl
+            } else {
+                println("DEBUG [MatrixContext] .well-known has no livekit rtc_focus; keeping current SFU config")
+            }
+        } catch (e: Exception) {
+            println("DEBUG [MatrixContext] .well-known fetch failed: ${e.message}")
+        }
+    }
 
     fun fullUrl(path: String, v1: Boolean = false): String {
         val version = if (v1) "v1" else "v3"

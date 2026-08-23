@@ -61,6 +61,8 @@ object LiveKitRemoteVideoFrameStore {
     val latestScreenShareFrame: StateFlow<LiveKitRemoteVideoFrame?> = _latestScreenShareFrame
     private val _activeTracks = MutableStateFlow<Map<String, LiveKitRemoteVideoTrackState>>(emptyMap())
     val activeTracks: StateFlow<Map<String, LiveKitRemoteVideoTrackState>> = _activeTracks
+    private val _framesByTrack = MutableStateFlow<Map<String, LiveKitRemoteVideoFrame>>(emptyMap())
+    val framesByTrack: StateFlow<Map<String, LiveKitRemoteVideoFrame>> = _framesByTrack
 
     private var sequence: Long = 0L
     private var activeTrackSid: String? = null
@@ -100,6 +102,11 @@ object LiveKitRemoteVideoFrameStore {
     ) {
         sequence += 1
         val frameSequence = sequence
+        // Frame-before-trackAdded race (or a late frame after trackStopped): register
+        // the track so the tile is addressable and the entry can be cleaned up later.
+        if (_activeTracks.value[trackSid] == null) {
+            trackStarted(participantIdentity, trackSid)
+        }
         if (frameSequence <= 3L || frameSequence % 60L == 0L) {
             println(
                 "DEBUG [RemoteVideoUI] frame updated participantIdentity=$participantIdentity " +
@@ -124,6 +131,7 @@ object LiveKitRemoteVideoFrameStore {
             sequence = frameSequence
         )
         _latestFrame.value = frame
+        _framesByTrack.value = _framesByTrack.value + (trackSid to frame)
         val trackState = _activeTracks.value[trackSid]
         if (trackState?.isScreenShare == true) {
             _latestScreenShareFrame.value = frame
@@ -133,20 +141,23 @@ object LiveKitRemoteVideoFrameStore {
     }
 
     fun trackStopped(participantIdentity: String, trackSid: String) {
-        val trackState = _activeTracks.value[trackSid]
         _activeTracks.value = _activeTracks.value - trackSid
-        if (trackState?.isScreenShare == true) {
+        _framesByTrack.value = _framesByTrack.value - trackSid
+        // Clear shared single-slot views only when they display THIS track —
+        // other same-source tracks may still be flowing.
+        if (_latestScreenShareFrame.value?.trackSid == trackSid) {
             _latestScreenShareFrame.value = null
-        } else {
+        }
+        if (_latestCameraFrame.value?.trackSid == trackSid) {
             _latestCameraFrame.value = null
         }
-        if (activeTrackSid == trackSid) {
+        if (_latestFrame.value?.trackSid == trackSid) {
             println(
                 "DEBUG [RemoteVideoUI] render stopped participantIdentity=$participantIdentity " +
                     "trackSid=$trackSid"
             )
-            activeTrackSid = null
-            _latestFrame.value = null
+            _latestFrame.value = _framesByTrack.value.values.lastOrNull()
+            activeTrackSid = _framesByTrack.value.keys.lastOrNull()
         }
     }
 
@@ -156,6 +167,7 @@ object LiveKitRemoteVideoFrameStore {
         }
         activeTrackSid = null
         _activeTracks.value = emptyMap()
+        _framesByTrack.value = emptyMap()
         _latestFrame.value = null
         _latestCameraFrame.value = null
         _latestScreenShareFrame.value = null
@@ -165,6 +177,14 @@ object LiveKitRemoteVideoFrameStore {
 object LiveKitLocalVideoFrameStore {
     private val _latestFrame = MutableStateFlow<LiveKitLocalVideoFrame?>(null)
     val latestFrame: StateFlow<LiveKitLocalVideoFrame?> = _latestFrame
+
+    // "Mirror my video" setting, applied to the group-call self tile only
+    private val _mirrorPreview = MutableStateFlow(true)
+    val mirrorPreview: StateFlow<Boolean> = _mirrorPreview
+
+    fun setMirrorPreview(enabled: Boolean) {
+        _mirrorPreview.value = enabled
+    }
 
     private var sequence: Long = 0L
 

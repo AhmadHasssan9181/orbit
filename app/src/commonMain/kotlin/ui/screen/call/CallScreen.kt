@@ -38,6 +38,11 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import livekit.soundboardAddCustomSound
+import livekit.soundboardCustomSounds
+import livekit.soundboardRemoveCustomSound
+import util.rememberFilePickerLauncher
 import ui.assets.OrbitBrandMark
 import ui.assets.OrbitDefaultAvatar
 import ui.icons.OrbitIcons
@@ -79,7 +84,7 @@ fun CallScreen(
     var showScreenShareDialog by remember { mutableStateOf(false) }
     var showSoundboard by remember { mutableStateOf(false) }
     var layoutMode by remember { mutableStateOf(CallLayoutMode.Grid) }
-    var isDeafened by remember { mutableStateOf(false) }
+    val isDeafened by callManager.isDeafened.collectAsState()
 
     if (callState == CallState.IDLE || callState == CallState.ENDED) {
         return
@@ -98,11 +103,12 @@ fun CallScreen(
 
     val isAudioEnabled by callManager.isLocalAudioEnabled.collectAsState()
     val isMuted = !isAudioEnabled
-    var includeStreamAudio by remember { mutableStateOf(false) }
 
     // ── Call Timer ──
     var elapsedSeconds by remember { mutableStateOf(0L) }
-    LaunchedEffect(callState) {
+    // Key on the connected flag, not the raw state: transient state flips while
+    // connected (e.g. renegotiation) must not zero the running timer.
+    LaunchedEffect(callState == CallState.CONNECTED) {
         if (callState == CallState.CONNECTED) {
             elapsedSeconds = 0L
             while (true) {
@@ -174,16 +180,19 @@ fun CallScreen(
                     }
                     .clickable { callManager.isMinimized.value = false }
             ) {
-                if (isVideoCall && (isVideoEnabled || callState == CallState.CONNECTED)) {
-                    val renderer = if (callState == CallState.CONNECTED) {
+                // Only show a video tile once media actually arrived — grabbing
+                // the remote renderer earlier renders a black frame; with no tile
+                // available at all, fall through to the audio-only card.
+                val pipRenderer = when {
+                    isVideoCall && callState == CallState.CONNECTED && hasRemoteStream ->
                         callManager.webRtcClient.getRemoteVideoRenderer()
-                    } else {
+                    isVideoCall && isVideoEnabled ->
                         callManager.webRtcClient.getLocalVideoRenderer()
-                    }
+                    else -> null
+                }
+                if (pipRenderer != null) {
                     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-                        if (renderer != null) {
-                            VideoRenderer(renderer = renderer, modifier = Modifier.fillMaxSize())
-                        }
+                        VideoRenderer(renderer = pipRenderer, modifier = Modifier.fillMaxSize())
                     }
                 } else {
                     // Audio-only PiP
@@ -637,6 +646,7 @@ fun CallScreen(
             modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 120.dp)
         ) {
             SoundboardPanel(
+                callManager = callManager,
                 onDismiss = { showSoundboard = false }
             )
         }
@@ -653,19 +663,21 @@ fun CallScreen(
                     isDeafened = isDeafened,
                     isScreenSharing = isScreenSharing,
                     layoutMode = layoutMode,
-                    showSoundboard = showSoundboard,
-                    onToggleDeafen = { isDeafened = !isDeafened },
+                    onToggleDeafen = { callManager.toggleDeafen() },
                     onLayoutModeToggle = {
                         layoutMode = if (layoutMode == CallLayoutMode.Grid) CallLayoutMode.Focus else CallLayoutMode.Grid
                     },
-                    onSoundboardToggle = { showSoundboard = !showSoundboard },
                     onScreenShareClick = {
                         if (isScreenSharing) {
                             callManager.stopScreenShare()
                         } else {
                             showScreenShareDialog = true
                         }
-                    }
+                    },
+                    // Real P2P playback-mute hook (remote AudioTrack volume).
+                    showDeafen = true,
+                    showSoundboard = showSoundboard,
+                    onSoundboardToggle = { showSoundboard = !showSoundboard }
                 )
             }
         }
@@ -698,16 +710,26 @@ private val soundEffects = listOf(
 
 @Composable
 fun SoundboardPanel(
-    onDismiss: () -> Unit
+    callManager: CallManager,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val tokens = rememberCosmicTokens()
+    var effectVolume by remember { mutableStateOf(1f) }
+    val customSounds by soundboardCustomSounds().collectAsState()
+    var uploadError by remember { mutableStateOf<String?>(null) }
+
+    val launchSoundPicker = rememberFilePickerLauncher { bytes, filename, _ ->
+        val error = soundboardAddCustomSound(filename, bytes)
+        uploadError = error
+    }
 
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = Color(0xFF1E1F22).copy(alpha = 0.95f),
         shadowElevation = 16.dp,
         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
-        modifier = Modifier.width(360.dp)
+        modifier = modifier.width(360.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
@@ -735,40 +757,154 @@ fun SoundboardPanel(
                 columns = GridCells.Fixed(4),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.heightIn(max = 200.dp)
+                modifier = Modifier.heightIn(max = 240.dp)
             ) {
-                items(soundEffects.size) { index ->
-                    val effect = soundEffects[index]
-                    var isHovered by remember { mutableStateOf(false) }
-                    val hoverInteraction = remember { MutableInteractionSource() }
+                val tileCount = soundEffects.size + customSounds.size + 1
+                items(tileCount) { index ->
+                    when {
+                        index < soundEffects.size -> {
+                            val effect = soundEffects[index]
+                            var isHovered by remember { mutableStateOf(false) }
+                            val hoverInteraction = remember { MutableInteractionSource() }
 
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = if (isHovered) Color(0xFF2B2D31) else Color(0xFF232428),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(1f)
-                            .hoverable(hoverInteraction)
-                            .clickable {
-                                // Sound effect would be played via CallManager in the future
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isHovered) Color(0xFF2B2D31) else Color(0xFF232428),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .aspectRatio(1f)
+                                    .hoverable(hoverInteraction)
+                                    .clickable { callManager.playSoundEffect(effect.name.lowercase()) }
+                            ) {
+                                Column(
+                                    modifier = Modifier.fillMaxSize().padding(4.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
+                                ) {
+                                    Text(effect.emoji, fontSize = 24.sp)
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(
+                                        effect.name,
+                                        color = Color.White.copy(alpha = 0.6f),
+                                        fontSize = 10.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             }
-                    ) {
-                        Column(
-                            modifier = Modifier.fillMaxSize().padding(4.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
-                        ) {
-                            Text(effect.emoji, fontSize = 24.sp)
-                            Spacer(Modifier.height(2.dp))
-                            Text(
-                                effect.name,
-                                color = Color.White.copy(alpha = 0.6f),
-                                fontSize = 10.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                        }
+                        index < soundEffects.size + customSounds.size -> {
+                            val custom = customSounds[index - soundEffects.size]
+
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color(0xFF1A3A2C),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .aspectRatio(1f)
+                                    .clickable { callManager.playSoundEffect(custom.id) }
+                            ) {
+                                Box(modifier = Modifier.fillMaxSize()) {
+                                    Column(
+                                        modifier = Modifier.fillMaxSize().padding(4.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.Center
+                                    ) {
+                                        Text("📁", fontSize = 24.sp)
+                                        Spacer(Modifier.height(2.dp))
+                                        Text(
+                                            custom.displayName,
+                                            color = Color(0xFF7FE0AE),
+                                            fontSize = 10.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = { soundboardRemoveCustomSound(custom.id) },
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .size(18.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Close,
+                                            contentDescription = "Remove ${custom.displayName}",
+                                            tint = Color.White.copy(alpha = 0.45f),
+                                            modifier = Modifier.size(10.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        else -> {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color(0xFF232428),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .aspectRatio(1f)
+                                    .clickable {
+                                        uploadError = null
+                                        launchSoundPicker()
+                                    }
+                            ) {
+                                Column(
+                                    modifier = Modifier.fillMaxSize().padding(4.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
+                                ) {
+                                    Text("＋", fontSize = 22.sp, color = tokens.Accent)
+                                    Text(
+                                        "Add",
+                                        color = Color.White.copy(alpha = 0.6f),
+                                        fontSize = 10.sp
+                                    )
+                                }
+                            }
                         }
                     }
+                }
+            }
+
+            if (uploadError != null) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    uploadError ?: "",
+                    color = Color(0xFFF23F42),
+                    fontSize = 11.sp
+                )
+            } else {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Upload your own (WAV/AIFF/AU, max 10 s)",
+                    color = Color.White.copy(alpha = 0.35f),
+                    fontSize = 10.sp
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Volume",
+                    color = Color.White.copy(alpha = 0.6f),
+                    fontSize = 12.sp
+                )
+                Slider(
+                    value = effectVolume,
+                    onValueChange = {
+                        effectVolume = it
+                        callManager.setSoundEffectVolume(it)
+                    },
+                    valueRange = 0f..2f,
+                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                )
+                TextButton(onClick = { callManager.stopSoundEffects() }) {
+                    Text("Stop All", color = Color.White, fontSize = 12.sp)
                 }
             }
         }
@@ -921,16 +1057,11 @@ data class RenderNode(
 
 @Composable
 fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Modifier = Modifier) {
-    val isSpeaking = node.id == "local" && !node.isMuted
     val borderColor = animateColorAsState(
-        when {
-            node.isScreenShare -> Color(0xFFF23F42)
-            isSpeaking -> Color(0xFF23A559)
-            else -> Color(0xFF1E1F22)
-        },
+        if (node.isScreenShare) Color(0xFFF23F42) else Color(0xFF1E1F22),
         label = "borderColor"
     )
-    val borderWidth = if (isSpeaking || node.isScreenShare) 2.dp else 1.dp
+    val borderWidth = if (node.isScreenShare) 2.dp else 1.dp
 
     Box(
         modifier = modifier
@@ -1042,11 +1173,16 @@ fun AudioDeviceMenu(
 ) {
     var inputs by remember { mutableStateOf<List<String>>(emptyList()) }
     var outputs by remember { mutableStateOf<List<String>>(emptyList()) }
+    var selectedInput by remember { mutableStateOf<String?>(null) }
+    var selectedOutput by remember { mutableStateOf<String?>(null) }
+    val settingsManager = remember { repository.SettingsManager() }
 
     LaunchedEffect(expanded) {
         if (expanded) {
             inputs = callManager.webRtcClient.getAudioInputDevices()
             outputs = callManager.webRtcClient.getAudioOutputDevices()
+            selectedInput = callManager.webRtcClient.getSelectedAudioInputDevice()
+            selectedOutput = callManager.webRtcClient.getSelectedAudioOutputDevice()
         }
     }
 
@@ -1066,14 +1202,31 @@ fun AudioDeviceMenu(
             )
         )
         inputs.forEach { device ->
+            val isSelected = device == selectedInput
             DropdownMenuItem(
-                text = { Text(device, color = Color.White, fontSize = 13.sp) },
+                text = {
+                    Text(
+                        device,
+                        color = if (isSelected) Color.White else Color.White.copy(alpha = 0.75f),
+                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                        fontSize = 13.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                },
                 onClick = {
                     callManager.setAudioInputDevice(device)
+                    settingsManager.setInputDevice(device)
+                    selectedInput = device
                     onDismiss()
                 },
                 leadingIcon = {
                     Icon(OrbitIcons.Mic, null, tint = Color.White.copy(alpha = 0.4f), modifier = Modifier.size(16.dp))
+                },
+                trailingIcon = {
+                    if (isSelected) {
+                        Icon(Icons.Default.Check, contentDescription = "Active device", tint = Color(0xFF23A559), modifier = Modifier.size(16.dp))
+                    }
                 }
             )
         }
@@ -1091,14 +1244,31 @@ fun AudioDeviceMenu(
             )
         )
         outputs.forEach { device ->
+            val isSelected = device == selectedOutput
             DropdownMenuItem(
-                text = { Text(device, color = Color.White, fontSize = 13.sp) },
+                text = {
+                    Text(
+                        device,
+                        color = if (isSelected) Color.White else Color.White.copy(alpha = 0.75f),
+                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                        fontSize = 13.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                },
                 onClick = {
                     callManager.setAudioOutputDevice(device)
+                    settingsManager.setOutputDevice(device)
+                    selectedOutput = device
                     onDismiss()
                 },
                 leadingIcon = {
                     Icon(Icons.Default.Headphones, null, tint = Color.White.copy(alpha = 0.4f), modifier = Modifier.size(16.dp))
+                },
+                trailingIcon = {
+                    if (isSelected) {
+                        Icon(Icons.Default.Check, contentDescription = "Active device", tint = Color(0xFF23A559), modifier = Modifier.size(16.dp))
+                    }
                 }
             )
         }

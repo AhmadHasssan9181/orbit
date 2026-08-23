@@ -111,6 +111,9 @@ val LocalEnterSend = compositionLocalOf<Boolean> { true }
 val LocalUse24HourClock = compositionLocalOf<Boolean> { false }
 val LocalDateFormat = compositionLocalOf<String> { "DD/MM/YYYY" }
 
+/** Members of the open room, so message UI can resolve avatars without extra lookups. */
+val LocalRoomMembers = compositionLocalOf<List<ui.model.OrbitUser>> { emptyList() }
+
 /**
  * Discord/Revolt-style semantic color tokens derived from MaterialTheme.
  * Every screen should use these tokens instead of hard-coding colors.

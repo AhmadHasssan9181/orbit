@@ -5,6 +5,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 
 sealed class RtcFocus {
     data class LiveKit(
@@ -63,6 +64,16 @@ object RtcFocusParser {
 
     private fun JsonObject.string(key: String): String? =
         (this[key] as? JsonPrimitive)?.contentOrNull
+}
+
+object MatrixRtcCalls {
+    val DEFINITION_TYPES = listOf("m.call", "org.matrix.msc3401.call")
+    val MEMBER_TYPES = listOf("org.matrix.msc3401.call.member", "m.call.member")
+
+    fun isDefinitionTerminated(content: JsonObject): Boolean =
+        content["m.intent"]?.jsonPrimitive?.content == "m.terminated" ||
+            content["m.terminated"] != null ||
+            content.isEmpty()
 }
 
 data class RtcCapabilities(
