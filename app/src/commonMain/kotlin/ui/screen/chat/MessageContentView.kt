@@ -376,6 +376,7 @@ private fun FileMessageCard(content: ui.model.MessageContent.File) {
             .clip(RoundedCornerShape(8.dp))
             .background(tokens.CardBg)
             .border(1.dp, tokens.Separator.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+            .clickable { openUrlInBrowser(content.url) }
             .padding(horizontal = 12.dp, vertical = 10.dp)
             .widthIn(min = 180.dp, max = 300.dp),
         verticalAlignment = Alignment.CenterVertically,

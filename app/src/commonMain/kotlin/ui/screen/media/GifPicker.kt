@@ -12,15 +12,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.readBytes
 import io.ktor.client.statement.bodyAsText
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import util.OrbitLog
 import ui.theme.rememberCosmicTokens
 
 import ui.screen.auth.*
@@ -31,41 +35,70 @@ import ui.screen.call.*
 import ui.screen.media.*
 import ui.screen.main.*
 
+// Tenor v2 (Google API). The legacy g.tenor.com/v1 endpoints are dead.
+private const val TENOR_CLIENT_KEY = "orbit"
+
 @Serializable
 data class TenorResponse(val results: List<TenorResult>)
 @Serializable
-data class TenorResult(val media: List<TenorMedia>)
+data class TenorResult(@SerialName("media_formats") val mediaFormats: TenorMediaFormats)
 @Serializable
-data class TenorMedia(val tinygif: TenorGif)
+data class TenorMediaFormats(val tinygif: TenorGif)
 @Serializable
 data class TenorGif(val url: String)
 
 private val tenorJson = Json { ignoreUnknownKeys = true }
-private const val TENOR_API_KEY = "LIVDSRZULELA"
+
+/** Minimal RFC 3986 unreserved-set percent encoding, safe in commonMain. */
+private fun String.urlEncoded(): String = buildString {
+    for (b in this@urlEncoded.encodeToByteArray()) {
+        when (val c = b.toInt() and 0xFF) {
+            in 'a'.code..'z'.code, in 'A'.code..'Z'.code, in '0'.code..'9'.code,
+            '-'.code, '_'.code, '.'.code, '~'.code -> append(c.toChar())
+            else -> append('%').append(c.toString(16).padStart(2, '0').uppercase())
+        }
+    }
+}
 
 @Composable
 fun GifPicker(commonHttpClient: HttpClient, onGifSelected: (ByteArray) -> Unit) {
     val t = rememberCosmicTokens()
     val scope = rememberCoroutineScope()
+    val settingsManager = remember { repository.SettingsManager() }
     var isLoading by remember { mutableStateOf(true) }
     var searchQuery by remember { mutableStateOf("") }
     var gifs by remember { mutableStateOf<List<String>>(emptyList()) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
     var isDownloading by remember { mutableStateOf(false) }
+    // The Tenor key is user-provisioned (inline below); it is deliberately not
+    // shipped in source control.
+    var tenorApiKey by remember { mutableStateOf(settingsManager.tenorApiKeySync()) }
 
-    LaunchedEffect(searchQuery) {
+    LaunchedEffect(tenorApiKey, searchQuery) {
+        if (tenorApiKey.isBlank()) {
+            isLoading = false
+            return@LaunchedEffect
+        }
+        // Restarting this effect per keystroke with a settle window gives us a
+        // debounce: only the final value within 300 ms actually fetches.
+        if (searchQuery.isNotBlank()) delay(300)
         isLoading = true
+        errorMessage = null
         try {
             val url = if (searchQuery.isBlank()) {
-                "https://g.tenor.com/v1/trending?key=$TENOR_API_KEY&limit=20"
+                "https://tenor.googleapis.com/v2/featured?key=$tenorApiKey&client_key=$TENOR_CLIENT_KEY&media_filter=tinygif&limit=20"
             } else {
-                "https://g.tenor.com/v1/search?key=$TENOR_API_KEY&q=$searchQuery&limit=20"
+                "https://tenor.googleapis.com/v2/search?key=$tenorApiKey&client_key=$TENOR_CLIENT_KEY&media_filter=tinygif&limit=20&q=${searchQuery.trim().urlEncoded()}"
             }
             val response: HttpResponse = commonHttpClient.get(url)
-            val jsonText = response.bodyAsText()
-            val tenorRes = tenorJson.decodeFromString<TenorResponse>(jsonText)
-            gifs = tenorRes.results.mapNotNull { it.media.firstOrNull()?.tinygif?.url }
+            if (response.status.value !in 200..299) {
+                throw IllegalStateException("Tenor responded ${response.status.value}")
+            }
+            val tenorRes = tenorJson.decodeFromString<TenorResponse>(response.bodyAsText())
+            gifs = tenorRes.results.mapNotNull { it.mediaFormats.tinygif.url }
         } catch (e: Exception) {
-            e.printStackTrace()
+            OrbitLog.e("GifPicker", "Tenor fetch failed: ${e.message}")
+            errorMessage = "Couldn't load GIFs${e.message?.let { " ($it)" } ?: ""}. Check your Tenor API key."
         } finally {
             isLoading = false
         }
@@ -91,7 +124,65 @@ fun GifPicker(commonHttpClient: HttpClient, onGifSelected: (ByteArray) -> Unit) 
                 )
             )
             Spacer(Modifier.height(8.dp))
-            if (isLoading || isDownloading) {
+            if (tenorApiKey.isBlank()) {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        "Tenor API key not set — paste one below to browse GIFs.",
+                        color = Color.Gray,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    var keyInput by remember { mutableStateOf("") }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = keyInput,
+                            onValueChange = { keyInput = it },
+                            placeholder = { Text("API key") },
+                            visualTransformation = PasswordVisualTransformation(),
+                            singleLine = true,
+                            modifier = Modifier.width(260.dp),
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent,
+                                focusedIndicatorColor = t.Accent,
+                                unfocusedIndicatorColor = Color.Gray
+                            )
+                        )
+                        Button(
+                            onClick = {
+                                val trimmed = keyInput.trim()
+                                if (trimmed.isNotBlank()) {
+                                    settingsManager.setTenorApiKey(trimmed)
+                                    tenorApiKey = trimmed
+                                    isLoading = true
+                                }
+                            },
+                            enabled = keyInput.isNotBlank()
+                        ) {
+                            Text("Save")
+                        }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Free key: developers.google.com/tenor",
+                        color = Color.Gray.copy(alpha = 0.6f),
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+            } else if (errorMessage != null) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        errorMessage!!,
+                        color = Color(0xFFF23F42),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                }
+            } else if (isLoading || isDownloading) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = t.Accent)
                 }
@@ -113,9 +204,13 @@ fun GifPicker(commonHttpClient: HttpClient, onGifSelected: (ByteArray) -> Unit) 
                                         isDownloading = true
                                         try {
                                             val response: HttpResponse = commonHttpClient.get(url)
-                                            val bytes: ByteArray = response.readBytes()
-                                            onGifSelected(bytes)
+                                            if (response.status.value !in 200..299) {
+                                                throw IllegalStateException("Download failed ${response.status.value}")
+                                            }
+                                            onGifSelected(response.readBytes())
                                         } catch (e: Exception) {
+                                            OrbitLog.e("GifPicker", "GIF download failed: ${e.message}")
+                                            errorMessage = "Couldn't download that GIF. Try again."
                                         } finally {
                                             isDownloading = false
                                         }

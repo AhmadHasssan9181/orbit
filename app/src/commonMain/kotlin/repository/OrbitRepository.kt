@@ -45,8 +45,8 @@ interface OrbitMessagesRepository {
     suspend fun sendImageMessage(channelId: String, mxcUrl: String, filename: String, mimeType: String, width: Int? = null, height: Int? = null, size: Long? = null): Result<String>
     suspend fun sendFileMessage(channelId: String, mxcUrl: String, filename: String, mimeType: String, size: Long? = null): Result<String>
     suspend fun sendAudioMessage(channelId: String, mxcUrl: String, filename: String, mimeType: String, durationMs: Int? = null, size: Long? = null): Result<String>
-    suspend fun editMessage(eventId: String, newBody: String): Result<Unit>
-    suspend fun deleteMessage(eventId: String): Result<Unit>
+    suspend fun editMessage(roomId: String, eventId: String, newBody: String): Result<Unit>
+    suspend fun deleteMessage(roomId: String, eventId: String): Result<Unit>
     suspend fun sendReadReceipt(roomId: String, eventId: String)
     suspend fun registerPusher(pushKey: String, appId: String, url: String)
     fun observeMessages(channelId: String): Flow<List<OrbitMessage>>
@@ -64,18 +64,31 @@ interface OrbitUsersRepository {
 
 interface OrbitCallsRepository {
     suspend fun getTurnServers(): Result<List<TurnServer>>
+    suspend fun configureCallEndpoints(sfuUrlOverride: String?)
     suspend fun sendCallEvent(channelId: String, eventType: String, content: kotlinx.serialization.json.JsonObject): Result<String>
     fun observeCallEvents(): Flow<CallEvent>
     fun observeActiveCall(channelId: String): Flow<CallEvent.Invite?>
     fun observeActiveGroupCall(channelId: String): Flow<String?>
     fun observeCallMembers(channelId: String): Flow<List<OrbitUser>>
+    suspend fun resolveGroupCallJoinTarget(roomId: String): ResolvedGroupCall
     suspend fun startGroupCall(roomId: String, callId: String)
     suspend fun endGroupCall(roomId: String, callId: String)
     suspend fun joinGroupCall(roomId: String, callId: String)
-    suspend fun updateGroupCallMembershipCapabilities(roomId: String, callId: String, audio: Boolean, video: Boolean, livekitIdentity: String? = null)
+    suspend fun updateGroupCallMembershipCapabilities(roomId: String, callId: String, audio: Boolean, video: Boolean, livekitIdentity: String? = null): Boolean
     suspend fun leaveGroupCall(roomId: String, callId: String)
     suspend fun fetchLiveKitToken(roomId: String, callId: String, livekitServiceUrl: String): livekit.LiveKitAuthResponse
     val activeCallsFlow: kotlinx.coroutines.flow.StateFlow<Map<String, String>>
+}
+
+data class ResolvedGroupCall(
+    val exists: Boolean,
+    val callId: String?,
+    val serviceUrl: String?,
+    val source: String?
+) {
+    companion object {
+        val None = ResolvedGroupCall(exists = false, callId = null, serviceUrl = null, source = null)
+    }
 }
 
 interface OrbitSyncRepository {
@@ -105,7 +118,7 @@ sealed class CallEvent {
     abstract val callId: String
     abstract val senderId: String
     abstract val partyId: String?
-    data class Invite(override val roomId: String, override val callId: String, val sdp: String, override val senderId: String, override val partyId: String? = null) : CallEvent()
+    data class Invite(override val roomId: String, override val callId: String, val sdp: String, override val senderId: String, override val partyId: String? = null, val lifetimeMs: Long? = null) : CallEvent()
     data class Answer(override val roomId: String, override val callId: String, val sdp: String, override val senderId: String, override val partyId: String? = null) : CallEvent()
     data class Negotiate(override val roomId: String, override val callId: String, val sdp: String, val type: String, override val senderId: String, override val partyId: String? = null) : CallEvent()
     data class Candidate(override val roomId: String, override val callId: String, val sdp: String, val sdpMid: String, val sdpMLineIndex: Int, override val senderId: String, override val partyId: String? = null) : CallEvent()

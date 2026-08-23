@@ -25,7 +25,7 @@ object LiveKitNativeAudioBridge {
     external fun nativeDisconnect()
 
     @JvmStatic
-    external fun nativePublishAudio(sampleRate: Int, channels: Int, frameMs: Int, queueSizeMs: Int, expectedTestTone: Boolean): Boolean
+    external fun nativePublishAudio(sampleRate: Int, channels: Int, frameMs: Int, queueSizeMs: Int, expectedTestTone: Boolean, maxBitrateBps: Int): Boolean
 
     @JvmStatic
     external fun nativePushAudioFrame(

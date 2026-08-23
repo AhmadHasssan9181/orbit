@@ -86,6 +86,7 @@ import ui.theme.LocalIsLiteMode
 import ui.theme.LocalOnLiteModeChange
 import ui.theme.rememberCosmicTokens
 import webrtc.CallManager
+import webrtc.CallState
 import webrtc.LocalCallManager
 import webrtc.createWebRtcClient
 
@@ -114,10 +115,12 @@ private val coilHttpClient = HttpClient(CIO) {
     install(io.ktor.client.plugins.logging.Logging) {
         logger = object : io.ktor.client.plugins.logging.Logger {
             override fun log(message: String) {
-                println("DEBUG: [Coil-Ktor] $message")
+                // Gate at the source: LogLevel.INFO already builds header strings,
+                // so don't pay for them unless debug logging is actually on.
+                if (util.OrbitLog.debugEnabled) println("DEBUG: [Coil-Ktor] $message")
             }
         }
-        level = io.ktor.client.plugins.logging.LogLevel.ALL
+        level = io.ktor.client.plugins.logging.LogLevel.INFO
     }
 }.apply {
     // Dynamic header injection interceptor
@@ -146,7 +149,6 @@ private val coilHttpClient = HttpClient(CIO) {
 @Suppress("UnusedBoxWithConstraintsScope")
 @Composable
 fun OrbitApp(
-    onStartScreenShare: (( (onResult: (Any) -> Unit) -> Unit ))? = null,
     modifier: Modifier = Modifier
 ) {
     var repository by remember { mutableStateOf<OrbitRepository?>(null) }
@@ -258,7 +260,6 @@ fun OrbitApp(
                             repository = repository!!,
                             settingsManager = settingsManager,
                             windowSize = windowSize,
-                            onStartScreenShare = onStartScreenShare,
                             onLogoutRequested = {
                                 scope.launch {
                                     repository?.logout()
@@ -286,7 +287,6 @@ private fun MainAppContent(
     repository: OrbitRepository,
     settingsManager: SettingsManager,
     windowSize: WindowSizeClass,
-    onStartScreenShare: (( (onResult: (Any) -> Unit) -> Unit ))? = null,
     onLogoutRequested: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -529,10 +529,21 @@ private fun MainAppContent(
             }
 
             val activeRoomId by callManager.activeRoomIdFlow.collectAsState()
+            val callState by callManager.callState.collectAsState()
+            val isGroupCall by callManager.isGroupCall.collectAsState()
             val activeCallChannel = channels.find { it.matrixRoomId == activeRoomId || it.id == activeRoomId }
             val callerName = activeCallChannel?.name ?: "Friend"
 
-            val shouldShowPopup = activeCallChannel != null && activeCallChannel.categoryId == "dm"
+            // Keep a minimized call mounted even if its channel can't be resolved
+            // (e.g. navigated into a server whose channel list differs), so the
+            // mini view has somewhere to render instead of the call vanishing.
+            val callActive = callState != CallState.IDLE && callState != CallState.ENDED
+            val shouldShowPopup =
+                (activeCallChannel != null && activeCallChannel.categoryId == "dm") ||
+                    (callActive && isGroupCall) ||
+                    // P2P calls may live outside the dm category or have their channel
+                    // unresolvable entirely — they must still surface their UI.
+                    (callActive && !isGroupCall)
 
             LaunchedEffect(selectedChannelId, activeRoomId, channels) {
                 if (activeRoomId != null) {
@@ -544,7 +555,7 @@ private fun MainAppContent(
             }
 
             if (shouldShowPopup) {
-                if (callManager.isGroupCall.value) {
+                if (isGroupCall) {
                     LiveKitGroupCallSurface(
                         callManager = callManager,
                         modifier = Modifier.fillMaxSize(),
@@ -554,15 +565,6 @@ private fun MainAppContent(
                     CallScreen(
                         callManager = callManager,
                         callerName = callerName,
-                        onStartScreenShare = {
-                            if (onStartScreenShare != null) {
-                                onStartScreenShare { data ->
-                                    callManager.startScreenShare(data)
-                                }
-                            } else {
-                                callManager.startScreenShare()
-                            }
-                        },
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -661,7 +663,9 @@ fun ChatScreenWithRepo(
                     repository.sendMessage(channel.id, body)
                     val loaded = repository.getMessagesForChannel(channel.id, limit = 50)
                     messages = loaded
-                } catch (_: Exception) {}
+                } catch (e: Exception) {
+                    util.OrbitLog.e("ChatSend", "message send failed: ${e.message}")
+                }
             }
         },
         onSendAttachment = { bytes, filename, mimeType ->
@@ -681,7 +685,9 @@ fun ChatScreenWithRepo(
                     }
                     val loaded = repository.getMessagesForChannel(channel.id, limit = 50)
                     messages = loaded
-                } catch (_: Exception) {}
+                } catch (e: Exception) {
+                    util.OrbitLog.e("ChatSend", "attachment send failed: ${e.message}")
+                }
             }
         },
         onTyping = { isTyping ->

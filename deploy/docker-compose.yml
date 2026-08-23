@@ -1,0 +1,54 @@
+# Orbit self-hosted MatrixRTC stack: LiveKit SFU + JWT service + coturn.
+#
+# The JWT service (lk-jwt-service) exchanges the user's Matrix OpenID token for
+# a short-lived LiveKit access token. It serves:
+#   POST /get_token       (modern Element Call / Orbit endpoint)
+#   POST /sfu/get         (legacy endpoint, also matched by Orbit)
+#
+# Point clients at it either via:
+#   - homeserver /.well-known/matrix/client -> "org.matrix.msc4143.rtc_foci"
+#     with {"type":"livekit","livekit_service_url":"https://livekit.example.com"}
+#     (auto-discovered by Orbit and Element Call), or
+#   - Orbit's in-app SFU override setting (Settings > Voice & Video > SFU URL).
+#
+# Before first start: copy .env.example to .env and fill in the values.
+
+services:
+  livekit:
+    image: livekit/livekit-server:latest
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_KEY}: ${LIVEKIT_SECRET}"
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "7880:7880"          # signaling (HTTP/WebSocket)
+      - "7881:7881"          # TCP fallback (ICE/TCP)
+      - "7882:7882/udp"      # UDP media
+      - "50000-50200:50000-50200/udp"  # RTC port range (see livekit.yaml)
+    # If the host is behind NAT, uncomment and set to its public address:
+    # network_mode: host
+
+  livekit-jwt:
+    image: ghcr.io/element-hq/lk-jwt-service:latest
+    restart: unless-stopped
+    environment:
+      # Public URL clients use to reach LiveKit signaling (wss:// in production).
+      LIVEKIT_URL: "${LIVEKIT_URL}"
+      LIVEKIT_KEY: "${LIVEKIT_KEY}"
+      LIVEKIT_SECRET: "${LIVEKIT_SECRET}"
+      # Comma-separated list of homeservers allowed to exchange OpenID tokens.
+      # Omit to allow any homeserver (fine for private deployments).
+      # LIVEKIT_ALLOW_HOMESERVERS: "matrix.example.com"
+    ports:
+      - "8080:8080"
+
+  coturn:
+    image: coturn/coturn:latest
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    # coturn runs with host networking so UDP relay ports are direct; the
+    # static-auth-secret below must match livekit.yaml's turn credentials.

@@ -49,7 +49,8 @@ object OrbitLiveKitNativeRaw {
         sampleRate: Int,
         channels: Int,
         queueSizeMs: Int,
-        expectedTestTone: Boolean
+        expectedTestTone: Boolean,
+        maxBitrateBps: Int
     ): Int
 
     @JvmStatic
@@ -70,11 +71,46 @@ object OrbitLiveKitNativeRaw {
         width: Int,
         height: Int,
         fps: Int,
-        format: Int
+        format: Int,
+        maxBitrateBps: Int
     ): Int
 
     @JvmStatic
     external fun nativePushVideoFrame(
+        sessionId: Long,
+        epoch: Long,
+        buffer: ByteBuffer,
+        width: Int,
+        height: Int,
+        format: Int,
+        strideY: Int,
+        strideU: Int,
+        strideV: Int,
+        timestampNs: Long,
+        rotation: Int
+    ): Int
+
+    @JvmStatic
+    external fun nativePublishScreenShare(
+        sessionId: Long,
+        epoch: Long,
+        width: Int,
+        height: Int,
+        fps: Int,
+        maxBitrateBps: Int
+    ): Int
+
+    @JvmStatic
+    external fun nativeUnpublishScreenShare(sessionId: Long, epoch: Long): Int
+
+    @JvmStatic
+    external fun nativePublishScreenShareAudio(sessionId: Long, epoch: Long): Int
+
+    @JvmStatic
+    external fun nativeUnpublishScreenShareAudio(sessionId: Long, epoch: Long): Int
+
+    @JvmStatic
+    external fun nativePushScreenShareFrame(
         sessionId: Long,
         epoch: Long,
         buffer: ByteBuffer,

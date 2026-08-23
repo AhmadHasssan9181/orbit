@@ -13,12 +13,21 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
     private const val CONNECT_TIMEOUT_MS = 15_000L
     private const val PUBLISH_TIMEOUT_MS = 10_000L
     private const val RECONNECT_TIMEOUT_MS = 15_000L
+    private const val MAX_CONSECUTIVE_RECONNECTS = 3
 
     private val bridge = OrbitLiveKitNativeBridge()
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private var sessionId: Long = 0L
     private var epoch: Long = 0L
+
+    // Screen-share publish slot (Part F): armed while the user is sharing;
+    // actual native publish happens lazily on first frame with its real dimensions.
+    private var screenShareArmed = false
+    private var screenShareWidth = 0
+    private var screenShareHeight = 0
+    private var screenShareFps = 30
+    private var screenShareMaxBitrateBps = 0
     private var connectedDeferred: CompletableDeferred<NativeResult<Unit>>? = null
     private var audioPublishedDeferred: CompletableDeferred<NativeResult<Unit>>? = null
     private var videoPublishedDeferred: CompletableDeferred<NativeResult<Unit>>? = null
@@ -29,6 +38,12 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
     private var lastVideoPolicy: JoinVideoPolicy = JoinVideoPolicy.AudioOnly
     private var lastRefreshTokenFetcher: (suspend () -> LiveKitAuthResponse)? = null
     @Volatile private var desiredAudioMuted: Boolean = false
+    @Volatile private var lastAudioBitrateKbps: Int = 64
+
+    // H1: bounded mid-call resume. Fires after a successful refreshAndReconnect so
+    // the owner (CallManager) can restore UI stage + re-affirm MatrixRTC membership.
+    private var reconnectAttempts = 0
+    var onReconnected: (() -> Unit)? = null
 
     @Volatile
     private var readinessCache = emptyReadiness()
@@ -45,12 +60,14 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
     suspend fun connectAndPublish(
         authResponse: LiveKitAuthResponse,
         videoPolicy: JoinVideoPolicy,
-        refreshTokenFetcher: (suspend () -> LiveKitAuthResponse)?
+        refreshTokenFetcher: (suspend () -> LiveKitAuthResponse)?,
+        audioBitrateKbps: Int = 64
     ): NativeResult<NativeMediaReadiness> {
         reconnectAllowed = true
         lastAuthResponse = authResponse
         lastVideoPolicy = videoPolicy
         lastRefreshTokenFetcher = refreshTokenFetcher
+        lastAudioBitrateKbps = audioBitrateKbps
         updateNativeState(NativeMediaState.FetchingToken)
 
         val tokenResult = authResponse.toTokenResult()
@@ -104,6 +121,9 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         }
 
         epoch += 1
+        // Native side resets the share slot on room reset; force lazy re-publish at this epoch.
+        screenShareWidth = 0
+        screenShareHeight = 0
         bridge.setEventSink(this)
         configureRemoteVideoSink("connect")
         connectedDeferred = CompletableDeferred()
@@ -153,21 +173,17 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         val publishChannels = LiveKitNativeAudioCapture.configuredPublishChannels()
         val queueSizeMs = configuredAudioSourceQueueMs()
         val expectedTestTone = LiveKitNativeAudioCapture.configuredTestTone()
-        println("DEBUG [LiveKitNativeMediaSession] audio publish format sampleRate=${LiveKitNativeAudioCapture.SAMPLE_RATE} channels=$publishChannels samplesPerChannel=${LiveKitNativeAudioCapture.SAMPLES_PER_CHANNEL} frameMs=${LiveKitNativeAudioCapture.FRAME_MS} queueSizeMs=$queueSizeMs expectedTestTone=$expectedTestTone")
-        val audioStarted = bridge.publishAudio(sessionId, epoch, LiveKitNativeAudioCapture.SAMPLE_RATE, publishChannels, queueSizeMs, expectedTestTone)
+        println("DEBUG [LiveKitNativeMediaSession] audio publish format sampleRate=${LiveKitNativeAudioCapture.SAMPLE_RATE} channels=$publishChannels samplesPerChannel=${LiveKitNativeAudioCapture.SAMPLES_PER_CHANNEL} frameMs=${LiveKitNativeAudioCapture.FRAME_MS} queueSizeMs=$queueSizeMs expectedTestTone=$expectedTestTone audioBitrateKbps=$lastAudioBitrateKbps")
+        val audioStarted = bridge.publishAudio(sessionId, epoch, LiveKitNativeAudioCapture.SAMPLE_RATE, publishChannels, queueSizeMs, expectedTestTone, lastAudioBitrateKbps * 1000)
         if (!audioStarted.ok) {
             val error = audioStarted.error ?: unknownError("Native audio publish failed", "nativePublishAudio")
             cancelPendingDeferreds(error)
             return NativeResult.failure(error)
         }
 
-        val audioPublished = awaitDeferred(audioPublishedDeferred, PUBLISH_TIMEOUT_MS, "publishAudio")
-        if (!audioPublished.ok) {
-            val error = audioPublished.error ?: unknownError("Native audio publish timed out", "publishAudio")
-            cancelPendingDeferreds(error)
-            return NativeResult.failure(error)
-        }
-
+        // The track exists the moment nativePublishAudio returns (it auto-unmutes after
+        // publish) — apply the desired mute BEFORE waiting on the ack so a muted join
+        // never transmits mic audio during the await window.
         LiveKitNativeAudioCapture.setMuted(desiredAudioMuted)
         val initialMute = bridge.setAudioMuted(sessionId, epoch, desiredAudioMuted)
         if (!initialMute.ok) {
@@ -176,9 +192,16 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             return NativeResult.failure(error)
         }
         if (desiredAudioMuted) {
-            println("DEBUG [LiveKitNativeMediaSession] native mic muted after publish")
+            println("DEBUG [LiveKitNativeMediaSession] native mic muted before publish ack")
         } else {
-            println("DEBUG [LiveKitNativeMediaSession] native mic unmuted after publish")
+            println("DEBUG [LiveKitNativeMediaSession] native mic unmuted before publish ack")
+        }
+
+        val audioPublished = awaitDeferred(audioPublishedDeferred, PUBLISH_TIMEOUT_MS, "publishAudio")
+        if (!audioPublished.ok) {
+            val error = audioPublished.error ?: unknownError("Native audio publish timed out", "publishAudio")
+            cancelPendingDeferreds(error)
+            return NativeResult.failure(error)
         }
 
         val videoOutcome = handleOptionalVideoPublish(videoPolicy, grantCheck.value.videoAllowed)
@@ -230,6 +253,10 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         return NativeResult.success(readinessCache)
     }
 
+    /** Read-only peek at the current readiness for join-progress UI (E1). */
+    fun currentReadiness(): NativeMediaReadiness? =
+        readinessCache.takeIf { it.state != NativeMediaState.Idle }
+
     suspend fun ensureMediaReady(): NativeResult<NativeMediaReadiness> {
         if (readinessCache.state == NativeMediaState.MediaReady &&
             readinessCache.audioPublished &&
@@ -256,20 +283,92 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         val raw = System.getProperty("orbit.livekit.audioSourceQueueMs")
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
-            ?: System.getenv("ORBIT_LIVEKIT_AUDIO_SOURCE_QUEUE_MS")
-                ?.trim()
-                ?.takeIf { it.isNotEmpty() }
-        val value = raw?.toIntOrNull() ?: 10
-        if (value != 10) {
-            println("WARN [LiveKitNativeMediaSession] orbit.livekit.audioSourceQueueMs=$value is disabled for the decode test; using 10")
-            return 10
+        // Default 0 = SDK real-time mode: captureFrame consumes synchronously and
+        // the worker's own 10 ms pacing is the only clock. Buffered mode (10) made
+        // captureFrame block until the SDK drained in real time, stacking with our
+        // pacing into a ~31 ms cycle and dropping ~68% of mic frames.
+        val value = raw?.toIntOrNull() ?: 0
+        if (value != 0 && value != 10) {
+            println("WARN [LiveKitNativeMediaSession] orbit.livekit.audioSourceQueueMs=$value unsupported; using 0")
+            return 0
         }
         return value
     }
 
+    fun armScreenSharePublish(fps: Int, maxBitrateBps: Int) {
+        screenShareFps = fps.coerceIn(1, 60)
+        screenShareMaxBitrateBps = maxBitrateBps
+        screenShareWidth = 0
+        screenShareHeight = 0
+        screenShareArmed = true
+        println("DEBUG [LiveKitNativeMediaSession] screenshare publish armed fps=$screenShareFps maxBitrateBps=$maxBitrateBps")
+    }
+
+    fun disarmScreenSharePublish() {
+        if (!screenShareArmed && screenShareWidth == 0 && screenShareHeight == 0) return
+        screenShareArmed = false
+        screenShareWidth = 0
+        screenShareHeight = 0
+        val result = bridge.unpublishScreenShare(sessionId, epoch)
+        if (result.ok) {
+            println("DEBUG [LiveKitNativeMediaSession] screenshare unpublished")
+        } else {
+            println("WARN [LiveKitNativeMediaSession] screenshare unpublish failed: ${result.error?.message}")
+        }
+    }
+
+    fun publishScreenShareAudio() {
+        if (sessionId == 0L) return
+        val result = bridge.publishScreenShareAudio(sessionId, epoch)
+        if (result.ok) {
+            println("DEBUG [LiveKitNativeMediaSession] screenshare audio published (system loopback)")
+        } else {
+            println("WARN [LiveKitNativeMediaSession] screenshare audio publish failed: ${result.error?.message}")
+        }
+    }
+
+    fun unpublishScreenShareAudio() {
+        if (sessionId == 0L) return
+        val result = bridge.unpublishScreenShareAudio(sessionId, epoch)
+        if (result.ok) {
+            println("DEBUG [LiveKitNativeMediaSession] screenshare audio unpublished")
+        } else {
+            println("WARN [LiveKitNativeMediaSession] screenshare audio unpublish failed: ${result.error?.message}")
+        }
+    }
+
+    fun pushScreenShareFrame(buffer: java.nio.ByteBuffer, width: Int, height: Int, timestampNs: Long, rotation: Int): Boolean {
+        if (!screenShareArmed || width <= 0 || height <= 0) return false
+        if (width != screenShareWidth || height != screenShareHeight) {
+            if (screenShareWidth != 0) {
+                runCatching { bridge.unpublishScreenShare(sessionId, epoch) }
+            }
+            val publish = bridge.publishScreenShare(sessionId, epoch, width, height, screenShareFps, screenShareMaxBitrateBps)
+            if (!publish.ok) {
+                println("ERROR [LiveKitNativeMediaSession] screenshare publish failed: ${publish.error?.message}")
+                return false
+            }
+            screenShareWidth = width
+            screenShareHeight = height
+            println("DEBUG [LiveKitNativeMediaSession] screenshare publishing ${width}x${height} fps=$screenShareFps")
+        }
+        val chromaStride = (width + 1) / 2
+        val push = bridge.pushScreenShareFrame(sessionId, epoch, buffer, width, height, 5, width, chromaStride, chromaStride, timestampNs, rotation)
+        if (!push.ok) {
+            // Force republish with fresh dimensions on the next frame (e.g. window resized).
+            screenShareWidth = 0
+            screenShareHeight = 0
+        }
+        return push.ok
+    }
+
     fun disconnect(userInitiated: Boolean) {
+        // Any explicit teardown — user leave OR owner give-up — kills auto-resume;
+        // otherwise a give-up disconnect could race the owner with a token-refresh
+        // reconnect (H1).
+        reconnectAllowed = false
+        reconnectAttempts = 0
         if (userInitiated) {
-            reconnectAllowed = false
             desiredAudioMuted = false
         }
         refreshJob?.cancel()
@@ -279,6 +378,9 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         runCatching { LiveKitNativeAudioCapture.stopAndJoin() }
         runCatching { LiveKitNativeAudioPlayer.stop() }
         disableRemoteVideoSink("disconnect")
+        screenShareArmed = false
+        screenShareWidth = 0
+        screenShareHeight = 0
         if (sessionId != 0L) {
             bridge.disconnect(sessionId, epoch, userInitiated)
         }
@@ -468,11 +570,14 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             videoPublishedDeferred = CompletableDeferred()
         }
 
+        val videoMaxBitrateBps = System.getProperty("orbit.video.maxBitrateKbps")
+            ?.trim()?.takeIf { it.isNotEmpty() }?.toIntOrNull()?.takeIf { it > 0 }?.times(1000) ?: 0
         println(
             "DEBUG [LiveKitNativeMediaSession] video publish started " +
-                "width=${config.width} height=${config.height} fps=${config.fps} format=${config.format}"
+                "width=${config.width} height=${config.height} fps=${config.fps} format=${config.format} " +
+                "videoMaxBitrateBps=$videoMaxBitrateBps"
         )
-        val publish = bridge.publishVideo(sessionId, epoch, config.width, config.height, config.fps, config.format)
+        val publish = bridge.publishVideo(sessionId, epoch, config.width, config.height, config.fps, config.format, videoMaxBitrateBps)
         if (!publish.ok) {
             runCatching { LiveKitNativeVideoCapture.stopAndJoin() }
             updateCameraFallback(CameraPublishState.Failed, joinedAsAudioOnlyFallback = !videoRequired)
@@ -529,7 +634,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
     }
 
     private fun shouldPublishVideo(): Boolean =
-        LiveKitFeatureFlags.videoPublish
+        LiveKitFeatureFlags.videoPublish && lastVideoPolicy != JoinVideoPolicy.AudioOnly
 
     private fun configureRemoteVideoSink(reason: String) {
         if (!LiveKitFeatureFlags.videoRemoteRender) {
@@ -614,9 +719,24 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
     private suspend fun refreshAndReconnect(fetcher: suspend () -> LiveKitAuthResponse) {
         if (!reconnectAllowed) return
 
-        println("DEBUG [LiveKitNativeMediaSession] token refresh started")
+        reconnectAttempts += 1
+        if (reconnectAttempts > MAX_CONSECUTIVE_RECONNECTS) {
+            println("ERROR [LiveKitNativeMediaSession] giving up after $reconnectAttempts consecutive reconnect attempts")
+            reconnectAllowed = false
+            handleNativeError(
+                NativeError(
+                    code = NativeErrorCode.DISCONNECTED,
+                    message = "Connection lost — reconnection attempts exhausted",
+                    operation = "refreshAndReconnect",
+                    recoverable = false
+                )
+            )
+            return
+        }
+
+        println("DEBUG [LiveKitNativeMediaSession] token refresh started (attempt $reconnectAttempts)")
         println("DEBUG [LiveKitNativeMediaSession] mute state before reconnect: $desiredAudioMuted")
-        updateNativeState(NativeMediaState.RefreshingToken)
+        updateNativeState(NativeMediaState.Reconnecting)
         runCatching { LiveKitNativeVideoCapture.stopAndJoin() }
         runCatching { LiveKitNativeAudioBridge.nativeSetAcceptingFrames(false) }
         runCatching { LiveKitNativeAudioCapture.stopAndJoin() }
@@ -669,11 +789,23 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         val publishChannels = LiveKitNativeAudioCapture.configuredPublishChannels()
         val queueSizeMs = configuredAudioSourceQueueMs()
         val expectedTestTone = LiveKitNativeAudioCapture.configuredTestTone()
-        println("DEBUG [LiveKitNativeMediaSession] audio republish format sampleRate=${LiveKitNativeAudioCapture.SAMPLE_RATE} channels=$publishChannels samplesPerChannel=${LiveKitNativeAudioCapture.SAMPLES_PER_CHANNEL} frameMs=${LiveKitNativeAudioCapture.FRAME_MS} queueSizeMs=$queueSizeMs expectedTestTone=$expectedTestTone")
-        val audioStarted = bridge.publishAudio(sessionId, epoch, LiveKitNativeAudioCapture.SAMPLE_RATE, publishChannels, queueSizeMs, expectedTestTone)
+        println("DEBUG [LiveKitNativeMediaSession] audio republish format sampleRate=${LiveKitNativeAudioCapture.SAMPLE_RATE} channels=$publishChannels samplesPerChannel=${LiveKitNativeAudioCapture.SAMPLES_PER_CHANNEL} frameMs=${LiveKitNativeAudioCapture.FRAME_MS} queueSizeMs=$queueSizeMs expectedTestTone=$expectedTestTone audioBitrateKbps=$lastAudioBitrateKbps")
+        val audioStarted = bridge.publishAudio(sessionId, epoch, LiveKitNativeAudioCapture.SAMPLE_RATE, publishChannels, queueSizeMs, expectedTestTone, lastAudioBitrateKbps * 1000)
         if (!audioStarted.ok) {
             handleNativeError(audioStarted.error ?: unknownError("Audio republish failed", "nativePublishAudio"))
             return
+        }
+        // Track exists now (publish auto-unmutes) — restore the desired mute before the
+        // ack wait so a muted user never leaks mic audio across a reconnect.
+        val muteRestored = bridge.setAudioMuted(sessionId, epoch, desiredAudioMuted)
+        if (!muteRestored.ok) {
+            handleNativeError(muteRestored.error ?: unknownError("Native mute restore failed", "nativeSetAudioMuted"))
+            return
+        }
+        if (desiredAudioMuted) {
+            println("DEBUG [LiveKitNativeMediaSession] native mute reapplied before republish ack")
+        } else {
+            println("DEBUG [LiveKitNativeMediaSession] native mute remains false after reconnect")
         }
         val audioPublished = awaitDeferred(audioPublishedDeferred, PUBLISH_TIMEOUT_MS, "republishAudio")
         if (!audioPublished.ok) {
@@ -681,22 +813,25 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             return
         }
         println("DEBUG [LiveKitNativeMediaSession] audio republished")
-        val muteRestored = bridge.setAudioMuted(sessionId, epoch, desiredAudioMuted)
-        if (!muteRestored.ok) {
-            handleNativeError(muteRestored.error ?: unknownError("Native mute restore failed", "nativeSetAudioMuted"))
-            return
-        }
-        if (desiredAudioMuted) {
-            println("DEBUG [LiveKitNativeMediaSession] native mute reapplied")
-        } else {
-            println("DEBUG [LiveKitNativeMediaSession] native mute remains false after reconnect")
-        }
         val videoOutcome = handleOptionalVideoPublish(lastVideoPolicy, grantCheck.value.videoAllowed)
         if (!videoOutcome.ok) {
             handleNativeError(videoOutcome.error ?: unknownError("Video republish failed", "republishVideo"))
             return
         }
-        LiveKitNativeAudioCapture.start(sessionId, epoch, bridge, ::handleCaptureFailure)
+        if (!LiveKitNativeAudioCapture.start(sessionId, epoch, bridge, ::handleCaptureFailure)) {
+            val error = NativeError(
+                code = NativeErrorCode.AUDIO_CAPTURE_FAILED,
+                message = "Microphone capture did not restart after audio republish",
+                operation = "restartMicCapture",
+                recoverable = false
+            )
+            // Tear down first, THEN surface Failed: disconnect() overwrites readiness
+            // with Disconnected/lastError=null, and the CallManager watchdog only reacts
+            // to Failed — the reverse order would mask this as a zombie InCall.
+            disconnect(userInitiated = false)
+            updateReadinessWithError(NativeMediaState.Failed, error)
+            return
+        }
         updateReadiness(
             state = NativeMediaState.MediaReady,
             connected = true,
@@ -714,6 +849,9 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         mediaReadyDeferred?.complete(NativeResult.success(Unit))
         scheduleTokenRefresh(tokenResult.value)
         clearCompletedDeferreds()
+        reconnectAttempts = 0
+        runCatching { onReconnected?.invoke() }
+            .onFailure { println("WARN [LiveKitNativeMediaSession] onReconnected listener failed: ${it.message}") }
     }
 
     private suspend fun awaitDeferred(
@@ -819,10 +957,12 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             operation = "nativeDisconnected",
             recoverable = recoverable
         )
-        updateReadinessWithError(NativeMediaState.Disconnected, error)
         if (recoverable && reconnectAllowed) {
+            // Surface Reconnecting (not Disconnected) so UI shows the resume chip.
+            updateReadinessWithError(NativeMediaState.Reconnecting, error)
             scheduleTokenRefreshNow()
         } else {
+            updateReadinessWithError(NativeMediaState.Disconnected, error)
             cancelPendingDeferreds(error)
         }
     }

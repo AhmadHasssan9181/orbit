@@ -48,7 +48,7 @@ fun ExpandedLayout(
         channels.mapNotNull { it.categoryId }.distinct()
             .map { catId ->
                 val firstCh = channels.firstOrNull { it.categoryId == catId }
-                ChannelCategory(id = catId, name = catId.takeLast(8), channelId = firstCh?.id ?: "")
+                ChannelCategory(id = catId, name = ui.model.categoryDisplayName(catId), channelId = firstCh?.id ?: "")
             }
     }
 

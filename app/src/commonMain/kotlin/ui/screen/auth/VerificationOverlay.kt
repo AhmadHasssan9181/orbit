@@ -40,7 +40,17 @@ fun VerificationOverlay(activeVerification: ActiveDeviceVerification?) {
 
     val state by activeVerification.state.collectAsState()
 
-    Dialog(onDismissRequest = { /* Require explicit action */ }) {
+    // Terminal states stay on screen until the user closes them, but must be
+    // closable — an undismissable modal would brick the whole window. Interactive
+    // (mid-verification) states still require an explicit accept/decline action.
+    var dismissedTerminal by remember(activeVerification) { mutableStateOf(false) }
+    val isTerminal = state is ActiveVerificationState.Done ||
+        state is ActiveVerificationState.Cancel ||
+        state is ActiveVerificationState.AcceptedByOtherDevice ||
+        state is ActiveVerificationState.Undefined
+    if (dismissedTerminal && isTerminal) return
+
+    Dialog(onDismissRequest = { if (isTerminal) dismissedTerminal = true }) {
         Surface(
             shape = RoundedCornerShape(16.dp),
             color = rememberCosmicTokens().Bg,
@@ -136,7 +146,7 @@ fun VerificationOverlay(activeVerification: ActiveDeviceVerification?) {
                     is ActiveVerificationState.Done -> {
                         Text("Verification Successful!", color = Color(0xFF34D399))
                         Spacer(modifier = Modifier.height(16.dp))
-                        Button(onClick = { /* Will close when Trixnity clears the state */ }) {
+                        Button(onClick = { dismissedTerminal = true }) {
                             Text("Dismiss")
                         }
                     }
@@ -144,6 +154,10 @@ fun VerificationOverlay(activeVerification: ActiveDeviceVerification?) {
                         Text("Verification Cancelled", color = MaterialTheme.colorScheme.error)
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(s.content.reason)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(onClick = { dismissedTerminal = true }) {
+                            Text("Close")
+                        }
                     }
                     is ActiveVerificationState.AcceptedByOtherDevice -> {
                         Text("Accepted by another device.")

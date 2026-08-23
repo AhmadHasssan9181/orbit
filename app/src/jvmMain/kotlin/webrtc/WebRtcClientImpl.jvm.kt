@@ -34,6 +34,9 @@ import dev.onvoid.webrtc.media.video.desktop.ScreenCapturer
 import dev.onvoid.webrtc.media.video.VideoDesktopSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -74,6 +77,7 @@ class JvmWebRtcClient : WebRtcClient {
     private var remoteAudioTrack: AudioTrack? = null
     private var screenSource: VideoDesktopSource? = null
     private var screenVideoTrack: VideoTrack? = null
+    private var shareWindowTrackingJob: Job? = null
     override var isGroupCall: Boolean = false
 
     private var selectedAudioInput: String = "Default"
@@ -197,31 +201,9 @@ class JvmWebRtcClient : WebRtcClient {
                 println("DEBUG: [WebRTC] Redirecting local media to LiveKit Data Plane")
 
                 val usingNativeAudio = livekit.LiveKitNativeAudioSession.isConnected
-                val allowFfiAudio = livekit.LiveKitFeatureFlags.ffiFallback && livekit.LiveKitFeatureFlags.ffiAudio
-                val allowFfiVideo = livekit.LiveKitFeatureFlags.ffiFallback && livekit.LiveKitFeatureFlags.ffiVideo
 
-                if (isVideoEnabled && !usingNativeAudio && allowFfiVideo) {
-                    startVideoCapture()
-
-                    if (cameraVideoTrack == null) {
-                        println("ERROR: [WebRTC] cameraVideoTrack is NULL after startVideoCapture()!")
-                    } else {
-                        println("DEBUG: [WebRTC] cameraVideoTrack is initialized, adding LiveKit sink")
-                        cameraVideoTrack?.addSink(livekit.LiveKitLocalTrack.sink)
-                    }
-
-                    livekit.LiveKitLocalTrack.startCapture(captureWidth, captureHeight)
-                    CoroutineScope(Dispatchers.Default).launch {
-                        runCatching {
-                            livekit.LiveKitClient.publishVideoTrack(livekit.LiveKitLocalTrack.getSourceHandle())
-                        }.onFailure { e ->
-                            println("ERROR: [WebRTC] Failed to publish FFI video track: ${e.message}")
-                        }
-                    }
-                } else if (isVideoEnabled && usingNativeAudio) {
+                if (isVideoEnabled && usingNativeAudio) {
                     println("DEBUG: [WebRTC] Native C++ audio mode active; LiveKit video publish stays disabled for now")
-                } else if (isVideoEnabled && !allowFfiVideo) {
-                    println("DEBUG: [WebRTC] Raw FFI LiveKit video is disabled by feature flag")
                 }
 
                 if (usingNativeAudio) {
@@ -230,17 +212,8 @@ class JvmWebRtcClient : WebRtcClient {
                     } else {
                         println("ERROR: [WebRTC] Failed to start native C++ LiveKit audio")
                     }
-                } else if (allowFfiAudio) {
-                    livekit.LiveKitLocalAudioTrack.startCapture()
-                    CoroutineScope(Dispatchers.Default).launch {
-                        runCatching {
-                            livekit.LiveKitClient.publishAudioTrack(livekit.LiveKitLocalAudioTrack.getSourceHandle())
-                        }.onFailure { e ->
-                            println("ERROR: [WebRTC] Failed to publish FFI audio track: ${e.message}")
-                        }
-                    }
                 } else {
-                    println("DEBUG: [WebRTC] Raw FFI LiveKit audio is disabled by feature flag")
+                    println("DEBUG: [WebRTC] No native audio session connected; skipping LiveKit media publish")
                 }
                 
                 println("DEBUG: [WebRTC] Group call local media started and published to LiveKit")
@@ -255,7 +228,7 @@ class JvmWebRtcClient : WebRtcClient {
                 options.noiseSuppression = currentNs
                 options.echoCancellation = currentEc
                 options.autoGainControl = currentAgc
-                options.highpassFilter = currentNs
+                options.highpassFilter = true
                 val audioSource = f.createAudioSource(options)
                 localAudioSource = audioSource
                 val audioTrack = f.createAudioTrack("audioTrack", audioSource)
@@ -437,6 +410,9 @@ class JvmWebRtcClient : WebRtcClient {
     private fun attachRemoteAudioTrack(track: AudioTrack) {
         track.setEnabled(true)
         remoteAudioTrack = track
+        if (playbackMuted) {
+            runCatching { track.setVolume(0.0) }
+        }
         _onStreamAdded.tryEmit(true)
     }
 
@@ -482,12 +458,11 @@ class JvmWebRtcClient : WebRtcClient {
     override fun stopLocalMedia() {
         if (isGroupCall) {
             runCatching { livekit.LiveKitNativeAudioSession.stopPublishing() }
-            runCatching { livekit.LiveKitLocalAudioTrack.stopCapture() }
-            runCatching { cameraVideoTrack?.removeSink(livekit.LiveKitLocalTrack.sink) }
             isLiveKitMediaStarted = false
         }
 
         stopVideoCapture(disposeTrack = true)
+        desktopAudioStreaming = false
         stopScreenShare()
 
         localAudioSender?.let { sender ->
@@ -523,21 +498,36 @@ class JvmWebRtcClient : WebRtcClient {
                     stopScreenShare()
                 }
 
+                val shareSettings = repository.SettingsManager()
+                val quality = runCatching { shareSettings.screenShareQualitySync() }.getOrDefault("1080p")
+                val fps = runCatching { shareSettings.screenShareFpsSync() }.getOrDefault(30)
+                    .coerceIn(5, 60)
+                val (maxShareWidth, maxShareHeight) = when (quality.lowercase()) {
+                    "720p" -> 1280 to 720
+                    "1440p" -> 2560 to 1440
+                    "source" -> Int.MAX_VALUE to Int.MAX_VALUE
+                    else -> 1920 to 1080
+                }
+                println("DEBUG [WebRTC] screen share params quality=$quality fps=$fps max=${maxShareWidth}x$maxShareHeight")
+
                 screenSource = VideoDesktopSource()
                 screenSource?.setSourceId(finalSourceId, isWindow)
+                if (maxShareHeight != Int.MAX_VALUE) {
+                    screenSource?.setMaxFrameSize(maxShareWidth, maxShareHeight)
+                }
+                screenSource?.setFrameRate(fps)
                 screenSource?.start()
-                
+
                 val screenTrack = f.createVideoTrack("screenTrack_${System.currentTimeMillis()}", screenSource)
                 screenTrack.setEnabled(true)
                 screenVideoTrack = screenTrack
-                
+
                 if (isGroupCall) {
                     println("DEBUG [WebRTC] Starting screen share in Group Call (LiveKit)")
                     screenTrack.addSink(livekit.LiveKitLocalScreenShareTrack.sink)
-                    livekit.LiveKitLocalScreenShareTrack.startCapture(1920, 1080)
-                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-                        livekit.LiveKitClient.publishScreenShareTrack(livekit.LiveKitLocalScreenShareTrack.getSourceHandle())
-                    }
+                    // Native C++ session publishes SOURCE_SCREENSHARE; dims are taken
+                    // lazily from the first frame, so no fixed declaration here.
+                    livekit.LiveKitNativeMediaSession.armScreenSharePublish(fps, 0)
                 } else {
                     val pConn = peerConnection ?: return
                     if (localVideoSender != null) {
@@ -553,6 +543,9 @@ class JvmWebRtcClient : WebRtcClient {
                 }
                 
                 _isScreenSharing.tryEmit(true)
+                if (isWindow) {
+                    trackSharedWindow(finalSourceId)
+                }
             }
             
             screenCapturer.dispose()
@@ -562,14 +555,34 @@ class JvmWebRtcClient : WebRtcClient {
         }
     }
 
+    private fun trackSharedWindow(sourceId: Long) {
+        shareWindowTrackingJob?.cancel()
+        shareWindowTrackingJob = CoroutineScope(Dispatchers.IO).launch {
+            while (isActive) {
+                kotlinx.coroutines.delay(2000)
+                if (!_isScreenSharing.value) break
+                val stillExists = runCatching {
+                    val windowCapturer = dev.onvoid.webrtc.media.video.desktop.WindowCapturer()
+                    val exists = windowCapturer.desktopSources.any { it.id == sourceId }
+                    windowCapturer.dispose()
+                    exists
+                }.getOrDefault(true)
+                if (!stillExists) {
+                    println("DEBUG [WebRTC] shared window closed or gone; stopping screen share")
+                    stopScreenShare()
+                    break
+                }
+            }
+        }
+    }
+
     override fun stopScreenShare() {
+        shareWindowTrackingJob?.cancel()
+        shareWindowTrackingJob = null
         try {
             if (isGroupCall && _isScreenSharing.value) {
                 println("DEBUG [WebRTC] Stopping screen share in Group Call (LiveKit)")
-                runCatching {
-                    livekit.LiveKitLocalScreenShareTrack.stopCapture()
-                    livekit.LiveKitClient.unpublishScreenShareTrack()
-                }
+                livekit.LiveKitNativeMediaSession.disarmScreenSharePublish()
             }
             if (!isGroupCall && peerConnection == null) return
             
@@ -605,7 +618,11 @@ class JvmWebRtcClient : WebRtcClient {
             
             // Stop sharing system audio
             runCatching { audioDeviceModule?.setSystemAudioShareEnabled(false) }
-        
+            if (desktopAudioStreaming) {
+                desktopAudioStreaming = false
+                rebuildMicAudioTrack()
+            }
+
             WindowsAudioDucker.unduckVolumes()
         
             _isScreenSharing.tryEmit(false)
@@ -726,6 +743,8 @@ class JvmWebRtcClient : WebRtcClient {
 
             peerConnection?.close()
             peerConnection = null
+            shareWindowTrackingJob?.cancel()
+            shareWindowTrackingJob = null
             screenSource?.stop()
             screenSource = null
             screenVideoTrack = null
@@ -753,49 +772,31 @@ class JvmWebRtcClient : WebRtcClient {
     override fun getRemoteScreenRenderer(): Any? = if (remoteScreenVideoTrack != null) remoteScreenRenderer else null
 
     override fun setStreamAudioEnabled(enabled: Boolean) {
+        // Group + cppMedia: system audio rides a dedicated SOURCE_SCREENSHARE_AUDIO
+        // track fed by WASAPI loopback inside the native session — no mic mixing.
+        if (isGroupCall && livekit.LiveKitFeatureFlags.cppMedia) {
+            runCatching {
+                if (enabled) livekit.LiveKitNativeMediaSession.publishScreenShareAudio()
+                else livekit.LiveKitNativeMediaSession.unpublishScreenShareAudio()
+            }.onFailure { it.printStackTrace() }
+            return
+        }
         audioDeviceModule?.setSystemAudioShareEnabled(enabled)
-        recreateLocalAudioTrack(enabled)
+        if (desktopAudioStreaming == enabled) return
+        desktopAudioStreaming = enabled
+        rebuildMicAudioTrack()
     }
-    
+
     private var currentNs = true
     private var currentEc = true
     private var currentAgc = true
+    private var desktopAudioStreaming = false
 
     override fun setAudioOptions(noiseSuppression: Boolean, echoCancellation: Boolean, autoGainControl: Boolean) {
         currentNs = noiseSuppression
         currentEc = echoCancellation
         currentAgc = autoGainControl
-        
-        try {
-            val pConn = peerConnection ?: return
-            val f = factory ?: return
-            
-            val options = dev.onvoid.webrtc.media.audio.AudioOptions()
-            options.noiseSuppression = noiseSuppression
-            options.echoCancellation = echoCancellation
-            options.autoGainControl = autoGainControl
-            options.highpassFilter = noiseSuppression
-            
-            val newAudioSource = f.createAudioSource(options)
-            val newAudioTrack = f.createAudioTrack("audioTrack_", newAudioSource)
-            newAudioTrack.setEnabled(true)
-            
-            if (localAudioSender != null) {
-                localAudioSender?.replaceTrack(newAudioTrack)
-            } else {
-                localAudioSender = pConn.addTrack(newAudioTrack, listOf("mediaStream"))
-            }
-            
-            // Clean up old track AND source
-            kotlin.runCatching { localAudioTrack?.dispose() }
-            
-            localAudioSource = newAudioSource
-            localAudioTrack = newAudioTrack
-            
-            println("DEBUG: [WebRTC] AudioOptions updated. NS=, EC=")
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        rebuildMicAudioTrack()
     }
 
     override fun setAttenuationStrength(strength: Float) {
@@ -807,6 +808,13 @@ class JvmWebRtcClient : WebRtcClient {
 
     override fun setRemoteVolume(volume: Float) {
         remoteAudioTrack?.setVolume(volume.toDouble())
+    }
+
+    private var playbackMuted = false
+
+    override fun setPlaybackMuted(muted: Boolean) {
+        playbackMuted = muted
+        runCatching { remoteAudioTrack?.setVolume(if (muted) 0.0 else 1.0) }
     }
 
     override fun setAudioInputDevice(deviceName: String) {
@@ -828,11 +836,17 @@ class JvmWebRtcClient : WebRtcClient {
         }
     }
 
+    override fun setMirrorVideo(enabled: Boolean) {
+        localRenderer?.mirror = enabled
+    }
+
     override fun getDesktopSources(): List<DesktopSourceModel> {
         val screenCapturer = ScreenCapturer()
-        val sources = screenCapturer.desktopSources.map { 
+        // ScreenCapturer only enumerates monitors; windows come from WindowCapturer
+        // below, so no title-based kind guessing is needed.
+        val sources = screenCapturer.desktopSources.map {
             val title = it.title ?: "Screen ${it.id}"
-            DesktopSourceModel(it.id.toString(), title, title.contains("Window")) 
+            DesktopSourceModel(it.id.toString(), title, false)
         }
         screenCapturer.dispose()
         
@@ -846,37 +860,39 @@ class JvmWebRtcClient : WebRtcClient {
         return sources + windowSources
     }
 
-    private fun recreateLocalAudioTrack(enabled: Boolean) {
+    private fun rebuildMicAudioTrack() {
         try {
             val pConn = peerConnection ?: return
             val f = factory ?: return
-            
-            // To prevent muffled desktop audio, we disable NS, AGC, and Highpass filters
-            // when streaming system audio. We re-enable them when stopping.
+
+            // Defined stream-mode profile instead of stripping every processor:
+            // NS and AGC pump/gate music, so they are suspended while desktop
+            // audio is mixed into this track; HPF (<100 Hz rumble/DC cut) and
+            // AEC stay on. Otherwise the user's Settings choices apply verbatim.
             val options = AudioOptions().apply {
-                noiseSuppression = !enabled
-                autoGainControl = !enabled
-                highpassFilter = !enabled
-                echoCancellation = true // Keep AEC to cancel acoustic echo
+                noiseSuppression = !desktopAudioStreaming && currentNs
+                echoCancellation = currentEc
+                autoGainControl = !desktopAudioStreaming && currentAgc
+                highpassFilter = true
             }
-            
+
             val newAudioSource = f.createAudioSource(options)
             val newAudioTrack = f.createAudioTrack("audioTrack_${System.currentTimeMillis()}", newAudioSource)
             newAudioTrack.setEnabled(true)
-            
+
             if (localAudioSender != null) {
                 localAudioSender?.replaceTrack(newAudioTrack)
             } else {
                 localAudioSender = pConn.addTrack(newAudioTrack, listOf("mediaStream"))
             }
-            
+
             // Clean up old track AND source
             kotlin.runCatching { localAudioTrack?.dispose() }
-            
+
             localAudioSource = newAudioSource
             localAudioTrack = newAudioTrack
-            
-            println("DEBUG: [WebRTC] AudioOptions updated. NS=${!enabled}, AGC=${!enabled}")
+
+            println("DEBUG: [WebRTC] Mic profile rebuilt: ns=${options.noiseSuppression} ec=${options.echoCancellation} agc=${options.autoGainControl} hpf=true stream=$desktopAudioStreaming")
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -892,6 +908,10 @@ class JvmWebRtcClient : WebRtcClient {
             dev.onvoid.webrtc.media.MediaDevices.getAudioRenderDevices().map { it.getName() }
         }.getOrDefault(listOf("Default"))
     }
+
+    override fun getSelectedAudioInputDevice(): String? = selectedAudioInput
+
+    override fun getSelectedAudioOutputDevice(): String? = selectedAudioOutput
 
     override fun getVideoCaptureDevices(): List<String> {
         return runCatching {

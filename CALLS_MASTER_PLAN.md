@@ -1,0 +1,209 @@
+# ORBIT CALLS MASTER PLAN — Complete Fix Plan (All Issues)
+
+Status: PROPOSED v2 (2026-08-22) · supersedes earlier draft
+Scope: EVERYTHING broken in calling — one-way audio, group video reliability, muffled audio, screen share, half-finished call features, lifecycle/reconnect gaps, infrastructure, hygiene.
+Baseline audited: HEAD `7b651c6` ("mark rest working audio quality and screen share left")
+Reference: **`ELEMENT_CALL_ENDPOINTS.md`** — verified Element wire protocol (membership shape, /sfu-get + /get_token bodies, event literals, party_id/ringing conventions). Diff any signaling work against it before changing formats.
+
+---
+
+## PART A — COMPLETE SYMPTOM INVENTORY (everything we know is broken)
+
+| ID | Symptom | Status today |
+|----|---------|--------------|
+| S1 | **Group call connects but nobody hears MY audio** | Core complaint. LIVEKIT_PLAN Phase 4.4 ("Verify Element can see and hear you") still unchecked |
+| S2 | Group VIDEO calls not happening reliably (flaky joins, audio-only fallbacks, tiles empty/black) | Core complaint |
+| S3 | Audio sounds muffled / unclean / quiet (both directions, group path worst) | Core complaint |
+| S4 | **Screen share** incomplete on group path (HEAD commit literally says "screen share left"); system-audio-in-share works only on P2P via ADM loopback hack | Half-built |
+| S5 | Half-baked call features: Deafen button cosmetic-only, Soundboard button has no backend, Audio-Bitrate slider wired to nothing, device pickers not connected to native capture/playout | Audit-confirmed |
+| S6 | Lifecycle holes: no explicit join state machine, no retry/timeout, no reconnect story, P2P renegotiation unimplemented (VIDEO_CALLING.md), 4-strategy `observeActiveGroupCall()` sprawl + nonstandard `org.orbit.group_call.state` event | Fragile |
+| S7 | Hard dependency on public matrix.org SFU (`https://livekit-jwt.call.matrix.org`) + Orbit ignores the SFU an Element-created room declares | Interop risk |
+| S8 | Hygiene: raw-FFI dead dual path, println spam, scratch files, plaintext credentials, Tenor key in source, no Android group calls | Debt |
+
+## PRE-RUN AUDIT (2026-08-23) — whole-stack audit before first runtime look
+
+Audit A (native/JNI, clean apart from): FIXED MAJOR-1 worker mute gate was fail-open under mutex contention → lock-free atomics + `g_micTrackMutedCache` (C2d). FIXED MAJOR-2 reconnect discarded `LiveKitNativeAudioCapture.start()` result → now fails loudly + disconnects (C2d). Deferred INFO: dead `orbit_livekit_video.dll` build/load, `destroySession` unused, stale LIVEKIT_PLAN.md FFI references, PcmResampler discards non-frame-aligned trailing bytes.
+
+Audit B (Kotlin wiring/UI), findings and disposition:
+- [x] FIXED MAJOR: group-call roster always EMPTY — join payloads carry no `"membership"` field, but both the live sync handler (`MatrixSyncRepository.kt`) and the initial timeline scan (`MatrixCallsRepository.observeCallMembers`) required `membership == "join"`, so every join event REMOVED the sender. Now active-unless-`membership=="leave"` (+ expiry check on historical scan), matching `isActiveMatrixRtcMember`. This un-breaks participant tiles, member counts, name resolution, and the watchdog's `remoteMediaExpected`.
+- [x] FIXED (2026-08-23, after first live call): "Stop Sharing" toolbar button reopened the source picker instead of stopping the share (`LiveKitGroupCallSurface` → `CallControlsBar.onScreenShareClick`) — now calls `callManager.stopScreenShare()` while `isScreenSharing`.
+- [x] FIXED (2026-08-23, after first live call): mid-call watchdog media-failure path used `failGroupJoin` which tears down locally but never publishes the MSC3401 leave — peers keep counting us as a member forever. Now runs full `endCall()` (bounded membership leave included) via `scope.launch`.
+- [x] FIXED MAJOR: `isMinimized` never reset in `endCall()` → next call started straight into PiP mini-view. Reset added.
+- [x] FIXED MINOR (half of watchdog race): `finalizeGroupJoin` no longer writes stale readiness over a terminal Failed tracker state. Full generation-token guard on `connectNativeGroupMedia` deferred.
+- [ ] MINOR deferred: `observeCallMembers` leaks an unscoped scan job per room switch (needs resolver dedup map like siblings).
+- [ ] MINOR deferred: two `LiveKitGroupCallSurfaces` composed at once during voice-channel calls (double BufferedImage conversion per tile).
+- [ ] MINOR deferred: notification sound settings (`joinLeaveSound`, `callRingtone`, `deafenSound`) are write-only; voice-message playback is a println stub (`AudioPlayer.jvm.kt`); CallEventGate fails open when own profile isn't loaded yet; two `SettingsManager` instances / debugLogging needs restart.
+- [ ] INFO deferred: `matrix-call://` still emitted/parsed despite E6 note claiming removal — doc vs code disagreement to reconcile.
+
+---
+
+## PART B — PHASE 0: INSTRUMENTATION-FIRST ("black box recorder") (½–1 day)
+
+Every symptom above becomes measurable before we fix anything, otherwise we're debugging blind like the last 199 commits.
+
+### B1. Stage counters along the entire audio path
+One counter struct logged once per 5 s (not per frame):
+```
+mic.deviceOpened(format) → mic.framesRead → gain.applied/clippedCount
+→ jni.pushAccepted/jni.pushDropped(queueFull) → cpp.workerFed/cpp.workerStalls
+→ lk.captureFrameOk/lk.captureFrameTimeout → lk.trackPublished(trackSid, source)
+→ sfu.publishAck → sfu.upstreamBytes/s → (remote side mirrored counters)
+```
+Same ladder for video (`framesCaptured → framesPushed → encoded → sent`) and screen share.
+
+### B2. SFU truth source
+Log LiveKit server events (participant joined/track published/track subscribed) — the SFU's view is ground truth for S1/S2. If the C++ SDK hides these, add the Rust FFI `engine_callback` path temporarily (flags exist) purely for diagnostics.
+
+### B3. Repro matrix sheet
+{Orbit↔ElementDesktop, Orbit↔ElementWeb, Orbit↔Orbit} × {group-2p, group-3p+, video on/off, screenshare, mute/unmute} × {same-LAN, one-behind-NAT}. Every phase exit-criterion below refers to this grid going green twice consecutively.
+Reuse the test-tone methodology already proven in `livekitcpp-element-audio.md`.
+
+---
+
+## PART C — S1: "CONNECTED BUT THEY CAN'T HEAR ME" — decision tree + fixes
+
+Work top-down; the B1 counters tell you which rung breaks. Fix EVERY rung regardless, since several are latent bugs.
+
+### C1. Rung 1 — Capture device actually delivers samples
+- [x] C1a. DONE (2026-08-23): real SRC added — new pure `commonMain/livekit/PcmResampler.kt` (incremental linear interpolation, any src rate/channels/byte-order → 48 kHz mono LE; phase + partially consumed source samples carried gaplessly across chunks; frozen by 7 tests in commonTest `PcmResamplerTest` incl. 44.1k→48k tone continuity across odd-size chunk boundaries). Integration: when NO input mixer advertises the 48 kHz pipeline format, new `openResampledFallbackLine` opens the best-scored mixer at its best advertised PCM_SIGNED 16-bit format (rate nearest 48k, mono preferred via `PcmResampler.pickNativeFormat`) and runCaptureLoop detects the mismatch (`needsConversion`), opens THAT format and converts per-chunk (source reads sized ~one output frame each so pushes stay evenly paced for the single-slot native backpressure). Direct 48 kHz path behavior unchanged.
+- [x] C1b. DONE (2026-08-23): failures loud — a thrown line open/start no longer dies in the generic catch with only a println: the capture-loop catch now invokes failureSink with AUDIO_DEVICE_UNAVAILABLE (recoverable) so UI surfaces it; system-default fallback upgraded to tagged WARN `MIC_FALLBACK_DEFAULT`; resample fallback logs tagged WARN `RESAMPLED_INPUT`.
+- [x] Wire Settings input-device picker to actual line selection — DONE 2026-08-22: `setLiveKitInputDevice` runtime override (JavaSound mixer substring match at next capture start) + P2P ADM device; "Default"/blank clears.
+
+### C2. Rung 2 — Frames survive the JVM→C++ gauntlet
+- [x] C2a. RESOLVED DIFFERENTLY (2026-08-23): the queue is single-slot latest-wins by design (`NativeAudioSourceWorker`; AudioSource queueSizeMs validated ==10 ms), so "auto-widen" was rejected — widening only adds latency while a drop means the JVM capture thread stalled >10 ms. Instead every drop now ALARMS: throttled (1/s) `WARN MIC_BACKPRESSURE_DROP` from the C++ enqueue path with running totalDropped; cumulative counters remain in the 5 s stats log.
+- [x] C2b. Worker cadence audited: dedicated C++ worker paces itself at kFrameMs and skips (never blocks) when muted/not-ready (`workerFramesSkippedMuted_`); share audio runs on its own OS thread (F3). Remaining under-load verification is runtime-only → tracked as F5.
+- [x] C2c. DONE (2026-08-23): post-gain zero-fill mute removed from runCaptureLoop — transmission gating is owned solely by the native track mute (`nativeSetAudioMuted` → track->mute()/unmute() + C++ worker skip); publish always auto-unmutes after publishTrack which heals stuck-native-mute on every republish. The JVM `muted` flag now only gates gain/APM work + stats. Hardened alongside: desired mute is applied BEFORE awaiting the publish ack in BOTH connectAndPublish and reconnect-republish, closing the leak window between publish-auto-unmute and setAudioMuted.
+
+- [x] C2d. DONE (2026-08-23, pre-run audit fixes): (MAJOR-1) native worker mute gate made lock-free + fail-closed — `g_micPublished`/`g_acceptingFrames` are now `std::atomic<bool>`, plus new `g_micTrackMutedCache` refreshed opportunistically under the try-lock and written authoritatively by `nativeSetAudioMuted`; the publish auto-unmute clears it. Mutex contention no longer defaults to "capture anyway" while muted. (MAJOR-2) reconnect republish path now checks the `LiveKitNativeAudioCapture.start()` return and fails loudly (`handleNativeError` + `disconnect(userInitiated=false)`), mirroring the connect path. MINOR fixed: `nativeSetAudioMuted` logs a tagged WARN when no track is published instead of silently succeeding.
+- [x] C2e. DONE (2026-08-23, after first live call): AudioSource queue mode switched 10 ms buffered → 0 real-time. Buffered mode makes `captureFrame` BLOCK until the SDK drains in real time; stacked on the worker's own kFrameMs pacing that was ~31 ms/frame → measured ~68 % mic frame loss (received=7635 submitted=2423 dropped=4088) = the "scrambled voice" + repeating share-start sound from live test #1. Changes: `isSupportedAudioSourceQueueMs` accepts 0|10 (10 kept for A/B), share-audio source created with queueSizeMs 0, `configuredAudioSourceQueueMs` default 0 (env override removed), invalid-format error message updated. Built + jvmTest 52/0 green.
+- [x] C2f. DONE (2026-08-23, live test #2): REAL root cause of choppy voice found via new worker instrumentation (`captureAvgMs/captureMaxMs/sleepAvgMs/pushAvgMs/pushMinMs/pushMaxMs` in the audio source stats line): queue-0 captureFrame costs ~0.07 ms, but the C++ worker STILL self-paced with a fixed kFrameMs sleep → consumer (~95 fps) permanently slower than the hardware-paced producer (100 fps) → single-slot overwrites = steady ~50 % loss. Fix: removed all consumer-side pacing from NativeAudioSourceWorker.run — cv-wait alone provides backpressure; bursts drain immediately instead of dropping. UI freeze root cause same test: RGBA→BufferedImage conversion ran INSIDE composition on the Compose UI thread (2M pixels per 1080p frame per tile per frame arrival) starving the main loop → window never painted ("call UI never opened"). Fix: new jvmMain AsyncVideoFrameImage.kt — conflated Channel + Dispatchers.Default conversion, rememberRemoteFrameImage/rememberLocalFrameImage used by VideoRenderer.kt (all four tile branches) and LiveKitVideoRenderer.kt; LiveKitFrameRenderer now takes ImageBitmap?.
+
+## LIVE TEST #3 RESULT (2026-08-23, post-C2e/C2f)
+User confirms: mic quality PERFECT, playback sound perfect, outgoing screen share works. OPEN BUGS (next session):
+- [ ] BUG-A: cannot publish own camera feed on the group path (video intent/camera track never shows). Start at CallManager video intent → connectNativeGroupMedia(video=true) → nativePublishVideo wiring; check E5 bitrate plumbing didn't gate publish, and whether VoiceChannelScreen join always passes isVideo=false.
+- [ ] BUG-B: incoming remote screen share not visible (remote's share track never renders as a tile). Suspects: track source/isScreenShare classification in LiveKitRemoteVideoFrameStore.framesByTrack (trackSid registered via updateFrame auto-register), RenderNode filter in LiveKitGroupCallSurface (screenShareTracks list empty?), or C++ subscription/sink gating (`!isStarted && !cppMedia`) dropping screenshare sink attach.
+- Verified-fixed in the wild: scrambled/choppy mic (C2e+C2f), repeating share-start sound, frozen/unpainted call window, Stop-Sharing button, watchdog ghost-member leave.
+
+### C3. Rung 3 — LiveKit publish actually happens and is allowed
+- [x] C3a. Already implemented (verified 2026-08-23): decoded grants logged at connect ("LiveKit token details … canPublish=… canSubscribe=… canPublishSources=…") AND enforced — `validateLiveKitGrants` fails the join when canPublish/microphone source is missing (video policy decides camera requirement).
+- [x] C3b. Already implemented (verified 2026-08-23): mic published with `publishOptions.source = SOURCE_MICROPHONE`, stable track name "audio"; publication null-checked after publishTrack and details logged ("local microphone track details trackName=… source=SOURCE_MICROPHONE").
+- [x] C3c. Already implemented via E1 (verified 2026-08-23): `nativePublishAudio` dispatches `AudioPublished` only after real publish success; Kotlin awaits that deferred (20 s timeout) before MediaReady; readiness JSON exposes audioPublished and GroupCallConnectionTracker + LiveKitGroupCallSurface gate Connected/AudioPublished stages on it — connection ≠ publication impossible by construction.
+
+### C4. Rung 4 — BOTH SIDES ARE IN THE SAME LIVEKIT ROOM (prime suspect)
+Audit fact: Orbit stamps its **default** SFU URL when creating, and ignores `focus_active`/`foci_preferred` of an existing definition (`MatrixContext.kt` L179, `CallManager`). If an Element client created the call against a different focus, Orbit happily connects to a *different LiveKit room* → looks "connected", hears nothing, transmits into the void. Same class of bug if room-name derivation (matrix room ⇄ livekit room id) diverges by one character.
+- [x] Join rule DONE (2026-08-23, via C4+E2+E6): `MatrixCallsRepository.resolveGroupCallJoinTarget` is THE single implementation — an existing m.call definition's focus wins (definition namespace → all-state fallback), room/call ids derived from room state exactly like Element; frozen by `RtcFocusParserTest` Element fixtures (m.foci_preferred / foci_preferred / foci_active / nested rtc_foci shapes).
+- [x] Resolved-pair logging DONE: `[JoinFocus] resolved … sfu=…` at every resolution site + `[MatrixCallsRepository] Call endpoints configured override=… wellKnown=… effective=…`. Cross-checking those lines against Element logs during matrix runs stays in the runtime-verification bucket below.
+
+### C5. Rung 5 — Remote can subscribe & play
+- [ ] Confirm SFU shows remote subscribed to your trackSid (B2 events). RUNTIME-ONLY: needs a live session with lk-jwt-service/SFU admin or B2 event capture.
+- [x] Silent-by-policy checklist DOCUMENTED (2026-08-23, don't code around): when the *other* side hears nothing, check before filing bugs — (1) Element privacy defaults: Element starts calls muted until the user taps; their tile shows a muted icon — that is policy, not a bug; (2) wrong OUTPUT device on the remote side (Element/OS settings, HDMI monitor sinks); (3) remote is deafened via OS app-volume mixer; (4) Element joined audio-only or declined media due to permissions (browser `getUserMedia` prompt on web); (5) Orbit-side: verify with `[JoinFocus]` + token-details logs that both sides resolved the SAME sfu + livekit room (split-room mimics one-way silence); (6) Orbit stats line `audio source stats … dropped=` must stay ~0 while speech is present.
+
+**Exit criteria:** counters prove end-to-end flow in all 3 pairing combos; Element hears Orbit within ≤2 s of join; one-way audio impossible by construction (publish-ack gate on UI state).
+
+---
+
+## PART D — S3: AUDIO QUALITY REBUILD (muffled / unclean / quiet) (1–2 weeks)
+
+(Details unchanged from v1 audit — summarized; all inside `orbit_livekit_audio.cpp` + capture/player Kotlin.)
+
+- [x] D1. DONE (2026-08-22, Kotlin-side APM instead of C++ vendoring): the webrtc-java fork (`webrtc-java-orbit-windows-x86_64.dll`) exports the full libwebrtc APM JNI surface — `AudioProcessing{applyConfig, processStream, processReverseStream, setStreamDelayMs}` with AGC2/captureLevelAdjustment fully mapped in `JNI_AudioProcessing.cpp`. New `jvmMain/livekit/OrbitApm.kt`: AEC3+NS(MODERATE)+AGC2(adaptiveDigital 15→40 dB)+HPF; capture loop feeds mic frames through `processStream` (replacing the ×8 default preamp — explicit `orbit.audio.captureGain` still honored as manual trim), player loop feeds mixed playout through `processReverseStream` as far-end reference before speaker write, delay hint `orbit.apm.delayMs` default 140 ms. Fallback to legacy gain path when APM init fails or `orbit.apm.enabled=false`. RUNTIME VERIFICATION PENDING: needs a real call with speakers (not headphones) to confirm echo suppression + AGC loudness.
+- [x] D2. DONE (2026-08-22): float-domain mic gain + tanh soft-knee limiter (knee −2.5 dBFS) in LiveKitNativeAudioCapture; ×8 int16 hard-clip preamp retired (default now only on the no-APM fallback path — AGC2 owns gain when D1 APM active). Per-callPathStats clippedSamples counter added.
+- [x] D3. DONE (2026-08-22): C++ mixer sqrt(N) attenuation replaced with unity-gain downmix + tanh soft-knee limiter on the sum (orbit_livekit_audio.cpp); participant jitter 60 ms prime + 1 s queue → 80 ms target / 160 ms max.
+- [x] D4. DONE (2026-08-22): SourceDataLine buffer 250 ms → ~83 ms; true underrun detection (drained-while-flowing within 250 ms window) separated from idle polls in CallPathStats.
+- [x] D5. DONE (2026-08-22): Settings "Audio Bitrate" slider → `CallManager.audioBitrateKbps` (wired via WebRtcEffects) → expect/actual `connectAndPublishToLiveKit(audioBitrateKbps)` → `LiveKitNativeMediaSession.connectAndPublish` (+ reconnect republish) → JNI `nativePublishAudio(..., maxBitrateBps)` → `TrackPublishOptions{audio_encoding.max_bitrate (clamped 8–512 kbps), dtx=true, red=true}` in `orbit_livekit_audio.cpp`. SDK exposes the knobs natively — no vendored patch needed. Music/stream stereo preset deferred to F3.
+- [x] D6a. `highpassFilter` decoupled from NS toggle — always `true` for voice tracks at BOTH 1:1 sites (startLocalMedia track creation + `setAudioOptions` source rebuild); screen-share desktop-audio path keeps its intentional filter-off behavior.
+- [x] D6b. DONE (2026-08-23): stream-mode voice-safe profile in WebRtcClientImpl.jvm.kt — one funnel `rebuildMicAudioTrack()` computes effective AudioOptions: while desktop audio is mixed into the mic track, NS+AGC suspended (pump/gate music), HPF+AEC stay on; otherwise user's Settings choices apply verbatim. Also fixed: stop-stream no longer hardcodes NS/AGC=true over user Settings; `stopScreenShare()` now restores the voice profile (previously mic stayed stripped after share ended — only the picker path toggled it back); flag reset on `stopLocalMedia()` teardown.
+
+**Exit criteria:** loud speech never clips; no echo on speakers (reverse-stream verified); added latency ≤150 ms; N-speaker loudness constant; ABX parity-or-better vs Element in same room.
+
+---
+
+## PART E — S2: GROUP VIDEO RELIABILITY (1 week)
+
+- [x] E1. DONE (2026-08-23): explicit stage ladder implemented as `GroupCallConnectionTracker` (commonMain/webrtc, unit-tested with fake clock): Idle→Joining→Joined(membership visible ack — `updateGroupCallMembershipCapabilities` now returns Boolean from real post-publish visibility check)→Connected→AudioPublished→VideoPublished→InCall(voice stable / first remote frame), plus Reconnecting + Failed surfaced states. Watchdog in CallManager evaluates deadlines every 500ms (membership 8s / connect 25s / audio-publish 20s / video-publish 30s; remote-media absence is a soft warning chip, never fatal; solo rooms settle to InCall after 10s); token fetch bounded by 10s timeout; connect retried once sequentially (`MAX_CONNECT_ATTEMPTS=2`) then gives up VISIBLY (UI panel with failure reason + Back button replaces the old bare spinner). Live per-stage progress fed by new expect/actual `liveKitCurrentReadiness()` polling (`LiveKitNativeMediaSession.currentReadiness()` read-only peek). UI: LiveKitGroupCallSurface staged labels ("Joining…/Connecting…/Publishing audio…/Publishing video…/Waiting for media…"), reconnecting/audio-only-fallback/waiting-for-media banner chips. RUNTIME VERIFICATION PENDING.
+- [x] E2. DONE (2026-08-23, via E6): focus resolution is one implementation (`resolveGroupCallJoinTarget`) used for BOTH join flows and the active-call observers — no second discovery path exists anymore.
+- [x] E3. DONE (2026-08-23): membership wire construction extracted into pure `MatrixRtcMembershipContent` (commonMain/livekit) — payload build, video-intent resolution, expiry selection, state-key mirroring, content call_id selection — and frozen by 8 tests in `MatrixRtcMembershipShapeTest` (legacy Element-mirror field set incl. NO foci_active/capabilities, modern foci_active+capabilities, capabilities-video/intent-video/element-reference modes, Element state-key suffix mirroring, blank legacy call_id). MatrixCallsRepository now delegates; JSON output byte-identical.
+- [x] E4. DONE (2026-08-23): sub→store→renderer chain audited end-to-end (NativeRemoteVideoSink → LiveKitRemoteVideoFrameStore → VideoRenderer); lifecycle already event-driven with clear() at every boundary (connect-start / disconnect / native-disconnected / reconnect epoch reconfigure), so scope narrowed to 3 concrete bugs: (1) `trackStopped` cross-track clobber — shared single-slot views (`_latestCameraFrame`/`_latestScreenShareFrame`/`_latestFrame`) are now cleared ONLY when the displayed trackSid matches, and `_latestFrame` falls back to a remaining flowing track; (2) frame-before-trackAdded race — `updateFrame` auto-registers unknown trackSids so tiles are addressable and cleanable; (3) pre-first-frame black tiles — RemoteTrack branch shows "Video starting…" placeholder instead of black (last frame still HELD during mute/reconnect stalls by design). RUNTIME VERIFICATION PENDING.
+- [x] E5. DONE (2026-08-23): capture baseline verified ALREADY 640×480@30 I420 (`LiveKitNativeVideoCapture` DEFAULT_WIDTH/HEIGHT/FPS, property-overridable via orbit.video.requestedWidth/Height/Fps, capability match weighted fps×20). Publish side now mirrors the D5 audio pattern: `nativePublishVideo` takes maxBitrateBps and clamps it (default 1.2 Mbps for VGA@30, min 150 kbps, max 6 Mbps); Kotlin sources it from new system property `orbit.video.maxBitrateKbps` (0/absent ⇒ native default). Simulcast INVESTIGATED: livekit-cpp 0.4.1 `TrackPublishOptions.simulcast` (optional<bool>) exists but no scalability/SVC field — deliberately left OFF (single-layer v1); one-line flip documented here for later after real-call verification. Adaptive bitrate up = future work (needs runtime stats feedback loop). RUNTIME VERIFICATION PENDING.
+- [x] E6. DONE (2026-08-23): `observeActiveGroupCall()` rewritten as reactive delegate over `resolveGroupCallJoinTarget` — the 4 escalating strategies + `org.orbit.group_call.state` custom event + backwards timeline scan + 1:1-invite contamination all deleted (~215 lines). Sync pipeline now only EMITS `groupCallStateChanges` room-id ticks on definition/member events (its old divergent `matrix-call://roomId/callId` URL-writing removed); one persistent resolver job per room re-resolves on tick and is the single writer of both the per-room flow and `globalActiveCalls` (fixes stale channel badges — previously only empty-content definitions cleared them, and the observer never refreshed on call end). New `commonTest` source set + `RtcFocusParserTest` (8 tests): Element definition/membership focus shapes (m.foci_preferred / foci_preferred / foci_active / nested rtc_foci), non-LiveKit focus rejection, terminated-definition detection, dual-namespace contract frozen. `MatrixRtcCalls.isDefinitionTerminated` shared by all sites.
+
+**Exit criteria:** full repro matrix green ×2; Element sees/hears Orbit video+audio ≤2 s post-join.
+
+---
+
+## PART F — S4: SCREEN SHARE, END TO END (≈1 week)
+
+Current state: P2P mixes system audio into mic via ADM loopback; group path effectively unfinished (commit message admits it).
+
+- [x] F1. DONE (2026-08-23): No custom capturer needed — the webrtc-java fork's `VideoDesktopSource` already uses DXGI duplication (`options.set_allow_directx_capturer(true)` in `VideoTrackDesktopSource.cpp`) with GDI fallback + `DesktopAndCursorComposer` cursor compositing. Wave 1 wired the previously dead `screenShareQuality`/`screenShareFps` settings into `setMaxFrameSize`/`setFrameRate` before `start()` (720p/1080p/1440p/source, fps coerced 5..60) and added synchronous `SettingsManager.screenShareQualitySync()/screenShareFpsSync()`.
+- [x] F2. DONE (2026-08-23): Group share publishing moved off the dead FFI path (cppMedia never connects the FFI room → old `publishScreenShareTrack` group branch was unreachable) onto the C++ native session. New JNI `nativePublishScreenShare/nativeUnpublishScreenShare/nativePushScreenShareFrame` in `orbit_livekit_audio.cpp`: `LocalVideoTrack("screenshare")` with `publishOptions.source = SOURCE_SCREENSHARE`, lazy publish-on-first-frame (real window dims), republish on dimension change (resize), share-slot state reset in `resetRoomLocked()`. Kotlin chain: Raw externals → Bridge wrappers → `LiveKitNativeMediaSession.armScreenSharePublish/disarmScreenSharePublish/pushScreenShareFrame`; sink routing in `LiveKitLocalScreenShareTrack.sink` gated by `LiveKitFeatureFlags.cppMedia` (native mode never calls `startCapture`, so `isStarted` must not gate native frames); packed-I420 via new `packI420/copyPlane`. Share bitrate defaults 2.5 Mbps clamped 300k–8M.
+- [x] F3. DONE (2026-08-23): Dedicated `SOURCE_SCREENSHARE_AUDIO` track for group calls. New WASAPI loopback thread inside `orbit_livekit_audio.cpp` (`shareAudioLoopbackMain`, process-loopback activation w/ fallback, float→int16, nearest-neighbor resample to 48 kHz stereo, chunked into exact 480×2 10 ms frames fed straight to a dedicated `AudioSource` via `captureFrame` — bypasses APM entirely, so no NS/AGC pumping). Music-mode publish preset: track name "screenshare_audio", dtx=false, red=true, max_bitrate=128k. JNI `nativePublishScreenShareAudio/nativeUnpublishScreenShareAudio` (idempotent publish; teardown joins loopback thread before touching source). Kotlin: Bridge + `LiveKitNativeMediaSession.publishScreenShareAudio/unpublishScreenShareAudio`; `WebRtcClientImpl.setStreamAudioEnabled` routes group+cppMedia to the dedicated track while P2P keeps the fork ADM mix-into-mic path. Link fix: `mmdevapi.lib` added for `ActivateAudioInterfaceAsync`.
+- [x] F4. DONE (2026-08-23): Picker kind info — `getDesktopSources()` no longer guesses via `title.contains("Window")` (ScreenCapturer enumerates monitors only; WindowCapturer supplies windows). Window-close tracking: `trackSharedWindow(sourceId)` polls `WindowCapturer.desktopSources` every 2 s while sharing a window and auto-stops the share when it disappears; job cancelled in `stopScreenShare()` and full dispose. Minimize tracking intentionally deferred — minimized windows still enumerate as valid sources.
+- [ ] F5. Concurrent load case tested: share active while mic pipeline runs — this is exactly the stress that historically starved the audio worker (C2). Runtime-only; share audio path now runs on its own OS thread + dedicated LiveKit AudioSource, structurally isolated from the mic worker.
+- [x] F6. DONE (2026-08-23): Out of scope for this repo by design — Android is the OrbitX fork. The parity hook is the reserved `startScreenShare(data: Any?)` interface parameter (already present); the MediaProjection `ScreenShareService` stub belongs to the Android fork and is acceptable as v1 per plan.
+
+**Exit criteria:** Orbit↔Element: share appears ≤3 s, smooth at 15 fps+, audio audible remotely, stop leaves no zombie tracks, call survives share start/stop ×10.
+
+---
+
+## PART G — S5: FINISH THE HALF-BUILT FEATURES (few days)
+
+| Feature | Current | Work |
+|---|---|---|
+| Deafen | ~~cosmetic~~ **DONE 2026-08-23** | Group mute landed 2026-08-22. Now: P2P hook via `WebRtcClient.setPlaybackMuted` (impl stores flag, applies `remoteAudioTrack.setVolume(0/1)`, re-applies on track attach); `endCall` resets both mute paths (LiveKit + WebRtc). Real keybinds: Ctrl+Shift+M / Ctrl+Shift+D dispatched app-wide from `Main.kt` Window `onPreviewKeyEvent` → `CallShortcuts` holder object (registered/cleared in `WebRtcEffects` DisposableEffect; CallManager lives inside composition so a static holder bridges it to the Window layer). Matches KeybindsPane labels already listed in Settings |
+| Soundboard | ~~Button only~~ **DONE 2026-08-23** | No sample assets exist → v1 is procedural DSP synthesis in new `livekit/SoundboardMixer.kt` (applause, laugh, airhorn, drumroll, party, wow, nice/music, ding, bruh, meow, quack — float PCM synth at 48 kHz). Mix bus drained by group capture loop AFTER mute-zeroing, PRE-push → effects transmit even while mic muted. Local monitor always via cached JavaSound SourceDataLine. Global volume slider 0–2× + Stop All. Panel now rendered on BOTH surfaces (P2P CallScreen + group LiveKitGroupCallSurface via CallControlsBar soundboard toggle). **Custom uploads (2026-08-23)**: "＋ Add" tile opens the existing `rememberFilePickerLauncher`; WAV/AIFF/AU decoded via javax.sound.sampled → mono downmix → NN-resample to 48 kHz → peak-normalized 0.9; hard 10 s limit (`MAX_CUSTOM_SECONDS`); persisted under `~/.orbit/sounds/` and reloaded at startup; custom tiles (green) with per-tile delete ×. P2P transmit relies on system-audio-share loopback (documented limitation); per-sample volume = global slider only for v1 |
+| Bitrate slider | ~~wired to nothing~~ **DONE = D5** | End-to-end into TrackPublishOptions |
+| Device pickers | ~~UI only~~ **DONE 2026-08-22** | Input/output drive P2P ADM + group JavaSound mixers (`setLiveKitInput/OutputDevice`, substring match at next line open); output volume scales player PCM, input volume multiplies post-APM gain. Mid-call hot-swap on group = applies next call |
+| Virtual bg | ~~Injected P2P-only~~ **DONE 2026-08-23** | Group path enabled: expect/actual chain `setLiveKitVirtualBackground` → `LiveKitNativeVideoCapture.virtualBackgroundEnabled` flag → at next `openForPublish` extracts `selfie_segmentation.onnx` via ResourceUtils and injects ONNX processor onto the capture's VideoDeviceSource (`OrbitVideoEngine.injectVideoProcessor`) — same engine as P2P. Restart semantics: toggle mid-call applies at next camera open (same as P2P). "Custom Image" unimplemented (deferred) |
+| PiP/minimize | ~~Partial states~~ **DONE 2026-08-23** | Group surface now reads `callManager.isMinimized`: when set renders a draggable compact card bottom-end (call name, participant count, stage label reusing joinStageLabel, Reconnecting/Audio-only chips, click-to-restore, Leave button) mirroring the P2P PiP pattern. OrbitApp `shouldShowPopup` widened: `(dm channel match) || (callState != IDLE && isGroupCall)` so a minimized group call stays mounted instead of vanishing on navigate-away |
+
+Settings-audit note (2026-08-22): NS/EC/AGC toggles now drive BOTH engines from SettingsManager at launch and live via `CallManager.setAudioOptions` → `OrbitApm.setAudioProcessingOptions` (applyConfig) — the in-call More Options menu and Settings share one session source of truth.
+
+---
+
+## PART H — S6: LIFECYCLE & RESILIENCE (few days)
+
+- [x] H1. DONE (2026-08-23): Reconnect lifecycle closed. `LiveKitNativeMediaSession.refreshAndReconnect` now emits `NativeMediaState.Reconnecting` for the whole resume cycle (was RefreshingToken — the tracker's Reconnecting stage + both UI chips were dead code until now); on unrecoverable native disconnect while auto-resume is allowed it surfaces Reconnecting (not Disconnected) before scheduling the resume. **Bounded give-up**: consecutive reconnect attempts capped at 3; exceeding → `reconnectAllowed=false` + readiness Failed with "Connection lost" → CallManager watchdog (which now also peeks `liveKitCurrentReadiness()` every 500 ms while InCall/Reconnecting) tears down and `failGroupJoin`s the user back to IDLE/lobby instead of a zombie call. Fixed the give-up race: `disconnect(userInitiated=false)` no longer leaves `reconnectAllowed=true`. **Membership re-affirm on resume**: new expect/actual `setLiveKitReconnectedListener` — session fires `onReconnected` after a successful resume; CallManager restores the tracker to InCall (`GroupCallConnectionTracker.onReconnectComplete`) and re-publishes m.call.member capabilities (fresh expires TTL) with captured room/callId/identity.
+- [x] H2. DONE (2026-08-23): Group leave teardown reordered to unpublish → membership expiry → close engine → release devices: `endCall` group branch now stops local media first (peers stop receiving immediately), then awaits the membership leave (`onLeaveGroupCall` = endGroupCall + leaveGroupCall membership:leave) with a 1.5 s bounded wait so a hung homeserver can't stall leaving, then `disconnectFromLiveKit(true)`, then `webRtcClient.endCall()` device/peer release. Crash-safety unchanged (4 h/12 h member-event TTLs). Double `stopLocalMedia()` eliminated by the restructure.
+- [x] H3. DONE (2026-08-23): AUDIT FINDING — `m.call.negotiate` was ALREADY implemented end-to-end (plan note stale): typed parse in MatrixSyncRepository (`CallEventContent.Negotiate` + raw-JSON fallback), `CallManager.handleCallNegotiate` (offer→createAnswer→send, answer→CONNECTED), sender via `sendNegotiationOffer` for mid-call video upgrade. VIDEO_CALLING.md limitations updated to reflect this. Remaining P2P gaps (select_answer receive filtering, sdp_stream_metadata_changed) stay as future work there.
+- [x] H4. DONE (2026-08-23): Multi-device noise guard extracted into pure testable form — new commonMain `webrtc/CallEventGate.shouldIgnore(senderId, partyId, ownDeviceId, ownUserId)` (party_id==our deviceId echo guard + same-user-other-device sender guard, mirroring js-sdk semantics), wired into WebRtcEffects' single call-event collector replacing inline logic. 6 tests in commonTest `CallEventGateTest` + 3 new tracker resume/failure tests (tracker total 16). Suite now 38/0.
+
+---
+
+## PART I — S7: INFRASTRUCTURE (parallel, any time after Phase 0)
+
+- [x] I1. DONE (2026-08-23): SFU endpoint resolution chain implemented — `MatrixContext.effectiveLiveKitServiceUrl()` = settings override → homeserver `.well-known/matrix/client` `org.matrix.msc4143.rtc_foci` (MSC4143, same mechanism Element uses; first `type=="livekit"` entry's `livekit_service_url`) → public matrix.org URL now a commented DEV FALLBACK only. All five consumer sites switched: m.call definition foci publish, activeGroupCalls value, MatrixRtcMembershipContent PayloadInputs, ChatScreen fallback, VoiceChannelScreen join focus. Settings override via new `liveKitServiceUrl` setting; wired app-wide through `OrbitRepository.configureCallEndpoints(sfuUrlOverride)` invoked from WebRtcEffects LaunchedEffect (also triggers the well-known refresh at startup). Well-known fetch is fault-tolerant (failures keep prior value).
+- [x] I2. DONE (2026-08-23): Self-host stack templates in new `deploy/` — docker-compose.yml with livekit/livekit-server + ghcr.io/element-hq/lk-jwt-service (serves /get_token + legacy /sfu/get) + coturn (host networking, shared static-auth-secret with livekit.yaml), livekit.yaml, coturn/turnserver.conf, .env.example, README documenting resolution order, firewall ports, and marking the public matrix.org SFU dev-fallback-only.
+- [ ] Runtime validation of deploy/ against real Element clients still pending (needs a host with Docker + public reachability).
+
+## PART J — S8: HYGIENE / SECURITY (trickle)
+
+- [x] J1. DONE (2026-08-23): Dead raw-JNA FFI dual path DELETED. Removed whole-file: LiveKitClient.kt, LiveKitFfiLibrary.kt, LiveKitAudioSink.kt, LiveKitLocalAudioTrack.kt, LiveKitVideoSink.kt (+ its JNI natives in orbit_livekit_video.cpp), JnaTest.kt scratch, prebuilt livekit_ffi.dll resource (~binary savings), orphaned cpp/include/livekit_ffi.h. Trimmed in place: WebRtcClientImpl.jvm.kt FFI publish/stop/screenshare branches (native-only paths kept incl. L560 sink→pushScreenShareFrame), LiveKitLocalTrack.kt reduced to native screen-share sink object (packI420/copyPlane kept), dead `connectToLiveKit` expect/actual pair, ffiFallback/ffiAudio/ffiVideo feature flags, WebrtcNativeDepsLoader livekit_ffi special-case, LiveKitVideoRenderer's FFI legacy fallback + permanently-empty activeSpeakers border UI. Dropped redundant app-level protobuf-java dep (generated proto classes remain vendored in webrtc-java-lib for future use). Suite 45/0 after deletion; runtime smoke of video+screenshare on a real call still pending.
+- [x] J2. DONE (2026-08-23): Root cleanup — 25 files deleted earlier this session (3 .old backups, 11 py scripts, 3 hs_err logs, app.log, 6 test*/temp scratch) after verifying git-tracked/unmodified and zero references.
+- [x] J3. DONE (2026-08-23): Logger wrapper — commonMain `util/OrbitLog` (DEBUG/INFO/WARN/ERROR levels + per-subsystem mute set, `d/w/e` API for new code); JVM `installOrbitLogConsoleFilter()` routes ALL existing `LEVEL [Subsystem] ...` println sites through one gate wired to Settings → debugLogging (`debugLoggingSync()` read once at startup in Main.kt). 7 tests in `OrbitLogTest`. Full per-site println rewrite deliberately not done — the console filter achieves level/subsystem gating across all 300+ sites with zero churn.
+- [x] J4. DONE (2026-08-23): Credentials encrypted at rest — jvmMain `createCredentialSettings()` now wraps the prefs-backed store: accessToken/syncToken stored as DPAPI blobs (Crypt32Util, Windows) or AES-256-GCM with a random key persisted to ~/.orbit/.credkey (other platforms), prefixed `enc:v1:`; legacy plaintext values migrate transparently on first read; non-secret keys (userId/deviceId/homeserverUrl) untouched. Tenor key removed from source (was the public demo key): user-provisioned via `SettingsManager.tenorApiKey`, GifPicker shows a hint when unset.
+- [x] Android strategy DECIDED (2026-08-22): **OrbitX** (`github.com/AhmadHasssan9181/orbitx`, fork of Element X Android rebranded "ORBIT Chat") is the official Android client — Element-grade calls/E2EE for free. The `androidTarget` was removed from this repo (pure Compose Desktop/JVM); do not re-add it.
+
+---
+
+## EXECUTION ORDER
+
+```
+Phase 0 (B) ──► S1 tree (C) ──► Quality (D) ──► Video (E) ──► Features (G)
+      │              │                              
+      │              └──► ScreenShare (F) after C4+C2 stabilize
+      └──► Infra (I) anytime parallel · Lifecycle (H) after E · Hygiene (J) trickle
+```
+Rationale: C4 (same-SFU-room) is the highest-probability root cause of "nobody hears me" AND flaky video — do it immediately after instrumentation; D-before-E keeps video tests unpolluted by audio debugging.
+
+## TOP RISKS
+| Risk | Mitigation |
+|---|---|
+| C4 room-id/focus derivation subtly differs from element-call | Port algorithm + fixture tests from real Element captures (tooling already exists) |
+| AEC useless without far-end reference wiring (D1) | Round-trip test-tone harness from Phase 0 validates explicitly |
+| livekit C++ SDK lacks Opus/simulcast knobs (D5/E5) | RESOLVED (D5+E5): 0.4.1 exposes `audio_encoding/dtx/red` AND `video_encoding{max_bitrate,max_framerate}` + `simulcast` (optional<bool>, no scalability/SVC). Video max-bitrate wired (default 1.2 Mbps, `orbit.video.maxBitrateKbps` override); simulcast deliberately OFF = single-layer v1 |
+| Public SFU throttles non-Element clients during testing | Self-hosted SFU (Part I) pulled earlier if this bites |
+| JNI worker starvation under concurrent share (F5/C2) | Dedicated-thread cadence test made part of CI-style manual suite |
+
+## ESTIMATED TOTAL: ~4–6 weeks focused work
+C+S1: week 1 · D+S3: weeks 1–2 · E+S2: week 3 · F+S4: week 4 · G/H: week 5 · polish/buffer: week 6

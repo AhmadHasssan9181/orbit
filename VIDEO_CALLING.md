@@ -28,8 +28,12 @@ Not implemented:
 - Screen sharing.
 - Call transfer.
 - Call hold.
-- Full renegotiation for changing call media type after the call starts.
 - To-device per-device calling for calling another client logged into the same Matrix user ID.
+
+Note: `m.call.negotiate` IS implemented (2026-08-23 audit): parsed in
+MatrixSyncRepository (typed `CallEventContent.Negotiate` + raw-JSON fallback),
+handled by `CallManager.handleCallNegotiate` (offer→answer, answer→CONNECTED),
+sent via `CallManager.sendRenegotiationOffer` (e.g. video upgrade mid-call).
 
 ## Main Files
 
@@ -594,7 +598,6 @@ $env:PATH="$env:JAVA_HOME\bin;$env:PATH"
 The current implementation is enough for normal one-to-one room calls, but the following items remain future work:
 
 - Add full to-device call signaling for same-user, different-device calls.
-- Add proper call renegotiation when enabling video during an audio-only call.
 - Send `m.call.sdp_stream_metadata_changed` when mute or video state changes, if needed for stricter clients.
 - Add screen sharing with `Purpose.SCREENSHARE`.
 - Add richer in-call connection status in the UI.

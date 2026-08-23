@@ -7,15 +7,6 @@ actual object LiveKitFeatureFlags {
             defaultValue = boolProperty("orbit.livekit.cppAudio", true)
         )
 
-    actual val ffiFallback: Boolean
-        get() = boolProperty("orbit.livekit.ffiFallback", false)
-
-    actual val ffiAudio: Boolean
-        get() = boolProperty("orbit.livekit.ffiAudio", false)
-
-    actual val ffiVideo: Boolean
-        get() = boolProperty("orbit.livekit.ffiVideo", false)
-
     actual val debugFrames: Boolean
         get() = boolProperty("orbit.livekit.debugFrames", false)
 

@@ -1,0 +1,28 @@
+# LiveKit server configuration for the Orbit self-hosted stack.
+# Docs: https://docs.livekit.io/oss/deployment/vm.md
+
+port: 7880
+# Public address clients connect to. Set to your domain in production.
+# external_ip is used for NAT traversal (SERVER_NAT). Uncomment behind NAT:
+# external_ip: <public-ip>
+
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50200
+  enable_loopback_candidate: false
+
+turn:
+  enabled: true
+  # Must match the static-auth-secret in coturn/turnserver.conf.
+  domain: turn.example.com
+  cert_file: ""
+  key_file: ""
+  tls_port: 5349
+  udp_port: 3478
+  external_tls: true
+
+keys:
+  # Filled from .env by docker-compose (LIVEKIT_KEYS env var overrides this file's
+  # value when set via environment). Keep a placeholder here for bare-metal runs.
+  devkey: secret-placeholder-overridden-by-compose

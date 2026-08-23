@@ -85,8 +85,8 @@ internal fun DrawerActionButton(
 @Composable
 internal fun InviteDialog(server: OrbitServer, onDismiss: () -> Unit) {
     val tokens = rememberCosmicTokens()
-    val inviteLink = "orbit://invite/${server.id}"
-    
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = tokens.CardBg,
@@ -104,12 +104,12 @@ internal fun InviteDialog(server: OrbitServer, onDismiss: () -> Unit) {
                 )
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    "Share this link with others to grant them access to this server.",
+                    "Invite links aren't supported yet. Share this server ID so others can find it manually.",
                     style = MaterialTheme.typography.bodySmall.copy(color = Text_Muted, fontSize = 13.sp),
                     modifier = Modifier.padding(bottom = 16.dp)
                 )
                 OutlinedTextField(
-                    value = inviteLink,
+                    value = server.id,
                     onValueChange = {},
                     readOnly = true,
                     singleLine = true,
@@ -126,10 +126,21 @@ internal fun InviteDialog(server: OrbitServer, onDismiss: () -> Unit) {
         },
         confirmButton = {
             Button(
-                onClick = onDismiss,
+                onClick = {
+                    clipboard.setText(androidx.compose.ui.text.AnnotatedString(server.id))
+                    onDismiss()
+                },
                 colors = ButtonDefaults.buttonColors(containerColor = Accent)
             ) {
-                Text("Done", color = Color.White)
+                Text("Copy ID", color = Color.White)
+            }
+        },
+        dismissButton = {
+            Button(
+                onClick = onDismiss,
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent)
+            ) {
+                Text("Close", color = Text_Muted)
             }
         }
     )

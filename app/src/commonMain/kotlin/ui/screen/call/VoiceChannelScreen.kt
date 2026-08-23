@@ -65,33 +65,20 @@ fun VoiceChannelScreen(
                                         scope.launch {
                                             try {
                                                 println("DEBUG [VoiceChannelScreen] User clicked Connect to Voice")
-                                                val activeUrl = activeGroupCallUrl
-                                                val isCreator = activeUrl == null || activeUrl == "LOADING"
-
-                                                val callId = if (!isCreator) {
-                                                    if (activeUrl!!.startsWith("matrix-call://")) {
-                                                        activeUrl.substringAfter("://")
-                                                    } else {
-                                                        val extracted = activeUrl.substringAfter("?callId=", missingDelimiterValue = "m.call")
-                                                        if (extracted.isBlank()) "m.call" else extracted
-                                                    }
-                                                } else {
-                                                    // Creator flow uses seamless 'm.call' state key
-                                                    "m.call"
+                                                var resolved = matrixRepository.resolveGroupCallJoinTarget(channel.matrixRoomId)
+                                                if (!resolved.exists) {
+                                                    // Fresh creator decision (no stale LOADING race): publish our definition
+                                                    matrixRepository.startGroupCall(channel.matrixRoomId, "m.call")
+                                                    resolved = matrixRepository.resolveGroupCallJoinTarget(channel.matrixRoomId)
                                                 }
-
-                                                if (isCreator) {
-                                                    matrixRepository.startGroupCall(channel.matrixRoomId, callId)
-                                                }
-
-                                                val livekitUrl = if (!isCreator && (activeUrl!!.startsWith("wss://") || activeUrl.startsWith("ws://"))) {
-                                                    activeUrl.substringBefore("?callId=")
-                                                } else {
-                                                    (matrixRepository as? MatrixOrbitRepository)?.context?.defaultLiveKitServiceUrl
-                                                }
-
+                                                val livekitUrl = resolved.serviceUrl
+                                                    ?: matrixRepository.context.effectiveLiveKitServiceUrl()
+                                                val callId = resolved.callId ?: "m.call"
+                                                println(
+                                                    "DEBUG [VoiceChannelScreen] JoinFocus callId=$callId sfu=$livekitUrl source=${resolved.source ?: "creator"}"
+                                                )
                                                 callManager.joinGroupCall(channel.matrixRoomId, callId, false, livekitUrl) {
-                                                    matrixRepository.fetchLiveKitToken(channel.matrixRoomId, callId, livekitUrl ?: "")
+                                                    matrixRepository.fetchLiveKitToken(channel.matrixRoomId, callId, livekitUrl)
                                                 }
                                             } catch (e: Exception) {
                                                 pendingVoiceJoin = false

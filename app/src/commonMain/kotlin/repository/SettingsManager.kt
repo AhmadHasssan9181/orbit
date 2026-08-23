@@ -181,9 +181,11 @@ class SettingsManager {
     // Screen Share Settings
     val screenShareQuality = flowSettings.getStringFlow("screenShareQuality", "1080p")
     fun setScreenShareQuality(value: String) = settings.putString("screenShareQuality", value)
-    
+    fun screenShareQualitySync(): String = settings.getString("screenShareQuality", "1080p")
+
     val screenShareFps = flowSettings.getIntFlow("screenShareFps", 30)
     fun setScreenShareFps(value: Int) = settings.putInt("screenShareFps", value)
+    fun screenShareFpsSync(): Int = settings.getInt("screenShareFps", 30)
     
     val latestScreenCaptureTech = flowSettings.getBooleanFlow("latestScreenCaptureTech", true)
     fun setLatestScreenCaptureTech(value: Boolean) = settings.putBoolean("latestScreenCaptureTech", value)
@@ -200,6 +202,17 @@ class SettingsManager {
     
     val audioSubsystem = flowSettings.getStringFlow("audioSubsystem", "Standard")
     fun setAudioSubsystem(value: String) = settings.putString("audioSubsystem", value)
+
+    // --- Calls / SFU ---
+    // Blank means auto: .well-known rtc_foci → public dev-fallback SFU.
+    val liveKitServiceUrl = flowSettings.getStringFlow("liveKitServiceUrl", "")
+    fun setLiveKitServiceUrl(value: String) = settings.putString("liveKitServiceUrl", value)
+
+    // --- Integrations ---
+    // Secret material must not live in source control; blank disables the feature.
+    val tenorApiKey = flowSettings.getStringFlow("tenorApiKey", "")
+    fun setTenorApiKey(value: String) = settings.putString("tenorApiKey", value)
+    fun tenorApiKeySync(): String = settings.getString("tenorApiKey", "")
 
     // --- Notifications ---
     val desktopNotifs = flowSettings.getBooleanFlow("desktopNotifs", true)
@@ -276,6 +289,7 @@ class SettingsManager {
     
     val debugLogging = flowSettings.getBooleanFlow("debugLogging", false)
     fun setDebugLogging(value: Boolean) = settings.putBoolean("debugLogging", value)
+    fun debugLoggingSync(): Boolean = settings.getBoolean("debugLogging", false)
     
     val hardwareAcceleration = flowSettings.getBooleanFlow("hardwareAcceleration", true)
     fun setHardwareAcceleration(value: Boolean) = settings.putBoolean("hardwareAcceleration", value)

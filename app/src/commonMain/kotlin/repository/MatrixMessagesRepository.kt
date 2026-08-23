@@ -232,10 +232,9 @@ class MatrixMessagesRepository(val context: MatrixContext) : OrbitMessagesReposi
         }
     }
 
-    override suspend fun editMessage(eventId: String, newBody: String): Result<Unit> {
+    override suspend fun editMessage(roomId: String, eventId: String, newBody: String): Result<Unit> {
         return try {
             val trixnity = context.trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
-            val roomId = context.extractRoomFromEventId(eventId)
             trixnity.room.sendMessage(RoomId(roomId)) {
                 this.relatesTo = RelatesTo.Replace(EventId(eventId))
                 text(newBody)
@@ -246,10 +245,9 @@ class MatrixMessagesRepository(val context: MatrixContext) : OrbitMessagesReposi
         }
     }
 
-    override suspend fun deleteMessage(eventId: String): Result<Unit> {
+    override suspend fun deleteMessage(roomId: String, eventId: String): Result<Unit> {
         return try {
             val trixnity = context.trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
-            val roomId = context.extractRoomFromEventId(eventId)
             trixnity.api.room.redactEvent(RoomId(roomId), EventId(eventId)).getOrThrow()
             Result.success(Unit)
         } catch (e: Exception) {

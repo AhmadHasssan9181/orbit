@@ -45,36 +45,19 @@ import ui.screen.main.*
 
 enum class SettingsCategory(val title: String, val group: String) {
     // User Settings
+    // (Fabricated panes removed: perks, family centre, connections, authorised apps,
+    // keybinds, language, activity/games, notifications and advanced were pure
+    // mock-ups with no backing engine — hidden until they actually work.)
     MyAccount("My Account", "USER SETTINGS"),
     Profiles("Profiles", "USER SETTINGS"),
-    Privacy("Privacy & Safety", "USER SETTINGS"),
-    FamilyCenter("Family Centre", "USER SETTINGS"),
-    AuthorizedApps("Authorised Apps", "USER SETTINGS"),
-    Connections("Connections", "USER SETTINGS"),
-    
-    // Perks (Replacing Billing)
-    OrbitPlus("Orbit Plus", "COSMIC PERKS"),
-    ServerOverdrive("Server Overdrive", "COSMIC PERKS"),
-    ActivePerks("Active Perks", "COSMIC PERKS"),
-    CosmicGifts("Cosmic Gifts", "COSMIC PERKS"),
-    PerkStatus("Perk Status", "COSMIC PERKS"),
 
     // App Settings
     Appearance("Appearance", "APP SETTINGS"),
     Accessibility("Accessibility", "APP SETTINGS"),
     VoiceVideo("Voice & Video", "APP SETTINGS"),
     Chat("Chat", "APP SETTINGS"),
-    Notifications("Notifications", "APP SETTINGS"),
-    Keybinds("Keybinds", "APP SETTINGS"),
-    Language("Language & Time", "APP SETTINGS"),
     Windows("Windows Settings", "APP SETTINGS"),
-    Advanced("Advanced", "APP SETTINGS"),
-    
-    // Activity
-    ActivityPrivacy("Activity Privacy", "ACTIVITY"),
-    RegisteredGames("Registered Games", "ACTIVITY"),
-    GameOverlay("Game Overlay", "ACTIVITY"),
-    
+
     // Auth
     Logout("Log Out", "")
 }
@@ -177,17 +160,7 @@ fun SettingsScreen(
                     when (selectedCategory) {
                         SettingsCategory.MyAccount -> item { MyAccountPane(repository) }
                         SettingsCategory.Profiles -> item { ProfilesPane(repository) }
-                        SettingsCategory.Privacy -> item { PrivacyPane(repository) }
-                        SettingsCategory.FamilyCenter -> item { FamilyCenterPane(repository) }
-                        SettingsCategory.AuthorizedApps -> item { AuthorizedAppsPane() }
-                        SettingsCategory.Connections -> item { ConnectionsPane(repository) }
-                        
-                        SettingsCategory.OrbitPlus -> item { OrbitPlusPane() }
-                        SettingsCategory.ServerOverdrive -> item { ServerOverdrivePane() }
-                        SettingsCategory.ActivePerks -> item { ActivePerksPane() }
-                        SettingsCategory.CosmicGifts -> item { CosmicGiftsPane() }
-                        SettingsCategory.PerkStatus -> item { PerkStatusPane() }
-                        
+
                         SettingsCategory.Appearance -> {
                             item { ThemeSelectorCard() }
                             item { LiteModeCard() }
@@ -195,32 +168,18 @@ fun SettingsScreen(
                             item { AppearanceExtrasPane(settingsManager) }
                         }
                         SettingsCategory.Accessibility -> {
-                            item { FontSizeCard(settingsManager) }
                             item { ReduceMotionCard(settingsManager) }
                             item { AccessibilityExtrasPane(settingsManager) }
                         }
                         SettingsCategory.Chat -> {
-                            item { FontSizeCard(settingsManager) }
                             item { MessageDensityCard(settingsManager) }
                             item { ChatSettingsPane(settingsManager) }
                         }
                         SettingsCategory.VoiceVideo -> {
                             item { VoiceVideoFullPane(settingsManager) }
                         }
-                        SettingsCategory.Notifications -> {
-                            item { MentionsOnlyCard(settingsManager) }
-                            item { SoundPickerCard(settingsManager) }
-                            item { NotificationsExtrasPane(settingsManager) }
-                        }
-                        SettingsCategory.Keybinds -> item { KeybindsPane() }
-                        SettingsCategory.Language -> item { LanguageTimePane(settingsManager) }
                         SettingsCategory.Windows -> item { WindowsSettingsPane(settingsManager) }
-                        SettingsCategory.Advanced -> item { AdvancedPane(settingsManager) }
-                        
-                        SettingsCategory.ActivityPrivacy -> item { ActivityPrivacyPane(settingsManager) }
-                        SettingsCategory.RegisteredGames -> item { RegisteredGamesPane(settingsManager) }
-                        SettingsCategory.GameOverlay -> item { GameOverlayPane(settingsManager) }
-                        
+
                         SettingsCategory.Logout -> {}
                         else -> {
                             item {
@@ -340,7 +299,16 @@ private fun MyAccountPane(repository: OrbitRepository) {
                     },
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Default.AccountCircle, null, modifier = Modifier.fillMaxSize(), tint = Accent)
+                if (user?.avatarUrl != null) {
+                    coil3.compose.AsyncImage(
+                        model = user?.avatarUrl,
+                        contentDescription = "Your avatar",
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize().clip(CircleShape)
+                    )
+                } else {
+                    Icon(Icons.Default.AccountCircle, null, modifier = Modifier.fillMaxSize(), tint = Accent)
+                }
             }
             
             Spacer(Modifier.width(16.dp))

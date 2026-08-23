@@ -47,15 +47,18 @@ fun CallControlsBar(
     isDeafened: Boolean,
     isScreenSharing: Boolean,
     layoutMode: CallLayoutMode,
-    showSoundboard: Boolean,
     onToggleDeafen: () -> Unit,
     onLayoutModeToggle: () -> Unit,
-    onSoundboardToggle: () -> Unit,
     onScreenShareClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    // Group path: NS/EC/AGC/ducking/virtual-bg live in the P2P engine only — hide the menu there.
+    showMoreOptions: Boolean = true,
+    showDeafen: Boolean = true,
+    showSoundboard: Boolean = false,
+    onSoundboardToggle: (() -> Unit)? = null
 ) {
     var showAudioDeviceMenu by remember { mutableStateOf(false) }
-    var showMoreOptions by remember { mutableStateOf(false) }
+    var moreOptionsExpanded by remember { mutableStateOf(false) }
     val tokens = rememberCosmicTokens()
 
     Surface(
@@ -137,17 +140,19 @@ fun CallControlsBar(
                 )
             }
 
-            // Deafen toggle
-            ControlButtonWithTooltip(
-                icon = if (isDeafened) Icons.Default.HeadsetOff else Icons.Default.Headphones,
-                tooltip = if (isDeafened) "Undeafen" else "Deafen",
-                isActive = !isDeafened,
-                activeColor = Color(0xFF313338),
-                activeIconColor = Color.White,
-                inactiveColor = Color(0xFFF23F42),
-                inactiveIconColor = Color.White,
-                onClick = onToggleDeafen
-            )
+            // Deafen toggle (real: mutes mixed playback, mic stays up — group path)
+            if (showDeafen) {
+                ControlButtonWithTooltip(
+                    icon = if (isDeafened) Icons.Default.HeadsetOff else Icons.Default.Headphones,
+                    tooltip = if (isDeafened) "Undeafen" else "Deafen",
+                    isActive = !isDeafened,
+                    activeColor = Color(0xFF313338),
+                    activeIconColor = Color.White,
+                    inactiveColor = Color(0xFFF23F42),
+                    inactiveIconColor = Color.White,
+                    onClick = onToggleDeafen
+                )
+            }
 
             // ── SEPARATOR ──
             ControlSeparator()
@@ -183,36 +188,40 @@ fun CallControlsBar(
                 onClick = onLayoutModeToggle
             )
 
-            // Soundboard
-            ControlButtonWithTooltip(
-                icon = Icons.Default.MusicNote,
-                tooltip = "Soundboard",
-                isActive = showSoundboard,
-                activeColor = Color(0xFF5865F2),
-                activeIconColor = Color.White,
-                inactiveColor = Color(0xFF313338),
-                inactiveIconColor = Color.White,
-                onClick = onSoundboardToggle
-            )
-
-            // More Options
-            Box {
+            // Soundboard (only where the panel exists — P2P call screen)
+            if (onSoundboardToggle != null) {
                 ControlButtonWithTooltip(
-                    icon = Icons.Default.MoreHoriz,
-                    tooltip = "More Options",
-                    isActive = showMoreOptions,
+                    icon = Icons.Default.MusicNote,
+                    tooltip = "Soundboard",
+                    isActive = showSoundboard,
                     activeColor = Color(0xFF5865F2),
                     activeIconColor = Color.White,
                     inactiveColor = Color(0xFF313338),
                     inactiveIconColor = Color.White,
-                    onClick = { showMoreOptions = !showMoreOptions }
+                    onClick = { onSoundboardToggle() }
                 )
+            }
 
-                MoreOptionsMenu(
-                    callManager = callManager,
-                    expanded = showMoreOptions,
-                    onDismiss = { showMoreOptions = false }
-                )
+            // More Options (P2P-only audio processing toggles)
+            if (showMoreOptions) {
+                Box {
+                    ControlButtonWithTooltip(
+                        icon = Icons.Default.MoreHoriz,
+                        tooltip = "More Options",
+                        isActive = moreOptionsExpanded,
+                        activeColor = Color(0xFF5865F2),
+                        activeIconColor = Color.White,
+                        inactiveColor = Color(0xFF313338),
+                        inactiveIconColor = Color.White,
+                        onClick = { moreOptionsExpanded = !moreOptionsExpanded }
+                    )
+
+                    MoreOptionsMenu(
+                        callManager = callManager,
+                        expanded = moreOptionsExpanded,
+                        onDismiss = { moreOptionsExpanded = false }
+                    )
+                }
             }
 
             // ── SEPARATOR ──

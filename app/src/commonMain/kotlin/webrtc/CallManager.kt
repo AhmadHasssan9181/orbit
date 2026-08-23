@@ -1,11 +1,15 @@
 package webrtc
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.runtime.staticCompositionLocalOf
 import repository.TurnServer
 
@@ -44,15 +48,40 @@ class CallManager(
     val hasRemoteStream = MutableStateFlow(false)
     val nativeMediaReadiness = MutableStateFlow<livekit.NativeMediaReadiness?>(null)
 
+    // E1: explicit group-call join ladder surfaced to the UI
+    private val groupConnectionTracker = GroupCallConnectionTracker(nowMs = System::currentTimeMillis)
+    val groupConnection: StateFlow<GroupCallConnection> get() = groupConnectionTracker.connection
+    private var groupWatchdogJob: Job? = null
+
     private val _isScreenSharing = MutableStateFlow(false)
     val isScreenSharing: StateFlow<Boolean> = _isScreenSharing
     val isRemoteScreenSharing: StateFlow<Boolean> = webRtcClient.isRemoteScreenSharing
+
+    // Deafen: mutes remote playback output, mic keeps publishing. Group mutes the
+    // mixed native player; P2P silences the remote AudioTrack.
+    val isDeafened = MutableStateFlow(false)
+    fun toggleDeafen() {
+        val newValue = !isDeafened.value
+        isDeafened.value = newValue
+        if (isGroupCall.value) {
+            livekit.setLiveKitPlaybackMuted(newValue)
+        } else {
+            webRtcClient.setPlaybackMuted(newValue)
+        }
+    }
+
+    // Group-call participant roster from MatrixRTC membership (covers voice-only members
+    // that produce no video track). Wired via groupMembersProvider in WebRtcEffects.
+    var groupMembersProvider: ((String) -> kotlinx.coroutines.flow.Flow<List<ui.model.OrbitUser>>)? = null
+    private val _groupCallMembers = MutableStateFlow<List<ui.model.OrbitUser>>(emptyList())
+    val groupCallMembers: StateFlow<List<ui.model.OrbitUser>> = _groupCallMembers
 
     val duckingStrength = MutableStateFlow(0.8f)
     val noiseSuppression = MutableStateFlow(true)
     val echoCancellation = MutableStateFlow(true)
     val autoGainControl = MutableStateFlow(true)
     val isVirtualBackgroundEnabled = MutableStateFlow(false)
+    var audioBitrateKbps: Int = 64
 
     // Callbacks to send Matrix events
     var refreshIceServers: (suspend () -> List<TurnServer>)? = null
@@ -62,11 +91,22 @@ class CallManager(
     var sendCandidate: (suspend (roomId: String, callId: String, candidate: IceCandidateModel) -> Unit)? = null
     var sendHangup: (suspend (roomId: String, callId: String) -> Unit)? = null
     var onLeaveGroupCall: (suspend (roomId: String, callId: String) -> Unit)? = null
-    var onUpdateGroupCallMembershipCapabilities: (suspend (roomId: String, callId: String, audio: Boolean, video: Boolean, livekitIdentity: String?) -> Unit)? = null
+    var onUpdateGroupCallMembershipCapabilities: (suspend (roomId: String, callId: String, audio: Boolean, video: Boolean, livekitIdentity: String?) -> Boolean)? = null
 
     private val pendingLocalCandidates = mutableListOf<IceCandidateModel>()
+    // Remote ICE candidates can arrive before our setRemoteDescription completes
+    // (peerConnection is null then and would silently drop them) — buffer until it's set.
+    private val pendingRemoteCandidates = mutableListOf<IceCandidateModel>()
+    private var remoteDescriptionSet = false
     private var candidatesAllowedForCallId: String? = null
     private var pendingInviteSdp: String? = null  // Stores the offer SDP until the user answers
+    private var ringTimeoutJob: Job? = null
+    companion object {
+        private const val DEFAULT_RING_TIMEOUT_MS = 60_000L // js-sdk CALL_TIMEOUT_MS
+        private const val TOKEN_FETCH_TIMEOUT_MS = 10_000L
+        private const val RETRY_BACKOFF_MS = 1_000L
+        private const val MEMBERSHIP_LEAVE_TIMEOUT_MS = 1_500L
+    }
 
     init {
         scope.launch {
@@ -91,6 +131,33 @@ class CallManager(
             webRtcClient.onStreamAdded.collect { added ->
                 hasRemoteStream.value = added
             }
+        }
+        var membersJob: Job? = null
+        scope.launch {
+            activeRoomIdFlow.collect { roomId ->
+                membersJob?.cancel()
+                membersJob = null
+                val provider = groupMembersProvider
+                if (roomId == null || provider == null) {
+                    _groupCallMembers.value = emptyList()
+                } else {
+                    membersJob = scope.launch {
+                        provider(roomId).collect { members -> _groupCallMembers.value = members }
+                    }
+                }
+            }
+        }
+        // E1 RENDERING evidence: first remote track/frame arriving during a join
+        scope.launch {
+            kotlinx.coroutines.flow.combine(
+                isGroupCall,
+                livekit.LiveKitRemoteVideoFrameStore.activeTracks
+            ) { group, tracks -> group to tracks.isNotEmpty() }
+                .collect { (group, hasTracks) ->
+                    if (group && hasTracks) {
+                        groupConnectionTracker.onFirstRemoteFrame()
+                    }
+                }
         }
     }
 
@@ -125,17 +192,21 @@ class CallManager(
         nativeMediaReadiness.value = null
         candidatesAllowedForCallId = null
         pendingLocalCandidates.clear()
+        pendingRemoteCandidates.clear()
+        remoteDescriptionSet = false
         _callState.value = CallState.CONNECTING
+        groupConnectionTracker.begin()
 
         scope.launch {
             try {
                 if (livekitUrl != null && livekitTokenFetcher != null) {
+                    startGroupWatchdog(isVideo)
                     val mediaReady = connectNativeGroupMedia(roomId, callId, isVideo, livekitUrl, livekitTokenFetcher)
                     if (mediaReady) {
                         _callState.value = CallState.CONNECTED
                         println("DEBUG [CallManager] LiveKit call state set to CONNECTED after MediaReady")
                     } else {
-                        failGroupJoin()
+                        failGroupJoin(groupConnectionTracker.connection.value.message ?: "Group call join failed")
                     }
                     return@launch
                 }
@@ -147,14 +218,61 @@ class CallManager(
                     recoverable = false
                 )
                 println("ERROR [CallManager] ${error.code} ${error.operation}: ${error.message}")
-                failGroupJoin()
+                failGroupJoin(error.message)
             } finally {
                 isJoiningGroupCall = false
             }
         }
     }
 
-    private fun failGroupJoin() {
+    private fun startGroupWatchdog(videoRequested: Boolean) {
+        groupWatchdogJob?.cancel()
+        groupWatchdogJob = scope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(500)
+                val decision = groupConnectionTracker.evaluateDeadlines(
+                    now = System.currentTimeMillis(),
+                    videoRequested = videoRequested,
+                    remoteMediaExpected = _groupCallMembers.value.size > 1
+                )
+                if (decision == TrackerDecision.GiveUp) {
+                    val stage = groupConnectionTracker.connection.value.stage
+                    println("ERROR [CallManager] Group-call join stalled at $stage, giving up visibly")
+                    // Force-unblock any in-flight native wait through the normal teardown path.
+                    livekit.disconnectFromLiveKit(userInitiated = false)
+                    groupConnectionTracker.markFailed(
+                        "Stalled at ${stage.name.lowercase().replaceFirstChar { it.uppercase() }}"
+                    )
+                    failGroupJoin(groupConnectionTracker.connection.value.message)
+                    break
+                }
+                // H1: once in the call, watch for the native media chain dying
+                // (reconnect budget exhausted or unrecoverable failure) so the user
+                // returns to the lobby instead of sitting in a zombie call.
+                val stage = groupConnectionTracker.connection.value.stage
+                if (stage == GroupCallStage.InCall || stage == GroupCallStage.Reconnecting) {
+                    val readiness = livekit.liveKitCurrentReadiness()
+                    if (readiness != null) {
+                        if (readiness.state == livekit.NativeMediaState.Failed) {
+                            println("ERROR [CallManager] Group-call media failed mid-call, returning to lobby")
+                            // Full teardown (not failGroupJoin) so the MSC3401 leave is
+                            // published — otherwise peers keep counting us as a member.
+                            scope.launch { endCall() }
+                            break
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun failGroupJoin(message: String? = null) {
+        if (message != null) {
+            groupConnectionTracker.markFailed(message)
+        }
+        groupWatchdogJob?.cancel()
+        groupWatchdogJob = null
+        livekit.setLiveKitReconnectedListener(null)
         _callState.value = CallState.IDLE
         activeRoomId = null
         callId = null
@@ -165,6 +283,8 @@ class CallManager(
         nativeMediaReadiness.value = null
         candidatesAllowedForCallId = null
         pendingLocalCandidates.clear()
+        pendingRemoteCandidates.clear()
+        remoteDescriptionSet = false
     }
 
     private fun ensureNativeMediaSessionStarted(
@@ -198,6 +318,8 @@ class CallManager(
 
             isJoiningGroupCall = true
             try {
+                groupConnectionTracker.begin()
+                startGroupWatchdog(isVideo)
                 if (connectNativeGroupMedia(roomId, callId, isVideo, livekitUrl, livekitTokenFetcher)) {
                     _callState.value = CallState.CONNECTED
                 }
@@ -223,56 +345,138 @@ class CallManager(
             }
 
             println("DEBUG [CallManager] Fetching LiveKit token for url: $livekitUrl")
-            val authResponse = livekitTokenFetcher()
-            println("DEBUG [CallManager] Token and SFU URL fetched. Publishing MatrixRTC membership before native media...")
-            onUpdateGroupCallMembershipCapabilities?.invoke(roomId, callId, true, false, authResponse.identity)
-            println("DEBUG [CallManager] MatrixRTC membership publish requested before native media. Connecting native media at ${authResponse.serverUrl}...")
-            val readiness = livekit.connectAndPublishToLiveKit(
-                authResponse = authResponse,
-                isVideo = isVideo,
-                iceServers = effectiveIceServers,
-                refreshTokenFetcher = livekitTokenFetcher
-            )
-
-            if (!readiness.ok || readiness.value == null) {
-                println("DEBUG [CallManager] Native media failed: ${readiness.error?.code} ${readiness.error?.message}")
-                false
-            } else {
-                val value = readiness.value
-                nativeMediaReadiness.value = value
-                val ready = value.state == livekit.NativeMediaState.MediaReady &&
-                    value.audioPublished &&
-                    value.acceptingAudioFrames
-                if (!ready) {
-                    println("DEBUG [CallManager] Native media not ready after join: $value")
-                } else {
-                    isLocalVideoEnabled.value = value.videoPublished
-                    isVideoCall.value = isVideoCall.value || value.videoPublished
-                    val membershipMode = livekit.LiveKitFeatureFlags.videoMembershipMode
-                    val membershipModeAllowsVideo = membershipMode == "intent-video" ||
-                        membershipMode == "capabilities-video" ||
-                        membershipMode == "element-reference"
-                    val updateVideoMembership = value.videoPublished &&
-                        livekit.LiveKitFeatureFlags.videoUpdateMembershipAfterPublish &&
-                        membershipModeAllowsVideo
-                    if (updateVideoMembership) {
-                        println("DEBUG [CallManager] publishing MatrixRTC membership after video publish audio=true video=true mode=$membershipMode")
-                        onUpdateGroupCallMembershipCapabilities?.invoke(roomId, callId, true, true, authResponse.identity)
-                    } else {
-                        println(
-                            "DEBUG [CallManager] keeping MatrixRTC membership audio-only after MediaReady " +
-                                "videoPublished=${value.videoPublished} updateMembershipAfterPublish=${livekit.LiveKitFeatureFlags.videoUpdateMembershipAfterPublish} membershipMode=$membershipMode"
-                        )
-                    }
-                }
-                ready
+            val authResponse = withTimeoutOrNull(TOKEN_FETCH_TIMEOUT_MS) { livekitTokenFetcher() }
+            if (authResponse == null) {
+                println("ERROR [CallManager] LiveKit token fetch timed out after ${TOKEN_FETCH_TIMEOUT_MS}ms")
+                groupConnectionTracker.markFailed("Timed out fetching LiveKit token")
+                return false
             }
+            println("DEBUG [CallManager] Token and SFU URL fetched. Publishing MatrixRTC membership before native media...")
+            val membershipVisible = onUpdateGroupCallMembershipCapabilities
+                ?.invoke(roomId, callId, true, false, authResponse.identity) ?: true
+            groupConnectionTracker.onMembershipPublished(membershipVisible)
+            if (!membershipVisible) {
+                println("ERROR [CallManager] MatrixRTC membership was not visible after publish; aborting join")
+                return false
+            }
+            // H1: after a mid-call reconnect the m.call.member TTL hasn't moved —
+            // re-affirm membership (fresh expires) and restore the InCall UI stage.
+            val reconnectRoom = roomId
+            val reconnectCall = callId
+            val reconnectIdentity = authResponse.identity
+            livekit.setLiveKitReconnectedListener {
+                println("DEBUG [CallManager] LiveKit reconnected mid-call — restoring stage + re-affirming membership")
+                groupConnectionTracker.onReconnectComplete()
+                scope.launch {
+                    runCatching {
+                        onUpdateGroupCallMembershipCapabilities?.invoke(
+                            reconnectRoom,
+                            reconnectCall,
+                            true,
+                            isLocalVideoEnabled.value,
+                            reconnectIdentity
+                        )
+                    }.onFailure { println("WARN [CallManager] membership re-affirm after reconnect failed: ${it.message}") }
+                }
+            }
+            println("DEBUG [CallManager] MatrixRTC membership visible. Connecting native media at ${authResponse.serverUrl}...")
+
+            var readiness: livekit.NativeResult<livekit.NativeMediaReadiness>? = null
+            for (attempt in 1..GroupCallConnectionTracker.MAX_CONNECT_ATTEMPTS) {
+                if (attempt > 1) {
+                    groupConnectionTracker.noteRetryStarted()
+                    println("WARN [CallManager] Retrying native LiveKit connect (attempt $attempt)")
+                    livekit.disconnectFromLiveKit(userInitiated = false)
+                    delay(RETRY_BACKOFF_MS)
+                }
+                readiness = connectOnceWithProgress(isVideo, effectiveIceServers, livekitTokenFetcher, authResponse)
+                val ok = readiness.ok && readiness.value != null &&
+                    readiness.value.state == livekit.NativeMediaState.MediaReady &&
+                    readiness.value.audioPublished &&
+                    readiness.value.acceptingAudioFrames
+                if (ok || groupConnectionTracker.connection.value.stage == GroupCallStage.Failed) break
+            }
+            finalizeGroupJoin(roomId, callId, isVideo, authResponse, readiness)
         } catch (e: Exception) {
             nativeMediaReadiness.value = null
             println("DEBUG [CallManager] Failed to connect native LiveKit media: ${e.message}")
             e.printStackTrace()
+            groupConnectionTracker.markFailed(e.message ?: "Native media error")
             false
         }
+    }
+
+    private suspend fun connectOnceWithProgress(
+        isVideo: Boolean,
+        effectiveIceServers: List<repository.TurnServer>,
+        livekitTokenFetcher: suspend () -> livekit.LiveKitAuthResponse,
+        authResponse: livekit.LiveKitAuthResponse
+    ): livekit.NativeResult<livekit.NativeMediaReadiness> {
+        val pollJob = scope.launch {
+            while (isActive) {
+                delay(300)
+                groupConnectionTracker.onNativeReadiness(livekit.liveKitCurrentReadiness())
+            }
+        }
+        try {
+            return livekit.connectAndPublishToLiveKit(
+                authResponse = authResponse,
+                isVideo = isVideo,
+                iceServers = effectiveIceServers,
+                refreshTokenFetcher = livekitTokenFetcher,
+                audioBitrateKbps = audioBitrateKbps
+            )
+        } finally {
+            pollJob.cancel()
+        }
+    }
+
+    private suspend fun finalizeGroupJoin(
+        roomId: String,
+        callId: String,
+        isVideo: Boolean,
+        authResponse: livekit.LiveKitAuthResponse,
+        readiness: livekit.NativeResult<livekit.NativeMediaReadiness>?
+    ): Boolean {
+        if (readiness == null || !readiness.ok || readiness.value == null) {
+            val message = readiness?.error?.message ?: "LiveKit connect did not complete"
+            println("DEBUG [CallManager] Native media failed: ${readiness?.error?.code} $message")
+            groupConnectionTracker.finalizeJoin(null, isVideo)
+            return false
+        }
+        val value = readiness.value
+        // A watchdog give-up may have already failed the call while this join coroutine
+        // was suspended; don't publish stale readiness over a terminal tracker state.
+        if (groupConnectionTracker.connection.value.stage == GroupCallStage.Failed) {
+            println("DEBUG [CallManager] Skipping finalizeGroupJoin readiness write: call already failed")
+            groupConnectionTracker.finalizeJoin(null, isVideo)
+            return false
+        }
+        nativeMediaReadiness.value = value
+        val stable = groupConnectionTracker.finalizeJoin(value, isVideo)
+        if (!stable) {
+            println("DEBUG [CallManager] Native media not ready after join: $value")
+            return false
+        }
+        isLocalVideoEnabled.value = value.videoPublished
+        isVideoCall.value = isVideoCall.value || value.videoPublished
+        val membershipMode = livekit.LiveKitFeatureFlags.videoMembershipMode
+        val membershipModeAllowsVideo = membershipMode == "intent-video" ||
+            membershipMode == "capabilities-video" ||
+            membershipMode == "element-reference"
+        val updateVideoMembership = value.videoPublished &&
+            livekit.LiveKitFeatureFlags.videoUpdateMembershipAfterPublish &&
+            membershipModeAllowsVideo
+        if (updateVideoMembership) {
+            println("DEBUG [CallManager] publishing MatrixRTC membership after video publish audio=true video=true mode=$membershipMode")
+            onUpdateGroupCallMembershipCapabilities?.invoke(roomId, callId, true, true, authResponse.identity)
+        } else {
+            println(
+                "DEBUG [CallManager] keeping MatrixRTC membership audio-only after MediaReady " +
+                    "videoPublished=${value.videoPublished} updateMembershipAfterPublish=${livekit.LiveKitFeatureFlags.videoUpdateMembershipAfterPublish} membershipMode=$membershipMode"
+            )
+        }
+        return true
     }
 
     fun startCall(roomId: String, isVideo: Boolean) {
@@ -287,6 +491,8 @@ class CallManager(
         nativeMediaReadiness.value = null
         candidatesAllowedForCallId = null
         pendingLocalCandidates.clear()
+        pendingRemoteCandidates.clear()
+        remoteDescriptionSet = false
         _callState.value = CallState.CONNECTING
 
         scope.launch {
@@ -313,12 +519,12 @@ class CallManager(
         }
     }
 
-    fun handleCallInvite(roomId: String, incomingCallId: String, sdp: String) {
+    fun handleCallInvite(roomId: String, incomingCallId: String, sdp: String, lifetimeMs: Long? = null) {
         if (_callState.value != CallState.IDLE && callId == incomingCallId) {
             println("DEBUG: [WebRTC] Ignoring duplicate invite for active call $incomingCallId")
             return
         }
-        
+
         if (_callState.value != CallState.IDLE) {
             println("DEBUG: [WebRTC] Ignoring invite for $incomingCallId because already in call $callId")
             return // Already in a different call
@@ -334,9 +540,27 @@ class CallManager(
         nativeMediaReadiness.value = null
         candidatesAllowedForCallId = null
         pendingLocalCandidates.clear()
+        pendingRemoteCandidates.clear()
+        remoteDescriptionSet = false
         pendingInviteSdp = sdp  // Store SDP; actual init happens when user answers
         _callState.value = CallState.RINGING
         println("DEBUG: [CallMgr] Incoming invite from $roomId callId=$incomingCallId, isVideo=${sdpHasVideo(sdp)}")
+
+        // Expire the invite like js-sdk does: stop ringing after its advertised lifetime
+        // (the caller's own CALL_TIMEOUT_MS timer hangs up remotely; here we just reset).
+        ringTimeoutJob?.cancel()
+        ringTimeoutJob = scope.launch {
+            val waitMs = lifetimeMs ?: DEFAULT_RING_TIMEOUT_MS
+            delay(waitMs)
+            if (_callState.value == CallState.RINGING && callId == incomingCallId) {
+                println("DEBUG: [CallMgr] Incoming call $incomingCallId expired after ${waitMs}ms (missed)")
+                isIncomingCall.value = false
+                activeRoomId = null
+                callId = null
+                pendingInviteSdp = null
+                _callState.value = CallState.IDLE
+            }
+        }
 
         // Warm up ICE servers in background so they're ready when user answers
         scope.launch {
@@ -368,6 +592,7 @@ class CallManager(
                 webRtcClient.setRemoteDescription(
                     SessionDescriptionModel("offer", offerSdp),
                     onSuccess = {
+                        flushRemoteCandidates()
                         println("DEBUG: [CallMgr] Remote description set, creating answer...")
                         webRtcClient.startLocalMedia(isVideo)
                         webRtcClient.createAnswer(
@@ -428,6 +653,7 @@ class CallManager(
         webRtcClient.setRemoteDescription(
             SessionDescriptionModel("answer", sdp),
             onSuccess = {
+                flushRemoteCandidates()
                 _callState.value = CallState.CONNECTED
             }
         )
@@ -449,6 +675,9 @@ class CallManager(
                 // where the signaling state can change (causing INVALID_STATE).
                 webRtcClient.setRemoteDescription(
                     SessionDescriptionModel("offer", sdp),
+                    onSuccess = {
+                        flushRemoteCandidates()
+                    },
                     onError = {
                         println("ERROR: [WebRTC] Failed to set remote description for negotiate: $it")
                     }
@@ -468,6 +697,7 @@ class CallManager(
                 webRtcClient.setRemoteDescription(
                     SessionDescriptionModel("answer", sdp),
                     onSuccess = {
+                        flushRemoteCandidates()
                         _callState.value = CallState.CONNECTED
                     }
                 )
@@ -476,7 +706,22 @@ class CallManager(
     }
 
     fun handleIceCandidate(candidate: IceCandidateModel) {
-        webRtcClient.addIceCandidate(candidate)
+        if (!remoteDescriptionSet) {
+            pendingRemoteCandidates.add(candidate)
+            println("DEBUG: [WebRTC] Queued remote ICE candidate until remote description is set")
+        } else {
+            webRtcClient.addIceCandidate(candidate)
+        }
+    }
+
+    private fun flushRemoteCandidates() {
+        remoteDescriptionSet = true
+        val queued = pendingRemoteCandidates.toList()
+        pendingRemoteCandidates.clear()
+        if (queued.isNotEmpty()) {
+            println("DEBUG: [WebRTC] Flushing ${queued.size} queued remote ICE candidates")
+            queued.forEach { webRtcClient.addIceCandidate(it) }
+        }
     }
 
     fun setDuckingStrength(strength: Float) {
@@ -489,14 +734,21 @@ class CallManager(
         echoCancellation.value = ec
         autoGainControl.value = agc
         webRtcClient.setAudioOptions(ns, ec, agc)
+        // Group path: same toggles drive the native APM chain (live via applyConfig)
+        livekit.setLiveKitAudioProcessingOptions(ns, ec, agc)
     }
 
     fun toggleVirtualBackground() {
         isVirtualBackgroundEnabled.value = !isVirtualBackgroundEnabled.value
         webRtcClient.isVirtualBackgroundEnabled = isVirtualBackgroundEnabled.value
-        // WebRTC client will read this when video is re-enabled, or we can toggle video.
+        // Group path picks the flag up at next camera open (same restart semantics
+        // as the P2P engine — applied on video restart, not mid-stream).
+        livekit.setLiveKitVirtualBackground(isVirtualBackgroundEnabled.value)
+        // Only the P2P engine needs an explicit camera bounce to pick the flag up;
+        // in group calls the LiveKit publisher handles it and bouncing here would
+        // tear down the shared camera track for everyone.
         val wasVideoEnabled = isLocalVideoEnabled.value
-        if (wasVideoEnabled) {
+        if (wasVideoEnabled && !isGroupCall.value) {
             webRtcClient.toggleVideo(false)
             webRtcClient.toggleVideo(true)
         }
@@ -507,20 +759,35 @@ class CallManager(
         val currentCall = callId
         val wasGroupCall = isGroupCall.value
 
+        ringTimeoutJob?.cancel()
+        groupWatchdogJob?.cancel()
+        groupWatchdogJob = null
+        groupConnectionTracker.reset()
         _callState.value = CallState.ENDED
+        livekit.setLiveKitReconnectedListener(null)
         if (wasGroupCall) {
-            livekit.disconnectFromLiveKit(userInitiated = true)
-        }
-        webRtcClient.stopLocalMedia()
-        webRtcClient.endCall()
-
-        if (notifyRemote && currentRoom != null && currentCall != null) {
-            scope.launch {
-                if (wasGroupCall) {
-                    onLeaveGroupCall?.invoke(currentRoom, currentCall)
-                } else {
-                    sendHangup?.invoke(currentRoom, currentCall)
+            // H2 teardown order: unpublish media (peers stop receiving us
+            // immediately) → membership leave (bounded wait) → close engine →
+            // release devices/peer connection.
+            webRtcClient.stopLocalMedia()
+            if (notifyRemote && currentRoom != null && currentCall != null) {
+                val room = currentRoom
+                val call = currentCall
+                scope.launch {
+                    val leave = launch { onLeaveGroupCall?.invoke(room, call) }
+                    withTimeoutOrNull(MEMBERSHIP_LEAVE_TIMEOUT_MS) { leave.join() }
+                    livekit.disconnectFromLiveKit(userInitiated = true)
+                    webRtcClient.endCall()
                 }
+            } else {
+                livekit.disconnectFromLiveKit(userInitiated = true)
+                webRtcClient.endCall()
+            }
+        } else {
+            webRtcClient.stopLocalMedia()
+            webRtcClient.endCall()
+            if (notifyRemote && currentRoom != null && currentCall != null) {
+                scope.launch { sendHangup?.invoke(currentRoom, currentCall) }
             }
         }
 
@@ -529,12 +796,20 @@ class CallManager(
         callId = null
         isIncomingCall.value = false
         isGroupCall.value = false
+        if (isDeafened.value) {
+            webRtcClient.setPlaybackMuted(false)
+            livekit.setLiveKitPlaybackMuted(false)
+        }
+        isDeafened.value = false
+        isMinimized.value = false
         _isScreenSharing.value = false
         isVideoCall.value = false
         isLocalVideoEnabled.value = false
         isLocalAudioEnabled.value = true
         candidatesAllowedForCallId = null
         pendingLocalCandidates.clear()
+        pendingRemoteCandidates.clear()
+        remoteDescriptionSet = false
         pendingInviteSdp = null
         hasRemoteStream.value = false
         nativeMediaReadiness.value = null
@@ -578,14 +853,45 @@ class CallManager(
 
     fun setAudioInputDevice(deviceName: String) {
         webRtcClient.setAudioInputDevice(deviceName)
+        livekit.setLiveKitInputDevice(deviceName)
     }
 
     fun setAudioOutputDevice(deviceName: String) {
         webRtcClient.setAudioOutputDevice(deviceName)
+        livekit.setLiveKitOutputDevice(deviceName)
     }
 
     fun setVideoCaptureDevice(deviceName: String) {
         webRtcClient.setVideoCaptureDevice(deviceName)
+    }
+
+    // Voice & Video settings: mic gain / playback volume for the native group path
+    // (1.0 = 100%). P2P levels stay managed by the WebRTC engine.
+    fun setMicVolume(volume: Float) {
+        livekit.setLiveKitInputVolume(volume)
+    }
+
+    fun setPlaybackVolume(volume: Float) {
+        livekit.setLiveKitOutputVolume(volume)
+    }
+
+    // Soundboard: synthesized effects mixed into outgoing mic frames (group path);
+    // on P2P they play locally and transmit only while system-audio share is on.
+    fun playSoundEffect(effectId: String) {
+        livekit.playSoundEffect(effectId)
+    }
+
+    fun stopSoundEffects() {
+        livekit.stopSoundEffects()
+    }
+
+    fun setSoundEffectVolume(volume: Float) {
+        livekit.setSoundEffectVolume(volume)
+    }
+
+    fun setMirrorVideo(enabled: Boolean) {
+        webRtcClient.setMirrorVideo(enabled)
+        livekit.LiveKitLocalVideoFrameStore.setMirrorPreview(enabled)
     }
 
     suspend fun getDesktopSources(): List<DesktopSourceModel> = withContext(Dispatchers.Default) {
@@ -599,8 +905,8 @@ class CallManager(
     fun startScreenShare(data: Any? = null) {
         scope.launch(Dispatchers.Default) {
             webRtcClient.startScreenShare(data)
-            // Screen sharing often changes resolution/streams, trigger re-negotiation
-            if (_callState.value == CallState.CONNECTED) {
+            // Screen sharing often changes resolution/streams, trigger re-negotiation (P2P only)
+            if (!isGroupCall.value && _callState.value == CallState.CONNECTED) {
                 webRtcClient.createOffer(
                     onSuccess = { sessionDescription ->
                         scope.launch {
@@ -620,8 +926,8 @@ class CallManager(
     fun stopScreenShare() {
         scope.launch(Dispatchers.Default) {
             webRtcClient.stopScreenShare()
-            // Trigger re-negotiation to go back to camera
-            if (_callState.value == CallState.CONNECTED) {
+            // Trigger re-negotiation to go back to camera (P2P only)
+            if (!isGroupCall.value && _callState.value == CallState.CONNECTED) {
                 webRtcClient.createOffer(
                     onSuccess = { sessionDescription ->
                         scope.launch {

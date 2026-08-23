@@ -74,6 +74,7 @@ fun ChatScreen(
             .fillMaxSize()
             .background(Chat_Bg)
     ) {
+        CompositionLocalProvider(ui.theme.LocalRoomMembers provides members) {
         Column(modifier = Modifier.weight(1f)) {
             ChatHeader(
                 channel = channel,
@@ -103,23 +104,36 @@ fun ChatScreen(
                         roomId = channel.id,
                         onJoinCall = { url ->
                             val matrixRepository = repository as? repository.MatrixOrbitRepository
-                            val target = parseGroupCallJoinTarget(
-                                url = url,
-                                fallbackLiveKitUrl = matrixRepository?.context?.defaultLiveKitServiceUrl
-                            )
-                            if (pendingGroupJoinCallId != null || callState == webrtc.CallState.CONNECTING) {
-                                println("DEBUG [ChatScreen] Ignoring duplicate MatrixRTC join click for ${target.callId}")
+                            if (matrixRepository == null) {
+                                println("ERROR [ChatScreen] Cannot join MatrixRTC call inside Orbit; missing Matrix repository for $url")
+                            } else if (pendingGroupJoinCallId != null || callState == webrtc.CallState.CONNECTING) {
+                                println("DEBUG [ChatScreen] Ignoring duplicate MatrixRTC join click")
                             } else {
-                                pendingGroupJoinCallId = target.callId
+                                pendingGroupJoinCallId = "resolving"
                                 scope.launch {
-                                    val livekitUrl = target.livekitUrl
-                                    if (matrixRepository == null || livekitUrl.isNullOrBlank()) {
-                                        println("ERROR [ChatScreen] Cannot join MatrixRTC call inside Orbit; missing Matrix repository or LiveKit URL for $url")
-                                        pendingGroupJoinCallId = null
-                                        return@launch
-                                    }
-                                    callManager?.joinGroupCall(channel.matrixRoomId, target.callId, false, livekitUrl) {
-                                        matrixRepository.fetchLiveKitToken(channel.matrixRoomId, target.callId, livekitUrl)
+                                    try {
+                                        // Room state is authoritative: never fall back to our default SFU while
+                                        // an active call definition points elsewhere (split-room bug).
+                                        val resolved = matrixRepository.resolveGroupCallJoinTarget(channel.matrixRoomId)
+                                        val parsed = parseGroupCallJoinTarget(
+                                            url = url,
+                                            fallbackLiveKitUrl = matrixRepository.context.effectiveLiveKitServiceUrl()
+                                        )
+                                        val callId = resolved.callId ?: parsed.callId
+                                        val livekitUrl = resolved.serviceUrl ?: parsed.livekitUrl
+                                        println(
+                                            "DEBUG [ChatScreen] JoinFocus callId=$callId sfu=$livekitUrl source=${resolved.source ?: "banner"}"
+                                        )
+                                        if (livekitUrl.isNullOrBlank()) {
+                                            println("ERROR [ChatScreen] No LiveKit URL available for $url")
+                                            return@launch
+                                        }
+                                        pendingGroupJoinCallId = callId
+                                        callManager?.joinGroupCall(channel.matrixRoomId, callId, false, livekitUrl) {
+                                            matrixRepository.fetchLiveKitToken(channel.matrixRoomId, callId, livekitUrl)
+                                        }
+                                    } finally {
+                                        if (pendingGroupJoinCallId == "resolving") pendingGroupJoinCallId = null
                                     }
                                 }
                             }
@@ -173,6 +187,7 @@ fun ChatScreen(
                 directProfile != null && windowSize.isExpanded -> DirectProfilePanel(directProfile)
                 ui.theme.LocalShowMemberList.current && windowSize.isExpanded -> MemberListPanel(members = members)
             }
+        }
         }
     }
 }

@@ -39,16 +39,25 @@ interface WebRtcClient {
     fun setAttenuationStrength(strength: Float)
     var isVirtualBackgroundEnabled: Boolean
     fun setRemoteVolume(volume: Float)
+
+    /** Deafen hook: silence remote playback while mic keeps publishing. */
+    fun setPlaybackMuted(muted: Boolean) {}
     
     fun setAudioInputDevice(deviceName: String)
     fun setAudioOutputDevice(deviceName: String)
     fun setVideoCaptureDevice(deviceName: String)
+    fun setMirrorVideo(enabled: Boolean)
     
     fun getDesktopSources(): List<DesktopSourceModel>
     
     fun getAudioInputDevices(): List<String>
     fun getAudioOutputDevices(): List<String>
     fun getVideoCaptureDevices(): List<String>
+
+    /** Last device chosen via setAudioInputDevice, or null if never set. */
+    fun getSelectedAudioInputDevice(): String? = null
+    /** Last device chosen via setAudioOutputDevice, or null if never set. */
+    fun getSelectedAudioOutputDevice(): String? = null
 }
 
 data class DesktopSourceModel(val id: String, val name: String, val isWindow: Boolean)

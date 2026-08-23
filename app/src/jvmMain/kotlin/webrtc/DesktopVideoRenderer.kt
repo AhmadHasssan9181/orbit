@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 class DesktopVideoRenderer(
-    val mirror: Boolean = false
+    var mirror: Boolean = false
 ) : VideoTrackSink {
     var isScreenShare: Boolean = false
     private val _frameImage = MutableStateFlow<BufferedImage?>(null)

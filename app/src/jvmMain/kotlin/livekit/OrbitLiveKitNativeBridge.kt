@@ -49,11 +49,12 @@ class OrbitLiveKitNativeBridge(
         sampleRate: Int,
         channels: Int,
         queueSizeMs: Int,
-        expectedTestTone: Boolean
+        expectedTestTone: Boolean,
+        maxBitrateBps: Int
     ): NativeResult<Unit> =
         statusToResult(
             sessionId,
-            raw.nativePublishAudio(sessionId, epoch, sampleRate, channels, queueSizeMs, expectedTestTone),
+            raw.nativePublishAudio(sessionId, epoch, sampleRate, channels, queueSizeMs, expectedTestTone, maxBitrateBps),
             "nativePublishAudio"
         )
 
@@ -72,8 +73,54 @@ class OrbitLiveKitNativeBridge(
             "nativePushAudioFrame"
         )
 
-    fun publishVideo(sessionId: Long, epoch: Long, width: Int, height: Int, fps: Int, format: Int): NativeResult<Unit> =
-        statusToResult(sessionId, raw.nativePublishVideo(sessionId, epoch, width, height, fps, format), "nativePublishVideo")
+    fun publishVideo(
+        sessionId: Long,
+        epoch: Long,
+        width: Int,
+        height: Int,
+        fps: Int,
+        format: Int,
+        maxBitrateBps: Int
+    ): NativeResult<Unit> =
+        statusToResult(sessionId, raw.nativePublishVideo(sessionId, epoch, width, height, fps, format, maxBitrateBps), "nativePublishVideo")
+
+    fun publishScreenShare(
+        sessionId: Long,
+        epoch: Long,
+        width: Int,
+        height: Int,
+        fps: Int,
+        maxBitrateBps: Int
+    ): NativeResult<Unit> =
+        statusToResult(sessionId, raw.nativePublishScreenShare(sessionId, epoch, width, height, fps, maxBitrateBps), "nativePublishScreenShare")
+
+    fun unpublishScreenShare(sessionId: Long, epoch: Long): NativeResult<Unit> =
+        statusToResult(sessionId, raw.nativeUnpublishScreenShare(sessionId, epoch), "nativeUnpublishScreenShare")
+
+    fun publishScreenShareAudio(sessionId: Long, epoch: Long): NativeResult<Unit> =
+        statusToResult(sessionId, raw.nativePublishScreenShareAudio(sessionId, epoch), "nativePublishScreenShareAudio")
+
+    fun unpublishScreenShareAudio(sessionId: Long, epoch: Long): NativeResult<Unit> =
+        statusToResult(sessionId, raw.nativeUnpublishScreenShareAudio(sessionId, epoch), "nativeUnpublishScreenShareAudio")
+
+    fun pushScreenShareFrame(
+        sessionId: Long,
+        epoch: Long,
+        buffer: ByteBuffer,
+        width: Int,
+        height: Int,
+        format: Int,
+        strideY: Int,
+        strideU: Int,
+        strideV: Int,
+        timestampNs: Long,
+        rotation: Int
+    ): NativeResult<Unit> =
+        statusToResult(
+            sessionId,
+            raw.nativePushScreenShareFrame(sessionId, epoch, buffer, width, height, format, strideY, strideU, strideV, timestampNs, rotation),
+            "nativePushScreenShareFrame"
+        )
 
     fun pushVideoFrame(
         sessionId: Long,
