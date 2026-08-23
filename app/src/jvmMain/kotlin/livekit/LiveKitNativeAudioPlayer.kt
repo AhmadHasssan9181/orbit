@@ -2,6 +2,7 @@ package livekit
 
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 import javax.sound.sampled.AudioFormat
 import javax.sound.sampled.AudioSystem
@@ -70,6 +71,25 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
     private var playerJob: Job? = null
     private val lastPcmAtNs = AtomicLong(0L)
 
+    // Playback is the most deadline-sensitive thread in the app; a dedicated
+    // high-priority thread keeps writes steady when the rest of the process is
+    // busy (e.g. decoding many remote video streams in a big room).
+    private val playerDispatcher by lazy {
+        Executors.newSingleThreadExecutor { r ->
+            Thread(r, "orbit-audio-playback").apply {
+                priority = Thread.MAX_PRIORITY
+                isDaemon = true
+            }
+        }.asCoroutineDispatcher()
+    }
+
+    // Pre-roll rebuilt after the output line has fully drained (silence gap,
+    // line open). Without it, production pace == consumption pace, so every
+    // write lands on an empty device buffer and the dry-line storm reads as
+    // screeching under load.
+    private val PRIME_FRAMES = 5
+    @Volatile private var primed = false
+
     fun start(
         sessionId: Long,
         epoch: Long,
@@ -91,12 +111,15 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
 
     private fun startPlayerLoop() {
         playerJob?.cancel()
-        playerJob = scope.launch {
+        playerJob = scope.launch(playerDispatcher) {
             println("DEBUG [LiveKitNativeAudioPlayer] Async playback loop started")
             while (isActive) {
                 val pcm = audioQueue.poll(50, TimeUnit.MILLISECONDS)
                 if (pcm == null) {
                     CallPathStats.onPlayerIdle()
+                    // Queue exhausted: the line will run dry shortly. Re-arm the
+                    // pre-roll so the next audio spurt writes onto a cushion.
+                    primed = false
                     continue
                 }
                 if (outputMuted) continue // Deafened: discard frame, keep queue draining
@@ -104,6 +127,17 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
                 val (sr, ch) = synchronized(lock) { currentSampleRate to currentChannels }
                 if (sr <= 0 || ch <= 0) continue
                 val out = synchronized(lock) { ensureLine(sr, ch) } ?: continue
+                if (!primed && audioQueue.size < PRIME_FRAMES) {
+                    // Hold the head frame until a small backlog accumulates (or
+                    // ~60ms elapses), then release everything in a burst so the
+                    // device buffer refills instead of running at zero depth.
+                    var heldMs = 0
+                    while (isActive && audioQueue.size < PRIME_FRAMES && heldMs < 60) {
+                        delay(5)
+                        heldMs += 5
+                    }
+                }
+                primed = true
                 runCatching {
                     // True underrun = output line fully drained while remote frames are still flowing
                     val available = runCatching { out.available() }.getOrDefault(-1)
@@ -202,7 +236,7 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
             } else {
                 AudioSystem.getLine(info) as SourceDataLine
             }).also { newLine ->
-                val bufferSize = sampleRate * channels * 2 / 12 // ~83 ms buffer (was 250 ms — added latency)
+                val bufferSize = sampleRate * channels * 2 / 8 // ~125 ms; cushion absorbs scheduler jitter (83 ms starved under load)
                 newLine.open(format, bufferSize)
                 newLine.start()
                 line = newLine
