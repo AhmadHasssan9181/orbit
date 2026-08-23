@@ -12,6 +12,151 @@ import javax.sound.sampled.SourceDataLine
 import kotlin.math.roundToInt
 import kotlinx.coroutines.*
 
+/**
+ * Content ground-truth capture for the playback path, gated by
+ * -Dorbit.audio.dumpPlayback=<base path>. Writes the raw arriving mix and the
+ * final pre-write buffer as 16-bit WAV files so a garbled call can be analyzed
+ * numerically (RMS/zero-crossing windows) instead of guessed at from level stats.
+ * Capped at 90 s per stream per session; headers are finalized on close or JVM exit.
+ */
+private object PlaybackDump {
+    private const val MAX_FRAMES = 9_000 // 90 s at 10 ms frames
+    private val basePath = System.getProperty("orbit.audio.dumpPlayback")?.trim()?.takeUnless { it.isEmpty() }
+    val enabled: Boolean get() = basePath != null
+
+    private val lock = Any()
+    private var inStream: java.io.DataOutputStream? = null
+    private var outStream: java.io.DataOutputStream? = null
+    private var inFile: java.io.File? = null
+    private var outFile: java.io.File? = null
+    private var sampleRate = 0
+    private var channels = 0
+    private var framesIn = 0L
+    private var framesOut = 0L
+    private var closedLogged = false
+
+    fun noteFormat(sr: Int, ch: Int) {
+        if (!enabled) return
+        synchronized(lock) {
+            if (sampleRate != 0) return
+            sampleRate = sr
+            channels = ch
+            val base = basePath ?: return
+            val parent = java.io.File(base).parentFile
+            parent?.mkdirs()
+            inFile = java.io.File("$base.in.wav")
+            outFile = java.io.File("$base.out.wav")
+            runCatching {
+                inStream = openWav(inFile!!, sr, ch)
+                outStream = openWav(outFile!!, sr, ch)
+                println("DEBUG [PlaybackDump] capturing raw-in + final-out to $base.{in,out}.wav sr=$sr ch=$ch cap=${MAX_FRAMES} frames")
+            }.onFailure { error ->
+                println("WARN [PlaybackDump] open failed: ${error.message}")
+                inStream = null
+                outStream = null
+            }
+        }
+    }
+
+    fun dumpIn(pcm: ByteArray) = writeFrame(isInput = true, pcm)
+
+    fun dumpOut(pcm: ByteArray) = writeFrame(isInput = false, pcm)
+
+    private fun writeFrame(isInput: Boolean, pcm: ByteArray) {
+        if (!enabled) return
+        synchronized(lock) {
+            val s = ((if (isInput) inStream else outStream)) ?: return
+            var count = if (isInput) framesIn else framesOut
+            if (count >= MAX_FRAMES.toLong()) return
+            runCatching { s.write(pcm) }.onFailure { error ->
+                println("WARN [PlaybackDump] write failed: ${error.message}")
+                closeLocked()
+                return
+            }
+            count += 1
+            if (isInput) framesIn = count else framesOut = count
+            if (count == MAX_FRAMES.toLong()) closeLocked()
+        }
+    }
+
+    fun close() {
+        if (!enabled) return
+        synchronized(lock) { closeLocked() }
+    }
+
+    private fun closeLocked() {
+        val i = framesIn
+        val o = framesOut
+        runCatching { inStream?.close() }
+        runCatching { outStream?.close() }
+        inStream = null
+        outStream = null
+        finalizeHeader(inFile)
+        finalizeHeader(outFile)
+        if (!closedLogged && (i > 0 || o > 0)) {
+            closedLogged = true
+            println("DEBUG [PlaybackDump] closed framesIn=$i framesOut=$o files=${inFile?.path} ${outFile?.path}")
+        }
+    }
+
+    private fun finalizeHeader(file: java.io.File?) {
+        file ?: return
+        if (!file.exists()) return
+        runCatching {
+            java.io.RandomAccessFile(file, "rw").use { raf ->
+                val dataSize = raf.length() - 44L
+                writeLeInt(raf, 4, dataSize.toInt() + 36)
+                writeLeInt(raf, 40, dataSize.toInt())
+            }
+        }
+    }
+
+    private fun openWav(file: java.io.File, sr: Int, ch: Int): java.io.DataOutputStream {
+        if (file.exists()) file.delete()
+        val out = java.io.DataOutputStream(java.io.BufferedOutputStream(java.io.FileOutputStream(file), 1 shl 16))
+        val byteRate = sr * ch * 2
+        out.writeBytes("RIFF")
+        writeLeInt(out, 0) // patched on close
+        out.writeBytes("WAVEfmt ")
+        writeLeInt(out, 16)
+        writeLeShort(out, 1) // PCM
+        writeLeShort(out, ch.toShort())
+        writeLeInt(out, sr)
+        writeLeInt(out, byteRate)
+        writeLeShort(out, (ch * 2).toShort())
+        writeLeShort(out, 16)
+        out.writeBytes("data")
+        writeLeInt(out, 0) // patched on close
+        return out
+    }
+
+    private fun writeLeInt(out: java.io.DataOutputStream, v: Int) {
+        out.writeByte(v and 0xff)
+        out.writeByte((v shr 8) and 0xff)
+        out.writeByte((v shr 16) and 0xff)
+        out.writeByte((v shr 24) and 0xff)
+    }
+
+    private fun writeLeShort(out: java.io.DataOutputStream, v: Short) {
+        out.writeByte(v.toInt() and 0xff)
+        out.writeByte((v.toInt() shr 8) and 0xff)
+    }
+
+    private fun writeLeInt(raf: java.io.RandomAccessFile, offset: Long, v: Int) {
+        raf.seek(offset)
+        raf.writeByte(v and 0xff)
+        raf.writeByte((v shr 8) and 0xff)
+        raf.writeByte((v shr 16) and 0xff)
+        raf.writeByte((v shr 24) and 0xff)
+    }
+
+    init {
+        if (enabled) {
+            Runtime.getRuntime().addShutdownHook(Thread { close() })
+        }
+    }
+}
+
 object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
     private const val UNDERRUN_WINDOW_NS = 250_000_000L
 
@@ -90,6 +235,9 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
     private val PRIME_FRAMES = 5
     @Volatile private var primed = false
 
+    private val firstFrameParamsLogged = AtomicLong(0)
+    private val sizeMismatches = AtomicLong(0)
+
     fun start(
         sessionId: Long,
         epoch: Long,
@@ -101,6 +249,8 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
         bridge = nativeBridge
         errorSink = onError
         playbackErrorReported = false
+        firstFrameParamsLogged.set(0)
+        sizeMismatches.set(0)
         // Preserve outputMuted across restarts (e.g. reconnect): un-deafening is
         // owned by CallManager, which explicitly clears it on call end.
         audioQueue.clear()
@@ -146,6 +296,7 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
                     ) {
                         CallPathStats.onPlayerUnderrun()
                     }
+                    PlaybackDump.dumpIn(pcm)
                     if (OrbitApm.enabled) {
                         OrbitApm.processRender(pcm, sr, ch)
                     }
@@ -154,6 +305,7 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
                     // Reference must match what actually hits the speakers so the
                     // share-path AEC subtracts exactly Orbit's audible contribution.
                     ShareAudioAec.processRender(outPcm, sr, ch)
+                    PlaybackDump.dumpOut(outPcm)
                     out.write(outPcm, 0, outPcm.size)
                     CallPathStats.onPlayerFramePlayed()
                 }.onFailure { error ->
@@ -179,6 +331,7 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
         playerJob?.cancel()
         playerJob = null
         audioQueue.clear()
+        PlaybackDump.close()
         closeLine()
     }
 
@@ -193,6 +346,24 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
     ) {
         if (sessionId != expectedSessionId || epoch != expectedEpoch) return
         if (pcm.isEmpty() || sampleRate <= 0 || channels <= 0 || samplesPerChannel <= 0) return
+
+        if (firstFrameParamsLogged.compareAndSet(0, 1)) {
+            println(
+                "DEBUG [LiveKitNativeAudioPlayer] first mixed frame sr=$sampleRate ch=$channels " +
+                    "spc=$samplesPerChannel bytes=${pcm.size} expected=${samplesPerChannel * channels * 2}"
+            )
+            PlaybackDump.noteFormat(sampleRate, channels)
+        }
+        if (pcm.size != samplesPerChannel * channels * 2) {
+            val n = sizeMismatches.incrementAndGet()
+            if (n <= 5L || n % 500L == 0L) {
+                println(
+                    "WARN [LiveKitNativeAudioPlayer] mixed frame size mismatch #$n bytes=${pcm.size} " +
+                        "expected=${samplesPerChannel * channels * 2} sr=$sampleRate ch=$channels spc=$samplesPerChannel"
+                )
+            }
+        }
+        CallPathStats.onPlayerFrameArrived()
 
         synchronized(lock) {
             if (currentSampleRate != sampleRate || currentChannels != channels) {

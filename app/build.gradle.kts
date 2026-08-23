@@ -100,6 +100,7 @@ val orbitAudioJvmArgs = listOf(
     "orbit.audio.autoProbeDurationMs",
     "orbit.livekit.audioSourceQueueMs",
     "orbit.livekit.dumpTonePublisherEnv",
+    "orbit.audio.dumpPlayback",
     "orbit.matrixrtc.publishLegacyMember",
     "orbit.matrixrtc.publishMemberMode",
     "orbit.matrixrtc.mirrorVisibleElementShape",
