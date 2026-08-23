@@ -546,6 +546,8 @@ class JvmWebRtcClient : WebRtcClient {
                 if (isWindow) {
                     trackSharedWindow(finalSourceId)
                 }
+            } else {
+                println("WARN [WebRTC] screen share aborted: no desktop/window source matched sourceId=$sourceId (screens=${screenSources.size} windows=${windowSources.size})")
             }
             
             screenCapturer.dispose()
