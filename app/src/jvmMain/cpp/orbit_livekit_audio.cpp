@@ -10,6 +10,7 @@
 #include <objbase.h>
 
 #include "livekit/livekit.h"
+#include "livekit/stats.h"
 #include "livekit/video_stream.h"
 
 #include <algorithm>
@@ -21,6 +22,7 @@
 #include <cstring>
 #include <deque>
 #include <exception>
+#include <future>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -32,6 +34,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace {
@@ -141,6 +144,7 @@ std::unordered_set<std::string> g_loggedCallbackSkips;
 struct RemoteAudioReader {
     std::string trackSid;
     std::string participantIdentity;
+    std::shared_ptr<livekit::Track> track;
     std::shared_ptr<livekit::AudioStream> stream;
     std::thread thread;
     std::atomic_bool running{true};
@@ -175,6 +179,7 @@ constexpr jint kBytesPerSample = static_cast<jint>(sizeof(std::int16_t));
 constexpr int kAudioSourceCaptureTimeoutMs = 0;
 constexpr std::size_t kTargetParticipantQueueSamples = kSamplesPerChannel * 8; // 80 ms target playout depth
 constexpr std::size_t kMaxParticipantQueueSamples = kSamplesPerChannel * 16; // 160 ms burst headroom
+constexpr std::size_t kStarvationReprimeSamples = kSamplesPerChannel * 2; // 20 ms top-up after a true drain
 constexpr int kDefaultAudioMaxBitrateBps = 64000;
 constexpr int kMinAudioMaxBitrateBps = 8000;
 constexpr int kMaxAudioMaxBitrateBps = 512000;
@@ -213,6 +218,21 @@ double audioFrameDurationMs(jint sampleRate, jint samplesPerChannel) {
     return (static_cast<double>(samplesPerChannel) * 1000.0) / static_cast<double>(sampleRate);
 }
 
+// SDK Track/Publication/Participant sids have been observed carrying trailing
+// whitespace padding ("TR_...   "). Sids are exact-string map keys here, so
+// every sid crossing a reader start/stop or announcement-dedup boundary is
+// passed through this first.
+static std::string normalizedSid(std::string sid) {
+    while (!sid.empty()) {
+        const char last = sid.back();
+        if (last != ' ' && last != '\t' && last != '\r' && last != '\n' && last != '\0') {
+            break;
+        }
+        sid.pop_back();
+    }
+    return sid;
+}
+
 void setRawErrorThreadSafe(
     const std::string& code,
     const std::string& message,
@@ -228,7 +248,8 @@ struct ParticipantPcmQueue {
     std::mutex queueMutex;
     std::atomic_bool active{true};
     std::atomic<std::int64_t> lastFrameNs{0};
-    bool targetDepthPrimed{false};
+    bool startupPrimed{false};
+    bool starved{true};
 };
 
 void dispatchMixedAudioFrame(const std::vector<std::int16_t>& samples, std::int64_t timestampNs);
@@ -855,12 +876,26 @@ inline std::vector<std::int16_t> resampleLinear(
 
         {
             std::lock_guard<std::mutex> queueLock(queue->queueMutex);
+            std::size_t overflowDropped = 0;
             while (queue->pcm.size() + finalCount > kMaxParticipantQueueSamples && !queue->pcm.empty()) {
                 queue->pcm.pop_front();
+                ++overflowDropped;
+            }
+            if (overflowDropped > 0) {
+                overflowDroppedSamples_.fetch_add(
+                    static_cast<std::int64_t>(overflowDropped), std::memory_order_relaxed);
+                const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count();
+                auto lastWarnMs = lastOverflowWarnMs_.load(std::memory_order_relaxed);
+                if (nowMs - lastWarnMs >= 1000 &&
+                    lastOverflowWarnMs_.compare_exchange_strong(lastWarnMs, nowMs)) {
+                    std::cout << "WARN [OrbitLiveKitAudio] remote audio queue overflow for "
+                              << identity << " droppedSamples=" << overflowDropped << std::endl;
+                }
             }
             queue->pcm.insert(queue->pcm.end(), finalSamples, finalSamples + finalCount);
             if (queue->pcm.size() >= kTargetParticipantQueueSamples) {
-                queue->targetDepthPrimed = true;
+                queue->startupPrimed = true;
             }
             queue->lastFrameNs = timestampNs;
         }
@@ -896,10 +931,17 @@ private:
             std::vector<std::int16_t> frame(kSamplesPerChannel, 0);
             {
                 std::lock_guard<std::mutex> queueLock(queue->queueMutex);
-                const bool canRead = queue->targetDepthPrimed || queue->pcm.size() >= kTargetParticipantQueueSamples;
-                if (canRead) {
-                    queue->targetDepthPrimed = true;
+                if (!queue->startupPrimed && queue->pcm.size() >= kTargetParticipantQueueSamples) {
+                    queue->startupPrimed = true;
                 }
+                // Startup waits once for the full jitter target. After a real
+                // drain only a short top-up gate applies: re-arming the whole
+                // 80 ms buffer turned every network-jitter pause on bursty
+                // server paths into an >=80 ms silent hole (robotic chop).
+                const std::size_t requiredDepth = queue->startupPrimed
+                    ? kStarvationReprimeSamples
+                    : kTargetParticipantQueueSamples;
+                const bool canRead = !queue->starved || queue->pcm.size() >= requiredDepth;
                 const auto samplesToRead = canRead
                     ? std::min<std::size_t>(queue->pcm.size(), kSamplesPerChannel)
                     : 0;
@@ -907,8 +949,11 @@ private:
                     frame[i] = queue->pcm.front();
                     queue->pcm.pop_front();
                 }
-                if (queue->pcm.empty()) {
-                    queue->targetDepthPrimed = false;
+                if (samplesToRead == 0) {
+                    queue->starved = true;
+                    starvationEvents_.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    queue->starved = false;
                 }
             }
 
@@ -970,6 +1015,8 @@ private:
                           << " participants=" << activeParticipants
                           << " inRms=" << static_cast<long long>(mixStatInEma_)
                           << " outRms=" << static_cast<long long>(mixStatOutEma_)
+                          << " starved=" << starvationEvents_.load(std::memory_order_relaxed)
+                          << " drops=" << overflowDroppedSamples_.load(std::memory_order_relaxed)
                           << std::endl;
             }
         }
@@ -1001,6 +1048,9 @@ void mixLoop() {
     std::int64_t mixStatFrames_{0};
     double mixStatInEma_{0.0};
     double mixStatOutEma_{0.0};
+    std::atomic<std::int64_t> starvationEvents_{0};
+    std::atomic<std::int64_t> overflowDroppedSamples_{0};
+    std::atomic<std::int64_t> lastOverflowWarnMs_{0};
     std::thread worker_;
     std::mutex mutex_;
     std::unordered_map<std::string, std::shared_ptr<ParticipantPcmQueue>> participants_;
@@ -1278,7 +1328,12 @@ void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track, const
     }
 
     try {
-        const std::string trackSid = track->sid();
+        const std::string rawTrackSid = track->sid();
+        const std::string trackSid = normalizedSid(rawTrackSid);
+        if (trackSid != rawTrackSid) {
+            std::cout << "WARN [OrbitLiveKitAudio] remote audio track sid had trailing padding: len="
+                      << rawTrackSid.size() << " -> " << trackSid.size() << std::endl;
+        }
         if (g_remoteAudioReaders.find(trackSid) != g_remoteAudioReaders.end()) {
             std::cout << "DEBUG [OrbitLiveKitAudio] Remote audio reader already active for track "
                       << trackSid << std::endl;
@@ -1298,8 +1353,10 @@ void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track, const
         // away from the other.
         g_audioMixer.addParticipant(reader->trackSid);
         reader->stream = livekit::AudioStream::fromTrack(track, options);
+        reader->track = track;
         reader->thread = std::thread([reader] {
             livekit::AudioFrameEvent event;
+            auto lastRxStat = std::chrono::steady_clock::now();
             while (reader->running && reader->stream != nullptr && reader->stream->read(event)) {
                 if (callbacksStopped("remote-audio-reader")) {
                     break;
@@ -1317,6 +1374,54 @@ void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track, const
                     event.frame.samplesPerChannel(),
                     event.frame.numChannels(),
                     static_cast<std::int64_t>(timestampNs));
+
+                // Receiver-side loss/concealment telemetry: proves whether
+                // garble originates as RTP loss (decoder concealment /
+                // NetEQ speed-up) before it ever reaches our mixer.
+                const auto nowSteady = std::chrono::steady_clock::now();
+                if (nowSteady - lastRxStat >= std::chrono::seconds(5) && reader->track != nullptr) {
+                    lastRxStat = nowSteady;
+                    try {
+                        auto statsFuture = reader->track->getStats();
+                        if (statsFuture.wait_for(std::chrono::milliseconds(50)) == std::future_status::ready) {
+                            double rttSec = -1.0;
+                            double remoteFractionLost = -1.0;
+                            for (const auto& stat : statsFuture.get()) {
+                                const auto* inbound = std::get_if<livekit::RtcInboundRtpStats>(&stat.stats);
+                                if (inbound != nullptr) {
+                                    std::cout << "RXSTAT sid=" << reader->trackSid
+                                              << " recv=" << inbound->received.packets_received
+                                              << " lost=" << inbound->received.packets_lost
+                                              << " jitterMs=" << static_cast<long long>(inbound->received.jitter * 1000.0)
+                                              << " concealedSamples=" << inbound->inbound.concealed_samples
+                                              << " silentConcealed=" << inbound->inbound.silent_concealed_samples
+                                              << " concealEvents=" << inbound->inbound.concealment_events
+                                              << " acceleratedSamples=" << inbound->inbound.removed_samples_for_acceleration
+                                              << " decelInsertedSamples=" << inbound->inbound.inserted_samples_for_deceleration
+                                              << " discarded=" << inbound->inbound.packets_discarded
+                                              << " retransmitted=" << inbound->inbound.retransmitted_packets_received
+                                              << std::endl;
+                                    continue;
+                                }
+                                const auto* remoteInbound = std::get_if<livekit::RtcRemoteInboundRtpStats>(&stat.stats);
+                                if (remoteInbound != nullptr) {
+                                    rttSec = remoteInbound->remote_inbound.round_trip_time;
+                                    remoteFractionLost = remoteInbound->remote_inbound.fraction_lost;
+                                }
+                            }
+                            if (rttSec >= 0.0) {
+                                std::cout << "RXRTT sid=" << reader->trackSid
+                                          << " rttMs=" << static_cast<long long>(rttSec * 1000.0)
+                                          << " remoteFractionLostPct="
+                                          << static_cast<long long>(remoteFractionLost * 100.0)
+                                          << std::endl;
+                            }
+                        }
+                    } catch (const std::exception& e) {
+                        std::cout << "DEBUG [OrbitLiveKitAudio] getStats failed track="
+                                  << reader->trackSid << ": " << e.what() << std::endl;
+                    }
+                }
             }
             {
                 // try_to_lock is required: stopRemoteReaderLocked /
@@ -1347,7 +1452,8 @@ void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track, const
     }
 }
 
-void stopRemoteReaderLocked(const std::string& trackSid) {
+void stopRemoteReaderLocked(const std::string& rawTrackSid) {
+    const std::string trackSid = normalizedSid(rawTrackSid);
     auto it = g_remoteAudioReaders.find(trackSid);
     if (it == g_remoteAudioReaders.end()) {
         return;
@@ -1439,7 +1545,7 @@ void dispatchRemoteParticipantConnected(const std::string& participantIdentity, 
         env->DeleteLocalRef(sink);
         {
             std::lock_guard<std::mutex> announcedLock(g_announcedParticipantsMutex);
-            g_announcedParticipantSids.insert(participantSid);
+            g_announcedParticipantSids.insert(normalizedSid(participantSid));
         }
     }
 
@@ -1487,7 +1593,7 @@ void dispatchRemoteParticipantDisconnected(const std::string& participantIdentit
         env->DeleteLocalRef(sink);
         {
             std::lock_guard<std::mutex> announcedLock(g_announcedParticipantsMutex);
-            g_announcedParticipantSids.erase(participantSid);
+            g_announcedParticipantSids.erase(normalizedSid(participantSid));
         }
     }
 
@@ -1500,9 +1606,9 @@ std::string publicationTrackSid(const std::shared_ptr<livekit::TrackPublication>
     }
     const auto track = publication->track();
     if (track != nullptr && !track->sid().empty()) {
-        return track->sid();
+        return normalizedSid(track->sid());
     }
-    return publication->sid();
+    return normalizedSid(publication->sid());
 }
 
 void dispatchRemoteVideoTrackAdded(const std::shared_ptr<RemoteVideoReader>& reader) {
@@ -1738,7 +1844,8 @@ void stopAllRemoteVideoReadersLocked(const std::string& reason = "all") {
     }
 }
 
-void stopRemoteVideoReaderLocked(const std::string& trackSid, const std::string& reason) {
+void stopRemoteVideoReaderLocked(const std::string& rawTrackSid, const std::string& reason) {
+    const std::string trackSid = normalizedSid(rawTrackSid);
     if (trackSid.empty()) {
         return;
     }
@@ -1760,8 +1867,9 @@ void stopRemoteVideoReaderForPublicationLocked(
     }
     const auto trackSid = publicationTrackSid(publication);
     stopRemoteVideoReaderLocked(trackSid, reason);
-    if (trackSid != publication->sid()) {
-        stopRemoteVideoReaderLocked(publication->sid(), reason);
+    const auto publicationSid = normalizedSid(publication->sid());
+    if (trackSid != publicationSid) {
+        stopRemoteVideoReaderLocked(publicationSid, reason);
     }
 }
 
@@ -1822,7 +1930,7 @@ void startRemoteVideoReaderLocked(
         return;
     }
 
-    const auto trackSid = track->sid();
+    const auto trackSid = normalizedSid(track->sid());
     if (trackSid.empty() || g_remoteVideoReaders.find(trackSid) != g_remoteVideoReaders.end()) {
         return;
     }
@@ -4879,10 +4987,10 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeRescanRemoteVideoTracks(JNIEnv*, jclass
         bool announced;
         {
             std::lock_guard<std::mutex> announcedLock(g_announcedParticipantsMutex);
-            announced = g_announcedParticipantSids.find(participant->sid()) != g_announcedParticipantSids.end();
+            announced = g_announcedParticipantSids.find(normalizedSid(participant->sid())) != g_announcedParticipantSids.end();
         }
         if (!announced) {
-            dispatchRemoteParticipantConnected(participant->identity(), participant->sid());
+            dispatchRemoteParticipantConnected(participant->identity(), normalizedSid(participant->sid()));
         }
         for (const auto& publicationEntry : participant->trackPublications()) {
             const auto& publication = publicationEntry.second;

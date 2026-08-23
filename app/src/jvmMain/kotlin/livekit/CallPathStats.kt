@@ -21,6 +21,7 @@ object CallPathStats {
     private val pushOk = AtomicLong()
     private val pushFail = AtomicLong()
 
+    private val playerFramesArrived = AtomicLong()
     private val playerFramesPlayed = AtomicLong()
     private val playerUnderruns = AtomicLong()
     private val playerIdlePolls = AtomicLong()
@@ -37,6 +38,7 @@ object CallPathStats {
     fun onPushOk() { if (enabled) pushOk.incrementAndGet() }
     fun onPushFail() { if (enabled) pushFail.incrementAndGet() }
 
+    fun onPlayerFrameArrived() { if (enabled) playerFramesArrived.incrementAndGet() }
     fun onPlayerFramePlayed() { if (enabled) playerFramesPlayed.incrementAndGet() }
     fun onPlayerUnderrun() { if (enabled) playerUnderruns.incrementAndGet() }
     fun onPlayerIdle() { if (enabled) playerIdlePolls.incrementAndGet() }
@@ -67,16 +69,19 @@ object CallPathStats {
         val clipped = micClippedSamples.getAndSet(0)
         val pOk = pushOk.getAndSet(0)
         val pFail = pushFail.getAndSet(0)
+        val arrived = playerFramesArrived.getAndSet(0)
         val played = playerFramesPlayed.getAndSet(0)
         val underruns = playerUnderruns.getAndSet(0)
         val idlePolls = playerIdlePolls.getAndSet(0)
         val dropped = playerDroppedOldest.getAndSet(0)
         val writeFails = playerWriteFailures.getAndSet(0)
 
-        // 100 frames/s ≈ healthy per direction at 10 ms frames
+        // 100 frames/s ≈ healthy per direction at 10 ms frames; played persistently
+        // above arrived means the sink consumes faster than production paces.
         println(
             "STATS [CallPathStats/5s] mic.read=$read stalls=$stalls muted=$muted clippedSamples=$clipped | " +
-                "jni.push ok=$pOk fail=$pFail | play.played=$played underruns=$underruns idlePolls=$idlePolls droppedOldest=$dropped writeFails=$writeFails"
+                "jni.push ok=$pOk fail=$pFail | play.arrived=$arrived play.played=$played underruns=$underruns " +
+                "idlePolls=$idlePolls droppedOldest=$dropped writeFails=$writeFails"
         )
     }
 }
