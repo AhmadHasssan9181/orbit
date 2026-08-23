@@ -26,6 +26,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -117,6 +118,13 @@ jmethodID g_remoteParticipantDisconnectedMethod = nullptr;
 jmethodID g_remoteVideoTrackAddedMethod = nullptr;
 jmethodID g_remoteVideoFrameMethod = nullptr;
 jmethodID g_remoteVideoTrackRemovedMethod = nullptr;
+
+// Participant SIDs already announced through onRemoteParticipantConnected.
+// The periodic rescan re-enumerates the whole roster; without this gate every
+// tick would re-fire the JNI upcall for every participant. Entries are erased
+// when a participant leaves and the whole set clears on session teardown.
+std::mutex g_announcedParticipantsMutex;
+std::set<std::string> g_announcedParticipantSids;
 
 std::mutex g_mixedAudioSinkMutex;
 jobject g_mixedAudioSink = nullptr;
@@ -1429,6 +1437,10 @@ void dispatchRemoteParticipantConnected(const std::string& participantIdentity, 
         if (jIdentity != nullptr) env->DeleteLocalRef(jIdentity);
         if (jSid != nullptr) env->DeleteLocalRef(jSid);
         env->DeleteLocalRef(sink);
+        {
+            std::lock_guard<std::mutex> announcedLock(g_announcedParticipantsMutex);
+            g_announcedParticipantSids.insert(participantSid);
+        }
     }
 
     releaseJniEnv(attached);
@@ -1473,6 +1485,10 @@ void dispatchRemoteParticipantDisconnected(const std::string& participantIdentit
         if (jIdentity != nullptr) env->DeleteLocalRef(jIdentity);
         if (jSid != nullptr) env->DeleteLocalRef(jSid);
         env->DeleteLocalRef(sink);
+        {
+            std::lock_guard<std::mutex> announcedLock(g_announcedParticipantsMutex);
+            g_announcedParticipantSids.erase(participantSid);
+        }
     }
 
     releaseJniEnv(attached);
@@ -3180,6 +3196,10 @@ Java_livekit_LiveKitNativeAudioBridge_nativeDisconnect(JNIEnv*, jclass) {
     std::lock_guard<std::mutex> lock(g_sessionMutex);
     g_acceptingFrames = false;
     resetRoomLocked();
+    {
+        std::lock_guard<std::mutex> announcedLock(g_announcedParticipantsMutex);
+        g_announcedParticipantSids.clear();
+    }
     std::cout << "DEBUG [OrbitLiveKitAudio] disconnect cleanup completed" << std::endl;
 }
 
@@ -3888,6 +3908,10 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeDisconnect(
         stopAllRemoteVideoReadersLocked("native-disconnect");
         resetRoomLocked();
         clearRawErrorLocked();
+        {
+            std::lock_guard<std::mutex> announcedLock(g_announcedParticipantsMutex);
+            g_announcedParticipantSids.clear();
+        }
         std::cout << "DEBUG [OrbitLiveKitAudio] disconnect cleanup completed" << std::endl;
     }
     dispatchDisconnectedEvent(
@@ -4852,7 +4876,14 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeRescanRemoteVideoTracks(JNIEnv*, jclass
         if (participant == nullptr) {
             continue;
         }
-        dispatchRemoteParticipantConnected(participant->identity(), participant->sid());
+        bool announced;
+        {
+            std::lock_guard<std::mutex> announcedLock(g_announcedParticipantsMutex);
+            announced = g_announcedParticipantSids.find(participant->sid()) != g_announcedParticipantSids.end();
+        }
+        if (!announced) {
+            dispatchRemoteParticipantConnected(participant->identity(), participant->sid());
+        }
         for (const auto& publicationEntry : participant->trackPublications()) {
             const auto& publication = publicationEntry.second;
             if (publication == nullptr || !publication->subscribed()) {
