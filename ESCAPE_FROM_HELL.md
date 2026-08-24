@@ -1,0 +1,547 @@
+# 🌋 ESCAPE FROM HELL
+
+### The Orbit Bug Codex — every demon we met in the Matrix wilderness, and how we killed it.
+
+> If you're reading this at 2am because Orbit broke again: breathe.
+> Every bug below was once "impossible", shipped to users, and got fixed.
+> Yours will too.
+>
+> — maintained since the first one-way-audio incident, 2026-08
+
+---
+
+## How to use this document
+
+Each entry is written **symptom-first**, because that's all you have at 2am:
+
+```
+## [ID] Short name
+**You see:**    the user-visible symptoms
+**It is:**      the actual root cause (usually not where it looks like it is)
+**Fix:**        what changed, and where
+**Prove it:**   how to verify the fix / reproduce the check
+**Files:**      where to look
+```
+
+Start from the [triage table](#0-triage-table), jump to the entry, read the
+root cause even if you think you know it. Half of these bugs were *two* bugs
+wearing a trench coat.
+
+---
+
+## 0. Triage table
+
+| Symptom | Go to |
+|---|---|
+| Peer can't hear us (TX dead) | [H8-TX](#h8-tx-tx-dead-peers-cant-hear-us) |
+| We can't hear a peer who joined later | [H8-RX](#h8-v3-rx-dead-for-latecomers) / [H7](#h7-settle-nudge-silent-element-peers) |
+| Audio works, then garbles/chops | [BUG-D](#bug-d-robotic-garbled-audio-in-one-room) |
+| Everything is ~2s late for minutes | [H6](#h6--2s-end-to-end-latency-that-never-recovers) |
+| Join hangs forever, or fails then stays connected | [H12](#h12-join-stall--the-watchdog-zombie) |
+| Can't navigate while in a call | [H10](#h10-the-overlay-trap--random-call-closes) |
+| Screen share stops but system audio keeps flowing | [H9](#h9-screen-share-stop-leaves-system-audio-publishing) |
+| RAM eats 20 GB in calls | [H11](#h11-the-20gb-ram-hog) |
+| Closing the app leaves a 3–4 GB java.exe | [H13](#h13-the-window-close-zombie-jvm) |
+| Packaging/build fails or MSI acts weird | [Circle V](#circle-v-packaging-and-release) |
+| Log line looks terrifying | [The Bestiary](#the-bestiary-benign-log-noise) first |
+
+---
+
+# CIRCLE I — E2EE MEDIA KEYS
+
+*The deepest circle. Here be olm events, ratchets, and peers that lie.*
+
+## The matrixRTC wilderness survival rules
+
+Burn these into your brain before touching any key-exchange code:
+
+1. **Element peers only act on membership DIFFS.** A plain join produces no
+   response from peers whose sync is throttled/frozen. Only a leaver→joiner
+   transition makes them rotate + redistribute keys.
+2. **Empty-content membership state events are REMOVALS** (tombstones,
+   redactions), not members. Counting them inflates peer counts by ~30x.
+3. **The sticky roster LIES about presence.** A crashed client's membership
+   event stays unexpired for HOURS (legacy 12h TTL). The **LiveKit participant
+   view is the authoritative liveness source** — roster for identity, LiveKit
+   for truth.
+4. **A received olm event proves that session direction works NOW.** Use it.
+5. **libwebrtc jitter-buffer delay fields are CUMULATIVE LIFETIME SUMS**, not
+   instantaneous values. See [H6-RX](#the-jitter-buffer-lie).
+6. In cancellable coroutine code, **always rethrow `CancellationException`
+   before any generic catch / `runCatching` swallow** (see Round 8).
+
+## H7 — Settle nudge (silent Element peers)
+
+**You see:** You join a call; an Element user who was there for hours never
+sends keys. They can hear you; you hear nothing. Forever.
+
+**It is:** Their client only redistributes on membership diffs. Your join was
+not a diff worth reacting to (throttled tab, sleeping laptop, whatever).
+
+**Fix:** One-shot early "settle" check in `CallMediaKeyExchange.start()`:
+after `NUDGE_SETTLE_DELAY_MS` (5s), if `receivedPeerIdentities.isEmpty()` and
+the roster is non-empty → fire `nudgeMembership` (leave+rejoin membership
+republish, see below). Stamps `lastNudgeMs` so the reactive watcher can't
+double-fire inside its cooldown. Keeps its own budget slot; healthy rooms log
+`settle check: N peer key(s) already received` and skip.
+
+**Prove it:** Silent peer → nudge fires ~5s after join → their key arrives
+within ~1s → e2ee state goes 4(MissingKey)→1(Ok).
+
+**Files:** `app/src/commonMain/kotlin/livekit/CallMediaKeyExchange.kt`,
+`repository/MatrixCallsRepository.kt` (`nudgeOwnMembership`: clears our sticky
+m.call.member event → wait ~2.5s → republish = forces EVERY peer through
+leaver+joiner key paths without touching the LiveKit connection).
+
+## H8-TX — TX dead (peers can't hear us)
+
+**You see:** You join a room with many participants. You hear everyone. Nobody
+hears you. Mic publishes fine, your own E2EE says Ok.
+
+**It is:** Diff-only key distribution is structurally incomplete in two ways:
+(a) a peer who RESET their key ring mid-call keeps the same device id ⇒ no
+roster diff ⇒ we never resend them our new index; (b) late joiners weren't in
+`knownTargets` when we distributed ⇒ they get nothing ever. Anyone without our
+current (index, key) pair decrypts nothing while their TX to us works.
+
+**Fix:** Reply-on-receive in `CallMediaKeyExchange.maybeReplyWithOwnKey` — on
+every FRESHLY accepted peer key event, resend our current key to that device
+over the just-proven olm direction. Payload+index snapshotted atomically under
+the roster mutex (`OwnKeyRing` itself is unlocked — a torn read across a
+rotation would corrupt installs). `OutdatedKeyFilter` runs BEFORE the hook, so
+resends carry no new index and cannot ping-pong between two Orbit peers.
+`/keys/query` warms unknown sender devices pre-encryptOlm. 3s per-device rate
+guard.
+
+**Prove it:** Room where a peer resets their ring mid-call → they now receive
+our current index within seconds of sending us anything.
+
+**Files:** `CallMediaKeyExchange.kt`.
+
+## H8-V2 — Ghost memberships burn the nudge budget
+
+**You see:** Reactive nudges fire at "30 peers" of which ~29 are tombstones;
+both nudge attempts die on crashed clients' zombie devices.
+
+**It is:** Roster counting includes empty-content removals and long-expired
+sticky entries (survival rule #2 and #3).
+
+**Fix:** Three pieces:
+1. `isActiveMatrixRtcMember` requires content evidence (membership field /
+   v1 memberships[] / device_id / foci markers). Tombstones excluded from
+   roster, distribution targets, and nudge counts.
+2. `DeliveredKeyIndex` ledger — per-device highest CONFIRMED sent index,
+   marked only on successful sendToDevice with that payload's own index.
+3. Convergence sweeper every 10s — resends the current key to every live
+   device lagging behind `ring.currentIndex`. "Live" = seen in roster within
+   10 min OR currently connected per `LiveKitRemoteVideoFrameStore.remoteParticipants`.
+   The LiveKit view rescues roster-invisible-but-talking peers.
+
+**Files:** `CallMediaKeysCore.kt`, `CallMediaKeyExchange.kt`.
+
+## H8-V3 — RX dead for latecomers specifically
+
+**You see:** A NEW participant joins; everyone hears them, they hear nobody.
+Not a settle case — keys were flowing fine when they arrived.
+
+**You diagnose:** Every peer dumps keys within ~1s ONLY in response to Orbit's
+leave/rejoin nudge (log epochs prove it). The reactive grace window is up to
+45s; a joiner arriving mid-flow just waits.
+
+**It is:** Same diff-rule as always: existing peers don't re-send to a new
+member unprompted, and the newcomer's own arrival isn't a diff for THEM.
+
+**Fix:** `LatecomerTracker` (in `CallMediaKeysCore.kt`, unit-tested): every 3s,
+stamp each LiveKit participant's FIRST appearance (prune leavers so rejoins
+restamp). If an identity has been present ≥8s past first appearance and has no
+entry in `receivedPeerIdentities` → fire the nudge early. Deaf window drops
+from ≤45s to ≤11s. Shares the reactive budget (max 2/call, ≥90s cooldown);
+settle stamps the cooldown so start-of-call can't double-fire.
+
+**Kotlin gotcha hit here:** `break` inside `run {}` is an experimental inline-
+lambda error — hoist to `val cb = x; if (cb == null) { …; break }`.
+
+**Files:** `CallMediaKeysCore.kt`, tests in `commonTest`.
+
+## Round 8 — the self-inflicted regression (read this before refactoring)
+
+**You see:** TOTAL silence both directions after a refactor. Logs show
+"rotating key" printed AFTER "stopped", plus 13 fake
+`olm encryption failed: StandaloneCoroutine was cancelled` warnings.
+
+**It is:** Two compounding mistakes: (1) an inline 10s device-key wait delayed
+the initial seed distribution until it collided with the user leaving; (2)
+`runCatching` swallowed `CancellationException`, so the cancelled collector
+kept running as a zombie while logging nonsense. Zero keys were ever sent.
+
+**Fix / Law:** Distribution NEVER blocks on key material — send immediately to
+stored-key devices, defer missing ones to the retry watcher. And **always
+rethrow `CancellationException` before generic catch/runCatching-swallow** in
+exchange code. Per-device granularity: partition ready/missing BEFORE
+`encryptOlm` — one bad device must not poison its whole user's batch (that
+silently dropped entire users, including the quiet ones you least suspect).
+
+## Trixnity shape traps (they cost real hours)
+
+- `ClaimKeys.Response.oneTimeKeys` is `Map<UserId, Map<String /*DEVICE id*/,
+  Keys>>` where `Keys implements Set<Key>`; identify usable OTKs by the FULL
+  key id prefix (`signed_curve25519:`…), not the device-id string.
+  A probe testing device ids reports `claimable=false` forever while OTKs are
+  fine.
+- `saveDeviceKeys` takes a `UserId` object, not String — value-class mangling
+  hides it from javap.
+- `getKeys(...)` is suspend with default args → mangled JVM name; call through
+  Kotlin or count the `-pFTbHVM`-style suffixes.
+- `continue` inside inline lambdas (`getOrElse`) is an experimental error —
+  restructure with `.onFailure{}.getOrNull() ?: continue`.
+- OlmDecrypter notifies ALL subscribers of every decrypted event; filter by
+  type yourself. `OutdatedKeyFilter.accept` correctly passes first receipts.
+
+---
+
+# CIRCLE II — JOINS & CALL LIFECYCLE
+
+## H12 — Join stall & the watchdog zombie
+
+**You see:** "Joining…" hangs. Sometimes it fails visibly but audio still
+works (!). Retrying spawns TWO live sessions (audio stats reset mid-log).
+
+**It is:** `MEMBERSHIP_TIMEOUT_MS` clock started at tracker.begin() covering
+THREE sequential network hops (ICE fetch → OpenID token → SFU JWT) BEFORE the
+membership PUT it polices. On a slow day the 8s deadline blew mid-connect:
+watchdog GiveUp ran (`disconnectFromLiveKit(false)` + markFailed +
+failGroupJoin) while `connectNativeGroupMedia` kept running and completed ANYWAY
+⇒ "Skipping finalizeGroupJoin readiness write: call already failed" = a fully
+connected zombie under a visible failure UI. User retry = second native
+session.
+
+**Evidence pattern in logs:** stall ERROR line BEFORE `Published … status=200`,
+then mic publish success lines AFTER the failure.
+
+**Fix:**
+1. `GroupCallConnectionTracker.noteJoiningProgress()` — resets
+   `stageEnteredAtMs` WITHOUT changing stage; no-op unless stage==Joining &&
+   !terminal. Called right after token fetch so the deadline measures the
+   membership PUT alone. Timeout raised 8s → 15s.
+2. Cooperative abort guards in `CallManager`: after the `!membershipVisible`
+   check (pre-native, nothing to tear down), and post-retry-loop on
+   `stage == Failed` → `disconnectFromLiveKit(false)` + return false EVEN IF
+   connect succeeded — the watchdog may give up mid-connect and the session
+   may still complete; tearing it down is the whole point.
+
+**Prove it:** Unit tests: stamp-rescues-breached-deadline,
+stamp-is-no-op-after-Joining. Live: slow-network join completes; failed join
+leaves zero resident sessions.
+
+**Files:** `webrtc/GroupCallConnectionTracker.kt`, `webrtc/CallManager.kt`,
+`commonTest/.../GroupCallConnectionTrackerTest.kt`.
+
+Stage ladder for orientation: Idle → Joining → Joined → Connected →
+AudioPublished → VideoPublished → InCall (+ Reconnecting/Failed). Watchdog
+polls `evaluateDeadlines()` every 500ms.
+
+## H10 — The overlay trap & random call closes
+
+**You see:** Joining a room puts the call surface over the WHOLE window with
+no minimize control; navigation impossible. Separately: calls sometimes end
+"randomly" with nothing in the logs identifying why.
+
+**It is:** OrbitApp mounted a second `LiveKitGroupCallSurface` fillMaxSize over
+everything whenever a group call was active, on top of the embedded in-channel
+surface; auto-minimize fired only on channel CHANGE. The "random close" was
+most plausibly misclicking Leave/Back while trapped.
+
+**Fix:** Suppress the popup when `selectedChannelId == activeCallChannel.id`
+(the embedded surface owns rendering); elsewhere ALWAYS render the mini-pill
+via `forceMinimized`; pill restore NAVIGATES back instead of re-expanding the
+blanket. Attribution for future incidents: `endCall()` now logs INFO with the
+top-5 stack-frame chain; WebRtcEffects logs WARN before ending on a matching
+m.call.hangup. If another unexplained close happens, grep
+`endCall invoked … by <chain>`.
+
+**Files:** `ui/screen/main/*` (OrbitApp), `livekit/LiveKitGroupCallSurface.kt`,
+`webrtc/CallManager.kt`, `ui/screen/main/WebRtcEffects.kt`.
+
+---
+
+# CIRCLE III — MEDIA PIPELINE (NATIVE)
+
+## BUG-D — Robotic garbled audio (in ONE specific room)
+
+**You see:** Speech sounds fast/high-pitched/choppy/robotic — but only in one
+room, even SOLO. Other rooms perfect. Network stats pristine.
+
+**It is:** Native mixer drain-cycling in `orbit_livekit_audio.cpp`:
+`targetDepthPrimed` unlatched whenever the input queue hit empty; recovery
+demanded the FULL 80ms depth again before contributing. On bursty decode paths
+each jitter pause became an ≥80ms inserted hole. Holes + limiter interplay read
+as "robotic". (ZCR analysis proved pitch was FINE — gaps, not chipmunk.)
+
+**Fix:** `startupPrimed` latches once at full depth (3840 samples) forever;
+post-drain recovery gate lowered to `kStarvationReprimeSamples = 960` (20ms);
+starved-flag re-gates only after a true hungry tick. MIXSTAT gained `drops=`
+(overflow trims) and `starved=` counts.
+
+**Related landmine — padded SIDs:** the SDK sometimes returns sids with
+trailing whitespace padding (`TR_AMsm2zYqaRtG4f   `). Padded-vs-clean
+comparisons duplicate decoders summing delayed copies = another garble source.
+`normalizedSid()` trims at ALL reader start/stop boundaries + publication
+lookups + announced-set operations.
+
+**Prove it:** Repro room → WAV gap analysis should show ~0 mid-speech stutters;
+MIXSTAT `starved=` may be >0 (jitter is real) but holes ≤20ms are inaudible.
+
+**Files:** `app/src/jvmMain/cpp/orbit_livekit_audio.cpp`.
+
+**Build-verification law:** after native changes, confirm the DLL timestamp
+actually changed — findstr filters can mask whether your build really rebuilt.
+
+## H6 — ~2s end-to-end latency that never recovers
+
+### The jitter buffer lie
+
+`jitter_buffer_target_delay` and friends are **cumulative sums over emitted
+frames**, NOT instantaneous. A raw read of 2342400ms means "39 minutes of
+lifetime delay accounting", not a 39-minute buffer. Correct instantaneous:
+`target_delay * 1000 / emitted_count`. Garbage-cap streaks at 120000ms.
+Without this correction, H6 watchdogs false-fire resubscribes.
+
+### The actual latency
+
+**You see:** element→orbit speech arrives ~2s late early in a call; settles
+by ~3min; every key rotation re-fires it.
+
+**It is:** Inside the LiveKit SDK receiver jitter buffer — NetEQ peak-mode
+holds an inflated target and decays over minutes. Our pipeline holds ≤160ms
+(mixer cap), network is clean ⇒ residual is theirs. Every rotation restarts
+peak-mode.
+
+**Shipped:** RXSTAT carries jbTargetMs/jbAvgMs/jbMinMs (per-frame averages).
+**Next lever (unimplemented):** one-shot AUDIO resubscribe recovery when
+jbTargetMs sustains >~400ms — `RemoteTrackPublication.setSubscribed(false→true)`
+rebuilds the receiver; guardrails: per-track cooldown, max count, don't fight
+announced-SID dedup.
+
+LiveKit C++ SDK headers (stats fields, options) live locally after any build at
+`app/build/jni/_deps/livekit-sdk/livekit-sdk-windows-x64-0.4.1/include/livekit/`.
+Read them THERE instead of web-fetching. `AudioStream::Options` has only
+capacity/noise-cancellation knobs — no NetEQ controls.
+
+## H9 — Screen share stop leaves system audio publishing
+
+**You see:** User stops screen share; viewers still hear their system audio.
+
+**It is:** `WebRtcClientImpl.stopScreenShare()` tore down ONLY the P2P/ADM
+path (`setSystemAudioShareEnabled(false)`). The group cppMedia sys-audio path
+lives behind `setStreamAudioEnabled(false)` → `unpublishScreenShareAudio()`,
+which NOTHING called on stop ⇒ WASAPI loopback kept publishing after the
+share ended.
+
+**Fix:** `stopScreenShare` mirrors `setStreamAudioEnabled`'s condition
+(`isGroupCall && LiveKitFeatureFlags.cppMedia` → `unpublishScreenShareAudio()`).
+
+**THE LAW:** any new publish path needs its teardown wired into EVERY stop
+surface (stop button, window-closed auto-stop, dialog cancel), not just the
+enable path's inverse.
+
+**Files:** `webrtc/WebRtcClientImpl.jvm.kt` (+ platform impls).
+
+## H11 — The 20GB RAM hog
+
+**You see:** 3 participants + screen share ⇒ RSS climbs toward 16–20GB and
+sits there.
+
+**It is:** Not a leak — GARBAGE ACCUMULATION. Without `-Xmx`, max heap defaults
+to ¼ of physical RAM, so G1 happily lets humongous-object garbage (1–8MB frame
+buffers × 30fps × N tracks) pile toward 16GB+ before collecting. Churn sources:
+remote-video JNI byte[] per frame, fresh DIRECT ByteBuffer per captured share
+frame (`packI420`), camera RGBA preview packs, and UI-side
+BufferedImage + `toComposeImageBitmap()` Skia copies per displayed tile frame.
+
+**Fix:** `-Xmx2048m` on BOTH launch paths — `compose.desktop.application.jvmArgs`
+(covers the packaged launcher) AND `tasks.withType<JavaExec>().configureEach`
+(covers `:app:run`). Tile conversion throttled to ~20fps/tile (50ms gate;
+next arriving frame retries — nothing stalls). Instrumentation: CallPathStats
+STATS lines now carry `vid.remote n=/mb= vid.share n=/mb= camPrev=` throughput
+plus `heap used=/max=MB pendingFin=` — rising pendingFin = finalizer backlog.
+
+**If RSS climbs again, triage order:** heap pinned at 2048 with high pendingFin
+→ need bitmap reuse/dispose path or lower throttle floor; vid.* MB/s exploding
+→ cap capture fps / reuse the packI420 direct buffer.
+
+**Files:** `app/build.gradle.kts`, `livekit/LiveKitLocalScreenShareTrack*`,
+UI video tile conversion sites.
+
+---
+
+# CIRCLE IV — APP LIFECYCLE
+
+## H13 — The window-close zombie JVM
+
+**You see:** Close the app; java.exe lives on in Task Manager eating 3–4GB.
+
+**It is:** `minimizeToTray` settings flow defaulted TRUE → clicking ✕ only hid
+the window (`windowRef?.isVisible = false`) and the entire app + call session
+stayed resident in the tray. The "zombie" was the app, alive and well, invisible.
+
+**Fix set:**
+1. Default flipped OFF; tray mode opt-in (`SettingsManager.minimizeToTray`).
+2. `CallShortcuts.onAppQuitRequested` hook registered in WebRtcEffects — fires
+   `callManager.endCall()` if not IDLE so quitting mid-call publishes the
+   MSC3401 leave instead of halt-killing it into a TTL ghost that confuses
+   peers for hours.
+3. Main.kt `quitOrbit()` local fun INSIDE the application{} scope:
+   armForcedExitWatchdog (5s daemon → Runtime.halt) → hook → exitApplication().
+   Wired to ✕/titlebar close and tray Quit.
+
+**Kotlin trap:** `exitApplication` is an ApplicationScope EXTENSION — a
+top-level fun cannot resolve it. Keep quitOrbit local or pass the scope.
+
+**Prove it — the WM_CLOSE ritual:**
+```
+taskkill /PID <appPid>        # NO /F flag == WM_CLOSE == clicking ✕
+# poll ~12s: process gone? log shows endCall chain + leave published?
+```
+Note: killing the gradle background shell kills the tree but does NOT test the
+app's own close path.
+
+Benign during shutdown: `VM attach current thread failed` /
+`Failed to attach thread NNNN` = native workers attaching to a dying JVM.
+
+**Files:** `Main.kt`, `webrtc/CallShortcuts.kt`,
+`ui/screen/main/WebRtcEffects.kt`, `repository/SettingsManager.kt`.
+
+## Data & storage map (for "why does it remember X")
+
+| What | Where | File |
+|---|---|---|
+| Matrix session DB (sync, rooms, crypto) | `%USERPROFILE%\.orbit\trixnity.db` | `util/DatabaseBuilder.jvm.kt` |
+| Credentials (accessToken/syncToken) | Windows registry Java prefs node `com/noobdev/orbit/credentials`, DPAPI-encrypted (`enc:v1:<b64>`); non-Windows AES-GCM w/ `.orbit/.credkey` | `repository/Settings.jvm.kt` |
+| Media cache | `%USERPROFILE%\.orbit\media` | `util/MediaStoreProvider.jvm.kt` |
+| Soundboard samples | `%USERPROFILE%\.orbit\sounds` | `livekit/SoundboardMixer.kt` |
+
+Consequence: dev runs, packaged builds, and MSI-installed copies on the SAME
+Windows user share one profile (instant login everywhere). Fresh machines get
+a clean login screen. Legacy plaintext credential values migrate to encrypted
+transparently on first read.
+
+---
+
+# CIRCLE V — PACKAGING AND RELEASE
+
+## The `buildFeatures` ghost
+
+`buildFeatures.release = false` DOES NOT EXIST anywhere in Compose Desktop
+1.7.x — not at application level, not inside nativeDistributions. It costs us
+two failed script compilations to learn that release packaging runs **no
+ProGuard tasks at all** (verify: `gradlew :app:createDistributable --dry-run`
+— no proguard task in the graph). Nothing to disable. If shrinking is ever
+wanted, the real knob is `buildTypes.release.proguard {}`.
+
+## WiX comes from the plugin
+
+No WiX install needed. `packageMsi` auto-downloads/unzips WiX
+(`:downloadWix`/`:unzipWix` tasks appear in the graph). `createDistributable`
+needs nothing extra.
+
+## jpackage launcher anatomy
+
+The packaged launcher is TWO processes named `Orbit.exe`: an ~8MB parent that
+spawns the real JVM child carrying the window. WM_CLOSE-test the CHILD pid.
+Native `webrtc-deps` DLLs ship INSIDE the app jar (`app-jvm-*.jar!
+/webrtc-deps/…`), not as loose files.
+
+## windows{} DSL notes
+
+- No `menuGroup` ⇒ shortcut lands under Start Menu → **Unknown** folder.
+  Always set `menuGroup = "Orbit"`.
+- `perUserInstall = true` ⇒ double-click install, NO UAC — mandatory for
+  sending to testers.
+- Fixed `upgradeUuid` ⇒ future versions upgrade IN PLACE.
+- No custom icon yet ⇒ default Java cup. Wire `iconFile` when an .ico exists.
+
+## msiexec via scripts
+
+Don't embed escaped quotes around args in `powershell -Command` — bare
+space-free paths work; `\"` mangling yields exit **1622** (log-open failure
+masquerading as install failure). Silent ops verified working:
+
+```
+msiexec /i <msi> /qn /norestart     # per-user install, exit 0, no elevation
+msiexec /x <msi> /qn /norestart     # uninstall, leaves zero trace
+```
+
+## The DLL churn ritual
+
+Every compile/test/run rewrites `orbit_livekit_audio.dll` /
+`orbit_livekit_video.dll` in resources with identical sizes and
+nondeterministic bytes. Before committing:
+
+```
+git restore -- app/src/jvmMain/resources/webrtc-deps/orbit_livekit_audio.dll ^
+               app/src/jvmMain/resources/webrtc-deps/orbit_livekit_video.dll
+```
+
+Unless you actually changed native `.cpp` sources — then the churn IS the change.
+
+---
+
+# THE BESTIARY — benign log noise
+
+Do NOT file bugs against these:
+
+| Log line | Actually |
+|---|---|
+| `VM attach current thread failed` / `Failed to attach thread NNNN` | native workers attaching to a dying JVM at shutdown |
+| `WARN configureE2EE(true) failed:` (empty msg) | request raced session creation; nativeConfigureE2EE returns stale-event silently; recovery lines follow |
+| `local participant metadata update failed: NotAllowed` | token lacks canUpdateOwnMetadata |
+| `Gradle build daemon disappeared unexpectedly` after closing the app | benign artifact of `:app:run` wrapping when the app exits |
+| MIXSTAT `starved=` > 0 | jitter existed; only holes >~20ms matter (see BUG-D) |
+| raw JB delay numbers in the thousands of ms | cumulative lifetime sums, divide by emitted_count |
+
+---
+
+# THE TOOLKIT — diagnostic rituals that work
+
+1. **WM_CLOSE test**: `taskkill /PID <pid>` WITHOUT `/F`. Poll 12s. This is
+   the ✕ click. Never trust shell-tree kills as close-path tests.
+2. **Log epoch mining**: bracket a repro between visible marks; compare
+   ordering across hops (publish status lines vs failure lines vs publish
+   success). Ordering violations ARE the bug (see H12).
+3. **STATS fields**: CallPathStats STATS lines carry mixer depths, RXSTAT
+   (incl. jbTarget/Avg/Min), TX counters, `vid.remote/vid.share/camPrev`
+   MB/s throughput, `heap used/max/pendingFin`.
+4. **Event-log check before diagnosing ghosts**: Windows Application log for
+   crash events. A cmd-mangled multi-line PowerShell pipeline once made the
+   app seem to self-exit mid-test — zero crash events, retest with simple
+   single-purpose commands before chasing phantoms.
+5. **cmd.exe reality**: run_shell_command is cmd.exe — wrap PS in
+   `powershell -NoProfile -Command`; bare space-free paths beat escaped
+   quotes; `findstr` exits 1 on no-match (not an error); `ping -n N` is the
+   sleep.
+6. **Native truth**: DLL timestamps over findstr output; SDK headers under
+   `app/build/jni/_deps/livekit-sdk/.../include/livekit/`.
+
+---
+
+# THE TEN COMMANDMENTS (lessons, distilled)
+
+1. Peers act on membership DIFFS — recovery must be baked into join, not left
+   to watchers.
+2. Empty-content membership events are removals. The sticky roster lies;
+   LiveKit presence is truth.
+3. A received olm event proves the direction works NOW — reply along it.
+4. Never block distribution on missing keys; defer per DEVICE, never per USER.
+5. Always rethrow `CancellationException` before generic swallowing.
+6. Any publish path gets its teardown wired on EVERY stop surface.
+7. libwebrtc JB delay fields are lifetime sums. Divide before believing.
+8. Measure the deadline over the thing it polices — stamp progress at phase
+   boundaries, and tear down zombies even when the work "succeeded".
+9. Ship with a heap cap; assume GC will let garbage pile to ¼ of physical RAM.
+10. When a log line looks like a demon, check the Bestiary first — half of
+    hell is benign.
+
+---
+
+*Every entry above corresponds to a real shipped fix with a commit behind it.
+If you break something new, add its entry here. Future-you is the audience.*
