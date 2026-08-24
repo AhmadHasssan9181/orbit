@@ -268,7 +268,9 @@ class SettingsManager {
     val startMinimized = flowSettings.getBooleanFlow("startMinimized", false)
     fun setStartMinimized(value: Boolean) = settings.putBoolean("startMinimized", value)
     
-    val minimizeToTray = flowSettings.getBooleanFlow("minimizeToTray", true)
+    // Default OFF: closing the window should quit the app, not park a hidden
+    // JVM (with its whole call session) in the tray. Opt in for tray mode.
+    val minimizeToTray = flowSettings.getBooleanFlow("minimizeToTray", false)
     fun setMinimizeToTray(value: Boolean) = settings.putBoolean("minimizeToTray", value)
     
     val alwaysOnTop = flowSettings.getBooleanFlow("alwaysOnTop", false)

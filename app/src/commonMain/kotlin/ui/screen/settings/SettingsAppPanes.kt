@@ -211,7 +211,7 @@ internal fun WindowsSettingsPane(settingsManager: SettingsManager) {
         }
 
         SectionHeader("Window Behavior")
-        val minimizeToTray by settingsManager.minimizeToTray.collectAsState(true)
+        val minimizeToTray by settingsManager.minimizeToTray.collectAsState(false)
         PrefCard("Minimize to tray", "Clicking the 'X' button minimizes Orbit to the system tray instead of quitting.") {
             CosmicSwitch(checked = minimizeToTray, onCheckedChange = { settingsManager.setMinimizeToTray(it) })
         }

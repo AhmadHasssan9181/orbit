@@ -24,10 +24,11 @@ import java.util.concurrent.atomic.AtomicBoolean
 // workers or stray non-daemon threads are alive (observed ~6 GB zombie after
 // window close). Arm a daemon watchdog before every explicit quit: if the
 // graceful shutdown has not finished the process within the budget, halt it.
-// On a clean exit the JVM dies before the watchdog ever fires.
+// On a clean exit the JVM dies before the watchdog ever fires. The budget is
+// generous because quitting mid-call first publishes the leave membership.
 private val forcedExitArmed = AtomicBoolean(false)
 
-private fun armForcedExitWatchdog(budgetMs: Long = 2_500) {
+private fun armForcedExitWatchdog(budgetMs: Long = 5_000) {
     if (!forcedExitArmed.compareAndSet(false, true)) return
     Thread {
         try {
@@ -46,7 +47,7 @@ fun main() = application {
     util.installOrbitLogConsoleFilter()
     val settingsManager = remember { repository.SettingsManager() }
     util.OrbitLog.debugEnabled = settingsManager.debugLoggingSync()
-    val minimizeToTray by settingsManager.minimizeToTray.collectAsState(true)
+    val minimizeToTray by settingsManager.minimizeToTray.collectAsState(false)
 
     var showSplash by remember { mutableStateOf(true) }
 
@@ -58,13 +59,18 @@ fun main() = application {
         val state = rememberWindowState()
         var windowRef by remember { mutableStateOf<java.awt.Window?>(null) }
 
-        // Close hides to tray while "minimize to tray" is on; quitting happens
-        // explicitly via the tray menu.
+        // Quit: end any active call first (the leave publish races the exit
+        // watchdog inside its grace window, never blocks), then exit.
+        fun quitOrbit() {
+            armForcedExitWatchdog()
+            webrtc.CallShortcuts.onAppQuitRequested?.invoke()
+            exitApplication()
+        }
+
+        // Close hides to tray only when tray mode is explicitly enabled in
+        // settings; otherwise closing the window quits the whole app.
         fun closeRequested() {
-            if (minimizeToTray) windowRef?.isVisible = false else {
-                armForcedExitWatchdog()
-                exitApplication()
-            }
+            if (minimizeToTray) windowRef?.isVisible = false else quitOrbit()
         }
 
         Window(
@@ -109,10 +115,7 @@ fun main() = application {
                     windowRef?.isVisible = true
                     windowRef?.toFront()
                 })
-                Item("Quit", onClick = {
-                    armForcedExitWatchdog()
-                    exitApplication()
-                })
+                Item("Quit", onClick = { quitOrbit() })
             }
         )
     }
