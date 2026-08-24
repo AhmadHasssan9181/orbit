@@ -148,6 +148,14 @@ struct RemoteAudioReader {
     std::shared_ptr<livekit::AudioStream> stream;
     std::thread thread;
     std::atomic_bool running{true};
+    // H6 jitter-buffer watchdog state. jbHighStreak is touched only by the
+    // reader thread; the atomics are also written by the detached resubscribe
+    // worker after it fires.
+    std::chrono::steady_clock::time_point createdSteady{std::chrono::steady_clock::now()};
+    std::atomic<long long> lastFrameSteadyMs{0};
+    int jbHighStreak{0};
+    std::atomic<int> resubCount{0};
+    std::atomic<long long> lastResubSteadyMs{-1};
 };
 
 struct RemoteVideoReader {
@@ -180,6 +188,18 @@ constexpr int kAudioSourceCaptureTimeoutMs = 0;
 constexpr std::size_t kTargetParticipantQueueSamples = kSamplesPerChannel * 8; // 80 ms target playout depth
 constexpr std::size_t kMaxParticipantQueueSamples = kSamplesPerChannel * 16; // 160 ms burst headroom
 constexpr std::size_t kStarvationReprimeSamples = kSamplesPerChannel * 2; // 20 ms top-up after a true drain
+
+// H6: receiver jitter-buffer recovery. When the SDK's NetEQ target stays
+// inflated (post-E2EE-key arrival storm, key rotations) the only cure is a
+// fresh receiver, i.e. setSubscribed(false->true). Guarded so failure modes
+// equal today's behavior: sustained-high streak + recent frame activity +
+// warmup/cooldown/lifetime caps, and every SDK call wrapped in try/catch.
+constexpr double kJitterBufferRecoverTargetMs = 400.0;
+constexpr int kJitterBufferRecoverStreak = 3;               // 3 consecutive 5 s polls ≈ 15 s sustained
+constexpr long long kJitterBufferWarmupMs = 20000;          // let initial jitter settle before judging
+constexpr long long kJitterBufferCooldownMs = 90000;        // per-reader minimum spacing
+constexpr int kJitterBufferMaxResubPerReader = 4;           // lifetime cap
+constexpr long long kJitterBufferActiveWindowMs = 10000;    // receiver must be actively producing frames
 constexpr int kDefaultAudioMaxBitrateBps = 64000;
 constexpr int kMinAudioMaxBitrateBps = 8000;
 constexpr int kMaxAudioMaxBitrateBps = 512000;
@@ -258,6 +278,7 @@ struct ParticipantPcmQueue {
 void dispatchMixedAudioFrame(const std::vector<std::int16_t>& samples, std::int64_t timestampNs);
 void dispatchRemoteParticipantConnected(const std::string& participantIdentity, const std::string& participantSid);
 void dispatchRemoteParticipantDisconnected(const std::string& participantIdentity, const std::string& participantSid);
+void requestAudioTrackResubscribe(const std::string& participantIdentity, const std::string& trackSid, long long jbTargetMs);
 
 struct PcmDiagnostics {
     double rms{0.0};
@@ -1325,6 +1346,95 @@ void stopAllRemoteReadersLocked() {
     g_audioMixer.clearParticipants();
 }
 
+// H6 recovery: rebuild one remote audio receiver by toggling its publication
+// subscription. Runs on a detached worker because setSubscribed can emit
+// Track(Un)Subscribed events synchronously into the room delegate, and those
+// handlers take g_sessionMutex — this worker must never hold that mutex
+// across an SDK call. The unsubscribe path stops the old reader and the
+// resubscribe path starts a fresh one through the EXISTING delegate plumbing,
+// so no new reader lifecycle code is involved.
+void requestAudioTrackResubscribe(const std::string& participantIdentity, const std::string& trackSid, long long jbTargetMs) {
+    std::thread([participantIdentity, trackSid, jbTargetMs]() {
+        const auto steadyMs = [] {
+            return std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+        };
+        try {
+            std::shared_ptr<livekit::RemoteTrackPublication> publication;
+            for (int attempt = 0; attempt < 20 && publication == nullptr; ++attempt) {
+                if (callbacksStopped("jb-resub")) {
+                    return;
+                }
+                {
+                    // Snapshot the publication pointer only; release before any SDK call.
+                    std::unique_lock<std::mutex> lock(g_sessionMutex, std::try_to_lock);
+                    if (lock.owns_lock() && g_room != nullptr && g_connected) {
+                        for (const auto& participant : g_room->remoteParticipants()) {
+                            if (participant == nullptr || participant->identity() != participantIdentity) {
+                                continue;
+                            }
+                            for (const auto& entry : participant->trackPublications()) {
+                                if (entry.second != nullptr && normalizedSid(entry.second->sid()) == trackSid) {
+                                    publication = entry.second;
+                                    break;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+                if (publication == nullptr) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                }
+            }
+            if (publication == nullptr) {
+                std::cout << "WARN [OrbitLiveKitAudio] JB-RESUB gave up: publication not found sid=" << trackSid << std::endl;
+                return;
+            }
+
+            std::cout << "JB-RESUB unsubscribing audio track sid=" << trackSid
+                      << " identity=" << participantIdentity
+                      << " reason=jbTargetMs=" << jbTargetMs << std::endl;
+            publication->setSubscribed(false);
+
+            bool unsubscribed = false;
+            for (int attempt = 0; attempt < 40; ++attempt) {
+                if (callbacksStopped("jb-resub")) {
+                    return;
+                }
+                if (!publication->subscribed()) {
+                    unsubscribed = true;
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+            if (!unsubscribed) {
+                std::cout << "WARN [OrbitLiveKitAudio] JB-RESUB unsubscribe did not take effect sid=" << trackSid << std::endl;
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+            {
+                std::unique_lock<std::mutex> lock(g_sessionMutex, std::try_to_lock);
+                const bool sessionAlive = lock.owns_lock() && g_room != nullptr && g_connected;
+                if (!sessionAlive) {
+                    std::cout << "WARN [OrbitLiveKitAudio] JB-RESUB aborted before resubscribe: session gone sid=" << trackSid << std::endl;
+                    return;
+                }
+            }
+            std::cout << "JB-RESUB resubscribing audio track sid=" << trackSid << std::endl;
+            publication->setSubscribed(true);
+            std::cout << "JB-RESUB done sid=" << trackSid
+                      << " freshReceiver=true expectFreshJitterBuffer=true" << std::endl;
+        } catch (const std::exception& error) {
+            std::cout << "WARN [OrbitLiveKitAudio] JB-RESUB failed sid=" << trackSid
+                      << ": " << error.what() << std::endl;
+        } catch (...) {
+            std::cout << "WARN [OrbitLiveKitAudio] JB-RESUB failed sid=" << trackSid << ": unknown error" << std::endl;
+        }
+    }).detach();
+}
+
 void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track, const std::string& participantIdentity) {
     if (track == nullptr || track->kind() != livekit::TrackKind::KIND_AUDIO) {
         return;
@@ -1368,6 +1478,10 @@ void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track, const
                 if (samples.empty()) {
                     continue;
                 }
+                reader->lastFrameSteadyMs.store(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch()).count(),
+                    std::memory_order_relaxed);
                 const auto timestampNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
                     std::chrono::steady_clock::now().time_since_epoch()).count();
                 g_audioMixer.pushParticipantFrame(
@@ -1392,11 +1506,13 @@ void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track, const
                             for (const auto& stat : statsFuture.get()) {
                                 const auto* inbound = std::get_if<livekit::RtcInboundRtpStats>(&stat.stats);
                                 if (inbound != nullptr) {
+                                    const long long jbTargetMs = static_cast<long long>(
+                                        inbound->inbound.jitter_buffer_target_delay * 1000.0);
                                     std::cout << "RXSTAT sid=" << reader->trackSid
                                               << " recv=" << inbound->received.packets_received
                                               << " lost=" << inbound->received.packets_lost
                                               << " jitterMs=" << static_cast<long long>(inbound->received.jitter * 1000.0)
-                                              << " jbTargetMs=" << static_cast<long long>(inbound->inbound.jitter_buffer_target_delay * 1000.0)
+                                              << " jbTargetMs=" << jbTargetMs
                                               << " jbAvgMs=" << (inbound->inbound.jitter_buffer_emitted_count > 0
                                                     ? static_cast<long long>(inbound->inbound.jitter_buffer_delay * 1000.0 /
                                                         static_cast<double>(inbound->inbound.jitter_buffer_emitted_count))
@@ -1410,6 +1526,45 @@ void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track, const
                                               << " discarded=" << inbound->inbound.packets_discarded
                                               << " retransmitted=" << inbound->inbound.retransmitted_packets_received
                                               << std::endl;
+                                    // H6 watchdog: a sustained inflated jitter-buffer target means the
+                                    // receiver is playing stale audio (NetEQ peak-mode decays it over
+                                    // minutes). Fire the guarded resubscribe once the streak, warmup,
+                                    // cooldown and lifetime caps all pass.
+                                    {
+                                        const long long nowSteadyMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                            std::chrono::steady_clock::now().time_since_epoch()).count();
+                                        const long long ageMs = nowSteadyMs - std::chrono::duration_cast<std::chrono::milliseconds>(
+                                            reader->createdSteady.time_since_epoch()).count();
+                                        const long long sinceFrameMs = nowSteadyMs - reader->lastFrameSteadyMs.load(std::memory_order_relaxed);
+                                        const bool active = sinceFrameMs <= kJitterBufferActiveWindowMs;
+                                        if (jbTargetMs > kJitterBufferRecoverTargetMs && active) {
+                                            reader->jbHighStreak += 1;
+                                            if (reader->jbHighStreak >= 2) {
+                                                std::cout << "JBWATCH sid=" << reader->trackSid
+                                                          << " jbTargetMs=" << jbTargetMs
+                                                          << " streak=" << reader->jbHighStreak << std::endl;
+                                            }
+                                        } else {
+                                            reader->jbHighStreak = 0;
+                                        }
+                                        const long long lastResubMs = reader->lastResubSteadyMs.load(std::memory_order_relaxed);
+                                        const long long sinceResubMs = lastResubMs < 0
+                                            ? std::numeric_limits<long long>::max()
+                                            : nowSteadyMs - lastResubMs;
+                                        if (reader->jbHighStreak >= kJitterBufferRecoverStreak &&
+                                            ageMs >= kJitterBufferWarmupMs &&
+                                            active &&
+                                            sinceResubMs >= kJitterBufferCooldownMs &&
+                                            reader->resubCount.load(std::memory_order_relaxed) < kJitterBufferMaxResubPerReader) {
+                                            reader->jbHighStreak = 0;
+                                            reader->resubCount.fetch_add(1, std::memory_order_relaxed);
+                                            reader->lastResubSteadyMs.store(nowSteadyMs, std::memory_order_relaxed);
+                                            std::cout << "JBWATCH firing resubscribe sid=" << reader->trackSid
+                                                      << " jbTargetMs=" << jbTargetMs
+                                                      << " attempt=" << reader->resubCount.load(std::memory_order_relaxed) << std::endl;
+                                            requestAudioTrackResubscribe(reader->participantIdentity, reader->trackSid, jbTargetMs);
+                                        }
+                                    }
                                     continue;
                                 }
                                 const auto* remoteInbound = std::get_if<livekit::RtcRemoteInboundRtpStats>(&stat.stats);

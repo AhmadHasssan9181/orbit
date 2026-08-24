@@ -18,6 +18,29 @@ import androidx.compose.ui.window.Tray
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import java.util.concurrent.atomic.AtomicBoolean
+
+// H5: exitApplication() cannot terminate the JVM while JNI-attached native
+// workers or stray non-daemon threads are alive (observed ~6 GB zombie after
+// window close). Arm a daemon watchdog before every explicit quit: if the
+// graceful shutdown has not finished the process within the budget, halt it.
+// On a clean exit the JVM dies before the watchdog ever fires.
+private val forcedExitArmed = AtomicBoolean(false)
+
+private fun armForcedExitWatchdog(budgetMs: Long = 2_500) {
+    if (!forcedExitArmed.compareAndSet(false, true)) return
+    Thread {
+        try {
+            Thread.sleep(budgetMs)
+        } catch (_: InterruptedException) {
+        }
+        println("WARN [Exit] graceful shutdown exceeded ${budgetMs}ms; forcing JVM halt")
+        Runtime.getRuntime().halt(0)
+    }.apply {
+        isDaemon = true
+        name = "orbit-exit-watchdog"
+    }.start()
+}
 
 fun main() = application {
     util.installOrbitLogConsoleFilter()
@@ -38,7 +61,10 @@ fun main() = application {
         // Close hides to tray while "minimize to tray" is on; quitting happens
         // explicitly via the tray menu.
         fun closeRequested() {
-            if (minimizeToTray) windowRef?.isVisible = false else exitApplication()
+            if (minimizeToTray) windowRef?.isVisible = false else {
+                armForcedExitWatchdog()
+                exitApplication()
+            }
         }
 
         Window(
@@ -83,7 +109,10 @@ fun main() = application {
                     windowRef?.isVisible = true
                     windowRef?.toFront()
                 })
-                Item("Quit", onClick = ::exitApplication)
+                Item("Quit", onClick = {
+                    armForcedExitWatchdog()
+                    exitApplication()
+                })
             }
         )
     }
