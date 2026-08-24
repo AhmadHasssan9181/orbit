@@ -1,0 +1,197 @@
+package livekit
+
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
+import kotlinx.serialization.json.put
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+/**
+ * Freezes the matrixRTC E2EE media-key wire shapes and rotation rules Orbit must
+ * follow to interop with Element Call (deployed format, not MSC4143 future text).
+ */
+class CallMediaKeysCoreTest {
+
+    private val sampleKey = ByteArray(16) { it.toByte() } // 000102..0f
+
+    @Test
+    fun payloadMirrorsVerifiedElementShape() {
+        val payload = CallMediaKeys.buildEncryptionKeysPayload(
+            keyIndex = 0,
+            key = sampleKey,
+            roomId = "!room:example.org",
+            memberId = "@alice:example.org:DEV123",
+            claimedDeviceId = "DEV123",
+            sentTsMs = 1_724_400_000_000
+        )
+
+        val keys = payload["keys"]?.jsonObject ?: throw AssertionError("keys missing")
+        assertEquals(0, keys["index"]?.jsonPrimitive?.int)
+        // Element emits PADDED base64 of the raw 16 key bytes.
+        assertEquals("AAECAwQFBgcICQoLDA0ODw==", keys["key"]?.jsonPrimitive?.content)
+        assertEquals("!room:example.org", payload["room_id"]?.jsonPrimitive?.content)
+        val member = payload["member"]?.jsonObject ?: throw AssertionError("member missing")
+        assertEquals("@alice:example.org:DEV123", member["id"]?.jsonPrimitive?.content)
+        assertEquals("DEV123", member["claimed_device_id"]?.jsonPrimitive?.content)
+        val session = payload["session"]?.jsonObject ?: throw AssertionError("session missing")
+        assertEquals("", session["call_id"]?.jsonPrimitive?.content)
+        assertEquals("m.call", session["application"]?.jsonPrimitive?.content)
+        assertEquals("m.room", session["scope"]?.jsonPrimitive?.content)
+        assertEquals(1_724_400_000_000L, payload["sent_ts"]?.jsonPrimitive?.long)
+    }
+
+    @Test
+    fun parseRoundTripsPaddedAndUnpaddedBase64() {
+        val padded = CallMediaKeys.buildEncryptionKeysPayload(
+            keyIndex = 255,
+            key = sampleKey,
+            roomId = "!r:s",
+            memberId = "@a:s:D",
+            claimedDeviceId = "D",
+            sentTsMs = 42L
+        )
+        val parsed = assertNotNull(CallMediaKeys.parseEncryptionKeysPayload(padded))
+        assertEquals(255, parsed.keyIndex)
+        assertTrue(sampleKey.contentEquals(parsed.key))
+        assertEquals("D", parsed.claimedDeviceId)
+
+        // Element accepts unpadded base64 on read; so must we.
+        val unpadded = kotlinx.serialization.json.buildJsonObject {
+            padded.forEach { (k, v) -> put(k, v) }
+            put("keys", kotlinx.serialization.json.buildJsonObject {
+                put("index", 7)
+                put("key", "AAECAwQFBgcICQoLDA0ODw")
+            })
+        }
+        val parsedUnpadded = assertNotNull(CallMediaKeys.parseEncryptionKeysPayload(unpadded))
+        assertEquals(7, parsedUnpadded.keyIndex)
+        assertTrue(sampleKey.contentEquals(parsedUnpadded.key))
+    }
+
+    @Test
+    fun parseRejectsMalformedPayloads() {
+        fun keysJson(vararg pairs: Pair<String, kotlinx.serialization.json.JsonElement>): kotlinx.serialization.json.JsonObject =
+            kotlinx.serialization.json.buildJsonObject { pairs.forEach { (k, v) -> put(k, v) } }
+
+        fun payloadWith(keys: kotlinx.serialization.json.JsonElement): kotlinx.serialization.json.JsonObject =
+            kotlinx.serialization.json.buildJsonObject { put("keys", keys) }
+
+        val validKey = kotlinx.serialization.json.JsonPrimitive("AAECAwQFBgcICQoLDA0ODw==")
+        val shortKey = kotlinx.serialization.json.JsonPrimitive("AAECAwQFBgcICQoLDA0O")
+
+        assertNull(CallMediaKeys.parseEncryptionKeysPayload(payloadWith(keysJson("index" to kotlinx.serialization.json.JsonPrimitive(0)))))
+        assertNull(
+            CallMediaKeys.parseEncryptionKeysPayload(
+                payloadWith(keysJson("index" to kotlinx.serialization.json.JsonPrimitive(-1), "key" to validKey))
+            )
+        )
+        assertNull(
+            CallMediaKeys.parseEncryptionKeysPayload(
+                payloadWith(keysJson("index" to kotlinx.serialization.json.JsonPrimitive(256), "key" to validKey))
+            )
+        )
+        // Wrong key size (15 bytes -> 20 unpadded chars) must be rejected.
+        assertNull(
+            CallMediaKeys.parseEncryptionKeysPayload(
+                payloadWith(keysJson("index" to kotlinx.serialization.json.JsonPrimitive(0), "key" to shortKey))
+            )
+        )
+        assertNull(CallMediaKeys.parseEncryptionKeysPayload(kotlinx.serialization.json.buildJsonObject { }))
+    }
+
+    @Test
+    fun base64MatchesRfc4648Vectors() {
+        fun b64(s: String) = CallMediaKeys.encodePaddedBase64(s.encodeToByteArray())
+        assertEquals("", b64(""))
+        assertEquals("Zg==", b64("f"))
+        assertEquals("Zm8=", b64("fo"))
+        assertEquals("Zm9v", b64("foo"))
+        assertEquals("Zm9vYmFy", b64("foobar"))
+
+        for (size in 0..24) {
+            val bytes = ByteArray(size) { (it * 31 + size).toByte() }
+            val encoded = CallMediaKeys.encodePaddedBase64(bytes)
+            assertTrue(encoded.length % 4 == 0, "padded length for $size")
+            assertTrue(bytes.contentEquals(CallMediaKeys.decodeBase64(encoded)), "round trip $size")
+        }
+        // Unpadded decode tolerance.
+        assertTrue(
+            byteArrayOf(1, 2, 3).contentEquals(
+                CallMediaKeys.decodeBase64("AQID")
+            )
+        )
+        assertNull(CallMediaKeys.decodeBase64("A"))
+        assertNull(CallMediaKeys.decodeBase64("!!!!"))
+    }
+
+    @Test
+    fun outdatedKeyFilterKeepsNewestSentTsPerSenderAndIndex() {
+        val filter = CallMediaKeys.OutdatedKeyFilter()
+        assertTrue(filter.accept("@a:s", "D1", 0, 100))
+        assertFalse(filter.accept("@a:s", "D1", 0, 50))   // older replay
+        assertFalse(filter.accept("@a:s", "D1", 0, 100))  // equal replay
+        assertTrue(filter.accept("@a:s", "D1", 0, 200))   // newer wins
+        assertTrue(filter.accept("@a:s", "D1", 1, 10))    // different index independent
+        assertTrue(filter.accept("@b:s", "D1", 0, 10))    // different sender independent
+        // Two devices of the same user both emit index 0 — neither evicts the other.
+        assertTrue(filter.accept("@a:s", "D2", 0, 150))
+        assertFalse(filter.accept("@a:s", "D2", 0, 140))
+        assertTrue(filter.accept("@a:s", "D1", 0, 250))
+    }
+
+    @Test
+    fun membershipReactionFollowsElementRules() {
+        val freshKeyAgeMs = 500L
+        val staleKeyAgeMs = 30_000L
+
+        assertTrue(CallMediaKeys.decideMembershipReaction(1, 0, freshKeyAgeMs) is CallMediaKeys.MembershipReaction.Rotate)
+        assertTrue(CallMediaKeys.decideMembershipReaction(2, 3, freshKeyAgeMs) is CallMediaKeys.MembershipReaction.Rotate)
+        assertTrue(CallMediaKeys.decideMembershipReaction(0, 1, freshKeyAgeMs) is CallMediaKeys.MembershipReaction.ResendCurrent)
+        assertTrue(CallMediaKeys.decideMembershipReaction(0, 2, staleKeyAgeMs) is CallMediaKeys.MembershipReaction.Rotate)
+        assertTrue(CallMediaKeys.decideMembershipReaction(0, 0, freshKeyAgeMs) is CallMediaKeys.MembershipReaction.None)
+    }
+
+    @Test
+    fun ownKeyRingRotatesWithWrappedIndex() {
+        var now = 1_000L
+        val ring = CallMediaKeys.OwnKeyRing(nowMs = { now })
+        assertEquals(0, ring.currentIndex)
+        assertEquals(16, ring.currentKey.size)
+        assertEquals(0L, ring.ageMs())
+        val firstKey = ring.currentKey.toList()
+
+        now += 5_000
+        // Age tracks the CURRENT key: full old-key age before rotating, reset after.
+        assertEquals(5_000L, ring.ageMs())
+        ring.rotate()
+        assertEquals(1, ring.currentIndex)
+        assertEquals(0L, ring.ageMs())
+        assertFalse(firstKey == ring.currentKey.toList())
+
+        repeat(CallMediaKeys.KEY_INDEX_MODULUS - 1) { ring.rotate() }
+        assertEquals(0, ring.currentIndex) // (255 + 1) % 256 wraps
+    }
+
+    @Test
+    fun participantIdentityConcatenatesUserIdAndDevice() {
+        assertEquals("@alice:example.org:JLAFKJWSCS", CallMediaKeys.participantIdentity("@alice:example.org", "JLAFKJWSCS"))
+    }
+
+    @Test
+    fun generatedKeysAreUniqueAndCorrectSized() {
+        val a = CallMediaKeys.generateKey()
+        val b = CallMediaKeys.generateKey()
+        assertEquals(16, a.size)
+        assertEquals(16, b.size)
+        assertFalse(a.contentEquals(b))
+    }
+}

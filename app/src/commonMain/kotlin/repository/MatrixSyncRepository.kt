@@ -287,6 +287,23 @@ class MatrixSyncRepository(
                                         currentMembers.removeAll { it.id == sender }
                                     }
                                     membersFlow.value = currentMembers
+
+                                    // Per-device mirror for the E2EE media-key exchange.
+                                    val eventDeviceId = realContent["device_id"]?.jsonPrimitive?.content
+                                    if (eventDeviceId != null) {
+                                        val devicesFlow = context.activeCallDevices.getOrPut(roomId) { MutableStateFlow(emptySet()) }
+                                        val updatedDevices = devicesFlow.value.toMutableSet()
+                                        val deviceEntry = livekit.CallDevice(sender, eventDeviceId)
+                                        if (membership != "leave") {
+                                            updatedDevices.add(deviceEntry)
+                                        } else {
+                                            updatedDevices.remove(deviceEntry)
+                                        }
+                                        if (updatedDevices != devicesFlow.value) {
+                                            devicesFlow.value = updatedDevices
+                                        }
+                                    }
+
                                     if (typeStr == "m.call.member" || typeStr == "org.matrix.msc3401.call.member") {
                                         context.groupCallStateChanges.tryEmit(roomId)
                                     }

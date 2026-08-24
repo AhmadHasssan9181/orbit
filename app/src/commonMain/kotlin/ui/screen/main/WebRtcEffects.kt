@@ -114,6 +114,13 @@ fun WebRtcEffects(
         // Group-call roster: MatrixRTC membership flow feeds the call surface tiles
         callManager.groupMembersProvider = { roomId -> repository.observeCallMembers(roomId) }
 
+        // matrixRTC E2EE media keys: room encryption probe + olm key exchange control
+        callManager.roomIsEncryptedChecker = { roomId -> repository.isRoomEncrypted(roomId) }
+        callManager.mediaKeysStart = { roomId, livekitIdentity ->
+            repository.startCallMediaKeyExchange(roomId, livekitIdentity)
+        }
+        callManager.mediaKeysStop = { repository.stopCallMediaKeyExchange() }
+
         // Warm the TURN/STUN config early, and CallManager refreshes it again before each call.
         scope.launch {
             callManager.iceServers = callManager.refreshIceServers?.invoke().orEmpty()

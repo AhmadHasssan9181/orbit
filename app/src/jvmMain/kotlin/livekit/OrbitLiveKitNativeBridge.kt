@@ -45,6 +45,12 @@ class OrbitLiveKitNativeBridge(
     fun reconnectAsync(sessionId: Long, epoch: Long, url: String, token: String): NativeResult<Unit> =
         statusToResult(sessionId, raw.nativeReconnectAsync(sessionId, epoch, url, token), "nativeReconnectAsync")
 
+    fun configureE2EE(sessionId: Long, enabled: Boolean): NativeResult<Unit> =
+        statusToResult(sessionId, raw.nativeConfigureE2EE(sessionId, enabled), "nativeConfigureE2EE")
+
+    fun setParticipantMediaKey(sessionId: Long, identity: String, key: ByteArray, keyIndex: Int): NativeResult<Unit> =
+        statusToResult(sessionId, raw.nativeSetParticipantMediaKey(sessionId, identity, key, keyIndex), "nativeSetParticipantMediaKey")
+
     fun disconnect(sessionId: Long, epoch: Long, userInitiated: Boolean): NativeResult<Unit> =
         statusToResult(sessionId, raw.nativeDisconnect(sessionId, epoch, userInitiated), "nativeDisconnect")
 

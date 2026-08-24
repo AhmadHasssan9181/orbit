@@ -70,6 +70,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -402,8 +403,106 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                 }
             } catch (e: Exception) {}
         }
-        
+
         return flow.asStateFlow()
+    }
+
+    /**
+     * Per-device roster for the matrixRTC E2EE media-key exchange. Mirrors
+     * [observeCallMembers] but keeps every (sender, device_id) pair distinct —
+     * Element distributes keys per DEVICE, not per user.
+     */
+    /** Best-effort device extraction from `_<userId>_<deviceId>[_<callId>]` state keys. */
+    private fun stateKeyDeviceId(stateKey: String): String? {
+        if (!stateKey.startsWith("_")) return null
+        val body = stateKey.drop(1)
+        val colon = body.indexOf(':')
+        if (colon < 0) return null
+        val rest = body.substring(colon + 1)
+        val underscore = rest.indexOf('_')
+        if (underscore < 0) return null
+        val device = rest.substring(underscore + 1)
+        val callSuffix = device.indexOf("_m.call")
+        val cleaned = if (callSuffix > 0) device.substring(0, callSuffix) else device
+        return cleaned.ifBlank { null }
+    }
+
+    override fun observeCallDevices(channelId: String): Flow<Set<livekit.CallDevice>> {
+        val flow = context.activeCallDevices.getOrPut(channelId) { MutableStateFlow(emptySet()) }
+
+        context.repositoryScope.launch {
+            var attempt = 0
+            while (attempt < 3) {
+                try {
+                    // Raw-JSON all-state fetch, same proven path as the visibility
+                    // audit: trixnity's serializer drops unknown event types from
+                    // api.room.getState(), which silently yielded an empty roster.
+                    val events = fetchMatrixRtcVisibilityEvents(channelId)
+                    val devices = linkedSetOf<livekit.CallDevice>()
+                    for (event in events) {
+                        if (!isActiveMatrixRtcMember(event)) continue
+                        if (!isUnexpiredMatrixRtcMember(event)) continue
+                        // A device is call-eligible once it claims any m.call member
+                        // shape; device_id is what Element keys media identities on.
+                        val deviceId = jsonString(event.content, "device_id")
+                            ?: stateKeyDeviceId(event.stateKey)
+                            ?: continue
+                        devices.add(livekit.CallDevice(event.sender, deviceId))
+                    }
+                    if (devices.isNotEmpty()) {
+                        flow.value = devices
+                        return@launch
+                    }
+                    println("DEBUG [MatrixCallsRepository] call-device roster empty for $channelId (attempt ${attempt + 1})")
+                } catch (e: Exception) {
+                    println("WARN [MatrixCallsRepository] call-device roster error for $channelId: ${e.message}")
+                }
+                attempt++
+                delay(3000)
+            }
+        }
+
+        return flow.asStateFlow()
+    }
+
+    override suspend fun isRoomEncrypted(roomId: String): Boolean = try {
+        // The "/state/event/<type>" URL form parses as eventType="event",
+        // stateKey="<type>" on Synapse → 404 → silently treated as unencrypted,
+        // which disabled the whole E2EE chain. Classic /state/<type> form works.
+        val response = context.httpClient.get(context.fullUrl("/rooms/$roomId/state/m.room.encryption")) {
+            header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
+        }
+        val encrypted = response.status.value == 200
+        if (!encrypted) {
+            println("DEBUG [MatrixCallsRepository] encryption probe $roomId -> HTTP ${response.status.value}")
+        }
+        encrypted
+    } catch (e: Exception) {
+        println("WARN [MatrixCallsRepository] encryption probe threw for $roomId: ${e.message}")
+        false
+    }
+
+    override fun startCallMediaKeyExchange(roomId: String, livekitIdentity: String) {
+        val trixnity = context.trixnityClient ?: return
+        val userId = context.userId ?: return
+        val deviceId = context.deviceId ?: "ORBIT_DESKTOP"
+        try {
+            livekit.CallMediaKeyExchangeManager.start(
+                client = trixnity,
+                scope = context.repositoryScope,
+                roomId = roomId,
+                ownUserId = userId,
+                ownDeviceId = deviceId,
+                ownLivekitIdentity = livekitIdentity.ifBlank { "$userId:$deviceId" },
+                devicesFlow = observeCallDevices(roomId)
+            )
+        } catch (e: Exception) {
+            println("ERROR [MatrixCallsRepository] media key exchange start failed: ${e.message}")
+        }
+    }
+
+    override fun stopCallMediaKeyExchange() {
+        livekit.CallMediaKeyExchangeManager.stop()
     }
 
     private fun membershipShapeMapKey(roomId: String, callId: String): String = "$roomId\u0000$callId"

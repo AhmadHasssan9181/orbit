@@ -53,6 +53,9 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
     private var lastRefreshTokenFetcher: (suspend () -> LiveKitAuthResponse)? = null
     @Volatile private var desiredAudioMuted: Boolean = false
     @Volatile private var lastAudioBitrateKbps: Int = 64
+    // matrixRTC E2EE media: armed for encrypted-room calls BEFORE connectAsync so
+    // RoomOptions::encryption is populated; the native module flag survives reconnects.
+    @Volatile private var e2eeArmed: Boolean = false
 
     // H1: bounded mid-call resume. Fires after a successful refreshAndReconnect so
     // the owner (CallManager) can restore UI stage + re-affirm MatrixRTC membership.
@@ -165,6 +168,20 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             tokenRefreshScheduled = false,
             lastError = null
         )
+
+        // Apply E2EE arming HERE rather than only at request time: the session may
+        // not have existed yet when requestE2EE ran, and the native side rejects
+        // unknown session ids without storing the flag. Session id is guaranteed
+        // valid at this point, and an explicit false clears any stale encrypted-call
+        // arming from a previous join.
+        run {
+            val e2eeApply = bridge.configureE2EE(sessionId, e2eeArmed)
+            if (e2eeApply.ok) {
+                println("DEBUG [LiveKitNativeMediaSession] e2ee pre-connect armed=$e2eeArmed")
+            } else {
+                println("WARN [LiveKitNativeMediaSession] e2ee pre-connect arm failed: ${e2eeApply.error?.message}")
+            }
+        }
 
         println("DEBUG [LiveKitNativeMediaSession] native connecting")
         val startConnect = bridge.connectAsync(
@@ -468,6 +485,32 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             return NativeResult.failure(unknownError("No native media session exists", "nativeSetAudioMuted"))
         }
         return bridge.setAudioMuted(sessionId, epoch, isMuted)
+    }
+
+    /**
+     * Arms/disarms the native E2EE media path for the NEXT connect. Safe to call
+     * with no live session: nativeConfigureE2EE only flips a module-level flag that
+     * ConnectAsync consumes when building RoomOptions.
+     */
+    fun requestE2EE(enabled: Boolean) {
+        if (!enabled && !e2eeArmed) return
+        e2eeArmed = enabled
+        val result = bridge.configureE2EE(sessionId, enabled)
+        if (result.ok) {
+            println("DEBUG [LiveKitNativeMediaSession] e2ee media armed=$enabled session=$sessionId")
+        } else {
+            println("WARN [LiveKitNativeMediaSession] configureE2EE($enabled) failed: ${result.error?.message}")
+        }
+    }
+
+    /** Feeds a per-participant media key into the native KeyProvider slot [identity]. */
+    fun deliverParticipantKey(identity: String, key: ByteArray, keyIndex: Int): Boolean {
+        if (sessionId == 0L || identity.isBlank() || key.size != CallMediaKeys.KEY_BYTES) return false
+        val result = bridge.setParticipantMediaKey(sessionId, identity, key, keyIndex)
+        if (!result.ok) {
+            println("WARN [LiveKitNativeMediaSession] setParticipantMediaKey($identity, idx=$keyIndex) failed: ${result.error?.message}")
+        }
+        return result.ok
     }
 
     override fun onNativeEvent(event: NativeMediaEvent) {

@@ -102,3 +102,10 @@ actual fun setLiveKitOutputVolume(volume: Float) {
 actual fun setLiveKitAudioProcessingOptions(noiseSuppression: Boolean, echoCancellation: Boolean, autoGainControl: Boolean) {
     OrbitApm.setAudioProcessingOptions(noiseSuppression, echoCancellation, autoGainControl)
 }
+
+actual fun prepareNativeE2EE(enabled: Boolean) {
+    LiveKitNativeMediaSession.requestE2EE(enabled)
+}
+
+actual fun deliverNativeMediaKey(identity: String, key: ByteArray, keyIndex: Int): Boolean =
+    LiveKitNativeMediaSession.deliverParticipantKey(identity, key, keyIndex)

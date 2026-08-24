@@ -78,6 +78,13 @@ interface OrbitCallsRepository {
     suspend fun leaveGroupCall(roomId: String, callId: String)
     suspend fun fetchLiveKitToken(roomId: String, callId: String, livekitServiceUrl: String): livekit.LiveKitAuthResponse
     val activeCallsFlow: kotlinx.coroutines.flow.StateFlow<Map<String, String>>
+
+    // matrixRTC E2EE media keys (encrypted-room calls): per-device roster for the
+    // olm key exchange, room encryption probe, and exchange lifecycle control.
+    fun observeCallDevices(channelId: String): kotlinx.coroutines.flow.Flow<Set<livekit.CallDevice>>
+    suspend fun isRoomEncrypted(roomId: String): Boolean
+    fun startCallMediaKeyExchange(roomId: String, livekitIdentity: String)
+    fun stopCallMediaKeyExchange()
 }
 
 data class ResolvedGroupCall(

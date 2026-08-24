@@ -193,6 +193,9 @@ constexpr int kDefaultShareAudioMaxBitrateBps = 128000;
 constexpr jlong kRawSessionId = 1;
 jlong g_rawEpoch = 0;
 bool g_rawDisconnecting = false;
+// Set via nativeConfigureE2EE before connect; survives reconnects until the
+// next configure call. Read in connectRoom under g_sessionMutex.
+bool g_e2eeRequested = false;
 
 bool isSupportedAudioChannels(jint channels) {
     return channels == kChannels || channels == kMaxChannels;
@@ -2247,6 +2250,14 @@ public:
         stopAllRemoteVideoReadersLocked("room-disconnected");
         g_connected = false;
     }
+
+    // Logging-only on purpose: this fires from webrtc worker threads and the
+    // session mutex may be held by teardown paths that join those threads.
+    void onE2eeStateChanged(livekit::Room&, const livekit::E2eeStateChangedEvent& event) override {
+        const std::string identity = event.participant != nullptr ? event.participant->identity() : std::string{"<none>"};
+        std::cout << "DEBUG [OrbitLiveKitAudio] e2ee state changed identity=" << identity
+                  << " state=" << static_cast<int>(event.state) << std::endl;
+    }
 };
 
 // Dedicated system-audio capture for the group-call screen-share audio track.
@@ -3168,6 +3179,17 @@ bool connectRoom(
         livekit::RoomOptions options;
         options.auto_subscribe = true;
         options.dynacast = false;
+        if (g_e2eeRequested) {
+            livekit::E2EEOptions e2eeOptions;
+            e2eeOptions.encryption_type = livekit::EncryptionType::GCM;
+            // Element Call's JS worker always derives frame keys via HKDF-SHA256;
+            // the native default is PBKDF2 which would make frames undecryptable.
+            e2eeOptions.key_provider_options.key_derivation_function = livekit::KeyDerivationFunction::HKDF;
+            e2eeOptions.key_provider_options.ratchet_window_size = 10;
+            e2eeOptions.key_provider_options.key_ring_size = 256;
+            options.encryption = e2eeOptions;
+            std::cout << "DEBUG [OrbitLiveKitAudio] E2EE room options configured type=GCM kdf=HKDF" << std::endl;
+        }
 
         g_connected = g_room->connect(urlString, tokenString, options);
         if (!g_connected) {
@@ -3177,6 +3199,19 @@ bool connectRoom(
             }
             std::cerr << "ERROR [OrbitLiveKitAudio] LiveKit C++ room connect failed" << std::endl;
             return false;
+        }
+
+        if (g_e2eeRequested) {
+            auto* e2eeManager = g_room->e2eeManager();
+            if (e2eeManager != nullptr) {
+                e2eeManager->setEnabled(true);
+                std::cout << "DEBUG [OrbitLiveKitAudio] E2EE manager enabled enabled="
+                          << (e2eeManager->enabled() ? "true" : "false")
+                          << " keyProvider=" << (e2eeManager->keyProvider() != nullptr ? "present" : "MISSING")
+                          << std::endl;
+            } else {
+                std::cerr << "WARN [OrbitLiveKitAudio] E2EE requested but room has no e2ee manager" << std::endl;
+            }
         }
 
         auto* localParticipant = g_room->localParticipant();
@@ -3368,7 +3403,10 @@ Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(
         livekit::TrackPublishOptions publishOptions;
         publishOptions.source = livekit::TrackSource::SOURCE_MICROPHONE;
         publishOptions.dtx = true;
-        publishOptions.red = true;
+        // RED doesn't work with frame encryption (see livekit-client options.ts);
+        // Element publishes with red=false in E2EE rooms, so mirror that.
+        const bool e2eeActive = g_e2eeRequested;
+        publishOptions.red = !e2eeActive;
         livekit::AudioEncodingOptions audioEncoding;
         audioEncoding.max_bitrate = static_cast<std::uint64_t>(effectiveMaxBitrateBps);
         publishOptions.audio_encoding = audioEncoding;
@@ -3382,7 +3420,7 @@ Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(
                   << " channels=" << channels
                   << " maxBitrateBps=" << effectiveMaxBitrateBps
                   << " dtx=true"
-                  << " red=true"
+                  << " red=" << (e2eeActive ? "false" : "true")
                   << " expectedTestTone=" << (g_expectedTestTone.load(std::memory_order_relaxed) ? "true" : "false")
                   << std::endl;
 
@@ -3987,6 +4025,80 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeReconnectAsync(
         url,
         token,
         nullptr);
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_livekit_OrbitLiveKitNativeRaw_nativeConfigureE2EE(
+    JNIEnv*,
+    jclass,
+    jlong sessionId,
+    jboolean enabled) {
+    if (!isRawSessionValid(sessionId)) {
+        return kStatusStaleEvent;
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        g_e2eeRequested = enabled == JNI_TRUE;
+    }
+    std::cout << "DEBUG [OrbitLiveKitAudio] e2ee configured requested="
+              << (enabled == JNI_TRUE ? "true" : "false") << std::endl;
+    return kStatusOk;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_livekit_OrbitLiveKitNativeRaw_nativeSetParticipantMediaKey(
+    JNIEnv* env,
+    jclass,
+    jlong sessionId,
+    jstring identity,
+    jbyteArray key,
+    jint keyIndex) {
+    if (!isRawSessionValid(sessionId)) {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativeSetParticipantMediaKey", false);
+        return kStatusStaleEvent;
+    }
+
+    const std::string identityString = jStringToString(env, identity);
+    if (identityString.empty() || key == nullptr) {
+        std::cerr << "WARN [OrbitLiveKitAudio] e2ee set key rejected empty identity or null key" << std::endl;
+        return kStatusNativeException;
+    }
+
+    const jsize keyLength = env->GetArrayLength(key);
+    if (keyLength <= 0) {
+        std::cerr << "WARN [OrbitLiveKitAudio] e2ee set key rejected empty key bytes" << std::endl;
+        return kStatusNativeException;
+    }
+    std::vector<std::uint8_t> keyBytes(static_cast<std::size_t>(keyLength));
+    env->GetByteArrayRegion(key, 0, keyLength, reinterpret_cast<jbyte*>(keyBytes.data()));
+    if (env->ExceptionCheck() == JNI_TRUE) {
+        env->ExceptionClear();
+        std::cerr << "ERROR [OrbitLiveKitAudio] e2ee set key byte copy failed" << std::endl;
+        return kStatusNativeException;
+    }
+
+    try {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        if (!g_connected || g_room == nullptr) {
+            std::cerr << "WARN [OrbitLiveKitAudio] e2ee set key ignored room not connected identity=" << identityString << std::endl;
+            return kStatusStaleEvent;
+        }
+        auto* e2eeManager = g_room->e2eeManager();
+        if (e2eeManager == nullptr || e2eeManager->keyProvider() == nullptr) {
+            std::cerr << "WARN [OrbitLiveKitAudio] e2ee set key ignored no manager/provider identity=" << identityString << std::endl;
+            return kStatusNativeException;
+        }
+        e2eeManager->keyProvider()->setKey(identityString, keyBytes, static_cast<int>(keyIndex));
+        std::cout << "DEBUG [OrbitLiveKitAudio] e2ee participant key installed identity=" << identityString
+                  << " keyIndex=" << keyIndex
+                  << " keyLen=" << keyLength << std::endl;
+        return kStatusOk;
+    } catch (const std::exception& error) {
+        std::cerr << "ERROR [OrbitLiveKitAudio] e2ee set key failed identity=" << identityString
+                  << " error=" << error.what() << std::endl;
+        return kStatusNativeException;
+    }
 }
 
 extern "C" JNIEXPORT jint JNICALL
