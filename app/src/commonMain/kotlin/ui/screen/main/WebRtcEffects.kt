@@ -161,6 +161,10 @@ fun WebRtcEffects(
                     )
                     is repository.CallEvent.Hangup -> {
                         if (callManager.callId == event.callId) {
+                            println(
+                                "WARN [WebRtcEffects] m.call.hangup matching active call " +
+                                    "callId=${event.callId} sender=${event.senderId} — ending call"
+                            )
                             callManager.endCall(notifyRemote = false)
                         }
                     }

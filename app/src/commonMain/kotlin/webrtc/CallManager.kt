@@ -797,6 +797,20 @@ class CallManager(
         val currentCall = callId
         val wasGroupCall = isGroupCall.value
 
+        // Random-close attribution: endCall has many invocation sites (buttons,
+        // watchdog, hangup events) and none logged who called, which left a
+        // reported "call randomly closes" undiagnosable from logs alone.
+        val callerChain = Throwable().stackTrace
+            .drop(1)
+            .take(5)
+            .joinToString(" <- ") { frame ->
+                "${frame.className.substringAfterLast('.')}.${frame.methodName}:${frame.lineNumber}"
+            }
+        println(
+            "INFO [CallManager] endCall invoked room=$currentRoom callId=$currentCall " +
+                "group=$wasGroupCall notifyRemote=$notifyRemote by $callerChain"
+        )
+
         ringTimeoutJob?.cancel()
         groupWatchdogJob?.cancel()
         groupWatchdogJob = null

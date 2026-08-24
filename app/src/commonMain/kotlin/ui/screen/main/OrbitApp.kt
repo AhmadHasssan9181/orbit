@@ -544,6 +544,11 @@ private fun MainAppContent(
                     // P2P calls may live outside the dm category or have their channel
                     // unresolvable entirely — they must still surface their UI.
                     (callActive && !isGroupCall)
+            // While the user is looking at the call's own channel, the embedded
+            // VoiceChannelScreen/ChatScreen surface already renders there — a
+            // second fullscreen overlay here blanketed the entire window and made
+            // navigation impossible.
+            val viewingCallChannel = activeCallChannel != null && selectedChannelId == activeCallChannel.id
 
             LaunchedEffect(selectedChannelId, activeRoomId, channels) {
                 if (activeRoomId != null) {
@@ -554,12 +559,18 @@ private fun MainAppContent(
                 }
             }
 
-            if (shouldShowPopup) {
+            if (shouldShowPopup && !viewingCallChannel) {
                 if (isGroupCall) {
                     LiveKitGroupCallSurface(
                         callManager = callManager,
                         modifier = Modifier.fillMaxSize(),
-                        remoteFallbackName = callerName
+                        remoteFallbackName = callerName,
+                        forceMinimized = true,
+                        onRestore = {
+                            val target = activeCallChannel?.id
+                            if (target != null) selectedChannelId = target
+                            callManager.isMinimized.value = false
+                        }
                     )
                 } else {
                     CallScreen(
