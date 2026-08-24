@@ -37,6 +37,11 @@ fun VoiceChannelScreen(
         Box(modifier = Modifier.fillMaxSize()) {
             val callState by callManager.callState.collectAsState()
             val scope = rememberCoroutineScope()
+            val activeRoomId by callManager.activeRoomIdFlow.collectAsState()
+            // A connected call in a DIFFERENT channel must not render here — the
+            // global floating pill owns that case; duplicating it per-channel
+            // produced multiple floating bars at once.
+            val isActiveCallInThisRoom = activeRoomId == channel.matrixRoomId || activeRoomId == channel.id
             val activeGroupCallUrl by matrixRepository.observeActiveGroupCall(channel.matrixRoomId).collectAsState("LOADING")
             var pendingVoiceJoin by remember(channel.id) { mutableStateOf(false) }
 
@@ -45,8 +50,8 @@ fun VoiceChannelScreen(
                     pendingVoiceJoin = false
                 }
             }
-            
-            if (callState == CallState.IDLE || callState == CallState.ENDED) {
+
+            if (callState == CallState.IDLE || callState == CallState.ENDED || !isActiveCallInThisRoom) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         if (activeGroupCallUrl == "LOADING") {

@@ -555,6 +555,11 @@ private fun MainAppContent(
                     val callChannel = channels.find { it.matrixRoomId == activeRoomId || it.id == activeRoomId }
                     if (callChannel == null || selectedChannelId != callChannel.id) {
                         callManager.isMinimized.value = true
+                    } else {
+                        // Back inside the call's own channel: the embedded surface renders
+                        // expanded here, and a stale minimized flag would draw a second
+                        // floating bar next to nothing.
+                        callManager.isMinimized.value = false
                     }
                 }
             }
