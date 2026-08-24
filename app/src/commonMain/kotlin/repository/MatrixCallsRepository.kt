@@ -537,7 +537,22 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
 
     private fun isActiveMatrixRtcMember(event: MatrixRtcVisibilityEvent): Boolean {
         if (event.type !in matrixRtcMemberEventTypes) return false
-        return jsonString(event.content, "membership") != "leave"
+        if (jsonString(event.content, "membership") == "leave") return false
+        // Tombstone guard: empty-content state events are REMOVALS in the
+        // sticky-event model (redactions and Element's own clears produce
+        // them). Without this, a graveyard of dead-device tombstones pollutes
+        // the key-exchange roster, the olm distribution target list and the
+        // nudge watcher's missing-peer set.
+        return event.content.containsKey("membership") ||
+            event.content["memberships"] is JsonArray ||
+            hasNonNullContentField(event.content, "device_id") ||
+            hasNonNullContentField(event.content, "membershipID") ||
+            hasNonNullContentField(event.content, "call_id") ||
+            hasNonNullContentField(event.content, "application") ||
+            hasNonNullContentField(event.content, "foci_preferred") ||
+            hasNonNullContentField(event.content, "focus_active") ||
+            hasNonNullContentField(event.content, "foci_active") ||
+            hasNonNullContentField(event.content, "capabilities")
     }
 
     private fun expiresRemainingMs(event: MatrixRtcVisibilityEvent): Long? {
