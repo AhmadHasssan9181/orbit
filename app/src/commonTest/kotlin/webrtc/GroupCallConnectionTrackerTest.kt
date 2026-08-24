@@ -118,6 +118,46 @@ class GroupCallConnectionTrackerTest {
     }
 
     @Test
+    fun joiningProgressStampExtendsMembershipDeadline() {
+        tracker.begin()
+        clockMs += GroupCallConnectionTracker.MEMBERSHIP_TIMEOUT_MS + 1
+
+        // Without a stamp the breached Joining deadline gives up…
+        assertEquals(
+            TrackerDecision.GiveUp,
+            tracker.evaluateDeadlines(clockMs, videoRequested = false, remoteMediaExpected = false)
+        )
+
+        // …but stamping progress opens a fresh window instead.
+        tracker.noteJoiningProgress()
+        assertEquals(
+            TrackerDecision.None,
+            tracker.evaluateDeadlines(clockMs, videoRequested = false, remoteMediaExpected = false)
+        )
+
+        clockMs += GroupCallConnectionTracker.MEMBERSHIP_TIMEOUT_MS + 1
+        assertEquals(
+            TrackerDecision.GiveUp,
+            tracker.evaluateDeadlines(clockMs, videoRequested = false, remoteMediaExpected = false)
+        )
+    }
+
+    @Test
+    fun joiningProgressStampIsNoOpAfterJoining() {
+        tracker.begin()
+        tracker.onMembershipPublished(true)
+        clockMs += 5_000
+
+        tracker.noteJoiningProgress()
+        // Joined deadline must NOT have been reset by the stamp.
+        clockMs += GroupCallConnectionTracker.CONNECT_TIMEOUT_MS + 1
+        assertEquals(
+            TrackerDecision.GiveUp,
+            tracker.evaluateDeadlines(clockMs, videoRequested = false, remoteMediaExpected = true)
+        )
+    }
+
+    @Test
     fun soloVideoCallSettlesToInCall() {
         tracker.begin()
         tracker.onMembershipPublished(true)
