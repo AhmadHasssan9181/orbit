@@ -1396,6 +1396,12 @@ void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track, const
                                               << " recv=" << inbound->received.packets_received
                                               << " lost=" << inbound->received.packets_lost
                                               << " jitterMs=" << static_cast<long long>(inbound->received.jitter * 1000.0)
+                                              << " jbTargetMs=" << static_cast<long long>(inbound->inbound.jitter_buffer_target_delay * 1000.0)
+                                              << " jbAvgMs=" << (inbound->inbound.jitter_buffer_emitted_count > 0
+                                                    ? static_cast<long long>(inbound->inbound.jitter_buffer_delay * 1000.0 /
+                                                        static_cast<double>(inbound->inbound.jitter_buffer_emitted_count))
+                                                    : -1LL)
+                                              << " jbMinMs=" << static_cast<long long>(inbound->inbound.jitter_buffer_minimum_delay * 1000.0)
                                               << " concealedSamples=" << inbound->inbound.concealed_samples
                                               << " silentConcealed=" << inbound->inbound.silent_concealed_samples
                                               << " concealEvents=" << inbound->inbound.concealment_events
