@@ -1,11 +1,30 @@
 package ui.screen.call
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ui.theme.CosmicTokens
+import ui.icons.OrbitIcons
 
 import ui.screen.auth.*
 import ui.screen.settings.*
@@ -24,22 +43,29 @@ fun CallGrid(
     modifier: Modifier = Modifier
 ) {
     if (nodes.isEmpty()) {
-        Box(modifier = modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
-            androidx.compose.material3.Text(
+        Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(
                 "Waiting for participants...",
-                color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.4f),
+                color = Color.White.copy(alpha = 0.4f),
                 fontSize = 14.sp
             )
         }
         return
     }
 
+    // Multiple people can share at once: every screen share competes for ONE
+    // spotlight slot and the pager arrows shift between them. Extra shares are
+    // no longer demoted to tiny thumbnails.
+    val screenShareNodes = nodes.filter { it.isScreenShare }
+    val nonShareNodes = nodes.filter { !it.isScreenShare }
+    var sharePage by remember { mutableStateOf(0) }
+    val clampedPage = if (screenShareNodes.isEmpty()) 0 else sharePage.coerceIn(0, screenShareNodes.lastIndex)
+    val spotlightShareNode = screenShareNodes.getOrNull(clampedPage)
+
     // ── Focus Mode: spotlight one participant, thumbnails on side ──
     if (layoutMode == CallLayoutMode.Focus && nodes.size >= 2) {
-        // Spotlight = first screen share, else remote, else first node
-        val spotlightNode = nodes.find { it.isScreenShare }
-            ?: nodes.find { it.id == "remote" }
-            ?: nodes.first()
+        // Spotlight = paged screen share, else remote camera, else first node
+        val spotlightNode = spotlightShareNode ?: nodes.find { it.id == "remote" } ?: nodes.first()
 
         val thumbnailNodes = nodes.filter { it.id != spotlightNode.id }
 
@@ -48,9 +74,12 @@ fun CallGrid(
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             // Main spotlight
-            VideoNodeCard(
-                spotlightNode,
-                tokens,
+            ShareSpotlightBox(
+                node = spotlightNode,
+                shareCount = screenShareNodes.size,
+                selectedPage = clampedPage,
+                onPageChange = { sharePage = it },
+                tokens = tokens,
                 modifier = Modifier
                     .weight(3f)
                     .fillMaxHeight()
@@ -93,19 +122,26 @@ fun CallGrid(
         }
 
         nodes.size == 2 -> {
-            // Two participants — side by side or stacked based on screen share
-            val hasScreenShare = nodes.any { it.isScreenShare }
-
-            if (hasScreenShare) {
-                // Screen share gets more space
+            if (screenShareNodes.isNotEmpty()) {
+                // Screen share gets more space (pager shifts between sharers;
+                // two simultaneous shares with no camera used to crash here).
                 Column(
                     modifier = modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    val screenNode = nodes.find { it.isScreenShare }!!
-                    val otherNode = nodes.find { !it.isScreenShare }!!
-                    VideoNodeCard(screenNode, tokens, modifier = Modifier.weight(2.5f).fillMaxWidth())
-                    VideoNodeCard(otherNode, tokens, modifier = Modifier.weight(1f).fillMaxWidth())
+                    ShareSpotlightBox(
+                        node = spotlightShareNode ?: nodes.first(),
+                        shareCount = screenShareNodes.size,
+                        selectedPage = clampedPage,
+                        onPageChange = { sharePage = it },
+                        tokens = tokens,
+                        modifier = Modifier
+                            .weight(if (nonShareNodes.isEmpty()) 1f else 2.5f)
+                            .fillMaxWidth()
+                    )
+                    nonShareNodes.firstOrNull()?.let { other ->
+                        VideoNodeCard(other, tokens, modifier = Modifier.weight(1f).fillMaxWidth())
+                    }
                 }
             } else {
                 // Equal side-by-side
@@ -121,22 +157,28 @@ fun CallGrid(
         }
 
         else -> {
-            // 3+ participants
-            val screenShareNode = nodes.find { it.isScreenShare }
-
-            if (screenShareNode != null) {
-                // Big screen share on top, thumbnails below
+            if (screenShareNodes.isNotEmpty()) {
+                // Big screen share on top (paged), thumbnails below
                 Column(
                     modifier = modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    VideoNodeCard(screenShareNode, tokens, modifier = Modifier.weight(2.5f).fillMaxWidth())
-                    Row(
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        nodes.filter { !it.isScreenShare }.forEach { node ->
-                            VideoNodeCard(node, tokens, modifier = Modifier.weight(1f).fillMaxHeight())
+                    ShareSpotlightBox(
+                        node = spotlightShareNode ?: nodes.first(),
+                        shareCount = screenShareNodes.size,
+                        selectedPage = clampedPage,
+                        onPageChange = { sharePage = it },
+                        tokens = tokens,
+                        modifier = Modifier.weight(2.5f).fillMaxWidth()
+                    )
+                    if (nonShareNodes.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            nonShareNodes.forEach { node ->
+                                VideoNodeCard(node, tokens, modifier = Modifier.weight(1f).fillMaxHeight())
+                            }
                         }
                     }
                 }
@@ -164,5 +206,94 @@ fun CallGrid(
                 }
             }
         }
+    }
+}
+
+/**
+ * Spotlight slot for a screen-share node with prev/next arrows overlaid when
+ * more than one person is sharing. Wraps around so the arrows always work.
+ */
+@Composable
+private fun ShareSpotlightBox(
+    node: RenderNode,
+    shareCount: Int,
+    selectedPage: Int,
+    onPageChange: (Int) -> Unit,
+    tokens: CosmicTokens,
+    modifier: Modifier = Modifier
+) {
+    Box(modifier = modifier) {
+        VideoNodeCard(node, tokens, modifier = Modifier.fillMaxSize())
+        if (shareCount > 1) {
+            SharePagerArrows(
+                page = selectedPage,
+                count = shareCount,
+                onPageChange = onPageChange,
+                modifier = Modifier.matchParentSize()
+            )
+        }
+    }
+}
+
+@Composable
+private fun SharePagerArrows(
+    page: Int,
+    count: Int,
+    onPageChange: (Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(modifier = modifier) {
+        PagerArrowButton(
+            icon = OrbitIcons.ChevronLeft,
+            contentDescription = "Previous shared screen",
+            modifier = Modifier.align(Alignment.CenterStart).padding(start = 10.dp),
+            onClick = { onPageChange((page - 1 + count) % count) }
+        )
+        PagerArrowButton(
+            icon = OrbitIcons.ChevronRight,
+            contentDescription = "Next shared screen",
+            modifier = Modifier.align(Alignment.CenterEnd).padding(end = 10.dp),
+            onClick = { onPageChange((page + 1) % count) }
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 10.dp)
+                .background(Color(0xFF111214).copy(alpha = 0.75f), RoundedCornerShape(50))
+                .padding(horizontal = 10.dp, vertical = 4.dp)
+        ) {
+            Text(
+                text = "${page + 1} / $count",
+                color = Color.White.copy(alpha = 0.75f),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium
+            )
+        }
+    }
+}
+
+@Composable
+private fun PagerArrowButton(
+    icon: ImageVector,
+    contentDescription: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val isHovered by interaction.collectIsHoveredAsState()
+    IconButton(
+        onClick = onClick,
+        modifier = modifier
+            .hoverable(interaction)
+            .size(36.dp)
+            .background(Color(0xFF111214).copy(alpha = if (isHovered) 0.85f else 0.55f), CircleShape)
+            .border(1.dp, Color.White.copy(alpha = 0.08f), CircleShape)
+    ) {
+        Icon(
+            icon,
+            contentDescription = contentDescription,
+            tint = Color.White.copy(alpha = 0.9f),
+            modifier = Modifier.size(18.dp)
+        )
     }
 }
