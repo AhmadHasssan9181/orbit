@@ -1,14 +1,23 @@
 package ui.screen.call
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,6 +43,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -112,7 +122,6 @@ fun LiveKitGroupCallSurface(
                 groupConnection.attempt
             ),
             participantCount = if (totalParticipants > 0) totalParticipants else 1,
-            accentColor = tokens.Accent,
             isMuted = isMuted,
             onToggleMute = { callManager.toggleMute(!isMuted) },
             onRestore = onRestore ?: { callManager.isMinimized.value = false },
@@ -375,7 +384,6 @@ private fun GroupCallMiniView(
     callName: String,
     stageLabel: String,
     participantCount: Int,
-    accentColor: Color,
     isMuted: Boolean,
     onToggleMute: () -> Unit,
     onRestore: () -> Unit,
@@ -392,88 +400,96 @@ private fun GroupCallMiniView(
     }
 
     Box(modifier = modifier.wrapContentSize(Alignment.BottomEnd)) {
-        Surface(
-            shape = RoundedCornerShape(24.dp),
-            color = Color.Transparent,
-            shadowElevation = 16.dp,
-            modifier = Modifier
-                .padding(24.dp)
-                .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
-                .pointerInput(Unit) {
-                    detectDragGestures { change, dragAmount ->
-                        change.consume()
-                        offsetX += dragAmount.x
-                        offsetY += dragAmount.y
-                    }
-                }
+        val entranceState = remember { MutableTransitionState(false).apply { targetState = true } }
+        AnimatedVisibility(
+            visibleState = entranceState,
+            enter = fadeIn(tween(220)) + slideInVertically(tween(260)) { it / 3 },
+            exit = fadeOut(tween(160)) + slideOutVertically(tween(200)) { it / 3 },
+            modifier = Modifier.align(Alignment.BottomEnd)
         ) {
-            Row(
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = Color.Transparent,
+                shadowElevation = 16.dp,
                 modifier = Modifier
-                    .clickable(onClick = onRestore)
-                    .background(
-                        Brush.horizontalGradient(
-                            listOf(
-                                Color(0xFF1A1B1E).copy(alpha = 0.97f),
-                                Color(0xFF1E1F22).copy(alpha = 0.97f),
-                                Color(0xFF1A1B1E).copy(alpha = 0.97f)
+                    .padding(24.dp)
+                    .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
+                    .pointerInput(Unit) {
+                        detectDragGestures { change, dragAmount ->
+                            change.consume()
+                            offsetX += dragAmount.x
+                            offsetY += dragAmount.y
+                        }
+                    }
+            ) {
+                Row(
+                    modifier = Modifier
+                        .clickable(onClick = onRestore)
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(
+                                    Color(0xFF1A1B1E).copy(alpha = 0.97f),
+                                    Color(0xFF1E1F22).copy(alpha = 0.97f),
+                                    Color(0xFF1A1B1E).copy(alpha = 0.97f)
+                                )
                             )
                         )
-                    )
-                    .border(1.dp, Color.White.copy(alpha = 0.06f), RoundedCornerShape(24.dp))
-                    .padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                LiveDot(reconnecting = connection.stage == GroupCallStage.Reconnecting)
-
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(
-                        text = callName,
-                        color = Color.White,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 13.sp,
-                        maxLines = 1
-                    )
-                    Text(
-                        text = subtitle,
-                        color = Color.White.copy(alpha = 0.5f),
-                        fontSize = 11.sp,
-                        maxLines = 1
-                    )
-                }
-
-                Row(
+                        .border(1.dp, Color.White.copy(alpha = 0.06f), RoundedCornerShape(24.dp))
+                        .padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Icon(
-                        OrbitIcons.Members,
-                        contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.45f),
-                        modifier = Modifier.size(12.dp)
+                    LiveDot(reconnecting = connection.stage == GroupCallStage.Reconnecting)
+
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = callName,
+                            color = Color.White,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.sp,
+                            maxLines = 1
+                        )
+                        Text(
+                            text = subtitle,
+                            color = Color.White.copy(alpha = 0.5f),
+                            fontSize = 11.sp,
+                            maxLines = 1
+                        )
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            OrbitIcons.Members,
+                            contentDescription = null,
+                            tint = Color.White.copy(alpha = 0.45f),
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Text(
+                            text = "$participantCount",
+                            color = Color.White.copy(alpha = 0.7f),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
+                    ControlSeparator()
+
+                    MiniPillButton(
+                        icon = if (isMuted) OrbitIcons.MicOff else OrbitIcons.Mic,
+                        contentDescription = if (isMuted) "Unmute" else "Mute",
+                        container = if (isMuted) Color(0xFFF23F42) else Color(0xFF313338),
+                        onClick = onToggleMute
                     )
-                    Text(
-                        text = "$participantCount",
-                        color = Color.White.copy(alpha = 0.7f),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium
+                    MiniPillButton(
+                        icon = OrbitIcons.CallEnd,
+                        contentDescription = "Leave call",
+                        container = Color(0xFFF23F42),
+                        onClick = onLeave
                     )
                 }
-
-                ControlSeparator()
-
-                MiniPillButton(
-                    icon = if (isMuted) OrbitIcons.MicOff else OrbitIcons.Mic,
-                    contentDescription = if (isMuted) "Unmute" else "Mute",
-                    container = if (isMuted) Color(0xFFF23F42) else Color(0xFF313338),
-                    onClick = onToggleMute
-                )
-                MiniPillButton(
-                    icon = OrbitIcons.CallEnd,
-                    contentDescription = "Leave call",
-                    container = Color(0xFFF23F42),
-                    onClick = onLeave
-                )
             }
         }
     }
@@ -502,11 +518,15 @@ private fun MiniPillButton(
     container: Color,
     onClick: () -> Unit
 ) {
+    val hoverInteraction = remember { MutableInteractionSource() }
+    val isHovered by hoverInteraction.collectIsHoveredAsState()
     IconButton(
         onClick = onClick,
         modifier = Modifier
             .size(32.dp)
-            .background(container, CircleShape)
+            .hoverable(hoverInteraction)
+            .background(if (isHovered) container.copy(alpha = 0.85f) else container, CircleShape)
+            .then(if (isHovered) Modifier.scale(1.12f) else Modifier)
     ) {
         Icon(icon, contentDescription = contentDescription, tint = Color.White, modifier = Modifier.size(15.dp))
     }
