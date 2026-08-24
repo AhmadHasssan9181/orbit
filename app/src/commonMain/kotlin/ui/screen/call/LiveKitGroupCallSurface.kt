@@ -67,7 +67,12 @@ private fun memberInfoFor(members: List<OrbitUser>, identity: String?): OrbitUse
 fun LiveKitGroupCallSurface(
     callManager: CallManager,
     modifier: Modifier = Modifier,
-    remoteFallbackName: String = "Participant"
+    remoteFallbackName: String = "Participant",
+    // Overlay hosts (floating popup) always render the compact pill so an active
+    // call can never blanket the whole window and block navigation; the expanded
+    // controls live only in the in-channel surface.
+    forceMinimized: Boolean = false,
+    onRestore: (() -> Unit)? = null
 ) {
     val callState by callManager.callState.collectAsState()
     val nativeReadiness by callManager.nativeMediaReadiness.collectAsState()
@@ -85,7 +90,7 @@ fun LiveKitGroupCallSurface(
     val members by callManager.groupCallMembers.collectAsState()
     val tokens = rememberCosmicTokens()
 
-    if (isMinimized) {
+    if (isMinimized || forceMinimized) {
         val totalParticipants = (members.map { it.id } + remoteParticipants).filter { it.isNotBlank() }.distinct().size
         GroupCallMiniView(
             connection = groupConnection,
@@ -97,7 +102,7 @@ fun LiveKitGroupCallSurface(
             ),
             participantCount = if (totalParticipants > 0) totalParticipants else 1,
             accentColor = tokens.Accent,
-            onRestore = { callManager.isMinimized.value = false },
+            onRestore = onRestore ?: { callManager.isMinimized.value = false },
             onLeave = { callManager.endCall() },
             modifier = modifier
         )
