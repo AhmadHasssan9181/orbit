@@ -47,6 +47,84 @@ wearing a trench coat.
 
 ---
 
+# CIRCLE 0 — THE WIRE
+
+*There are no docs for the deployed matrixRTC format. This section IS the
+docs — reverse-engineered from matrix-js-sdk@84fb28a (develop),
+element-hq/element-call@b51a33c (main) and livekit/client-sdk-js@f3732d1.
+Implement THIS, not MSC4143's future branch text.*
+
+## The join network chain
+
+Joining an encrypted group call touches FOUR services in order. Any stall
+here used to kill the whole join — see [H12](#h12-join-stall--the-watchdog-zombie):
+
+1. **ICE servers** — fetched from room metadata / well-known.
+2. **OpenID token** — `POST /_matrix/client/v3/user/{userId}/openid/request_token` from YOUR homeserver.
+3. **SFU JWT** — token exchanged at the broker (`livekit-jwt.call.matrix.org`). The legacy `/sfu/get` endpoint sets the JWT `sub` to `` `${userId}:${deviceId}` `` raw concat (e.g. `@alice:example.org:JLAFKJWSCS`). **That string is the LiveKit participant identity forever after** — every key slot, every renderer lookup.
+4. **LiveKit WS connect + publish**, then the membership PUT back to Matrix state.
+
+## Matrix endpoints you will suffer against
+
+| Endpoint | Used for | The trap |
+|---|---|---|
+| `POST /_matrix/client/v3/keys/upload` | Own device keys + OTKs | OTK pool starvation is silent; peers' claims fail while everything "looks connected" |
+| `POST /_matrix/client/v3/keys/query` | Fetch peer device identity keys | Warm these BEFORE `encryptOlm` — cold queries delay seed distribution (Round 8) |
+| `POST /_matrix/client/v3/keys/claim` | Claim OTKs to open olm sessions | **CONSUMES the claimed OTK.** A diagnostic self-claim drained our pool to 1 spare. Gate self-probes behind observed-zero-inbound |
+| `PUT /_matrix/client/v3/sendToDevice/m.room.encrypted/{txnId}` | Olm-wrapped key distribution | One payload per DEVICE; per-device granularity or one bad device poisons its user's batch |
+| `GET/PUT /_matrix/client/v3/rooms/{roomId}/state/m.call.member/{stateKey}` | Sticky call membership | This is what the nudge clears + republishes. Sticky TTL ≈ **12h legacy**: crashed clients stay "members" for hours |
+| `GET /_matrix/client/v3/sync` | Everything arrives here | Empty-content m.call.member events = TOMBSTONES/removals, not members |
+| Room state `m.room.encryption` | Gate for E2EE media | Presence ⇒ enable E2EE at connect (PER_PARTICIPANT mode); SHARED_KEY only for URL-password rooms |
+
+## The key event (deployed schema)
+
+Event type **`io.element.call.encryption_keys`** (PLURAL), wrapped in Olm
+per-device sessions, transported ONLY as to-device. Room-event transport was
+disabled 2025-10 (#4929) and REMOVED 2026-02 (#5119) — don't look for it.
+
+```json
+{
+  "keys":    {"index": 0, "key": "<base64 PADDED of 16 raw bytes>"},
+  "room_id": "!r:s",
+  "member":  {"id": "<memberId>", "claimed_device_id": "DEVICE"},
+  "session": {"call_id": "", "application": "m.call", "scope": "m.room"},
+  "sent_ts": 1730000000000
+}
+```
+
+- **Per-DEVICE sender keys, NOT one group key.** Each device: 16 CSPRNG bytes, index starts 0, `(prev+1)%256`.
+- `member.id` fallback convention: `"${sender}:${device_id}"`.
+- Emit PADDED base64; accept padded AND unpadded on read.
+- Rotation rules (RTCEncryptionManager.ts): leaver ⇒ rotate IMMEDIATELY + redistribute to ALL remaining; joiner ⇒ resend current key if age < 10_000ms (`keyRotationGracePeriodMs`) else rotate; after sending a CHANGED key sleep ~1000ms (`useKeyDelay`) before using locally; FIRST key distributes + activates immediately.
+- Receiver dedup: per (participant, index) keep NEWEST sent_ts — that's Orbit's `OutdatedKeyFilter`.
+- Old Element peers (pre-2025-07 manager) used 3000/5000ms delays but the SAME event family/schema — compatible.
+- The future stable format `m.rtc.encryption_key` (32-byte keys) exists only as MSC4143 branch text. NOT SHIPPED. Ignore for interop.
+
+## LiveKit mapping & the crypto chain (where bugs go to hide)
+
+- **PER-PARTICIPANT key slots**: `keyProvider.setKey(participantIdentity, keyBytes, index)` — NEVER the shared-key slot. Identity = JWT `sub` = `mxid:device`. Log `localParticipant->identity()` at connect and VERIFY it equals mxid:device, or every downstream mapping silently misroutes.
+- Hashed identity mode (`unpaddedBase64(SHA256(JSON.stringify([userId,deviceId,memberId])))`) exists only in sticky/"Matrix 2.0" deployments (`m.rtc.member` events) — not today's default.
+- The 16 distributed bytes are **RAW key material**. LiveKit derives the frame key itself: HKDF-SHA256(salt=UTF8(`"LKFrameEncryptionKey"`), info=128 ZERO bytes) → AES-GCM-128. NO extra Matrix-side derivation — adding one is how you get perfectly-formed undecryptable traffic.
+- IV: 12 random bytes per frame. Unencrypted leading bytes: audio=1 (Opus TOC), VP8 key=10, delta=3. Ratchet window 10, key ring 256, tolerate 10 consecutive failures.
+
+> ⚠️ **NATIVE TRAP**: `livekit-sdk-windows-x64-0.4.1` `KeyProviderOptions`
+> DEFAULTS TO PBKDF2. Element's JS worker ALWAYS uses HKDF. You MUST set
+> `key_derivation_function = KeyDerivationFunction::HKDF` explicitly (plus
+> `ratchet_window_size=10`, `key_ring_size≈256` to mirror EC) — or frames
+> never decrypt and every human involved questions their sanity.
+> `E2EEOptions{encryption_type=GCM}` goes in `RoomOptions::encryption` BEFORE
+> connect; `E2EEManager::setEnabled(true)` post-connect.
+
+## Membership event validation
+
+Modern js-sdk `checkSessionsMembershipData` REQUIRES content fields
+`device_id`, `call_id`, `application` (`"m.call"`), `focus_active`;
+`devices[]` is optional. Recipients parse out per-membership deviceId.
+Anything failing validation is either ancient garbage or a tombstone —
+exclude it from rosters, targets, and counts.
+
+---
+
 # CIRCLE I — E2EE MEDIA KEYS
 
 *The deepest circle. Here be olm events, ratchets, and peers that lie.*
@@ -85,6 +163,17 @@ republish, see below). Stamps `lastNudgeMs` so the reactive watcher can't
 double-fire inside its cooldown. Keeps its own budget slot; healthy rooms log
 `settle check: N peer key(s) already received` and skip.
 
+The whole nudge budget lives in five numbers (`CallMediaKeyExchange.kt`
+companion):
+
+```kotlin
+const val NUDGE_WATCH_INTERVAL_MS = 10_000L  // reactive watcher cadence
+const val NUDGE_SETTLE_DELAY_MS   = 5_000L   // one-shot settle check after join
+const val NUDGE_GRACE_MS          = 45_000L  // reactive wait for FIRST peer key
+const val NUDGE_COOLDOWN_MS       = 90_000L  // minimum spacing between nudges
+const val NUDGE_MAX_PER_CALL      = 2        // total membership churn budget/call
+```
+
 **Prove it:** Silent peer → nudge fires ~5s after join → their key arrives
 within ~1s → e2ee state goes 4(MissingKey)→1(Ok).
 
@@ -112,6 +201,18 @@ rotation would corrupt installs). `OutdatedKeyFilter` runs BEFORE the hook, so
 resends carry no new index and cannot ping-pong between two Orbit peers.
 `/keys/query` warms unknown sender devices pre-encryptOlm. 3s per-device rate
 guard.
+
+The hook's contract (signature + invariants — read the body before touching):
+
+```kotlin
+private fun maybeReplyWithOwnKey(sender: String, claimedDevice: String)
+```
+
+- Fires ONLY for freshly ACCEPTED peer key events — `OutdatedKeyFilter` runs
+  upstream, so resends can never carry a new index and cannot ping-pong.
+- Payload+index snapshotted atomically under the roster mutex; `OwnKeyRing`
+  itself stays unlocked (a torn read across a rotation would corrupt installs).
+- One device per send; 3s per-device rate guard.
 
 **Prove it:** Room where a peer resets their ring mid-call → they now receive
 our current index within seconds of sending us anything.
@@ -181,6 +282,19 @@ exchange code. Per-device granularity: partition ready/missing BEFORE
 `encryptOlm` — one bad device must not poison its whole user's batch (that
 silently dropped entire users, including the quiet ones you least suspect).
 
+The law, in code shape:
+
+```kotlin
+try {
+    distribute(snapshot)
+} catch (e: CancellationException) {
+    throw e   // NEVER swallow — a swallowed cancel leaves a zombie collector
+              // that keeps logging "rotating key" after "stopped"
+} catch (e: Exception) {
+    log("distribution failed", e)
+}
+```
+
 ## Trixnity shape traps (they cost real hours)
 
 - `ClaimKeys.Response.oneTimeKeys` is `Map<UserId, Map<String /*DEVICE id*/,
@@ -196,6 +310,13 @@ silently dropped entire users, including the quiet ones you least suspect).
   restructure with `.onFailure{}.getOrNull() ?: continue`.
 - OlmDecrypter notifies ALL subscribers of every decrypted event; filter by
   type yourself. `OutdatedKeyFilter.accept` correctly passes first receipts.
+- `POST /keys/claim` **CONSUMES** the claimed OTK. A diagnostic self-claim
+  drains your own pool (observed live: `otkCount=1` spare left). Gate any
+  self-probe behind "zero inbound olm observed"; replenishment cadence is
+  trixnity's business, not yours to assume.
+- Sync liveness needs proving too: the raw sync probe logs
+  `sync probe alive batch=N events=M olmSoFar=K` heartbeats — check them
+  before declaring "server never delivered".
 
 ---
 
@@ -240,6 +361,35 @@ Stage ladder for orientation: Idle → Joining → Joined → Connected →
 AudioPublished → VideoPublished → InCall (+ Reconnecting/Failed). Watchdog
 polls `evaluateDeadlines()` every 500ms.
 
+The progress stamp — the whole trick, verbatim from
+`GroupCallConnectionTracker.kt`:
+
+```kotlin
+fun noteJoiningProgress() {
+    if (terminal()) return
+    if (_connection.value.stage == GroupCallStage.Joining) stageEnteredAtMs = nowMs()
+}
+```
+
+The post-connect zombie guard in `CallManager` (condensed to its shape):
+
+```kotlin
+var connectOk = false
+for (attempt in 1..MAX_CONNECT_ATTEMPTS) {
+    connectOk = tryConnect()
+    if (connectOk || groupConnectionTracker.connection.value.stage == GroupCallStage.Failed) break
+}
+if (groupConnectionTracker.connection.value.stage == GroupCallStage.Failed) {
+    // Watchdog gave up mid-connect, yet the native session may STILL have
+    // completed. Tearing down even on success is the entire point — this is
+    // zombie prevention, not failure handling.
+    println("WARN [CallManager] Join aborted: call already failed; tearing down native session")
+    livekit.disconnectFromLiveKit(userInitiated = false)
+    return false
+}
+finalizeGroupJoin(roomId, callId, isVideo, authResponse, readiness, roomEncrypted)
+```
+
 ## H10 — The overlay trap & random call closes
 
 **You see:** Joining a room puts the call surface over the WHOLE window with
@@ -282,6 +432,20 @@ post-drain recovery gate lowered to `kStarvationReprimeSamples = 960` (20ms);
 starved-flag re-gates only after a true hungry tick. MIXSTAT gained `drops=`
 (overflow trims) and `starved=` counts.
 
+The fix in the mixer (`orbit_livekit_audio.cpp`), verbatim core:
+
+```cpp
+constexpr std::size_t kStarvationReprimeSamples = kSamplesPerChannel * 2; // 20 ms top-up after a true drain
+
+// latch ONCE at full depth — never demand the full 80ms again mid-call
+if (!queue->startupPrimed && queue->pcm.size() >= kTargetParticipantQueueSamples) {
+    queue->startupPrimed = true;
+}
+const std::size_t requiredDepth = queue->startupPrimed
+    ? kStarvationReprimeSamples      // 20ms is inaudible as a hole
+    : kTargetParticipantQueueSamples; // full depth only for cold start
+```
+
 **Related landmine — padded SIDs:** the SDK sometimes returns sids with
 trailing whitespace padding (`TR_AMsm2zYqaRtG4f   `). Padded-vs-clean
 comparisons duplicate decoders summing delayed copies = another garble source.
@@ -315,6 +479,13 @@ by ~3min; every key rotation re-fires it.
 holds an inflated target and decays over minutes. Our pipeline holds ≤160ms
 (mixer cap), network is clean ⇒ residual is theirs. Every rotation restarts
 peak-mode.
+
+**Compounding trigger — the cold-decode storm:** installing the FIRST peer
+key activates decrypt+decode across ALL tiles simultaneously. MIXSTAT logged
++394k samples trimmed in ~12s (`droppedOldest` up to 167/window,
+`play.played` collapsing to 16) = a process-wide CPU hole right when latency
+matters most. The H11 tile-conversion throttle shrinks the blast radius but
+the storm still exists at key-activation moment.
 
 **Shipped:** RXSTAT carries jbTargetMs/jbAvgMs/jbMinMs (per-frame averages).
 **Next lever (unimplemented):** one-shot AUDIO resubscribe recovery when
@@ -393,6 +564,16 @@ stayed resident in the tray. The "zombie" was the app, alive and well, invisible
 3. Main.kt `quitOrbit()` local fun INSIDE the application{} scope:
    armForcedExitWatchdog (5s daemon → Runtime.halt) → hook → exitApplication().
    Wired to ✕/titlebar close and tray Quit.
+
+The quit path, verbatim shape from `Main.kt`:
+
+```kotlin
+fun quitOrbit() {          // LOCAL fun inside application{} — see Kotlin trap below
+    armForcedExitWatchdog()                             // 5s daemon → Runtime.halt(0)
+    webrtc.CallShortcuts.onAppQuitRequested?.invoke()   // publishes MSC3401 leave if in call
+    exitApplication()                                   // ApplicationScope extension
+}
+```
 
 **Kotlin trap:** `exitApplication` is an ApplicationScope EXTENSION — a
 top-level fun cannot resolve it. Keep quitOrbit local or pass the scope.
@@ -521,6 +702,22 @@ Do NOT file bugs against these:
    sleep.
 6. **Native truth**: DLL timestamps over findstr output; SDK headers under
    `app/build/jni/_deps/livekit-sdk/.../include/livekit/`.
+
+### Log-grep recipe card
+
+| Question | Grep for |
+|---|---|
+| Who ended the call? | `endCall invoked` (attribution chain follows) |
+| Did the settle check run? | `settle check:` |
+| Nudge fired? | `leave+rejoin` / `forcing membership leave+rejoin attempt=` |
+| Raw inbound olm arriving at all? | `raw olm to-device #` |
+| Sync loop alive? | `sync probe alive batch=` |
+| Peer key installs | `e2ee participant key installed` / `peer key sender=` |
+| Native E2EE state per participant | `EncryptionState` codes: New=0 Ok=1 EncryptionFailed=2 DecryptionFailed=3 MissingKey=4 KeyRatcheted=5 InternalError=6 |
+| Mixer health | `MIXSTAT` (depths, `starved=`, `drops=`) |
+| RX jitter buffer | `RXSTAT` (`jbTarget/Avg/Min`) — divide by emitted_count! |
+| Watchdog verdicts during join | `GiveUp` / `Join aborted` / `noteJoiningProgress` effects |
+| Leave actually published on quit? | `invoke$quitOrbit` → `invoke$closeRequested` → endCall chain |
 
 ---
 
