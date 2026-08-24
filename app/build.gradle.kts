@@ -129,6 +129,25 @@ compose.desktop {
             "--add-opens", "java.base/java.lang=ALL-UNNAMED"
         )
         jvmArgs += orbitAudioJvmArgs
+
+        nativeDistributions {
+            targetFormats(org.jetbrains.compose.desktop.application.dsl.TargetFormat.Msi)
+            packageName = "Orbit"
+            packageVersion = "0.1.0"
+            description = "Orbit — Matrix voice/video calls client"
+            vendor = "Orbit"
+
+            // Trixnity/Ktor/Koin/Room rely on runtime services + reflection;
+            // module detection misses them, so ship everything.
+            includeAllModules = true
+
+            windows {
+                menu = true
+                shortcut = true
+                dirChooser = true
+                upgradeUuid = "7f3c2a10-52d4-4b8e-9c61-0a5e8d2f4b17"
+            }
+        }
     }
 }
 
