@@ -54,6 +54,13 @@ Start from the [triage table](#0-triage-table), jump to the entry, read the
 root cause even if you think you know it. Half of these bugs were *two* bugs
 wearing a trench coat.
 
+*Pick a circle. Any circle. They're all on fire.*
+
+**Related scrolls in this dungeon:** `CALLS_MASTER_PLAN.md` (the campaign
+itself), `ELEMENT_CALL_ENDPOINTS.md` (wire protocol archaeology, verified
+against Element sources), `headache_medicine.md` (UI architecture map),
+`LIVEKIT_CPP_AUDIO_BRIDGE.md` (native bridge notes).
+
 ---
 
 ## 0. Triage table
@@ -70,11 +77,16 @@ wearing a trench coat.
 | RAM eats 20 GB in calls | [H11](#h11-the-20gb-ram-hog) |
 | Closing the app leaves a 3–4 GB java.exe | [H13](#h13-the-window-close-zombie-jvm) |
 | Packaging/build fails or MSI acts weird | [Circle V](#circle-v-packaging-and-release) |
+| Audio works but a peer's video never renders | [Rounds 6–7](#rounds-67--heard-but-not-seen-the-downgrade-mystery) |
 | Log line looks terrifying | [The Bestiary](#the-bestiary-benign-log-noise) first |
+| What's still broken or unbuilt? | [Unfinished Business](#unfinished-business) |
 
 ---
 
 # CIRCLE 0 — THE WIRE
+
+> 🕯️ *The format below is what IS deployed. The spec is what SHOULD be.
+> When paper and wire disagree, believe the corpse holding the packet captures.*
 
 *There are no docs for the deployed matrixRTC format. This section IS the
 docs — reverse-engineered from matrix-js-sdk@84fb28a (develop),
@@ -154,6 +166,10 @@ exclude it from rosters, targets, and counts.
 
 # CIRCLE I — E2EE MEDIA KEYS
 
+> 🕯️ *Here speak the key-exchange demons. Their native tongue is olm,
+> their love language is membership diffs, and their favorite meal is a
+> developer's weekend.*
+
 *The deepest circle. Here be olm events, ratchets, and peers that lie.*
 
 ## The matrixRTC wilderness survival rules
@@ -174,6 +190,32 @@ Burn these into your brain before touching any key-exchange code:
    instantaneous values. See [H6-RX](#the-jitter-buffer-lie).
 6. In cancellable coroutine code, **always rethrow `CancellationException`
    before any generic catch / `runCatching` swallow** (see Round 8).
+
+## Rounds 6–7 — heard but not seen (the downgrade mystery)
+
+**You see:** Peers hear AND see Orbit, including screen share. Orbit hears
+peers but renders NO peer video. Log shows exactly ONE
+`e2ee participant key installed` line — your OWN identity — and zero
+`peer key sender=` lines all session. Native state for the peer sits at
+4(MissingKey) forever.
+
+**It is:** Peer keys never reached the native KeyProvider. But hold on to the
+OPEN CONTRADICTION that makes this entry worth reading: the user HEARD peers
+perfectly with ZERO peer keys installed. Two surviving explanations:
+(a) Element silently downgrades a participant to plaintext when it can't find
+their key, or (b) Orbit's custom audio path bypasses the frame cryptor while
+video cannot. **Lesson: do not assume E2EE health is symmetric across media
+types** — verify audio and video paths independently.
+
+**Diagnostics deployed during this round** (kept permanently):
+raw sync probe counting inbound `m.room.encrypted` BEFORE trixnity decrypt
+(`raw olm to-device #N` — splits server-never-delivered from
+delivered-but-unreadable); every silent-drop path in handleDecrypted now logs
+(non-UnknownEventContent class, event-type mismatch, other-room,
+outdated-filter reject); `WARN configureE2EE(true)` empty-message lines are
+the benign pre-session race (see Bestiary).
+
+**Files:** `CallMediaKeyExchange.kt`, native E2EE config in the LiveKit bridge.
 
 ## H7 — Settle nudge (silent Element peers)
 
@@ -349,6 +391,10 @@ try {
 
 # CIRCLE II — JOINS & CALL LIFECYCLE
 
+> 🕯️ *Every join is four services holding hands across the internet.
+> When one lets go, production calls it "network issues" and moves on
+> to the next ticket. Do not be production.*
+
 ## H12 — Join stall & the watchdog zombie
 
 **You see:** "Joining…" hangs. Sometimes it fails visibly but audio still
@@ -442,6 +488,10 @@ m.call.hangup. If another unexplained close happens, grep
 ---
 
 # CIRCLE III — MEDIA PIPELINE (NATIVE)
+
+> 🕯️ *Native C++ speaking WASAPI through JNI to a LiveKit SDK that ships
+> with its own opinions. "Works on my machine" means nothing here —
+> your machine IS the weird machine.*
 
 ## BUG-D — Robotic garbled audio (in ONE specific room)
 
@@ -574,6 +624,10 @@ UI video tile conversion sites.
 
 # CIRCLE IV — APP LIFECYCLE
 
+> 🕯️ *Apps ought to die when closed. Ours preferred to haunt — invisible,
+> resident, sipping 4 GB from the tray like a polite poltergeist.
+> Follow the rituals below or join them.*
+
 ## H13 — The window-close zombie JVM
 
 **You see:** Close the app; java.exe lives on in Task Manager eating 3–4GB.
@@ -619,6 +673,24 @@ Benign during shutdown: `VM attach current thread failed` /
 **Files:** `Main.kt`, `webrtc/CallShortcuts.kt`,
 `ui/screen/main/WebRtcEffects.kt`, `repository/SettingsManager.kt`.
 
+## Share pager & the icon forge (UI mines)
+
+Not all wounds bleed audio. Two UI artifacts worth remembering:
+
+- **Share pager** (`CallGrid.kt`): multiple simultaneous screen shares compete
+  for ONE spotlight slot; wrap-around chevron arrows + an "N / M" counter chip
+  (`ShareSpotlightBox` / `SharePagerArrows`). En route it killed a latent NPE:
+  the old code did `nodes.find { !it.isScreenShare }!!` — two shares and zero
+  cameras = guaranteed crash. Guards now handle empty lists; the page index is
+  `remember { mutableStateOf(0) }` so it survives recomposition (CallGrid stays
+  mounted), but ALWAYS re-clamp before indexing — `coerceIn(0, -1)` throws on
+  an empty list.
+- **OrbitIcons** (`ui/icons/OrbitIcons.kt`): hand-rolled SVG paths through
+  `collectionIcon(name, originX, originY, paths)` — the builder viewport is
+  **80×80 with an origin translation**, not Material's 24dp box. Author new
+  icons natively at origin (0,0); if porting a Material path, scale by
+  ×80/24 (the chevrons were made exactly this way).
+
 ## Data & storage map (for "why does it remember X")
 
 | What | Where | File |
@@ -636,6 +708,10 @@ transparently on first read.
 ---
 
 # CIRCLE V — PACKAGING AND RELEASE
+
+> 🕯️ *Packaging: where code you tested becomes a binary you didn't.
+> WiX materializes out of the internet; DLLs mutate byte-by-byte out of
+> pure spite. Trust timestamps, never vibes.*
 
 ## The `buildFeatures` ghost
 
@@ -692,9 +768,27 @@ git restore -- app/src/jvmMain/resources/webrtc-deps/orbit_livekit_audio.dll ^
 
 Unless you actually changed native `.cpp` sources — then the churn IS the change.
 
+## Build internals worth knowing
+
+- **`compileJniBridge`**: finds `vcvars64.bat` across known install paths,
+  else walks `D:\` up to depth 6 hunting for one; CMake + MSVC
+  `MultiThreadedDLL`; copies built DLLs AND LiveKit SDK runtime DLLs into
+  `src/jvmMain/resources/webrtc-deps/`. Falls back to prebuilt DLLs if VS is
+  missing; throws only if neither exists. `jvmProcessResources` depends on it.
+- **`runLiveKitTonePublisher`**: headless tone publisher exe for exercising
+  the audio pipeline without launching the UI. Needs
+  `ORBIT_LIVEKIT_URL`/`ORBIT_LIVEKIT_TOKEN` env vars or `-PlivekitUrl=` /
+  `-PlivekitToken=` props.
+- The JNI bridge task has NO up-to-date checking — it rebuilds (and re-fetched
+  the SDK zip) every invocation. That's why builds are slow and why the DLL
+  churn ritual exists.
+
 ---
 
 # THE BESTIARY — benign log noise
+
+> 🕯️ *Not every monster bites. Some are just ugly. Learn the difference
+> before spending a candle on them.*
 
 Do NOT file bugs against these:
 
@@ -710,6 +804,9 @@ Do NOT file bugs against these:
 ---
 
 # THE TOOLKIT — diagnostic rituals that work
+
+> 🕯️ *These rituals were paid for in hours you will never get back.
+> Use them freely — the lock is already picked.*
 
 1. **WM_CLOSE test**: `taskkill /PID <pid>` WITHOUT `/F`. Poll 12s. This is
    the ✕ click. Never trust shell-tree kills as close-path tests.
@@ -748,7 +845,32 @@ Do NOT file bugs against these:
 
 ---
 
+# UNFINISHED BUSINESS
+
+> 🕯️ *The demons not yet baptized. They know where you sleep. Visit them
+> before they visit you.*
+
+| Front | Status | Where to start |
+|---|---|---|
+| H6 resubscribe recovery | Designed, NOT implemented | One-shot audio resubscribe when jbTargetMs sustains >400ms; guardrails in [H6](#h6--2s-end-to-end-latency-that-never-recovers) |
+| H8-V3 latecomer nudge | Shipped + unit-tested, needs LIVE multi-peer verification | Join as latecomer to a busy encrypted room, measure deaf window |
+| H10 random-close attribution | Instrumentation live, awaiting next incident | Grep `endCall invoked` chain from the run log |
+| H11 RAM under load | Capped + instrumented, verify under 3-person+share load | Read STATS fields; if pendingFin grows → bitmap reuse/dispose path |
+| Cold-decode storm | Throttled (H11), not eliminated | Fires at first peer-key install; revisit if latency regressions return |
+| D1 AEC/AGC speakers test | Untested | Native APM flags (`orbit.apm.*`) exist for this |
+| orbit→element residual TX glitch | Open polish item | Element hears slight artifact; direction-specific |
+| Deploy / Docker validation | Untouched | MatrixRTC focus/livekit broker deployment checks |
+| packI420 direct-buffer reuse + share capture fps cap | Optimization backlog | `LiveKitLocalScreenShareTrack` allocates fresh direct buffers per frame |
+| App icon | No .ico exists | Author one, wire `windows { iconFile = ... }`; default Java cup shows today |
+| GitHub Release publication | Offered, awaiting go-ahead | Public action — upload Orbit-0.1.0.msi to a tagged release |
+| MSI upgrade path in the wild | Mechanism verified via upgradeUuid | Bump packageVersion, install over 0.1.0, confirm in-place upgrade |
+
+---
+
 # THE TEN COMMANDMENTS (lessons, distilled)
+
+> 🕯️ *Ten laws. Zero appeals. Moses got a burning bush; we got merge
+> conflicts.*
 
 1. Peers act on membership DIFFS — recovery must be baked into join, not left
    to watchers.
