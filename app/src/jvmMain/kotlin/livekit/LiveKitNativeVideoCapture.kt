@@ -337,6 +337,7 @@ object LiveKitNativeVideoCapture {
                         timestampNs = timestampNs,
                         rotation = frame.rotation
                     )
+                    CallPathStats.onCameraPreviewPack()
                 }
 
                 if (seq <= FRAME_LOG_LIMIT) {

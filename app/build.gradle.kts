@@ -125,6 +125,7 @@ compose.desktop {
     application {
         mainClass = "ui.screen.MainKt"
         jvmArgs += listOf(
+            "-Xmx2048m",
             "--add-opens", "java.base/java.lang=ALL-UNNAMED"
         )
         jvmArgs += orbitAudioJvmArgs
@@ -132,6 +133,10 @@ compose.desktop {
 }
 
 tasks.withType<JavaExec>().configureEach {
+    // Video calls generate hundreds of MB/s of short-lived frame buffers; without
+    // a cap the default max heap (1/4 of physical RAM) lets RSS balloon past 15 GB
+    // before G1 collects. The live set is well under 1 GB.
+    jvmArgs("-Xmx2048m")
     jvmArgs(orbitAudioJvmArgs)
 }
 

@@ -88,6 +88,7 @@ object LiveKitNativeRemoteVideoRenderer : NativeRemoteVideoSink {
             timestampNs = timestampNs,
             rotation = rotation
         )
+        CallPathStats.onRemoteVideoFrame(buffer.size)
     }
 
     override fun onRemoteVideoTrackRemoved(
