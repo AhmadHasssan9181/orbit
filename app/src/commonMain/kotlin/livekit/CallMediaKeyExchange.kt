@@ -83,6 +83,17 @@ class CallMediaKeyExchange(
 
     // Per-device timestamp of the last reply-on-receive resend (rate/loop guard).
     private val lastReplyToDeviceMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    // Us→them convergence ledger + roster memory. The sweeper re-sends our
+    // current key to any live device whose CONFIRMED delivery index lags
+    // ring.currentIndex — heals peers that diff-only distribution misses
+    // (transient roster leavers like the L18225 flicker that orphaned a peer
+    // for two sessions, mid-call client restarts, deferred devices the retry
+    // watcher never picked back up).
+    private val deliveredIndex = DeliveredKeyIndex()
+    private val knownDevices = java.util.concurrent.ConcurrentHashMap<String, CallDevice>()
+    private val deviceLastSeenMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private var convergeJob: Job? = null
     private val startTimeMs: Long = nowMs()
 
     fun start() {
@@ -156,9 +167,7 @@ class CallMediaKeyExchange(
                 val lastNudge = lastNudgeMs
                 if (lastNudge != 0L && now - lastNudge < NUDGE_COOLDOWN_MS) continue
                 if (nudgesFired >= NUDGE_MAX_PER_CALL) break
-                val missing = targets.filter {
-                    CallMediaKeys.participantIdentity(it.userId, it.deviceId) !in receivedPeerIdentities
-                }
+                val missing = nudgeMissingPeers(targets)
                 if (missing.isEmpty()) continue
                 val callback = nudgeMembership
                 if (callback == null) {
@@ -199,15 +208,65 @@ class CallMediaKeyExchange(
                 )
                 return@launch
             }
+            val livePeers = nudgeMissingPeers(targets)
+            if (livePeers.isEmpty()) {
+                println(
+                    "DEBUG [CallMediaKeyExchange] settle check: ${targets.size} roster device(s) but none " +
+                        "present in the LiveKit room — no settle nudge needed"
+                )
+                return@launch
+            }
             val callback = nudgeMembership ?: return@launch
             settleNudgeFired = true
             lastNudgeMs = nowMs()
             println(
                 "WARN [CallMediaKeyExchange] settle nudge: no peer key ${NUDGE_SETTLE_DELAY_MS / 1000}s after join " +
-                    "(${targets.size} live peer(s)); forcing membership leave+rejoin early"
+                    "(${livePeers.size} live peer(s)); forcing membership leave+rejoin early"
             )
             runCatching { callback() }
                 .onFailure { println("WARN [CallMediaKeyExchange] settle nudge failed: ${it.message}") }
+        }
+        // Convergence sweeper: diff-only distribution is structurally incomplete
+        // in BOTH directions — a device absent from the roster at rotation time
+        // never learns the new index unless it happens to send us a key (reply
+        // path), so it decrypts NOTHING of ours while our RX of it works fine.
+        // Every CONVERGE_INTERVAL_MS, re-send the current key to every live
+        // device whose CONFIRMED delivery index lags ring.currentIndex. Live
+        // = seen in the matrixRTC roster recently OR currently connected in the
+        // LiveKit room (the LiveKit view rescues peers whose membership event
+        // dropped out of the sticky-roster while they are still talking).
+        convergeJob = scope.launch {
+            while (!stopped) {
+                delay(CONVERGE_INTERVAL_MS)
+                if (stopped) break
+                // Snapshot payload+index atomically so a concurrent rotate
+                // cannot split the pair across the sweep.
+                val (payload, keyIndex) = mutex.withLock { currentPayload() to ring.currentIndex }
+                val now = nowMs()
+                val candidates = buildMap<String, CallDevice> {
+                    for ((id, dev) in knownDevices) {
+                        if ((deviceLastSeenMs[id] ?: 0L) >= now - SWEEP_DEVICE_TTL_MS) put(id, dev)
+                    }
+                    val livekitDevices = runCatching {
+                        LiveKitRemoteVideoFrameStore.remoteParticipants.value
+                    }.getOrNull().orEmpty()
+                    for (identity in livekitDevices) {
+                        val dev = callDeviceFromParticipantIdentity(identity) ?: continue
+                        if (dev.userId == ownUserId && dev.deviceId == ownDeviceId) continue
+                        put(CallMediaKeys.participantIdentity(dev.userId, dev.deviceId), dev)
+                    }
+                }
+                val underdelivered = candidates.filterKeys { id ->
+                    deliveredIndex.isUnderdelivered(id, keyIndex)
+                }
+                if (underdelivered.isEmpty()) continue
+                println(
+                    "DEBUG [CallMediaKeyExchange] convergence sweep: resending key index=$keyIndex to " +
+                        "${underdelivered.size} underdelivered device(s) " +
+                        "(${underdelivered.values.map { "${it.userId}:${it.deviceId}" }})"
+                )
+                distribute(payload, underdelivered.values.toSet(), keyIndex)
+            }
         }
         // Devices whose keys were not yet stored when a distribution ran get
         // retried here — WITHOUT blocking membership processing (the round-8
@@ -231,7 +290,8 @@ class CallMediaKeyExchange(
                             "newly-ready device(s)"
                     )
                     pendingRetryDevices.removeAll(ready.toSet())
-                    distribute(currentPayload(), ready.toSet())
+                    val (payload, keyIndex) = mutex.withLock { currentPayload() to ring.currentIndex }
+                    distribute(payload, ready.toSet(), keyIndex)
                 }
             }
         }
@@ -295,6 +355,8 @@ class CallMediaKeyExchange(
         nudgeWatchJob = null
         settleNudgeJob?.cancel()
         settleNudgeJob = null
+        convergeJob?.cancel()
+        convergeJob = null
         println("DEBUG [CallMediaKeyExchange] stopped room=$roomId")
     }
 
@@ -454,7 +516,33 @@ class CallMediaKeyExchange(
                 "DEBUG [CallMediaKeyExchange] reply-on-receive: resending current key " +
                     "index=$keyIndex to $sender:$claimedDevice"
             )
-            distribute(payload, setOf(CallDevice(userId = sender, deviceId = claimedDevice)))
+            distribute(payload, setOf(CallDevice(userId = sender, deviceId = claimedDevice)), keyIndex)
+        }
+    }
+
+    /**
+     * Nudge scope: only devices that are REALLY in the room right now (LiveKit
+     * participant view) AND have never sent us a key. The matrixRTC roster
+     * keeps stale-but-unexpired membership events of crashed clients for hours
+     * (legacy TTL 12 h), which burned the reactive nudge budget on ghost
+     * devices while genuinely keyless peers went unheeded. Falls back to the
+     * full roster if the LiveKit view is empty so a native-wiring regression
+     * can never silence the nudges entirely.
+     */
+    private fun nudgeMissingPeers(targets: Set<CallDevice>): List<CallDevice> {
+        val livekitIds = runCatching { LiveKitRemoteVideoFrameStore.remoteParticipants.value }
+            .getOrNull().orEmpty()
+        return targets.filter { dev ->
+            val identity = CallMediaKeys.participantIdentity(dev.userId, dev.deviceId)
+            val live = livekitIds.isEmpty() || identity in livekitIds
+            live && identity !in receivedPeerIdentities
+        }.also { missing ->
+            if (missing.size < targets.size && livekitIds.isNotEmpty()) {
+                println(
+                    "DEBUG [CallMediaKeyExchange] nudge scope: ${targets.size - missing.size} roster " +
+                        "device(s) not present in the LiveKit room — excluded as ghosts"
+                )
+            }
         }
     }
 
@@ -463,6 +551,12 @@ class CallMediaKeyExchange(
             if (stopped) return
             val targets = all.filterNot { it.userId == ownUserId && it.deviceId == ownDeviceId }.toSet()
             if (targets.isNotEmpty()) ensurePeerDeviceKeys(targets)
+            val seenAt = nowMs()
+            for (dev in targets) {
+                val id = CallMediaKeys.participantIdentity(dev.userId, dev.deviceId)
+                knownDevices[id] = dev
+                deviceLastSeenMs[id] = seenAt
+            }
             val previous = knownTargets
             knownTargets = targets
             if (previous == null) {
@@ -474,7 +568,7 @@ class CallMediaKeyExchange(
                         "DEBUG [CallMediaKeyExchange] distributing initial key index=${ring.currentIndex} " +
                             "to ${targets.size} device(s)"
                     )
-                    distribute(currentPayload(), targets)
+                    distribute(currentPayload(), targets, ring.currentIndex)
                 }
                 return
             }
@@ -494,7 +588,7 @@ class CallMediaKeyExchange(
                         "DEBUG [CallMediaKeyExchange] resending current key to joiners=" +
                             "${joiners.size} (keyAgeMs=${ring.ageMs()} within grace)"
                     )
-                    distribute(currentPayload(), targets)
+                    distribute(currentPayload(), targets, ring.currentIndex)
                 }
                 CallMediaKeys.MembershipReaction.None -> {}
             }
@@ -516,7 +610,8 @@ class CallMediaKeyExchange(
 
     private suspend fun rotateAndDistribute(targets: Set<CallDevice>) {
         ring.rotate()
-        distribute(currentPayload(), targets)
+        val payload = currentPayload()
+        distribute(payload, targets, ring.currentIndex)
         // Element sleeps ~1s after distributing a CHANGED key before using it
         // locally, giving slower peers time to learn it.
         scope.launch {
@@ -527,7 +622,7 @@ class CallMediaKeyExchange(
         }
     }
 
-    private suspend fun distribute(payload: UnknownEventContent, targets: Set<CallDevice>) {
+    private suspend fun distribute(payload: UnknownEventContent, targets: Set<CallDevice>, keyIndex: Int) {
         if (targets.isEmpty()) return
         val olm = olmEncryptor() ?: return
         // encryptOlm is PER DEVICE: (content, userId, deviceId) — the third
@@ -560,8 +655,16 @@ class CallMediaKeyExchange(
                 client.api.user.sendToDevice(mapOf(UserId(userId) to encryptedByDevice))
                     .onFailure { println("WARN [CallMediaKeyExchange] sendToDevice failed for $userId: ${it.message}") }
                     .onSuccess {
+                        // Confirmed delivery: only now may the convergence ledger
+                        // consider this device covered for keyIndex.
+                        for (device in devices) {
+                            deliveredIndex.markDelivered(
+                                CallMediaKeys.participantIdentity(userId, device.deviceId),
+                                keyIndex
+                            )
+                        }
                         println(
-                            "DEBUG [CallMediaKeyExchange] key index=${ring.currentIndex} sent " +
+                            "DEBUG [CallMediaKeyExchange] key index=$keyIndex sent " +
                                 "user=$userId devices=${encryptedByDevice.keys}"
                         )
                     }
@@ -582,6 +685,12 @@ class CallMediaKeyExchange(
         const val NUDGE_COOLDOWN_MS = 90_000L
         const val NUDGE_MAX_PER_CALL = 2
         const val REPLY_ON_RECEIVE_MIN_INTERVAL_MS = 3_000L
+        const val CONVERGE_INTERVAL_MS = 10_000L
+        // Devices only seen in the roster (not currently in the LiveKit room)
+        // stay sweep-eligible for this long after their last roster appearance —
+        // long enough to rescue a peer whose membership event flickered out,
+        // short enough that long-gone devices stop receiving new indexes.
+        const val SWEEP_DEVICE_TTL_MS = 600_000L
     }
 }
 
