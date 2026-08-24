@@ -2,9 +2,36 @@
 
 ### The Orbit Bug Codex — every demon we met in the Matrix wilderness, and how we killed it.
 
-> If you're reading this at 2am because Orbit broke again: breathe.
-> Every bug below was once "impossible", shipped to users, and got fixed.
-> Yours will too.
+---
+
+> ## ⚠️ ABANDON ALL HOPE, YE WHO DEBUG HERE ⚠️
+>
+> **To all those wishing to baptize these demons:** know that thy
+> predecessor came to this wilderness with a full head of hair, a clean
+> commit history, and the arrogance of a man who once fixed a CSS bug in
+> under an hour.
+>
+> The wilderness took payment.
+>
+> Here lies the record of his suffering: **nine rounds of E2EE key exchange**
+> before a single "hello" survived its own encryption. **A watchdog** that
+> executed healthy joins mid-flight, for treason. **A jitter buffer** that
+> honestly reported *39 minutes* of delay, because nobody ever told it that
+> lies must be small. **Peers who lied about existing. Members who were
+> secretly tombstones. Tombstones that still voted in the roster.** And a
+> JVM, thrice slain, that kept attending meetings as a ghost drinking 4 GB
+> of RAM.
+>
+> Hours wasted here: unnumbered. Nights: darker than vodozemac's source
+> tree. Tears: collected in a bucket and reserved for hydrating the CI
+> runners we never built.
+>
+> So if thou art reading this at 2am, weeping softly into thine keyboard —
+> good. That is step one of every fix in this book. Now laugh a little,
+> dry thine eyes, open the triage table, and remember:
+>
+> **Every demon in here was baptized by someone who also wanted to quit.
+> They are all dead. Thou art still compiling. Go forth.** 🕯️
 >
 > — maintained since the first one-way-audio incident, 2026-08
 
