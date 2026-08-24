@@ -361,12 +361,21 @@ class CallManager(
                 return false
             }
             println("DEBUG [CallManager] Token and SFU URL fetched. Publishing MatrixRTC membership before native media...")
+            // The token fetch (OpenID + SFU JWT round trips) can be slow; stamp
+            // the Joining deadline so it only measures the membership publish.
+            groupConnectionTracker.noteJoiningProgress()
             groupCallLivekitIdentity = authResponse.identity
             val membershipVisible = onUpdateGroupCallMembershipCapabilities
                 ?.invoke(roomId, callId, true, false, authResponse.identity) ?: true
             groupConnectionTracker.onMembershipPublished(membershipVisible)
             if (!membershipVisible) {
                 println("ERROR [CallManager] MatrixRTC membership was not visible after publish; aborting join")
+                return false
+            }
+            if (groupConnectionTracker.connection.value.stage == GroupCallStage.Failed) {
+                // The watchdog gave up while the token/membership hops were in
+                // flight — do not start a native session nobody is waiting for.
+                println("WARN [CallManager] Join aborted: watchdog gave up during pre-join steps")
                 return false
             }
             // H1: after a mid-call reconnect the m.call.member TTL hasn't moved —
@@ -406,6 +415,7 @@ class CallManager(
             )
 
             var readiness: livekit.NativeResult<livekit.NativeMediaReadiness>? = null
+            var connectOk = false
             for (attempt in 1..GroupCallConnectionTracker.MAX_CONNECT_ATTEMPTS) {
                 if (attempt > 1) {
                     groupConnectionTracker.noteRetryStarted()
@@ -414,11 +424,22 @@ class CallManager(
                     delay(RETRY_BACKOFF_MS)
                 }
                 readiness = connectOnceWithProgress(isVideo, effectiveIceServers, livekitTokenFetcher, authResponse)
-                val ok = readiness.ok && readiness.value != null &&
+                connectOk = readiness.ok && readiness.value != null &&
                     readiness.value.state == livekit.NativeMediaState.MediaReady &&
                     readiness.value.audioPublished &&
                     readiness.value.acceptingAudioFrames
-                if (ok || groupConnectionTracker.connection.value.stage == GroupCallStage.Failed) break
+                if (connectOk || groupConnectionTracker.connection.value.stage == GroupCallStage.Failed) break
+            }
+            if (groupConnectionTracker.connection.value.stage == GroupCallStage.Failed) {
+                // Watchdog gave up mid-join (even if the session technically
+                // connected afterwards): tear down instead of leaving a zombie
+                // that keeps publishing after the user already saw the failure.
+                println(
+                    "WARN [CallManager] Join aborted: call already failed " +
+                        "(stage=${groupConnectionTracker.connection.value.failedStage}); tearing down native session"
+                )
+                livekit.disconnectFromLiveKit(userInitiated = false)
+                return false
             }
             finalizeGroupJoin(roomId, callId, isVideo, authResponse, readiness, roomEncrypted)
         } catch (e: Exception) {
