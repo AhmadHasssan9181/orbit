@@ -143,8 +143,11 @@ compose.desktop {
 
             windows {
                 menu = true
+                menuGroup = "Orbit"
                 shortcut = true
                 dirChooser = true
+                // Per-user install (no admin/UAC) — friends can just double-click.
+                perUserInstall = true
                 upgradeUuid = "7f3c2a10-52d4-4b8e-9c61-0a5e8d2f4b17"
             }
         }
