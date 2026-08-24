@@ -87,19 +87,30 @@ private fun <T : Any> rememberConvertedRgbaFrame(
     var image by remember { mutableStateOf<ImageBitmap?>(null) }
     val channel = remember { Channel<T>(Channel.CONFLATED) }
     var lastSent by remember { mutableStateOf<T?>(null) }
+    var lastEmitMs by remember { mutableStateOf(0L) }
 
+    // Each conversion allocates a full-frame BufferedImage plus a native Skia
+    // bitmap; at capture rate across several tiles that garbage outpaces
+    // cleanup and drives RSS into the gigabytes. ~20 fps per tile is visually
+    // indistinguishable for call tiles and cuts conversion churn ~4x. The next
+    // arriving frame retries, so a skipped final frame costs nothing.
+    SideEffect {
+        val current = frame
+        if (current != null && current !== lastSent) {
+            val now = System.currentTimeMillis()
+            if (lastEmitMs == 0L || now - lastEmitMs >= 50L) {
+                lastEmitMs = now
+                lastSent = current
+                channel.trySend(current)
+            }
+        }
+    }
     LaunchedEffect(channel) {
         for (f in channel) {
             val bitmap = withContext(Dispatchers.Default) {
                 convert(f).toComposeImageBitmap()
             }
             image = bitmap
-        }
-    }
-    SideEffect {
-        if (frame != null && frame !== lastSent) {
-            lastSent = frame
-            channel.trySend(frame)
         }
     }
     return image

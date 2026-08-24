@@ -28,6 +28,12 @@ object CallPathStats {
     private val playerDroppedOldest = AtomicLong()
     private val playerWriteFailures = AtomicLong()
 
+    private val remoteVideoFrames = AtomicLong()
+    private val remoteVideoBytes = AtomicLong()
+    private val shareFramesPushed = AtomicLong()
+    private val shareBytesPushed = AtomicLong()
+    private val cameraPreviewPacks = AtomicLong()
+
     @Volatile private var reporterThread: Thread? = null
 
     fun onMicFrameRead() { if (enabled) micFramesRead.incrementAndGet() }
@@ -44,6 +50,20 @@ object CallPathStats {
     fun onPlayerIdle() { if (enabled) playerIdlePolls.incrementAndGet() }
     fun onPlayerDroppedOldest() { if (enabled) playerDroppedOldest.incrementAndGet() }
     fun onPlayerWriteFailure() { if (enabled) playerWriteFailures.incrementAndGet() }
+
+    fun onRemoteVideoFrame(bytes: Int) {
+        if (!enabled) return
+        remoteVideoFrames.incrementAndGet()
+        remoteVideoBytes.addAndGet(bytes.toLong())
+    }
+
+    fun onShareFramePushed(bytes: Int) {
+        if (!enabled) return
+        shareFramesPushed.incrementAndGet()
+        shareBytesPushed.addAndGet(bytes.toLong())
+    }
+
+    fun onCameraPreviewPack() { if (enabled) cameraPreviewPacks.incrementAndGet() }
 
     fun ensureReporter() {
         if (!enabled) return
@@ -75,13 +95,28 @@ object CallPathStats {
         val idlePolls = playerIdlePolls.getAndSet(0)
         val dropped = playerDroppedOldest.getAndSet(0)
         val writeFails = playerWriteFailures.getAndSet(0)
+        val rvf = remoteVideoFrames.getAndSet(0)
+        val rvb = remoteVideoBytes.getAndSet(0)
+        val sf = shareFramesPushed.getAndSet(0)
+        val sfb = shareBytesPushed.getAndSet(0)
+        val camPrev = cameraPreviewPacks.getAndSet(0)
+
+        // Heap + pending-finalization numbers make memory behavior measurable:
+        // a heap pinned near max with a rising pendingFin count means bitmap
+        // finalizers can't keep pace with frame churn.
+        val memory = java.lang.management.ManagementFactory.getMemoryMXBean()
+        val heapUsedMb = memory.heapMemoryUsage.used / (1024L * 1024L)
+        val heapMaxMb = memory.heapMemoryUsage.max / (1024L * 1024L)
+        val pendingFinalizations = memory.objectPendingFinalizationCount
 
         // 100 frames/s ≈ healthy per direction at 10 ms frames; played persistently
         // above arrived means the sink consumes faster than production paces.
         println(
             "STATS [CallPathStats/5s] mic.read=$read stalls=$stalls muted=$muted clippedSamples=$clipped | " +
                 "jni.push ok=$pOk fail=$pFail | play.arrived=$arrived play.played=$played underruns=$underruns " +
-                "idlePolls=$idlePolls droppedOldest=$dropped writeFails=$writeFails"
+                "idlePolls=$idlePolls droppedOldest=$dropped writeFails=$writeFails | " +
+                "vid.remote n=$rvf mb=${rvb / (1024L * 1024L)} vid.share n=$sf mb=${sfb / (1024L * 1024L)} " +
+                "camPrev=$camPrev | heap used=${heapUsedMb}MB max=${heapMaxMb}MB pendingFin=$pendingFinalizations"
         )
     }
 }

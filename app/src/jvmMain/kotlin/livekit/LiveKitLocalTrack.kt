@@ -59,6 +59,7 @@ object LiveKitLocalScreenShareTrack {
                 timestampNs = System.nanoTime(),
                 rotation = frame.rotation
             )
+            CallPathStats.onShareFramePushed(packed.remaining())
         }
     }
 
