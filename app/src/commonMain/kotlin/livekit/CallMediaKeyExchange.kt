@@ -57,6 +57,7 @@ class CallMediaKeyExchange(
     private var collectJob: Job? = null
     private var retryWatchJob: Job? = null
     private var nudgeWatchJob: Job? = null
+    private var settleNudgeJob: Job? = null
     private val pendingRetryDevices = java.util.Collections.synchronizedSet(mutableSetOf<CallDevice>())
     private val directQueriedUsers = java.util.Collections.synchronizedSet(mutableSetOf<String>())
     private val keyStore: KeyStore? =
@@ -78,6 +79,7 @@ class CallMediaKeyExchange(
     private val receivedPeerIdentities = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     @Volatile private var nudgesFired = 0
     @Volatile private var lastNudgeMs = 0L
+    @Volatile private var settleNudgeFired = false
     private val startTimeMs: Long = nowMs()
 
     fun start() {
@@ -174,6 +176,36 @@ class CallMediaKeyExchange(
                     .onFailure { println("WARN [CallMediaKeyExchange] membership nudge failed: ${it.message}") }
             }
         }
+        // Early "settle" nudge: Element peers only act on membership DIFFS and a
+        // throttled/backgrounded peer reliably ignores our fresh join while
+        // answering a leave+rejoin cycle within seconds (proven across three
+        // live sessions). If NO peer key has arrived shortly after joining, run
+        // the cycle up front instead of staying deaf until the 45s watcher
+        // grace. Stamps lastNudgeMs so the reactive watcher cannot double-fire
+        // inside its cooldown; keeps its own one-shot slot so the reactive
+        // budget stays available for later-joining silent peers.
+        settleNudgeJob = scope.launch {
+            delay(NUDGE_SETTLE_DELAY_MS)
+            if (stopped || settleNudgeFired) return@launch
+            val targets = knownTargets ?: return@launch
+            if (targets.isEmpty()) return@launch
+            if (receivedPeerIdentities.isNotEmpty()) {
+                println(
+                    "DEBUG [CallMediaKeyExchange] settle check: ${receivedPeerIdentities.size} peer key(s) " +
+                        "already received — no settle nudge needed"
+                )
+                return@launch
+            }
+            val callback = nudgeMembership ?: return@launch
+            settleNudgeFired = true
+            lastNudgeMs = nowMs()
+            println(
+                "WARN [CallMediaKeyExchange] settle nudge: no peer key ${NUDGE_SETTLE_DELAY_MS / 1000}s after join " +
+                    "(${targets.size} live peer(s)); forcing membership leave+rejoin early"
+            )
+            runCatching { callback() }
+                .onFailure { println("WARN [CallMediaKeyExchange] settle nudge failed: ${it.message}") }
+        }
         // Devices whose keys were not yet stored when a distribution ran get
         // retried here — WITHOUT blocking membership processing (the round-8
         // regression: an inline 10s poll delayed the initial seed until it
@@ -258,6 +290,8 @@ class CallMediaKeyExchange(
         retryWatchJob = null
         nudgeWatchJob?.cancel()
         nudgeWatchJob = null
+        settleNudgeJob?.cancel()
+        settleNudgeJob = null
         println("DEBUG [CallMediaKeyExchange] stopped room=$roomId")
     }
 
@@ -500,6 +534,7 @@ class CallMediaKeyExchange(
         const val RETRY_WATCH_INTERVAL_MS = 1_500L
         const val DIAG_ZERO_INBOUND_GRACE_MS = 25_000L
         const val NUDGE_WATCH_INTERVAL_MS = 10_000L
+        const val NUDGE_SETTLE_DELAY_MS = 5_000L
         const val NUDGE_GRACE_MS = 45_000L
         const val NUDGE_COOLDOWN_MS = 90_000L
         const val NUDGE_MAX_PER_CALL = 2
