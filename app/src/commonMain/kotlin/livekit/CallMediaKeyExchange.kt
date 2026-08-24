@@ -103,7 +103,21 @@ class CallMediaKeyExchange(
             }
         }.onFailure { println("WARN [CallMediaKeyExchange] raw sync probe unavailable: ${it.message}") }
             .getOrNull()
-        scope.launch { diagnoseOwnKeyServerState() }
+        // /keys/claim CONSUMES one of our server-side one-time keys and trixnity
+        // replenishment is unverified (pool showed a single spare), so the probe
+        // only runs when inbound olm is genuinely absent after a grace window —
+        // exactly the broken scenario it exists to diagnose.
+        scope.launch {
+            delay(DIAG_ZERO_INBOUND_GRACE_MS)
+            if (!stopped && rawOlmToDeviceSeen == 0) {
+                diagnoseOwnKeyServerState()
+            } else {
+                println(
+                    "DEBUG [CallMediaKeyExchange] DIAG skipped " +
+                        "(inbound olm seen=$rawOlmToDeviceSeen stopped=$stopped)"
+                )
+            }
+        }
         // Devices whose keys were not yet stored when a distribution ran get
         // retried here — WITHOUT blocking membership processing (the round-8
         // regression: an inline 10s poll delayed the initial seed until it
@@ -425,6 +439,7 @@ class CallMediaKeyExchange(
 
     private companion object {
         const val RETRY_WATCH_INTERVAL_MS = 1_500L
+        const val DIAG_ZERO_INBOUND_GRACE_MS = 25_000L
     }
 }
 
