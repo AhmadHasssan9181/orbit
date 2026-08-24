@@ -187,6 +187,39 @@ class CallMediaKeysCoreTest {
     }
 
     @Test
+    fun participantIdentityParsesBackToDevice() {
+        assertEquals(
+            CallDevice("@alice:example.org", "JLAFKJWSCS"),
+            callDeviceFromParticipantIdentity("@alice:example.org:JLAFKJWSCS")
+        )
+        // Server part with a port — device id still resolves after the LAST colon.
+        assertEquals(
+            CallDevice("@alice:example.org:8448", "DEV1"),
+            callDeviceFromParticipantIdentity("@alice:example.org:8448:DEV1")
+        )
+        assertNull(callDeviceFromParticipantIdentity("alice:example.org:D"))  // no leading @
+        assertNull(callDeviceFromParticipantIdentity("@alice:example.org"))   // user:server only
+        assertNull(callDeviceFromParticipantIdentity("@alice:example.org:"))  // empty device
+        assertNull(callDeviceFromParticipantIdentity(""))
+    }
+
+    @Test
+    fun deliveredKeyIndexTracksHighestConfirmedPerDevice() {
+        val ledger = DeliveredKeyIndex()
+        assertTrue(ledger.isUnderdelivered("@a:s:D1", 0)) // nothing delivered yet
+        ledger.markDelivered("@a:s:D1", 0)
+        assertFalse(ledger.isUnderdelivered("@a:s:D1", 0))
+        assertTrue(ledger.isUnderdelivered("@a:s:D1", 1)) // rotation moved ahead
+        ledger.markDelivered("@a:s:D1", 1)
+        assertFalse(ledger.isUnderdelivered("@a:s:D1", 1))
+        ledger.markDelivered("@a:s:D1", 0)                // stale mark never regresses
+        assertFalse(ledger.isUnderdelivered("@a:s:D1", 0))
+        assertTrue(ledger.snapshot() == mapOf("@a:s:D1" to 1))
+        // Devices are independent slots.
+        assertTrue(ledger.isUnderdelivered("@a:s:D2", 0))
+    }
+
+    @Test
     fun generatedKeysAreUniqueAndCorrectSized() {
         val a = CallMediaKeys.generateKey()
         val b = CallMediaKeys.generateKey()

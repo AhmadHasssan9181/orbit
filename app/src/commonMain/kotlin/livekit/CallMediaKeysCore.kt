@@ -22,6 +22,44 @@ import kotlinx.serialization.json.putJsonObject
  */
 data class CallDevice(val userId: String, val deviceId: String)
 
+/**
+ * LiveKit participant identities are `${userId}:${deviceId}` where userId
+ * itself contains colons (and the server part may carry a port), so the device
+ * id is everything after the LAST colon.
+ */
+fun callDeviceFromParticipantIdentity(identity: String): CallDevice? {
+    if (!identity.startsWith("@")) return null
+    val lastColon = identity.lastIndexOf(':')
+    if (lastColon <= 1 || lastColon == identity.length - 1) return null
+    // A bare "user:server" without a device segment must not pass.
+    if (identity.indexOf(':') == lastColon) return null
+    return CallDevice(userId = identity.substring(0, lastColon), deviceId = identity.substring(lastColon + 1))
+}
+
+/**
+ * Us→them delivery ledger: the highest key index each peer device has CONFIRMED
+ * received (marked only after a successful olm sendToDevice). Any live device
+ * whose entry lags our current index is still decrypting nothing we send and
+ * belongs in every resend pass — diff-only distribution (Element semantics)
+ * structurally misses peers that drop out of the roster between emissions or
+ * reset mid-call, which orphaned real calls in the field.
+ */
+class DeliveredKeyIndex {
+    private val delivered = mutableMapOf<String, Int>()
+
+    @Synchronized
+    fun markDelivered(identity: String, keyIndex: Int) {
+        if ((delivered[identity] ?: -1) < keyIndex) delivered[identity] = keyIndex
+    }
+
+    @Synchronized
+    fun isUnderdelivered(identity: String, currentIndex: Int): Boolean =
+        (delivered[identity] ?: -1) < currentIndex
+
+    @Synchronized
+    fun snapshot(): Map<String, Int> = delivered.toMap()
+}
+
 expect fun secureRandomBytes(count: Int): ByteArray
 
 object CallMediaKeys {
