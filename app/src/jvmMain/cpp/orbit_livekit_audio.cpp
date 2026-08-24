@@ -195,6 +195,10 @@ constexpr std::size_t kStarvationReprimeSamples = kSamplesPerChannel * 2; // 20 
 // equal today's behavior: sustained-high streak + recent frame activity +
 // warmup/cooldown/lifetime caps, and every SDK call wrapped in try/catch.
 constexpr double kJitterBufferRecoverTargetMs = 400.0;
+// jitter_buffer_target_delay is a CUMULATIVE SUM over all emitted frames, so a
+// computed average above this cap means the math went wrong (e.g. emitted_count
+// lagging), not that the receiver is really 2 minutes behind.
+constexpr long long kJitterBufferGarbageCapMs = 120000;
 constexpr int kJitterBufferRecoverStreak = 3;               // 3 consecutive 5 s polls ≈ 15 s sustained
 constexpr long long kJitterBufferWarmupMs = 20000;          // let initial jitter settle before judging
 constexpr long long kJitterBufferCooldownMs = 90000;        // per-reader minimum spacing
@@ -1506,7 +1510,18 @@ void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track, const
                             for (const auto& stat : statsFuture.get()) {
                                 const auto* inbound = std::get_if<livekit::RtcInboundRtpStats>(&stat.stats);
                                 if (inbound != nullptr) {
-                                    const long long jbTargetMs = static_cast<long long>(
+                                    // jitter_buffer_target_delay / jitter_buffer_delay are
+                                    // CUMULATIVE sums over every emitted frame (live proof:
+                                    // raw target read 2342400 ms = 39 min while the real
+                                    // per-frame delay averaged 68 ms). The instantaneous
+                                    // value is the per-frame average; -1 until frames flow.
+                                    const double emittedCount =
+                                        static_cast<double>(inbound->inbound.jitter_buffer_emitted_count);
+                                    const long long jbTargetMs = emittedCount > 0.0
+                                        ? static_cast<long long>(
+                                              inbound->inbound.jitter_buffer_target_delay * 1000.0 / emittedCount)
+                                        : -1LL;
+                                    const long long jbTargetSumMs = static_cast<long long>(
                                         inbound->inbound.jitter_buffer_target_delay * 1000.0);
                                     std::cout << "RXSTAT sid=" << reader->trackSid
                                               << " recv=" << inbound->received.packets_received
@@ -1518,6 +1533,7 @@ void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track, const
                                                         static_cast<double>(inbound->inbound.jitter_buffer_emitted_count))
                                                     : -1LL)
                                               << " jbMinMs=" << static_cast<long long>(inbound->inbound.jitter_buffer_minimum_delay * 1000.0)
+                                              << " jbTargetSumMs=" << jbTargetSumMs
                                               << " concealedSamples=" << inbound->inbound.concealed_samples
                                               << " silentConcealed=" << inbound->inbound.silent_concealed_samples
                                               << " concealEvents=" << inbound->inbound.concealment_events
@@ -1537,7 +1553,9 @@ void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track, const
                                             reader->createdSteady.time_since_epoch()).count();
                                         const long long sinceFrameMs = nowSteadyMs - reader->lastFrameSteadyMs.load(std::memory_order_relaxed);
                                         const bool active = sinceFrameMs <= kJitterBufferActiveWindowMs;
-                                        if (jbTargetMs > kJitterBufferRecoverTargetMs && active) {
+                                        const bool jbTargetSane =
+                                            jbTargetMs >= 0 && jbTargetMs <= kJitterBufferGarbageCapMs;
+                                        if (jbTargetSane && jbTargetMs > kJitterBufferRecoverTargetMs && active) {
                                             reader->jbHighStreak += 1;
                                             if (reader->jbHighStreak >= 2) {
                                                 std::cout << "JBWATCH sid=" << reader->trackSid

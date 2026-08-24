@@ -38,7 +38,16 @@ class CallMediaKeyExchange(
     private val ownDeviceId: String,
     private val ownLivekitIdentity: String,
     private val devicesFlow: Flow<Set<CallDevice>>,
-    private val nowMs: () -> Long = System::currentTimeMillis
+    private val nowMs: () -> Long = System::currentTimeMillis,
+    /**
+     * Recovery lever for the observed regression where a peer's client never
+     * reacts to our join (throttled background tab / missed sync) and its media
+     * key never arrives — RX stays silent forever. Element clients only act on
+     * membership DIFFS (leaver -> rotate+redistribute, joiner -> resend), so a
+     * clear-then-republish cycle of OUR OWN membership event forces every live
+     * peer through both paths without touching the LiveKit session.
+     */
+    private val nudgeMembership: (suspend () -> Unit)? = null
 ) {
     private val ring = CallMediaKeys.OwnKeyRing(nowMs)
     private val receivedFilter = CallMediaKeys.OutdatedKeyFilter()
@@ -47,6 +56,7 @@ class CallMediaKeyExchange(
     private var unsubscribe: (() -> Unit)? = null
     private var collectJob: Job? = null
     private var retryWatchJob: Job? = null
+    private var nudgeWatchJob: Job? = null
     private val pendingRetryDevices = java.util.Collections.synchronizedSet(mutableSetOf<CallDevice>())
     private val directQueriedUsers = java.util.Collections.synchronizedSet(mutableSetOf<String>())
     private val keyStore: KeyStore? =
@@ -61,6 +71,14 @@ class CallMediaKeyExchange(
     @Volatile private var rawOlmToDeviceSeen = 0
     @Volatile private var syncBatchesSeen = 0
     @Volatile private var stopped = false
+
+    // LiveKit identities whose media key we actually received this call — the
+    // nudge watcher compares the live roster against this to detect peers that
+    // never sent us a key.
+    private val receivedPeerIdentities = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    @Volatile private var nudgesFired = 0
+    @Volatile private var lastNudgeMs = 0L
+    private val startTimeMs: Long = nowMs()
 
     fun start() {
         // FIRST key is distributed and registered locally immediately, without
@@ -116,6 +134,44 @@ class CallMediaKeyExchange(
                     "DEBUG [CallMediaKeyExchange] DIAG skipped " +
                         "(inbound olm seen=$rawOlmToDeviceSeen stopped=$stopped)"
                 )
+            }
+        }
+        // RX-dead recovery: if a live peer never delivered its media key, force
+        // a membership leave+rejoin cycle so every peer re-runs its leaver
+        // (rotate+redistribute) and joiner (resend) key paths.
+        nudgeWatchJob = scope.launch {
+            while (!stopped) {
+                delay(NUDGE_WATCH_INTERVAL_MS)
+                if (stopped) break
+                val targets = knownTargets ?: continue
+                if (targets.isEmpty()) continue
+                val startMs = this@CallMediaKeyExchange.startTimeMs
+                val now = nowMs()
+                if (now - startMs < NUDGE_GRACE_MS) continue
+                val lastNudge = lastNudgeMs
+                if (lastNudge != 0L && now - lastNudge < NUDGE_COOLDOWN_MS) continue
+                if (nudgesFired >= NUDGE_MAX_PER_CALL) break
+                val missing = targets.filter {
+                    CallMediaKeys.participantIdentity(it.userId, it.deviceId) !in receivedPeerIdentities
+                }
+                if (missing.isEmpty()) continue
+                val callback = nudgeMembership
+                if (callback == null) {
+                    println(
+                        "WARN [CallMediaKeyExchange] missing peer keys ${missing.map { "${it.userId}:${it.deviceId}" }} " +
+                            "but no membership nudge available"
+                    )
+                    break
+                }
+                nudgesFired += 1
+                lastNudgeMs = now
+                println(
+                    "WARN [CallMediaKeyExchange] no key from ${missing.size} live peer(s) " +
+                        "(${missing.map { "${it.userId}:${it.deviceId}" }}); nudging membership " +
+                        "leave+rejoin attempt=$nudgesFired/$NUDGE_MAX_PER_CALL"
+                )
+                runCatching { callback() }
+                    .onFailure { println("WARN [CallMediaKeyExchange] membership nudge failed: ${it.message}") }
             }
         }
         // Devices whose keys were not yet stored when a distribution ran get
@@ -200,6 +256,8 @@ class CallMediaKeyExchange(
         collectJob = null
         retryWatchJob?.cancel()
         retryWatchJob = null
+        nudgeWatchJob?.cancel()
+        nudgeWatchJob = null
         println("DEBUG [CallMediaKeyExchange] stopped room=$roomId")
     }
 
@@ -315,6 +373,7 @@ class CallMediaKeyExchange(
             println("DEBUG [CallMediaKeyExchange] ignoring echoed own key from $sender")
             return
         }
+        receivedPeerIdentities.add(identity)
         val delivered = deliverNativeMediaKey(identity, parsed.key, parsed.keyIndex)
         println(
             "DEBUG [CallMediaKeyExchange] peer key sender=$sender device=$claimedDevice " +
@@ -440,6 +499,10 @@ class CallMediaKeyExchange(
     private companion object {
         const val RETRY_WATCH_INTERVAL_MS = 1_500L
         const val DIAG_ZERO_INBOUND_GRACE_MS = 25_000L
+        const val NUDGE_WATCH_INTERVAL_MS = 10_000L
+        const val NUDGE_GRACE_MS = 45_000L
+        const val NUDGE_COOLDOWN_MS = 90_000L
+        const val NUDGE_MAX_PER_CALL = 2
     }
 }
 
@@ -454,7 +517,8 @@ object CallMediaKeyExchangeManager {
         ownUserId: String,
         ownDeviceId: String,
         ownLivekitIdentity: String,
-        devicesFlow: Flow<Set<CallDevice>>
+        devicesFlow: Flow<Set<CallDevice>>,
+        nudgeMembership: (suspend () -> Unit)? = null
     ): Boolean {
         stop()
         val exchange = CallMediaKeyExchange(
@@ -464,7 +528,8 @@ object CallMediaKeyExchangeManager {
             ownUserId = ownUserId,
             ownDeviceId = ownDeviceId,
             ownLivekitIdentity = ownLivekitIdentity,
-            devicesFlow = devicesFlow
+            devicesFlow = devicesFlow,
+            nudgeMembership = nudgeMembership
         )
         active = exchange
         exchange.start()
