@@ -60,6 +60,41 @@ class DeliveredKeyIndex {
     fun snapshot(): Map<String, Int> = delivered.toMap()
 }
 
+/**
+ * RX-dead latecomer bookkeeping: stamps when each LiveKit participant identity
+ * FIRST appeared in the room, prunes identities that left, and reports the ones
+ * still present but that have never delivered a media key past a grace window.
+ * Throttled Element clients (background tabs, mobile) reliably ignore plain
+ * joins — they only respond to membership DIFFS — so an overdue identity is the
+ * signal to fire our own leave+rejoin nudge instead of staying deaf for the
+ * full reactive-watcher grace.
+ */
+class LatecomerTracker {
+    private val firstSeenMs = mutableMapOf<String, Long>()
+
+    @Synchronized
+    fun observe(livekitIdentities: Collection<String>, ownIdentity: String, nowMs: Long) {
+        val live = livekitIdentities.toSet()
+        firstSeenMs.keys.retainAll(live)
+        for (identity in live) {
+            if (identity == ownIdentity) continue
+            if (!firstSeenMs.containsKey(identity)) {
+                firstSeenMs[identity] = nowMs
+            }
+        }
+    }
+
+    @Synchronized
+    fun overdue(receivedIdentities: Set<String>, nowMs: Long, graceMs: Long): List<String> =
+        firstSeenMs.entries
+            .filter { (identity, seen) -> identity !in receivedIdentities && nowMs - seen >= graceMs }
+            .map { it.key }
+            .sorted()
+
+    @Synchronized
+    fun snapshot(): Map<String, Long> = firstSeenMs.toMap()
+}
+
 expect fun secureRandomBytes(count: Int): ByteArray
 
 object CallMediaKeys {

@@ -220,6 +220,32 @@ class CallMediaKeysCoreTest {
     }
 
     @Test
+    fun latecomerTrackerFlagsOnlyKeylessParticipantsPastGrace() {
+        val tracker = LatecomerTracker()
+        tracker.observe(listOf("@a:s:D1", "@b:s:D2"), ownIdentity = "@me:s:ME", nowMs = 1_000L)
+        // Own identity is never tracked even if it appears in the room view.
+        tracker.observe(listOf("@a:s:D1", "@b:s:D2", "@me:s:ME"), ownIdentity = "@me:s:ME", nowMs = 2_000L)
+        // D2 appeared at 1000; before firstSeen+grace it is not yet overdue.
+        assertEquals(emptyList(), tracker.overdue(setOf("@a:s:D1"), nowMs = 8_999L, graceMs = 8_000L))
+        // At exactly firstSeen+grace it is overdue.
+        assertEquals(listOf("@b:s:D2"), tracker.overdue(setOf("@a:s:D1"), nowMs = 9_000L, graceMs = 8_000L))
+        // Once its key arrives it drops out of the overdue list.
+        assertEquals(emptyList(), tracker.overdue(setOf("@a:s:D1", "@b:s:D2"), nowMs = 9_000L, graceMs = 8_000L))
+    }
+
+    @Test
+    fun latecomerTrackerRestampsRejoinersAndPrunesLeavers() {
+        val tracker = LatecomerTracker()
+        tracker.observe(listOf("@a:s:D1"), ownIdentity = "@me:s:ME", nowMs = 1_000L)
+        // Participant leaves — pruning forgets their stamp...
+        tracker.observe(emptyList(), ownIdentity = "@me:s:ME", nowMs = 2_000L)
+        // ...so on rejoin the grace window restarts from the new appearance.
+        tracker.observe(listOf("@a:s:D1"), ownIdentity = "@me:s:ME", nowMs = 10_000L)
+        assertEquals(emptyList(), tracker.overdue(setOf(), nowMs = 17_999L, graceMs = 8_000L))
+        assertEquals(listOf("@a:s:D1"), tracker.overdue(setOf(), nowMs = 18_000L, graceMs = 8_000L))
+    }
+
+    @Test
     fun generatedKeysAreUniqueAndCorrectSized() {
         val a = CallMediaKeys.generateKey()
         val b = CallMediaKeys.generateKey()
