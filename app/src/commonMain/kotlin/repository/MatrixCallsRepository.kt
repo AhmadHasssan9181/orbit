@@ -157,6 +157,16 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
         val publishMode: MatrixRtcPublishMode
     )
 
+    // What we last published per room, so the key-exchange nudge can replay an
+    // identical membership leave+rejoin without the caller passing callId again.
+    private data class MembershipContext(
+        val callId: String,
+        val audio: Boolean,
+        val video: Boolean,
+        val livekitIdentity: String?
+    )
+    private val latestMembershipContextByRoom = java.util.concurrent.ConcurrentHashMap<String, MembershipContext>()
+
     override suspend fun configureCallEndpoints(sfuUrlOverride: String?) {
         context.liveKitServiceUrlOverride = sfuUrlOverride?.takeIf { it.isNotBlank() }
         context.refreshWellKnownRtcFoci()
@@ -494,7 +504,8 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                 ownUserId = userId,
                 ownDeviceId = deviceId,
                 ownLivekitIdentity = livekitIdentity.ifBlank { "$userId:$deviceId" },
-                devicesFlow = observeCallDevices(roomId)
+                devicesFlow = observeCallDevices(roomId),
+                nudgeMembership = { nudgeOwnMembership(roomId) }
             )
         } catch (e: Exception) {
             println("ERROR [MatrixCallsRepository] media key exchange start failed: ${e.message}")
@@ -975,7 +986,43 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
 
     override suspend fun updateGroupCallMembershipCapabilities(roomId: String, callId: String, audio: Boolean, video: Boolean, livekitIdentity: String?): Boolean {
         println("DEBUG [MatrixCallsRepository] publishing MatrixRTC membership audio=$audio video=$video")
+        latestMembershipContextByRoom[roomId] = MembershipContext(callId, audio, video, livekitIdentity)
         return publishGroupCallMembership(roomId, callId, audio = audio, video = video, livekitIdentity = livekitIdentity)
+    }
+
+    /**
+     * Key-exchange recovery nudge: clear our membership state event (peers run
+     * their leaver path -> rotate + redistribute) and republish it (peers run
+     * their joiner path -> resend current key). The LiveKit media session is
+     * untouched; only the Matrix room state cycles.
+     */
+    private suspend fun nudgeOwnMembership(roomId: String) {
+        val userId = context.userId ?: return
+        val deviceId = context.deviceId ?: "ORBIT_DESKTOP"
+        val ctx = latestMembershipContextByRoom[roomId]
+        val callId = ctx?.callId ?: "m.call"
+        val shape = matrixRtcMembershipShapes[membershipShapeMapKey(roomId, callId)]
+        val stateKey = shape?.stateKey ?: "_${userId}_${deviceId}_$callId"
+        val eventTypes = shape?.publishMode?.eventTypes ?: matrixRtcMemberEventTypes
+        try {
+            for (ns in eventTypes) {
+                clearMatrixRtcMemberEvent(roomId, ns, stateKey)
+                println("DEBUG [MatrixCallsRepository] nudge leave published type=$ns state_key=$stateKey")
+            }
+            delay(2_500)
+            publishGroupCallMembership(
+                roomId,
+                callId,
+                audio = ctx?.audio ?: true,
+                video = ctx?.video ?: false,
+                livekitIdentity = ctx?.livekitIdentity
+            )
+            println("DEBUG [MatrixCallsRepository] nudge rejoin published room=$roomId callId=$callId")
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            println("WARN [MatrixCallsRepository] nudge leave+rejoin failed: ${e.message}")
+        }
     }
 
     /** Returns true when our own m.call.member event is visible in room state after publish. */
