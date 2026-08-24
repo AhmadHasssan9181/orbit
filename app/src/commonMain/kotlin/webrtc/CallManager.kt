@@ -93,6 +93,11 @@ class CallManager(
     var onLeaveGroupCall: (suspend (roomId: String, callId: String) -> Unit)? = null
     var onUpdateGroupCallMembershipCapabilities: (suspend (roomId: String, callId: String, audio: Boolean, video: Boolean, livekitIdentity: String?) -> Boolean)? = null
 
+    // matrixRTC E2EE media keys (encrypted-room calls): wired from WebRtcEffects.
+    var roomIsEncryptedChecker: (suspend (roomId: String) -> Boolean)? = null
+    var mediaKeysStart: ((roomId: String, livekitIdentity: String) -> Unit)? = null
+    var mediaKeysStop: (() -> Unit)? = null
+
     // LiveKit identity of the current group-call join; reused for membership
     // re-affirmation when the camera is toggled mid-call.
     private var groupCallLivekitIdentity: String? = null
@@ -386,6 +391,20 @@ class CallManager(
             }
             println("DEBUG [CallManager] MatrixRTC membership visible. Connecting native media at ${authResponse.serverUrl}...")
 
+            // Encrypted rooms need per-participant media keys (matrixRTC olm
+            // exchange) and the native frame cryptors armed BEFORE connect.
+            val roomEncrypted = try {
+                roomIsEncryptedChecker?.invoke(roomId) ?: false
+            } catch (e: Exception) {
+                println("WARN [CallManager] room encryption probe failed: ${e.message}")
+                false
+            }
+            livekit.prepareNativeE2EE(roomEncrypted)
+            println(
+                "DEBUG [CallManager] room encrypted=$roomEncrypted → native E2EE media " +
+                    if (roomEncrypted) "armed" else "disabled"
+            )
+
             var readiness: livekit.NativeResult<livekit.NativeMediaReadiness>? = null
             for (attempt in 1..GroupCallConnectionTracker.MAX_CONNECT_ATTEMPTS) {
                 if (attempt > 1) {
@@ -401,7 +420,7 @@ class CallManager(
                     readiness.value.acceptingAudioFrames
                 if (ok || groupConnectionTracker.connection.value.stage == GroupCallStage.Failed) break
             }
-            finalizeGroupJoin(roomId, callId, isVideo, authResponse, readiness)
+            finalizeGroupJoin(roomId, callId, isVideo, authResponse, readiness, roomEncrypted)
         } catch (e: Exception) {
             nativeMediaReadiness.value = null
             println("DEBUG [CallManager] Failed to connect native LiveKit media: ${e.message}")
@@ -441,7 +460,8 @@ class CallManager(
         callId: String,
         isVideo: Boolean,
         authResponse: livekit.LiveKitAuthResponse,
-        readiness: livekit.NativeResult<livekit.NativeMediaReadiness>?
+        readiness: livekit.NativeResult<livekit.NativeMediaReadiness>?,
+        roomEncrypted: Boolean = false
     ): Boolean {
         if (readiness == null || !readiness.ok || readiness.value == null) {
             val message = readiness?.error?.message ?: "LiveKit connect did not complete"
@@ -462,6 +482,19 @@ class CallManager(
         if (!stable) {
             println("DEBUG [CallManager] Native media not ready after join: $value")
             return false
+        }
+        if (roomEncrypted) {
+            // Start the matrixRTC olm media-key exchange once media is live; the
+            // LiveKit identity must match the JWT sub the SFU issued us.
+            val ownIdentity = authResponse.matrixRtcMemberId
+                ?: authResponse.identity
+                ?: groupCallLivekitIdentity
+                ?: ""
+            try {
+                mediaKeysStart?.invoke(roomId, ownIdentity)
+            } catch (e: Exception) {
+                println("WARN [CallManager] media key exchange start failed: ${e.message}")
+            }
         }
         isLocalVideoEnabled.value = value.videoPublished
         isVideoCall.value = isVideoCall.value || value.videoPublished
@@ -771,6 +804,12 @@ class CallManager(
         _callState.value = CallState.ENDED
         livekit.setLiveKitReconnectedListener(null)
         if (wasGroupCall) {
+            // Stop the E2EE media-key exchange before tearing media down.
+            try {
+                mediaKeysStop?.invoke()
+            } catch (e: Exception) {
+                println("WARN [CallManager] media key exchange stop failed: ${e.message}")
+            }
             // H2 teardown order: unpublish media (peers stop receiving us
             // immediately) → membership leave (bounded wait) → close engine →
             // release devices/peer connection.

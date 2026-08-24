@@ -54,3 +54,9 @@ expect fun setLiveKitOutputVolume(volume: Float)
 
 // Voice & Video settings: NS/EC/AGC for the native group-call APM chain
 expect fun setLiveKitAudioProcessingOptions(noiseSuppression: Boolean, echoCancellation: Boolean, autoGainControl: Boolean)
+
+// matrixRTC E2EE media: arm the native KeyProvider path before connectAsync
+// (encrypted rooms only) and feed per-participant media keys received through
+// the olm to-device exchange into the native KeyProvider.
+expect fun prepareNativeE2EE(enabled: Boolean)
+expect fun deliverNativeMediaKey(identity: String, key: ByteArray, keyIndex: Int): Boolean

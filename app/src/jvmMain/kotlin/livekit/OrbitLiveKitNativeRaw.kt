@@ -43,6 +43,17 @@ object OrbitLiveKitNativeRaw {
     ): Int
 
     @JvmStatic
+    external fun nativeConfigureE2EE(sessionId: Long, enabled: Boolean): Int
+
+    @JvmStatic
+    external fun nativeSetParticipantMediaKey(
+        sessionId: Long,
+        identity: String,
+        key: ByteArray,
+        keyIndex: Int
+    ): Int
+
+    @JvmStatic
     external fun nativeDisconnect(sessionId: Long, epoch: Long, userInitiated: Boolean): Int
 
     @JvmStatic

@@ -175,6 +175,9 @@ class MatrixContext(val homeserverUrl: String) {
     val activeCalls = mutableMapOf<String, MutableStateFlow<CallEvent.Invite?>>()
     val activeGroupCalls = mutableMapOf<String, MutableStateFlow<String?>>()
     val activeCallMembers = mutableMapOf<String, MutableStateFlow<List<OrbitUser>>>()
+    // Per-device call roster ((userId, deviceId) pairs) driving the matrixRTC
+    // E2EE media-key exchange; mirrors activeCallMembers but keeps devices distinct.
+    val activeCallDevices = mutableMapOf<String, MutableStateFlow<Set<livekit.CallDevice>>>()
     val accountDataCache = mutableMapOf<String, MutableStateFlow<Any?>>()
     val roomMetadataCache = mutableMapOf<String, RoomMetadata>()
     private val joinedMemberCountCache = mutableMapOf<String, Int>()
