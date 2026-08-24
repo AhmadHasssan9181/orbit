@@ -643,6 +643,14 @@ class JvmWebRtcClient : WebRtcClient {
                 desktopAudioStreaming = false
                 rebuildMicAudioTrack()
             }
+            if (isGroupCall && livekit.LiveKitFeatureFlags.cppMedia) {
+                // Group calls ride the native share-audio track instead of the
+                // ADM mixing path above; ending the share must tear it down no
+                // matter which surface stopped the share (native side is a
+                // safe no-op when nothing was published).
+                runCatching { livekit.LiveKitNativeMediaSession.unpublishScreenShareAudio() }
+                    .onFailure { it.printStackTrace() }
+            }
 
             WindowsAudioDucker.unduckVolumes()
         

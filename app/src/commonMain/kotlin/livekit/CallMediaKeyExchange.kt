@@ -94,6 +94,11 @@ class CallMediaKeyExchange(
     private val knownDevices = java.util.concurrent.ConcurrentHashMap<String, CallDevice>()
     private val deviceLastSeenMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private var convergeJob: Job? = null
+    private var latecomerWatchJob: Job? = null
+    // First-seen stamps for LiveKit participants; drives the latecomer nudge
+    // that rescues RX when a joiner's client ignores plain joins (throttled
+    // Element clients only act on membership DIFFS).
+    private val latecomers = LatecomerTracker()
     private val startTimeMs: Long = nowMs()
 
     fun start() {
@@ -226,6 +231,48 @@ class CallMediaKeyExchange(
             runCatching { callback() }
                 .onFailure { println("WARN [CallMediaKeyExchange] settle nudge failed: ${it.message}") }
         }
+        // Latecomer nudge: the settle nudge only covers "ZERO keys at join+5s".
+        // A peer joining LATER — while keys already flow — whose throttled
+        // client ignores our membership diff stays RX-dead for us until the
+        // 45s reactive grace. Track each LiveKit participant's first-seen time
+        // and fire the leave+rejoin cycle ~8s after a participant appears
+        // without ever having sent us a key. Shares the reactive watcher's
+        // budget (NUDGE_MAX_PER_CALL) and cooldown so total membership churn
+        // per call stays bounded.
+        latecomerWatchJob = scope.launch {
+            while (!stopped) {
+                delay(LATECOMER_WATCH_INTERVAL_MS)
+                if (stopped) break
+                val livekitIds = runCatching {
+                    LiveKitRemoteVideoFrameStore.remoteParticipants.value
+                }.getOrNull().orEmpty()
+                if (livekitIds.isEmpty()) continue
+                val now = nowMs()
+                latecomers.observe(livekitIds, ownLivekitIdentity, now)
+                val overdue = latecomers.overdue(receivedPeerIdentities, now, LATECOMER_GRACE_MS)
+                if (overdue.isEmpty()) continue
+                val lastNudge = lastNudgeMs
+                if (lastNudge != 0L && now - lastNudge < NUDGE_COOLDOWN_MS) continue
+                if (nudgesFired >= NUDGE_MAX_PER_CALL) break
+                val callback = nudgeMembership
+                if (callback == null) {
+                    println(
+                        "WARN [CallMediaKeyExchange] latecomer(s) ${overdue} keyless but no " +
+                            "membership nudge available"
+                    )
+                    break
+                }
+                nudgesFired += 1
+                lastNudgeMs = now
+                println(
+                    "WARN [CallMediaKeyExchange] latecomer nudge: ${overdue.size} participant(s) " +
+                        "$overdue present >=${LATECOMER_GRACE_MS / 1000}s without sending a key; " +
+                        "forcing membership leave+rejoin attempt=$nudgesFired/$NUDGE_MAX_PER_CALL"
+                )
+                runCatching { callback() }
+                    .onFailure { println("WARN [CallMediaKeyExchange] latecomer nudge failed: ${it.message}") }
+            }
+        }
         // Convergence sweeper: diff-only distribution is structurally incomplete
         // in BOTH directions — a device absent from the roster at rotation time
         // never learns the new index unless it happens to send us a key (reply
@@ -357,6 +404,8 @@ class CallMediaKeyExchange(
         settleNudgeJob = null
         convergeJob?.cancel()
         convergeJob = null
+        latecomerWatchJob?.cancel()
+        latecomerWatchJob = null
         println("DEBUG [CallMediaKeyExchange] stopped room=$roomId")
     }
 
@@ -686,6 +735,11 @@ class CallMediaKeyExchange(
         const val NUDGE_MAX_PER_CALL = 2
         const val REPLY_ON_RECEIVE_MIN_INTERVAL_MS = 3_000L
         const val CONVERGE_INTERVAL_MS = 10_000L
+        const val LATECOMER_WATCH_INTERVAL_MS = 3_000L
+        // A participant present this long without EVER sending us a key is
+        // almost certainly a throttled client that ignored our join diff —
+        // healthy clients deliver within a few seconds of seeing new members.
+        const val LATECOMER_GRACE_MS = 8_000L
         // Devices only seen in the roster (not currently in the LiveKit room)
         // stay sweep-eligible for this long after their last roster appearance —
         // long enough to rescue a peer whose membership event flickered out,
