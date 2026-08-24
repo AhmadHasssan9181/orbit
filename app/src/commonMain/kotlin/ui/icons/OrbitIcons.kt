@@ -262,6 +262,28 @@ object OrbitIcons {
                 CollectionPath("""M488.797 1709C497.746 1709 505 1701.75 505 1692.8C505 1683.85 497.746 1676.6 488.797 1676.6C479.849 1676.6 472.595 1683.85 472.595 1692.8C472.595 1701.75 479.849 1709 488.797 1709Z"""),
             )
         ).also { _members = it }
+
+    private var _chevronLeft: ImageVector? = null
+    val ChevronLeft: ImageVector
+        get() = _chevronLeft ?: collectionIcon(
+            name = "ChevronLeft",
+            originX = 0f,
+            originY = 0f,
+            paths = listOf(
+                CollectionPath("""M51.4 24.7L46.7 20L26.7 40L46.7 60L51.4 55.3L36.1 40Z""")
+            )
+        ).also { _chevronLeft = it }
+
+    private var _chevronRight: ImageVector? = null
+    val ChevronRight: ImageVector
+        get() = _chevronRight ?: collectionIcon(
+            name = "ChevronRight",
+            originX = 0f,
+            originY = 0f,
+            paths = listOf(
+                CollectionPath("""M28.6 24.7L33.3 20L53.3 40L33.3 60L28.6 55.3L43.9 40Z""")
+            )
+        ).also { _chevronRight = it }
 }
 
 private data class CollectionPath(
