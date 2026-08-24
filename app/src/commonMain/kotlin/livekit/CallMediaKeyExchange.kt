@@ -80,6 +80,9 @@ class CallMediaKeyExchange(
     @Volatile private var nudgesFired = 0
     @Volatile private var lastNudgeMs = 0L
     @Volatile private var settleNudgeFired = false
+
+    // Per-device timestamp of the last reply-on-receive resend (rate/loop guard).
+    private val lastReplyToDeviceMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private val startTimeMs: Long = nowMs()
 
     fun start() {
@@ -413,6 +416,46 @@ class CallMediaKeyExchange(
             "DEBUG [CallMediaKeyExchange] peer key sender=$sender device=$claimedDevice " +
                 "index=${parsed.keyIndex} identity=$identity delivered=$delivered"
         )
+        maybeReplyWithOwnKey(sender, claimedDevice)
+    }
+
+    /**
+     * TX-dead recovery: distribution above is roster-DIFF-driven (Element
+     * semantics), which silently misses peers who reset their key ring
+     * mid-call (same device id = no diff = never resent to them) or joined
+     * after the last pass covered their device — they hold none/stale of our
+     * keys and decrypt NOTHING we send while their RX of us is the only thing
+     * broken. A freshly accepted peer key event (the outdated filter above
+     * already rejected duplicates) proves that peer's olm direction works
+     * RIGHT NOW, so replying with our current key on it is the most reliable
+     * delivery path available. Loop safety for Orbit-to-Orbit pairs: our
+     * resend carries an index the peer has already seen, so its filter drops
+     * it before any reciprocal hook — only genuine peer rotations trigger a
+     * reply, one each.
+     */
+    private fun maybeReplyWithOwnKey(sender: String, claimedDevice: String) {
+        val deviceKey = "$sender:$claimedDevice"
+        val now = nowMs()
+        synchronized(lastReplyToDeviceMs) {
+            val last = lastReplyToDeviceMs[deviceKey] ?: 0L
+            if (now - last < REPLY_ON_RECEIVE_MIN_INTERVAL_MS) return
+            lastReplyToDeviceMs[deviceKey] = now
+        }
+        scope.launch {
+            if (stopped) return@launch
+            // Snapshot payload+index atomically under the roster mutex so a
+            // concurrent rotate can't split the pair across the build.
+            val (payload, keyIndex) = mutex.withLock { currentPayload() to ring.currentIndex }
+            // Their device keys may never have been queried (late joiner not in
+            // roster yet); encryptOlm needs them stored or it fails per-device.
+            runCatching { fetchAndStorePeerDeviceKeys(listOf(sender)) }
+                .onFailure { println("WARN [CallMediaKeyExchange] reply /keys/query for $sender failed: ${it.message}") }
+            println(
+                "DEBUG [CallMediaKeyExchange] reply-on-receive: resending current key " +
+                    "index=$keyIndex to $sender:$claimedDevice"
+            )
+            distribute(payload, setOf(CallDevice(userId = sender, deviceId = claimedDevice)))
+        }
     }
 
     private suspend fun onDevices(all: Set<CallDevice>) {
@@ -538,6 +581,7 @@ class CallMediaKeyExchange(
         const val NUDGE_GRACE_MS = 45_000L
         const val NUDGE_COOLDOWN_MS = 90_000L
         const val NUDGE_MAX_PER_CALL = 2
+        const val REPLY_ON_RECEIVE_MIN_INTERVAL_MS = 3_000L
     }
 }
 
