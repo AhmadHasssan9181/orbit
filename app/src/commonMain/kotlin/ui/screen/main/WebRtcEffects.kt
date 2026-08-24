@@ -31,9 +31,15 @@ fun WebRtcEffects(
                 callManager.toggleDeafen()
             }
         }
+        CallShortcuts.onAppQuitRequested = {
+            if (callManager.callState.value != CallState.IDLE) {
+                callManager.endCall()
+            }
+        }
         onDispose {
             CallShortcuts.onToggleMute = null
             CallShortcuts.onToggleDeafen = null
+            CallShortcuts.onAppQuitRequested = null
         }
     }
     

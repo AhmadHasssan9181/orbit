@@ -7,4 +7,9 @@ package webrtc
 object CallShortcuts {
     var onToggleMute: (() -> Unit)? = null
     var onToggleDeafen: (() -> Unit)? = null
+
+    // Fired from the window-close / tray-quit path BEFORE the JVM starts
+    // shutting down, so an active call can publish its leave membership while
+    // the exit watchdog's grace window is still open.
+    var onAppQuitRequested: (() -> Unit)? = null
 }
