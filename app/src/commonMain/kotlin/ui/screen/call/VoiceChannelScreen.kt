@@ -106,7 +106,8 @@ fun VoiceChannelScreen(
                 // ACTIVE CALL UI
                 LiveKitGroupCallSurface(
                     callManager = callManager,
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.fillMaxSize(),
+                    remoteFallbackName = channel.name
                 )
             }
         }

@@ -1225,6 +1225,105 @@ Do NOT file bugs against these:
 
 ---
 
+# THE PARITY ROADMAP
+
+> 🕯️ *"There is sooo much missing — do research and make a really long
+> list of all backend and UI features and implement em all."*
+> Command received. Here is the list, researched against how Element Call
+> actually works (matrix-js-sdk `MatrixRTCSession` / `RTCEncryptionManager`,
+> read from source) and Discord's voice surface. ✅ = already shipped in
+> Orbit (see H-entries). Everything else is ordered by impact-per-effort.
+
+## A. CALL / VOICE — BACKEND & MEDIA
+
+- ✅ E2EE media keys: push-based distribution, per-device ledger, 10s
+  convergence sweeper, latecomer nudge ≤11s (H8/V2/V3/V4) — EXCEEDS Element
+  (which has no key-request mechanism at all; push-only + membership-driven).
+- ✅ Partial-deafness root causes: sticky-roster lies → LiveKit-truth sweeps;
+  per-device send isolation; retry-unconfirmed devices.
+- ✅ JB resubscribe recovery on sustained jitter (H6).
+- ✅ Join watchdog vs slow joins; zombie-session teardown (H12).
+- ✅ Speaker detection native→UI glow (H16); remote mic-muted badges (H17).
+- ✅ Per-participant local volume/mute via native mixer gains (H15).
+- **Per-tile connection quality** — Discord shows 3-bar signal per voice user;
+  Element exposes stats via `getStats()`. We already parse jbTargetMs/RTT in
+  the native watcher → emit per-participant `{jitterMs, rttMs, lossPct}` over
+  the existing JNI event channel → colored bars/badge on each tile.
+- **Connection-stats dialog** — the "Voice Connection" debug panel: current
+  SFU url, ICE state, bitrate in/out, jitter, packet loss, codec. Data source
+  exists (STATS line); needs a settings/call-menu pane rendering it live.
+- **Device hot-swap mid-call** — `setAudioInputDevice` etc. exist, but verify
+  a LIVE call re-negotiates without drop; add UI affordance from the call
+  device menu (Element re-negotiates via m.call.negotiate).
+- **Raise hand** — Element-style: custom `m.call.member` field or reaction;
+  hand icon overlay on tile + roster sort bump. Cheap, high delight.
+- **Spotlight / pin participant** — pin a tile to spotlight slot (layout mode
+  exists: Grid/Focus; add explicit Pin action to the new context menu).
+- **Screen-share resolution/FPS picker** — capture pipeline caps exist; expose
+  picker in ScreenShareDialog (720p30 default for bad internet).
+- **Simulcast/bandwidth adaptation** — LiveKit supports it natively; verify
+  dynacast enabled; low priority while group sizes stay small.
+- **Custom image virtual background** — only Blur wired today
+  (`videoBackground` setting); engine supports images.
+
+## B. CALL / VOICE — UI
+
+- ✅ Mini-pill floating bar with mute/leave/drag/restore (H10).
+- ✅ Fixed double-pill bug when navigating during a call (embedded surfaces no
+  longer render their own minimized pill; popup owns it).
+- ✅ Right-click context menu on tiles: volume slider %, Mute-for-me,
+  Reset volume (this round).
+- **Add to context menu:** Pin/Unpin tile · Raise hand · Copy user ID ·
+  "Mute stream" label for share tiles (= same local gain, clearer wording).
+- **In-call device switcher quick menu** — mic/speaker/camera pickers inline
+  in the call controls (AudioDeviceMenu exists — surface it on hover of the
+  chevron next to mute, Discord-style).
+- **Ringing / incoming-call UX for DM calls** — invite events arrive already
+  (`m.call.invite`); needs a ring overlay + accept/decline + timeout
+  (lifetimeMs already parsed). Biggest missing DM-call piece.
+- **Call notifications** — system toast/tray flash when invited or when a
+  call starts in a watched room.
+- **Soundboard** — `showSoundboard` state exists but appears unwired; either
+  wire short-sound playback through a second audio track or remove the button
+  (honesty rule).
+- **PiP window** — separate always-on-top Compose window showing active
+  speaker when main window minimized (Windows-native parity).
+
+## C. MESSAGING
+
+- Typing indicators (`m.typing` ephemeral events — repository likely has sync
+  access already; render "X is typing…" under header).
+- Read receipts + unread separator + jump-to-unread (no read-state system
+  exists yet — this unblocks Mark Server/Channel Read shortcuts too).
+- Edit / delete / redact messages (Matrix supports both natively).
+- Replies + threads (`m.in_reply_to` first; threads later).
+- Reactions (m.relation annotation) with picker.
+- File/image upload with thumbnail previews + download.
+- Markdown/rich-text rendering of `org.matrix.custom.html`.
+- Mentions (@user → push notification + highlight).
+- Message search (/search room-scoped first).
+- Pinned messages list.
+- Quick Switcher Ctrl+K — build fuzzy channel jump dialog, THEN re-add the
+  deleted Keybinds card.
+- Slash commands (/me at minimum).
+
+## D. NAVIGATION / APP SHELL
+
+- Back/forward navigation history stack (Alt+←/→) over selectedChannelId
+  transitions — small state machine in OrbitApp, then restore the cards.
+- Unread badges on server icons (setting exists; ensure counts aggregate).
+- Status system: online/idle/DND/invisible presence + custom status text.
+- Profile editing (display name/avatar upload via profile API).
+- Member list grouping by role/power level.
+- Notification settings per room (mute/mentions-only).
+- Server creation/join-via-invite flows.
+- Moderation: kick/ban/power levels (needs power-level UI + guards).
+
+> Rule: features get added to Settings → Keybinds ONLY when they actually
+> work (H19). Build feature → wire shortcut → restore card.
+
+---
+
 # THE TEN COMMANDMENTS (lessons, distilled)
 
 > 🕯️ *Ten laws. Zero appeals. Moses got a burning bush; we got merge

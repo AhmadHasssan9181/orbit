@@ -94,7 +94,8 @@ fun ChatScreen(
             } else if (isCallActiveInRoom && isGroupCall && callManager != null) {
                 LiveKitGroupCallSurface(
                     callManager = callManager,
-                    modifier = Modifier.weight(1f).fillMaxWidth()
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    remoteFallbackName = channel.name
                 )
             } else {
 
