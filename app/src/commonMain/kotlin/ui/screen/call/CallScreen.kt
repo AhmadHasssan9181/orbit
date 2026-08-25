@@ -1094,6 +1094,12 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
         label = "borderColor"
     )
     val borderWidth = if (node.isScreenShare) 2.dp else 1.dp + 1.dp * speakGlow
+    // Discord convention: the speaker's name goes green while they talk.
+    val nameColor by animateColorAsState(
+        if (isSpeaking) Color(0xFF23A55A) else Color.White,
+        animationSpec = tween(durationMillis = 240),
+        label = "speakerNameColor"
+    )
 
     Box(
         modifier = modifier
@@ -1169,7 +1175,7 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                 }
                 Text(
                     node.name,
-                    color = Color.White,
+                    color = nameColor,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
