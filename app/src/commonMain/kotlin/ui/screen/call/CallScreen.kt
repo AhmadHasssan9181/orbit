@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -1115,6 +1116,8 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
         label = "speakerNameColor"
     )
 
+    var participantMenuOpen by remember { mutableStateOf(false) }
+
     Box(
         modifier = modifier
             .shadow(
@@ -1126,6 +1129,18 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
             .clip(RoundedCornerShape(8.dp))
             .background(Color(0xFF18191C))
             .border(borderWidth, borderColor.value, RoundedCornerShape(8.dp))
+            .pointerInput(node.participantIdentity) {
+                if (node.participantIdentity == null) return@pointerInput
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        if (event.type == PointerEventType.Press && event.buttons.isSecondaryPressed) {
+                            event.changes.forEach { it.consume() }
+                            participantMenuOpen = true
+                        }
+                    }
+                }
+            }
     ) {
         if (node.renderer != null) {
             VideoRenderer(renderer = node.renderer, modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp)))
@@ -1253,6 +1268,81 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                     modifier = Modifier
                         .width(72.dp)
                         .height(24.dp)
+                )
+            }
+        }
+
+        // Right-click context menu — per-participant audio controls (Element/
+        // Discord style). Everything here is LOCAL: it changes how THIS client
+        // renders that person, never their actual mic or stream.
+        val menuIdentity = node.participantIdentity
+        if (menuIdentity != null && callManager != null) {
+            DropdownMenu(
+                expanded = participantMenuOpen,
+                onDismissRequest = { participantMenuOpen = false }
+            ) {
+                val menuGains by callManager.participantGains.collectAsState()
+                val menuVolume = menuGains[menuIdentity] ?: 1f
+
+                Text(
+                    node.name,
+                    color = Color.White.copy(alpha = 0.9f),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                )
+                HorizontalDivider()
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        if (menuVolume == 0f) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.7f),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Slider(
+                        value = menuVolume,
+                        onValueChange = { callManager.setParticipantVolume(menuIdentity, it) },
+                        valueRange = 0f..2f,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        "${(menuVolume * 100).toInt()}%",
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 11.sp
+                    )
+                }
+
+                DropdownMenuItem(
+                    text = { Text("Reset volume") },
+                    onClick = {
+                        callManager.setParticipantVolume(menuIdentity, 1f)
+                    },
+                    enabled = menuVolume != 1f
+                )
+                DropdownMenuItem(
+                    text = {
+                        Text(if (menuVolume == 0f) "Unmute for me" else "Mute for me")
+                    },
+                    leadingIcon = {
+                        Icon(
+                            if (menuVolume == 0f) Icons.Filled.VolumeUp else Icons.Filled.VolumeOff,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    },
+                    onClick = {
+                        callManager.toggleParticipantMute(menuIdentity)
+                        participantMenuOpen = false
+                    }
                 )
             }
         }

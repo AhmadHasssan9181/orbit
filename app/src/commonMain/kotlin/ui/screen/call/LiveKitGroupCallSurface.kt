@@ -131,7 +131,7 @@ fun LiveKitGroupCallSurface(
         onDispose { CallShortcuts.onToggleStream = null }
     }
 
-    if (isMinimized || forceMinimized) {
+    if (forceMinimized) {
         val totalParticipants = (members.map { it.id } + remoteParticipants).filter { it.isNotBlank() }.distinct().size
         GroupCallMiniView(
             connection = groupConnection,
@@ -148,6 +148,14 @@ fun LiveKitGroupCallSurface(
             onLeave = { callManager.endCall() },
             modifier = modifier
         )
+        return
+    }
+
+    if (isMinimized) {
+        // Embedded surface with the call minimized: the app-level floating pill
+        // already represents this call — rendering our own here stacked a second
+        // bar ("Participant") next to the real one.
+        Box(modifier)
         return
     }
 
