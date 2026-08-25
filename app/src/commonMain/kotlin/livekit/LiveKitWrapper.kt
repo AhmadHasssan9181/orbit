@@ -56,6 +56,10 @@ expect fun setLiveKitOutputVolume(volume: Float)
 // (1.0 = unity, 0.0 = individually muted; independent of global deafen).
 expect fun setLiveKitParticipantGain(identity: String, gain: Float)
 
+// LiveKit identities of remote participants currently speaking, as metered
+// by the native mixer (change-only updates). Empty while not in a call.
+expect fun liveKitActiveSpeakers(): kotlinx.coroutines.flow.StateFlow<Set<String>>
+
 // Voice & Video settings: NS/EC/AGC for the native group-call APM chain
 expect fun setLiveKitAudioProcessingOptions(noiseSuppression: Boolean, echoCancellation: Boolean, autoGainControl: Boolean)
 

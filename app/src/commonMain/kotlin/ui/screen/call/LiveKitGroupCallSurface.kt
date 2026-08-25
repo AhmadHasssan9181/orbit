@@ -109,6 +109,7 @@ fun LiveKitGroupCallSurface(
     val remoteParticipants by LiveKitRemoteVideoFrameStore.remoteParticipants.collectAsState()
     val isVideoIntent by callManager.isVideoCall.collectAsState()
     val members by callManager.groupCallMembers.collectAsState()
+    val selfNudgeRecovery by callManager.selfNudgeRecovery.collectAsState()
     val tokens = rememberCosmicTokens()
 
     if (isMinimized || forceMinimized) {
@@ -271,6 +272,7 @@ fun LiveKitGroupCallSurface(
                 reconnecting = showReconnecting,
                 audioOnlyFallback = groupConnection.audioOnlyFallback,
                 waitingForRemoteMedia = groupConnection.waitingForRemoteMedia,
+                repairingLink = selfNudgeRecovery,
                 modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp)
             )
         }
@@ -359,15 +361,28 @@ private fun GroupCallStatusBanner(
     reconnecting: Boolean,
     audioOnlyFallback: Boolean,
     waitingForRemoteMedia: Boolean,
+    repairingLink: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     Row(
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        if (reconnecting) StatusChip("Reconnecting…", Color(0xFFFAA61A))
+        // During a key-exchange self-nudge the media session is untouched —
+        // show calm recovery copy instead of implying the call dropped.
+        if (reconnecting) {
+            StatusChip(
+                if (repairingLink) "Repairing audio link…" else "Reconnecting…",
+                Color(0xFFFAA61A)
+            )
+        }
         if (audioOnlyFallback) StatusChip("No camera — joined audio-only", Color(0xFFFAA61A))
-        if (waitingForRemoteMedia) StatusChip("Waiting for participants' media…", Color(0xFF00A8FC))
+        if (waitingForRemoteMedia) {
+            StatusChip(
+                if (repairingLink) "Restoring participants' audio…" else "Waiting for participants' media…",
+                Color(0xFF00A8FC)
+            )
+        }
     }
 }
 

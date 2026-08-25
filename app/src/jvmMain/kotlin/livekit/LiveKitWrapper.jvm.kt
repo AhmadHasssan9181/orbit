@@ -103,6 +103,9 @@ actual fun setLiveKitParticipantGain(identity: String, gain: Float) {
     LiveKitNativeAudioBridge.nativeSetParticipantGain(identity, gain)
 }
 
+actual fun liveKitActiveSpeakers(): kotlinx.coroutines.flow.StateFlow<Set<String>> =
+    LiveKitNativeMediaSession.activeSpeakers
+
 actual fun setLiveKitAudioProcessingOptions(noiseSuppression: Boolean, echoCancellation: Boolean, autoGainControl: Boolean) {
     OrbitApm.setAudioProcessingOptions(noiseSuppression, echoCancellation, autoGainControl)
 }

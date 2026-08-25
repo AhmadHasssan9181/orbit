@@ -30,6 +30,18 @@ sealed class NativeMediaEvent {
         val recoverable: Boolean
     ) : NativeMediaEvent()
 
+    /**
+     * Emitted by the native mixer when the set of REMOTELY speaking
+     * participants changes (throttled, change-only). Identities are LiveKit
+     * identities; levels are measured pre-gain so locally muted peers still
+     * appear while talking.
+     */
+    data class ActiveSpeakersChanged(
+        override val sessionId: Long,
+        override val epoch: Long,
+        val speakers: List<String>
+    ) : NativeMediaEvent()
+
     data class Error(
         override val sessionId: Long,
         override val epoch: Long,

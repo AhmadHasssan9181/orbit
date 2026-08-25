@@ -28,6 +28,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.layout.ContentScale
@@ -1075,14 +1076,33 @@ data class RenderNode(
 
 @Composable
 fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Modifier = Modifier, callManager: webrtc.CallManager? = null) {
+    // Active-speaker glow: native mixer meters remote voices; a tile whose
+    // participant is talking gets an animated accent ring + soft halo.
+    val speakers = if (callManager != null) callManager.activeSpeakers.collectAsState().value else emptySet()
+    val isSpeaking = node.participantIdentity != null && node.participantIdentity in speakers
+    val speakGlow by animateFloatAsState(
+        targetValue = if (isSpeaking) 1f else 0f,
+        animationSpec = tween(durationMillis = 240),
+        label = "speakGlow"
+    )
     val borderColor = animateColorAsState(
-        if (node.isScreenShare) Color(0xFFF23F42) else Color(0xFF1E1F22),
+        if (node.isScreenShare) {
+            Color(0xFFF23F42)
+        } else {
+            lerp(Color(0xFF1E1F22), tokens.Accent, speakGlow)
+        },
         label = "borderColor"
     )
-    val borderWidth = if (node.isScreenShare) 2.dp else 1.dp
+    val borderWidth = if (node.isScreenShare) 2.dp else 1.dp + 1.dp * speakGlow
 
     Box(
         modifier = modifier
+            .shadow(
+                elevation = 18.dp * speakGlow,
+                shape = RoundedCornerShape(8.dp),
+                ambientColor = tokens.Accent,
+                spotColor = tokens.Accent
+            )
             .clip(RoundedCornerShape(8.dp))
             .background(Color(0xFF18191C))
             .border(borderWidth, borderColor.value, RoundedCornerShape(8.dp))
