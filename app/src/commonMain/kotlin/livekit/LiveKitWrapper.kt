@@ -52,6 +52,10 @@ expect fun setLiveKitOutputDevice(deviceName: String)
 expect fun setLiveKitInputVolume(volume: Float)
 expect fun setLiveKitOutputVolume(volume: Float)
 
+// Per-remote-participant output gain on the native group-call mixer
+// (1.0 = unity, 0.0 = individually muted; independent of global deafen).
+expect fun setLiveKitParticipantGain(identity: String, gain: Float)
+
 // Voice & Video settings: NS/EC/AGC for the native group-call APM chain
 expect fun setLiveKitAudioProcessingOptions(noiseSuppression: Boolean, echoCancellation: Boolean, autoGainControl: Boolean)
 

@@ -43,6 +43,9 @@ object LiveKitNativeAudioBridge {
     external fun nativeSetAcceptingFrames(accepting: Boolean)
 
     @JvmStatic
+    external fun nativeSetParticipantGain(identity: String, gain: Float)
+
+    @JvmStatic
     external fun nativeSetRemoteAudioSink(sink: RemoteAudioSink?)
 
     fun pushAudioFrame(

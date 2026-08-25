@@ -70,6 +70,8 @@ against Element sources), `headache_medicine.md` (UI architecture map),
 | Peer can't hear us (TX dead) | [H8-TX](#h8-tx-tx-dead-peers-cant-hear-us) |
 | We can't hear a peer who joined later | [H8-RX](#h8-v3-rx-dead-for-latecomers) / [H7](#h7-settle-nudge-silent-element-peers) |
 | Audio works, then garbles/chops | [BUG-D](#bug-d-robotic-garbled-audio-in-one-room) |
+| One person too loud/quiet, or mute ONE person's playback | [H15](#h15--per-participant-volume--the-local-mute) |
+| Key delivery to one device keeps failing long-session | [H8-V4](#h8-v4--one-bad-device-poisoned-the-whole-batch) |
 | Everything is ~2s late for minutes | [H6](#h6--2s-end-to-end-latency-that-never-recovers) |
 | Join hangs forever, or fails then stays connected | [H12](#h12-join-stall--the-watchdog-zombie) |
 | Can't navigate while in a call | [H10](#h10-the-overlay-trap--random-call-closes) |
@@ -364,6 +366,48 @@ try {
 }
 ```
 
+## H8-V4 — One bad device poisoned the whole batch
+
+> 🕯️ *The sweeper swept. The ledger lied not. But one cursed device made the
+> scribe burn the whole page — and its innocent siblings burned with it.*
+
+**You see (day-1 field reports):** "one can hear some but can't hear another,"
+worse in long calls / flaky networks. Existing recovery machinery (settle /
+reactive / latecomer nudges, convergence sweeper, reply-on-receive) all worked
+— but a single device whose olm encryption throws aborted distribution for its
+ENTIRE user.
+
+**It was:** `distribute()` built each user's encrypted payload with
+`put(deviceId, olm.encryptOlm(...).getOrThrow())` inside ONE `buildMap` — first
+throwing device discarded every sibling already encrypted in that pass, and
+none of them got sent until the next 10s sweep. Multi-device users + one broken
+device = systematic under-delivery. Also: an encryption failure carried no
+recovery beyond a generic WARN — OTK exhaustion and mid-call device-key
+rotation both looked like "unknown error", forever.
+
+**Fix set (all in `CallMediaKeyExchange.distribute`):**
+1. PER-DEVICE isolation — encrypt each device under its own `runCatching`;
+   failures log `ERROR ... (OTK exhaustion or rotated device keys are the usual
+   suspects)` and never touch siblings.
+2. Failed devices stay UNMARKED in the delivered-index ledger → the convergence
+   sweeper re-attempts at its 10s cadence. Deliberately NOT queued into the
+   1.5s retry watcher — those devices have stored keys, so their failure is
+   session-level; re-claiming every 1.5s would hammer `/keys/claim`.
+3. `maybeRefreshDeviceKeys(userId)` after any failure — post-failure
+   `/keys/query` refresh rate-limited to once/30s per user (heals rotated
+   identity keys without hammering during outages).
+4. Ledger truthfulness: `markDelivered` only for devices actually present in
+   the sent batch (`deviceId !in encryptedByDevice.keys → continue`).
+
+**Still true:** HTTP-200 from sendToDevice proves the HOME SERVER accepted the
+event, nothing about the receiving client. Silent stale-device loss remains
+invisible by protocol design — the ERROR lines above are the best available
+telescope.
+
+**Files:** `livekit/CallMediaKeyExchange.kt`.
+
+---
+
 ## Trixnity shape traps (they cost real hours)
 
 - `ClaimKeys.Response.oneTimeKeys` is `Map<UserId, Map<String /*DEVICE id*/,
@@ -622,6 +666,60 @@ UI video tile conversion sites.
 
 ---
 
+## H15 — Per-participant volume & the local mute
+
+> 🕯️ *Day one of internal testing and the first prayer arrived: "let me turn
+> DOWN the loud one." Discord had this in 2015. We have it now. Barely. It
+> almost killed us less than usual.*
+
+**You see:** friends demand per-person volume sliders + mute-one-person
+without deafening yourself. (Also asked: where's the other person's
+mute/deafen badge? See [Unfinished Business](#unfinished-business) — no audio
+mute event exists yet; video-only.)
+
+**The law of this feature:** the native mixer sums every participant at UNITY
+gain into one mixed stream that becomes a single output device feed. There is
+no per-person knob anywhere downstream of `mixOneFrame()` — so the gain had to
+be born inside the mixer queue itself.
+
+**Stack, top to bottom (all shipped):**
+1. **cpp** (`orbit_livekit_audio.cpp`): `ParticipantPcmQueue.gain{1.0f}`;
+   global `g_participantGains` map + mutex OUTSIDE the mixer so setters that
+   arrive before the queue exists survive; `addParticipant` re-applies the
+   remembered gain at queue creation (mute survives participant reconnects);
+   `applyParticipantGain` mutates live queues under `mutex_`+`queueMutex`;
+   accumulate loop multiplies by `queue->gain`. MUTED QUEUES STILL POP — only
+   the contribution is zeroed, so starvation/jitter-depth bookkeeping is
+   untouched (muting must not re-trigger the cold-buffer gate).
+2. **JNI**: `Java_livekit_LiveKitNativeAudioBridge_nativeSetParticipantGain(JNIEnv*, jclass, jstring, jfloat)`
+   → `setParticipantGainEverywhere()` (writes map + live queue).
+3. **Kotlin bridge**: `LiveKitNativeAudioBridge.nativeSetParticipantGain`
+   external; `LiveKitWrapper` common expect / jvm actual.
+4. **CallManager**: `_participantGains: MutableStateFlow<Map<String,Float>>`,
+   `setParticipantVolume(identity, 0f..2f)`, `toggleParticipantMute()`;
+   cleared + reset to unity on endCall. Independent of global deafen by design.
+5. **UI**: `RenderNode.participantIdentity` plumbed on remote cam/voice/share
+   nodes in `LiveKitGroupCallSurface`; `VideoNodeCard(…, callManager)` renders
+   volume IconButton + 0–200% Slider on bottom-right pill.
+
+**Gating rules that prevent stupid bugs:** controls appear ONLY when
+`participantIdentity != null && !node.isScreenShare && callManager != null`.
+No local/self tiles. Not on share tiles (a share mirrors the sharer's MIC
+queue — same identity — so a slider there would silently control their voice;
+that confusion stays banned until the mixer learns per-TRACK queues).
+
+**Semantics worth remembering:** purely LOCAL playback shaping — remote side's
+mic, everyone else, and server are untouched. Native gains persist for process
+lifetime (bounded, tiny); Kotlin resets them to unity at endCall so state can't
+diverge across calls.
+
+**Files:** `jvmMain/cpp/orbit_livekit_audio.cpp`, `livekit/LiveKitNativeAudioBridge.kt`,
+`livekit/LiveKitWrapper.kt`(+`.jvm.kt`), `webrtc/CallManager.kt`,
+`ui/screen/call/LiveKitGroupCallSurface.kt`, `ui/screen/call/CallScreen.kt`
+(RenderNode/VideoNodeCard live HERE, not in CallGrid), `ui/screen/call/CallGrid.kt`.
+
+---
+
 # CIRCLE IV — APP LIFECYCLE
 
 > 🕯️ *Apps ought to die when closed. Ours preferred to haunt — invisible,
@@ -855,6 +953,10 @@ Do NOT file bugs against these:
 | H6 resubscribe recovery | Designed, NOT implemented | One-shot audio resubscribe when jbTargetMs sustains >400ms; guardrails in [H6](#h6--2s-end-to-end-latency-that-never-recovers) |
 | H8-V3 latecomer nudge | Shipped + unit-tested, needs LIVE multi-peer verification | Join as latecomer to a busy encrypted room, measure deaf window |
 | H10 random-close attribution | Instrumentation live, awaiting next incident | Grep `endCall invoked` chain from the run log |
+| Remote MIC-muted badge on tiles | DESIGNED, not built — no native audio event exists (video sink only, `NativeMediaEvents.kt`) | Source candidates: new cpp audio-mute callback OR matrixRTC `m.call.member` audioMuted mapped via `${userId}:${deviceId}` identity convention |
+| Deafen-of-others badge | IMPOSSIBLE remotely by protocol design | Deafen is local output muting; no wire signal exists. Do not promise it |
+| "Mic suppression not working" reports | Explained: suppression is the SPEAKER-side client's TX setting (their NS/EC), not yours to toggle | Expose our APM knobs (`orbit.apm.*`, `setLiveKitAudioProcessingOptions`) in settings; RX-side suppression remains out of scope |
+| Long-session partial deafness field reports | Hardened (H8-V4) + fully instrumented; await reproduction logs | Grep `ERROR [CallMediaKeyExchange] olm encryption failed` + nudge lines; if clean, suspect sendToDevice silent loss / OTK pool on SERVER side |
 | H11 RAM under load | Capped + instrumented, verify under 3-person+share load | Read STATS fields; if pendingFin grows → bitmap reuse/dispose path |
 | Cold-decode storm | Throttled (H11), not eliminated | Fires at first peer-key install; revisit if latency regressions return |
 | D1 AEC/AGC speakers test | Untested | Native APM flags (`orbit.apm.*`) exist for this |

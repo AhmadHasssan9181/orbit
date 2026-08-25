@@ -70,6 +70,27 @@ class CallManager(
         }
     }
 
+    // Per-participant volume (group calls): LiveKit identity -> gain, 0.0 =
+    // individually muted, 1.0 = unity. Independent of global deafen; backed by a
+    // per-queue gain inside the native mixer.
+    private val _participantGains = MutableStateFlow<Map<String, Float>>(emptyMap())
+    val participantGains: StateFlow<Map<String, Float>> = _participantGains
+
+    fun participantVolume(identity: String): Float = _participantGains.value[identity] ?: 1f
+
+    fun setParticipantVolume(identity: String, volume: Float) {
+        val clamped = volume.coerceIn(0f, 2f)
+        _participantGains.value = _participantGains.value + (identity to clamped)
+        livekit.setLiveKitParticipantGain(identity, clamped)
+    }
+
+    /** Returns the new muted state after toggling this participant locally. */
+    fun toggleParticipantMute(identity: String): Boolean {
+        val nowMuted = participantVolume(identity) > 0f
+        setParticipantVolume(identity, if (nowMuted) 0f else 1f)
+        return nowMuted
+    }
+
     // Group-call participant roster from MatrixRTC membership (covers voice-only members
     // that produce no video track). Wired via groupMembersProvider in WebRtcEffects.
     var groupMembersProvider: ((String) -> kotlinx.coroutines.flow.Flow<List<ui.model.OrbitUser>>)? = null
@@ -880,6 +901,10 @@ class CallManager(
             livekit.setLiveKitPlaybackMuted(false)
         }
         isDeafened.value = false
+        _participantGains.value.forEach { (identity, _) ->
+            runCatching { livekit.setLiveKitParticipantGain(identity, 1f) }
+        }
+        _participantGains.value = emptyMap()
         isMinimized.value = false
         _isScreenSharing.value = false
         isVideoCall.value = false

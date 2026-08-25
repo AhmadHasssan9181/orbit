@@ -84,6 +84,9 @@ class CallMediaKeyExchange(
     // Per-device timestamp of the last reply-on-receive resend (rate/loop guard).
     private val lastReplyToDeviceMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
+    // Per-user timestamp of the last post-encryption-failure device-key refresh.
+    private val lastDeviceKeyRefreshMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
     // Us→them convergence ledger + roster memory. The sweeper re-sends our
     // current key to any live device whose CONFIRMED delivery index lags
     // ring.currentIndex — heals peers that diff-only distribution misses
@@ -695,18 +698,42 @@ class CallMediaKeyExchange(
             pendingRetryDevices.addAll(missing)
         }
         for ((userId, devices) in ready.groupBy { it.userId }) {
-            try {
-                val encryptedByDevice = buildMap {
-                    for (device in devices) {
-                        put(device.deviceId, olm.encryptOlm(payload, UserId(userId), device.deviceId).getOrThrow())
-                    }
+            // Per-device isolation: one device failing olm encryption must not
+            // discard its siblings' already-encrypted payloads (a whole-user
+            // abort here turned single-broken-peer reports into multi-peer
+            // deafness until the next sweep).
+            val encryptedByDevice = buildMap {
+                for (device in devices) {
+                    runCatching { olm.encryptOlm(payload, UserId(userId), device.deviceId).getOrThrow() }
+                        .onSuccess { put(device.deviceId, it) }
+                        .onFailure {
+                            println(
+                                "ERROR [CallMediaKeyExchange] olm encryption failed for " +
+                                    "$userId:${device.deviceId} (OTK exhaustion or rotated device keys " +
+                                    "are the usual suspects): ${it.message}"
+                            )
+                        }
                 }
+            }
+            val failedDevices = devices.filter { it.deviceId !in encryptedByDevice.keys }
+            if (failedDevices.isNotEmpty()) {
+                // NOT queued into the fast retry watcher: those devices have
+                // stored keys already, so their failure is session-level (OTK
+                // exhaustion / rotated identity keys) and re-claiming every
+                // 1.5 s would hammer the server. They stay unmarked in the
+                // delivery ledger, so the 10 s convergence sweeper re-attempts.
+                maybeRefreshDeviceKeys(userId)
+            }
+            if (encryptedByDevice.isEmpty()) continue
+            try {
                 client.api.user.sendToDevice(mapOf(UserId(userId) to encryptedByDevice))
                     .onFailure { println("WARN [CallMediaKeyExchange] sendToDevice failed for $userId: ${it.message}") }
                     .onSuccess {
                         // Confirmed delivery: only now may the convergence ledger
-                        // consider this device covered for keyIndex.
+                        // consider this device covered for keyIndex — and only for
+                        // devices that actually made it into this batch.
                         for (device in devices) {
+                            if (device.deviceId !in encryptedByDevice.keys) continue
                             deliveredIndex.markDelivered(
                                 CallMediaKeys.participantIdentity(userId, device.deviceId),
                                 keyIndex
@@ -725,6 +752,28 @@ class CallMediaKeyExchange(
         }
     }
 
+    /**
+     * After an olm encryption failure, refresh this user's stored device keys
+     * at most every DEVICE_KEY_REFRESH_MIN_INTERVAL_MS — handles a mid-call
+     * device-key rotation (stale Curve25519 identity key poisons every attempt
+     * for the rest of the call otherwise) without hammering /keys/query during
+     * an outage.
+     */
+    private fun maybeRefreshDeviceKeys(userId: String) {
+        val now = nowMs()
+        synchronized(lastDeviceKeyRefreshMs) {
+            val last = lastDeviceKeyRefreshMs[userId] ?: 0L
+            if (now - last < DEVICE_KEY_REFRESH_MIN_INTERVAL_MS) return
+            lastDeviceKeyRefreshMs[userId] = now
+        }
+        scope.launch {
+            if (stopped) return@launch
+            println("DEBUG [CallMediaKeyExchange] refreshing device keys for $userId after encryption failure")
+            runCatching { fetchAndStorePeerDeviceKeys(listOf(userId)) }
+                .onFailure { println("WARN [CallMediaKeyExchange] post-failure /keys/query for $userId failed: ${it.message}") }
+        }
+    }
+
     private companion object {
         const val RETRY_WATCH_INTERVAL_MS = 1_500L
         const val DIAG_ZERO_INBOUND_GRACE_MS = 25_000L
@@ -735,6 +784,8 @@ class CallMediaKeyExchange(
         const val NUDGE_MAX_PER_CALL = 2
         const val REPLY_ON_RECEIVE_MIN_INTERVAL_MS = 3_000L
         const val CONVERGE_INTERVAL_MS = 10_000L
+        // Minimum spacing between post-failure /keys/query refreshes per user.
+        const val DEVICE_KEY_REFRESH_MIN_INTERVAL_MS = 30_000L
         const val LATECOMER_WATCH_INTERVAL_MS = 3_000L
         // A participant present this long without EVER sending us a key is
         // almost certainly a throttled client that ignored our join diff —

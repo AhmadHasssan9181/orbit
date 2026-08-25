@@ -277,6 +277,11 @@ struct ParticipantPcmQueue {
     std::atomic<std::int64_t> lastFrameNs{0};
     bool startupPrimed{false};
     bool starved{true};
+    // Per-participant output gain (1.0 = unity, 0.0 = individually muted).
+    // Written under mutex_ while holding queueMutex; read in mixOneFrame
+    // after the queue lock section. Muted queues still drain so starvation
+    // and jitter-depth bookkeeping stay identical.
+    float gain{1.0f};
 };
 
 void dispatchMixedAudioFrame(const std::vector<std::int16_t>& samples, std::int64_t timestampNs);
@@ -737,6 +742,14 @@ private:
 
 NativeAudioSourceWorker g_audioSourceWorker;
 
+// Per-participant output gains requested from Kotlin. Kept outside the mixer
+// so a setter that arrives before the participant's queue exists (or while no
+// call is connected) is remembered and applied when addParticipant creates the
+// queue. Persists for process lifetime so Kotlin-side UI state and native
+// state cannot diverge; entries are tiny and bounded by distinct identities.
+std::mutex g_participantGainsMutex;
+std::unordered_map<std::string, float> g_participantGains;
+
 class NativeAudioMixer {
 public:
     ~NativeAudioMixer() {
@@ -778,6 +791,36 @@ public:
                       << identity << std::endl;
         }
         queue->active = true;
+        // Re-apply any gain the UI set before this queue existed so a mute or
+        // slider position survives participant reconnects mid-call.
+        float rememberedGain = 1.0f;
+        bool hasRememberedGain = false;
+        {
+            std::lock_guard<std::mutex> gainLock(g_participantGainsMutex);
+            auto it = g_participantGains.find(identity);
+            if (it != g_participantGains.end()) {
+                rememberedGain = it->second;
+                hasRememberedGain = true;
+            }
+        }
+        if (hasRememberedGain) {
+            std::lock_guard<std::mutex> queueLock(queue->queueMutex);
+            queue->gain = rememberedGain;
+        }
+    }
+
+    void applyParticipantGain(const std::string& identity, float gain) {
+        if (identity.empty()) {
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = participants_.find(identity);
+        if (it == participants_.end() || it->second == nullptr) {
+            return;
+        }
+        std::lock_guard<std::mutex> queueLock(it->second->queueMutex);
+        it->second->gain = gain;
     }
 
     void removeParticipant(const std::string& identity) {
@@ -986,8 +1029,14 @@ private:
             }
 
             activeParticipants += 1;
+            // Per-participant gain (0.0 = individually muted). The frames were
+            // already popped above so queue-depth/starvation bookkeeping is
+            // untouched by muting; a muted participant simply contributes
+            // silence to the sum.
+            const float participantGain = queue->gain;
             for (int i = 0; i < kSamplesPerChannel; ++i) {
-                accumulator[i] += frame[static_cast<std::size_t>(i)];
+                accumulator[static_cast<std::size_t>(i)] += static_cast<std::int32_t>(
+                    std::lround(static_cast<double>(frame[static_cast<std::size_t>(i)]) * participantGain));
             }
         }
 
@@ -1085,6 +1134,17 @@ void mixLoop() {
 };
 
 NativeAudioMixer g_audioMixer;
+
+void setParticipantGainEverywhere(const std::string& identity, float gain) {
+    if (identity.empty()) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_participantGainsMutex);
+        g_participantGains[identity] = gain;
+    }
+    g_audioMixer.applyParticipantGain(identity, gain);
+}
 
 void initializeSdkOnce() {
     std::call_once(g_initializeOnce, [] {
@@ -3795,6 +3855,15 @@ extern "C" JNIEXPORT void JNICALL
 Java_livekit_LiveKitNativeAudioBridge_nativeSetAcceptingFrames(JNIEnv*, jclass, jboolean accepting) {
     std::lock_guard<std::mutex> lock(g_sessionMutex);
     g_acceptingFrames = accepting == JNI_TRUE && g_connected && g_micPublished && g_audioSource != nullptr && g_audioTrack != nullptr;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_livekit_LiveKitNativeAudioBridge_nativeSetParticipantGain(JNIEnv* env, jclass, jstring identity, jfloat gain) {
+    if (identity == nullptr) {
+        return;
+    }
+    const std::string identityUtf = jStringToString(env, identity);
+    setParticipantGainEverywhere(identityUtf, static_cast<float>(gain));
 }
 
 extern "C" JNIEXPORT void JNICALL
