@@ -1066,12 +1066,15 @@ data class RenderNode(
     val isScreenShare: Boolean,
     val isMuted: Boolean = false,
     val isDeafened: Boolean = false,
+    // LiveKit identity for remote participants (group calls). Non-null enables
+    // per-participant volume/mute controls on the tile; never set on local nodes.
+    val participantIdentity: String? = null,
     val avatarUrl: String? = null,
     val avatarColor: Int = 0xFF5865F2.toInt()
 )
 
 @Composable
-fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Modifier = Modifier) {
+fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Modifier = Modifier, callManager: webrtc.CallManager? = null) {
     val borderColor = animateColorAsState(
         if (node.isScreenShare) Color(0xFFF23F42) else Color(0xFF1E1F22),
         label = "borderColor"
@@ -1171,6 +1174,46 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                     Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color.White))
                     Text("LIVE", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold)
                 }
+            }
+        }
+
+        // Per-participant volume / local mute — remote group-call tiles only
+        // (cam/voice tiles; a screen-share tile mirrors the same identity's mic,
+        // so controlling audio from there would be confusing).
+        // Local-only: changes the gain this client mixes that person at; the
+        // remote side's mic and everyone else are untouched.
+        val participantIdentity = node.participantIdentity
+        if (participantIdentity != null && !node.isScreenShare && callManager != null) {
+            val gains by callManager.participantGains.collectAsState()
+            val volume = gains[participantIdentity] ?: 1f
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(8.dp)
+                    .background(Color(0xFF111214).copy(alpha = 0.8f), RoundedCornerShape(6.dp))
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                IconButton(
+                    onClick = { callManager.toggleParticipantMute(participantIdentity) },
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        if (volume == 0f) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp,
+                        contentDescription = if (volume == 0f) "Unmute participant locally" else "Mute participant locally",
+                        tint = if (volume == 0f) Color(0xFFF23F42) else Color.White.copy(alpha = 0.85f),
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+                Slider(
+                    value = volume,
+                    onValueChange = { callManager.setParticipantVolume(participantIdentity, it) },
+                    valueRange = 0f..2f,
+                    modifier = Modifier
+                        .width(72.dp)
+                        .height(24.dp)
+                )
             }
         }
     }

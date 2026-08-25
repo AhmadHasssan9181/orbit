@@ -99,6 +99,10 @@ actual fun setLiveKitOutputVolume(volume: Float) {
     LiveKitNativeAudioPlayer.setOutputVolume(volume)
 }
 
+actual fun setLiveKitParticipantGain(identity: String, gain: Float) {
+    LiveKitNativeAudioBridge.nativeSetParticipantGain(identity, gain)
+}
+
 actual fun setLiveKitAudioProcessingOptions(noiseSuppression: Boolean, echoCancellation: Boolean, autoGainControl: Boolean) {
     OrbitApm.setAudioProcessingOptions(noiseSuppression, echoCancellation, autoGainControl)
 }

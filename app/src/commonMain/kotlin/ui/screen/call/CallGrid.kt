@@ -40,7 +40,8 @@ fun CallGrid(
     nodes: List<RenderNode>,
     tokens: CosmicTokens,
     layoutMode: CallLayoutMode = CallLayoutMode.Grid,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    callManager: CallManager? = null
 ) {
     if (nodes.isEmpty()) {
         Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -80,6 +81,7 @@ fun CallGrid(
                 selectedPage = clampedPage,
                 onPageChange = { sharePage = it },
                 tokens = tokens,
+                callManager = callManager,
                 modifier = Modifier
                     .weight(3f)
                     .fillMaxHeight()
@@ -97,6 +99,7 @@ fun CallGrid(
                         VideoNodeCard(
                             node,
                             tokens,
+                            callManager = callManager,
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxWidth()
@@ -116,7 +119,7 @@ fun CallGrid(
                 modifier = modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                VideoNodeCard(nodes.first(), tokens, modifier = Modifier.weight(1f).fillMaxWidth())
+                VideoNodeCard(nodes.first(), tokens, callManager = callManager, modifier = Modifier.weight(1f).fillMaxWidth())
                 EmptyVoicePanel(modifier = Modifier.weight(1f).fillMaxWidth())
             }
         }
@@ -135,12 +138,13 @@ fun CallGrid(
                         selectedPage = clampedPage,
                         onPageChange = { sharePage = it },
                         tokens = tokens,
+                        callManager = callManager,
                         modifier = Modifier
                             .weight(if (nonShareNodes.isEmpty()) 1f else 2.5f)
                             .fillMaxWidth()
                     )
                     nonShareNodes.firstOrNull()?.let { other ->
-                        VideoNodeCard(other, tokens, modifier = Modifier.weight(1f).fillMaxWidth())
+                        VideoNodeCard(other, tokens, callManager = callManager, modifier = Modifier.weight(1f).fillMaxWidth())
                     }
                 }
             } else {
@@ -150,7 +154,7 @@ fun CallGrid(
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     nodes.forEach { node ->
-                        VideoNodeCard(node, tokens, modifier = Modifier.weight(1f).fillMaxHeight())
+                        VideoNodeCard(node, tokens, callManager = callManager, modifier = Modifier.weight(1f).fillMaxHeight())
                     }
                 }
             }
@@ -169,6 +173,7 @@ fun CallGrid(
                         selectedPage = clampedPage,
                         onPageChange = { sharePage = it },
                         tokens = tokens,
+                        callManager = callManager,
                         modifier = Modifier.weight(2.5f).fillMaxWidth()
                     )
                     if (nonShareNodes.isNotEmpty()) {
@@ -177,7 +182,7 @@ fun CallGrid(
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             nonShareNodes.forEach { node ->
-                                VideoNodeCard(node, tokens, modifier = Modifier.weight(1f).fillMaxHeight())
+                                VideoNodeCard(node, tokens, callManager = callManager, modifier = Modifier.weight(1f).fillMaxHeight())
                             }
                         }
                     }
@@ -195,7 +200,7 @@ fun CallGrid(
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             rowNodes.forEach { node ->
-                                VideoNodeCard(node, tokens, modifier = Modifier.weight(1f).fillMaxHeight())
+                                VideoNodeCard(node, tokens, callManager = callManager, modifier = Modifier.weight(1f).fillMaxHeight())
                             }
                             // If odd number, add empty space
                             if (rowNodes.size < 2) {
@@ -220,10 +225,11 @@ private fun ShareSpotlightBox(
     selectedPage: Int,
     onPageChange: (Int) -> Unit,
     tokens: CosmicTokens,
+    callManager: CallManager? = null,
     modifier: Modifier = Modifier
 ) {
     Box(modifier = modifier) {
-        VideoNodeCard(node, tokens, modifier = Modifier.fillMaxSize())
+        VideoNodeCard(node, tokens, callManager = callManager, modifier = Modifier.fillMaxSize())
         if (shareCount > 1) {
             SharePagerArrows(
                 page = selectedPage,

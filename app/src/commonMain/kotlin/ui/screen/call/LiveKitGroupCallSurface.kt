@@ -201,6 +201,7 @@ fun LiveKitGroupCallSurface(
                             name = tileName(track.participantIdentity),
                             renderer = LiveKitVideoTileRenderer.RemoteTrack(track.trackSid, isScreenShare = false),
                             isScreenShare = false,
+                            participantIdentity = track.participantIdentity,
                             avatarColor = memberInfoFor(members, track.participantIdentity)?.avatarColor
                                 ?: identityColor(track.participantIdentity),
                             avatarUrl = memberInfoFor(members, track.participantIdentity)?.avatarUrl
@@ -214,6 +215,7 @@ fun LiveKitGroupCallSurface(
                             name = "${tileName(track.participantIdentity)}'s Screen",
                             renderer = LiveKitVideoTileRenderer.RemoteTrack(track.trackSid, isScreenShare = true),
                             isScreenShare = true,
+                            participantIdentity = track.participantIdentity,
                             avatarColor = memberInfoFor(members, track.participantIdentity)?.avatarColor
                                 ?: identityColor(track.participantIdentity)
                         )
@@ -233,6 +235,7 @@ fun LiveKitGroupCallSurface(
                             name = displayName,
                             renderer = null,
                             isScreenShare = false,
+                            participantIdentity = identity,
                             avatarUrl = member?.avatarUrl,
                             avatarColor = member?.avatarColor ?: identityColor(identity)
                         )
@@ -247,7 +250,8 @@ fun LiveKitGroupCallSurface(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(horizontal = 12.dp)
-                    .padding(top = 12.dp, bottom = 96.dp)
+                    .padding(top = 12.dp, bottom = 96.dp),
+                callManager = callManager
             )
         } else {
             GroupCallJoinStatus(
