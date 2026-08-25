@@ -792,6 +792,12 @@ endCall clears CallManager's copy.
 `jvmMain/livekit/LiveKitNativeMediaSession.kt`, `LiveKitWrapper.kt`(+`.jvm.kt`),
 `webrtc/CallManager.kt`, `ui/screen/call/CallScreen.kt` (VideoNodeCard).
 
+**Downstream consumers added same day:** (1) sidebar voice-channel member
+rows (`ChannelList.kt`) get an animated green avatar ring + white name while
+their user speaks — matched via `identity.substringBeforeLast(':') == userId`
+(identities are `${userId}:${deviceId}`); (2) tile name pills go Discord-green
+(`#23A55A`) while speaking. One metering pipeline, three visible surfaces.
+
 ## The nudge, de-uglified (recovery-aware status)
 
 > 🕯️ *The membership nudge works like a defibrillator: necessary, effective,
@@ -1073,7 +1079,7 @@ Do NOT file bugs against these:
 
 | Front | Status | Where to start |
 |---|---|---|
-| H6 resubscribe recovery | Designed, NOT implemented | One-shot audio resubscribe when jbTargetMs sustains >400ms; guardrails in [H6](#h6--2s-end-to-end-latency-that-never-recovers) |
+| H6 resubscribe recovery | SHIPPED in native stats watcher — guarded one-shot unsubscribe/resubscribe per reader | Fires when jbTargetMs sustains >400ms (3 consecutive polls) with 20s warmup, 90s cooldown, 4-lifetime cap, 120s garbage cap; grep `JBWATCH firing resubscribe` / `JB-RESUB` in run logs to see it work |
 | H8-V3 latecomer nudge | Shipped + unit-tested, needs LIVE multi-peer verification | Join as latecomer to a busy encrypted room, measure deaf window |
 | H10 random-close attribution | Instrumentation live, awaiting next incident | Grep `endCall invoked` chain from the run log |
 | Remote MIC-muted badge on tiles | DESIGNED, not built — but H16 proved the audio→UI event pattern works end-to-end | Clone the [H16](#h16--the-speaking-glow--native-rms-to-the-tile-ring) pipeline with a mute-state source: cpp audio-mute callback OR matrixRTC `m.call.member` audioMuted mapped via `${userId}:${deviceId}` identity convention |

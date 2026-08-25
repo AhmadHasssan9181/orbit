@@ -8,6 +8,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -355,13 +356,28 @@ internal fun ChannelItem(channel: OrbitChannel, isSelected: Boolean, currentUser
         
         if (members.isNotEmpty() || isActiveCallInChannel) {
             val isAudioEnabled by callManager?.isLocalAudioEnabled?.collectAsState() ?: mutableStateOf(true)
-            
+            // LiveKit identities of whoever is talking right now (native mixer
+            // metering). Identity is `${userId}:${deviceId}` — match members on
+            // the userId part.
+            val speakers = callManager?.activeSpeakers?.collectAsState()?.value ?: emptySet()
+
             Column(modifier = Modifier.padding(start = 24.dp, bottom = 4.dp)) {
                 // If local user is in the call but not in Matrix state yet (e.g. just joined), we can artificially show them
                 val showLocalUserFallback = isActiveCallInChannel && currentUser != null && members.none { it.id == currentUser.id }
 
-                
+
                 members.forEach { member ->
+                    val speaking = speakers.any { it.substringBeforeLast(':') == member.id }
+                    val speakRing by animateFloatAsState(
+                        targetValue = if (speaking) 1f else 0f,
+                        animationSpec = tween(durationMillis = 200),
+                        label = "memberSpeakRing"
+                    )
+                    val memberNameColor by animateColorAsState(
+                        targetValue = if (speaking) Color.White else Text_Secondary,
+                        animationSpec = tween(durationMillis = 200),
+                        label = "memberSpeakName"
+                    )
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -384,11 +400,19 @@ internal fun ChannelItem(channel: OrbitChannel, isSelected: Boolean, currentUser
                                     modifier = Modifier.fillMaxSize()
                                 )
                             }
+                            if (speakRing > 0f) {
+                                Box(
+                                    modifier = Modifier
+                                        .matchParentSize()
+                                        .alpha(speakRing)
+                                        .border(2.dp, liveGreen, CircleShape)
+                                )
+                            }
                         }
                         Spacer(Modifier.width(8.dp))
                         Text(
                             text = member.displayName,
-                            style = MaterialTheme.typography.bodySmall.copy(color = Text_Secondary, fontSize = 13.sp),
+                            style = MaterialTheme.typography.bodySmall.copy(color = memberNameColor, fontSize = 13.sp),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
