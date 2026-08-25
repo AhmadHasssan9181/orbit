@@ -889,9 +889,36 @@ mirror video, background blur, bitrate, attenuation, SFU override.
    no consumer. Replaced with truthful fixed-combo text; Keybinds pane card
    updated to match ("Ctrl + Shift + Space (Hold)").
 
-**Left on the table deliberately:** rebindable PTT keys (focus-aware capture
-UI is its own project), Start/Stop Stream shortcut (needs source-picker flow
-first), Navigation-pane shortcuts (unaudited this round).
+**Left on the table deliberately:** Start/Stop Stream shortcut (needs
+source-picker flow first), Navigation-pane shortcuts (unaudited this round).
+Rebindable PTT keys — deferred that day, SHIPPED the next: see H18 below.
+
+## H18 — Rebindable push-to-talk (the deferred keybind, delivered)
+
+> 🕯️ *"Rebindable PTT keys (focus-aware capture UI is its own project)."*
+> It was. It isn't anymore.
+
+**Shipped:** one new file (`ui/screen/settings/PttKeybinds.kt`) owns the
+whole domain — a hand-checkable label↔Key table (letters, digits, F1–F12,
+Space), `parsePttCombo` (Ctrl/Shift/Alt tokens + one key), and the capture
+`Dialog` that grabs the next `onPreviewKeyEvent` combination live.
+
+**The safety rule:** every combo MUST include Ctrl or Alt. Shift alone is
+rejected because Shift+letter types uppercase in chat; a bare letter would
+swallow normal typing app-wide (the handler sits on the root Window). The
+capture dialog says so while you press.
+
+**Wiring:** Voice & Video pane's keybind Surface is now clickable → capture
+dialog → canonical string persisted via the pre-existing
+`pushToTalkKeybind` setting (legacy `"Unassigned"` values normalize to
+`Ctrl+Shift+Space`, so old installs migrate without touching storage).
+Main.kt parses once per stored change into `PttBinding(ctrl, shift, alt,
+key)` and matches the event dynamically — modifiers compared EXACTLY
+(`==` per flag), not subset-matched, so "Ctrl+Shift+V" never leaks into a
+"Ctrl+V" bind. The Keybinds pane row reads the same flow.
+
+**Files:** `commonMain/ui/screen/settings/PttKeybinds.kt` (new),
+`SettingsExtraPanes.kt`, `SettingsAppPanes.kt`, `jvmMain/Main.kt`.
 
 ---
 
@@ -1139,7 +1166,7 @@ Do NOT file bugs against these:
 | Deploy / Docker validation | Untouched | MatrixRTC focus/livekit broker deployment checks |
 | packI420 direct-buffer reuse + share capture fps cap | Optimization backlog | `LiveKitLocalScreenShareTrack` allocates fresh direct buffers per frame |
 | App icon | No .ico exists | Author one, wire `windows { iconFile = ... }`; default Java cup shows today |
-| Rebindable PTT key | Fixed combo Ctrl+Shift+Space (honest, wired) | Needs focus-aware key-capture UI; bare letters would swallow chat typing |
+| Rebindable PTT key | SHIPPED (H18) — click-to-capture dialog in Voice & Video; combo must include Ctrl or Alt so chat typing stays safe; Main.kt matches the parsed binding dynamically; legacy "Unassigned" values fall back to Ctrl+Shift+Space | Capture supports letters/digits/F1–F12/Space; extend `pttKeyTable` in PttKeybinds.kt for more keys |
 | "Navigation" polish (user ask) | AMBIGUOUS — awaiting user's meaning | In-app navigation vs nav-while-in-call vs something else; ask before building |
 | GitHub Release publication | Offered, awaiting go-ahead | Public action — upload Orbit-0.1.0.msi to a tagged release |
 | MSI upgrade path in the wild | Mechanism verified via upgradeUuid | Bump packageVersion, install over 0.1.0, confirm in-place upgrade |
