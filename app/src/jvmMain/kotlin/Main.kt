@@ -114,8 +114,17 @@ fun main() = application {
                             webrtc.CallShortcuts.onToggleDeafen?.invoke()
                             true
                         }
+                        androidx.compose.ui.input.key.Key.S -> {
+                            webrtc.CallShortcuts.onToggleStream?.invoke()
+                            true
+                        }
                         androidx.compose.ui.input.key.Key.V -> {
-                            webrtc.CallShortcuts.onToggleCamera?.invoke()
+                            // Alt distinguishes Return to Active Call from Toggle Camera.
+                            if (event.isAltPressed) {
+                                webrtc.CallShortcuts.onReturnToCall?.invoke()
+                            } else {
+                                webrtc.CallShortcuts.onToggleCamera?.invoke()
+                            }
                             true
                         }
                         else -> false

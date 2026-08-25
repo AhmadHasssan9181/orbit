@@ -9,6 +9,14 @@ object CallShortcuts {
     var onToggleDeafen: (() -> Unit)? = null
     var onToggleCamera: (() -> Unit)? = null
 
+    // Start/Stop Stream: registered by the active call surface. Stops an
+    // in-flight screen share directly; otherwise opens the source picker
+    // (only when the expanded surface is showing).
+    var onToggleStream: (() -> Unit)? = null
+
+    // Return to Active Call: expands a minimized call back into its surface.
+    var onReturnToCall: (() -> Unit)? = null
+
     // Push-to-talk (Voice & Video settings): invoked with true while the combo
     // is held and false on release; repeats are idempotent in the handler.
     var onPushToTalk: ((active: Boolean) -> Unit)? = null

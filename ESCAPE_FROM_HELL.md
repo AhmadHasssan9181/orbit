@@ -922,6 +922,56 @@ key)` and matches the event dynamically — modifiers compared EXACTLY
 
 ---
 
+## H19 — The Keybinds pane audit: two shortcuts wired, six lies deleted
+
+**You see:** Settings → Keybinds advertises 13 shortcuts with pretty accent
+chips. Grep for their handlers: **8 of them do not exist anywhere in the
+codebase.** Quick Switcher Ctrl+K, Navigate Back/Forward Alt+←/→,
+Mark Server Read Shift+Esc, Mark Channel Read Esc, Focus Message Box Tab —
+pure decoration. Even a dead **"Add a Keybind"** button (`onClick = {}`)
+sat under them like a tombstone for features never written.
+
+**It is:** the same honesty debt as the settings panes — UI copied from
+Discord's keybind list before any of it was real.
+
+**Fix set (two wired, six deleted):**
+1. **Start/Stop Stream Ctrl+Shift+S is now REAL.** New
+   `CallShortcuts.onToggleStream`, registered by `LiveKitGroupCallSurface`
+   via `DisposableEffect` — placed BEFORE the minimized early-return so
+   stopping a share works from the compact pill too; opening the source
+   picker stays expanded-only (same as clicking the button). Sharing?
+   `stopScreenShare()`. Not sharing? Picker.
+2. **Return to Active Call Ctrl+Shift+Alt+V is now REAL.**
+   `CallShortcuts.onReturnToCall` registered app-wide in WebRtcEffects →
+   clears `callManager.isMinimized` (guarded on not-IDLE). In Main.kt the
+   Ctrl+Shift block splits Key.V on `isAltPressed`: plain = camera,
+   +Alt = restore. Exact-flag matching from H18 keeps these unambiguous.
+3. **Deleted without ceremony:** the five Messaging/Navigation fakes above
+   plus the empty Navigation leftovers — no read-state system exists
+   (`unread*` grep finds only badge toggles), no focus-requester anywhere,
+   no nav history stack. A card advertising a nonexistent FEATURE is worse
+   than no card.
+4. Dead "Add a Keybind" button removed.
+
+**Files:** `webrtc/CallShortcuts.kt`, `ui/screen/main/WebRtcEffects.kt`,
+`ui/screen/call/LiveKitGroupCallSurface.kt`, `jvmMain/Main.kt`,
+`ui/screen/settings/SettingsAppPanes.kt`.
+
+**Smoke-test trap found this round:** the H13 WM_CLOSE ritual
+(`taskkill /PID <pid>`) now hits **`TrayMessageWindow`**, not the app —
+the unconditional `Tray {}` in Main.kt owns a hidden message window, and
+taskkill posts WM_CLOSE to whichever top-level window it enumerates first.
+The app ignores close-on-tray-window, so the ritual reports a false zombie.
+Post to the VISIBLE window instead:
+
+```powershell
+# EnumWindows for pid → find visible "Orbit" hwnd, then:
+[W.U32b]::PostMessage([IntPtr]<hwnd>, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
+# poll ~12s → process tree gone == clean exit (verified this round)
+```
+
+---
+
 # CIRCLE IV — APP LIFECYCLE
 
 > 🕯️ *Apps ought to die when closed. Ours preferred to haunt — invisible,
@@ -1167,6 +1217,8 @@ Do NOT file bugs against these:
 | packI420 direct-buffer reuse + share capture fps cap | Optimization backlog | `LiveKitLocalScreenShareTrack` allocates fresh direct buffers per frame |
 | App icon | No .ico exists | Author one, wire `windows { iconFile = ... }`; default Java cup shows today |
 | Rebindable PTT key | SHIPPED (H18) — click-to-capture dialog in Voice & Video; combo must include Ctrl or Alt so chat typing stays safe; Main.kt matches the parsed binding dynamically; legacy "Unassigned" values fall back to Ctrl+Shift+Space | Capture supports letters/digits/F1–F12/Space; extend `pttKeyTable` in PttKeybinds.kt for more keys |
+| Keybinds-pane honesty audit | SHIPPED (H19) — Ctrl+Shift+S stream toggle + Ctrl+Shift+Alt+V return-to-call wired; Quick Switcher/Navigate/Mark-Read/Focus-Message cards deleted (features don't exist); dead Add-a-Keybind button removed | Build the actual features first, then re-add their cards |
+| Smoke-test WM_CLOSE ritual | AMENDED (H19) — taskkill hits hidden TrayMessageWindow now; post WM_CLOSE to the VISIBLE "Orbit" hwnd via EnumWindows+PostMessage | See H19 snippet |
 | "Navigation" polish (user ask) | AMBIGUOUS — awaiting user's meaning | In-app navigation vs nav-while-in-call vs something else; ask before building |
 | GitHub Release publication | Offered, awaiting go-ahead | Public action — upload Orbit-0.1.0.msi to a tagged release |
 | MSI upgrade path in the wild | Mechanism verified via upgradeUuid | Bump packageVersion, install over 0.1.0, confirm in-place upgrade |
