@@ -118,6 +118,7 @@ std::mutex g_remoteVideoSinkMutex;
 jobject g_remoteVideoSink = nullptr;
 jmethodID g_remoteParticipantConnectedMethod = nullptr;
 jmethodID g_remoteParticipantDisconnectedMethod = nullptr;
+jmethodID g_remoteAudioMuteChangedMethod = nullptr;
 jmethodID g_remoteVideoTrackAddedMethod = nullptr;
 jmethodID g_remoteVideoFrameMethod = nullptr;
 jmethodID g_remoteVideoTrackRemovedMethod = nullptr;
@@ -315,6 +316,7 @@ void releaseJniEnv(bool attached);
 void dispatchActiveSpeakersChanged(JNIEnv* env, jlong sessionId, jlong epoch, const std::vector<std::string>& speakers);
 void dispatchNativeEvent(JNIEnv* env, jobject event);
 void dispatchRemoteParticipantDisconnected(const std::string& participantIdentity, const std::string& participantSid);
+void dispatchRemoteAudioMuteChanged(const std::string& participantIdentity, bool muted);
 void requestAudioTrackResubscribe(const std::string& participantIdentity, const std::string& trackSid, long long jbTargetMs);
 
 struct PcmDiagnostics {
@@ -1686,6 +1688,9 @@ void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track, const
         g_audioMixer.addParticipant(reader->trackSid);
         reader->stream = livekit::AudioStream::fromTrack(track, options);
         reader->track = track;
+        // Announce the subscribe-time mute state so late joiners see the badge
+        // for peers who were already muted (no TrackMuted event will fire).
+        dispatchRemoteAudioMuteChanged(reader->participantIdentity, track->muted());
         reader->thread = std::thread([reader] {
             livekit::AudioFrameEvent event;
             auto lastRxStat = std::chrono::steady_clock::now();
@@ -1992,6 +1997,48 @@ void dispatchRemoteParticipantDisconnected(const std::string& participantIdentit
             std::lock_guard<std::mutex> announcedLock(g_announcedParticipantsMutex);
             g_announcedParticipantSids.erase(normalizedSid(participantSid));
         }
+    }
+
+    releaseJniEnv(attached);
+}
+
+void dispatchRemoteAudioMuteChanged(const std::string& participantIdentity, bool muted) {
+    if (participantIdentity.empty() || callbacksStopped("remote-audio-mute-changed")) {
+        return;
+    }
+
+    JNIEnv* env = nullptr;
+    bool attached = false;
+    if (!getJniEnv(&env, &attached, "remote-audio-mute-changed") || env == nullptr) {
+        return;
+    }
+    logJniAttachSuccess("remote-audio-mute-changed", attached);
+
+    jobject sink = nullptr;
+    jmethodID method = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_remoteVideoSinkMutex);
+        if (g_remoteVideoSink != nullptr && g_remoteAudioMuteChangedMethod != nullptr) {
+            sink = env->NewLocalRef(g_remoteVideoSink);
+            method = g_remoteAudioMuteChangedMethod;
+        }
+    }
+
+    if (sink != nullptr && method != nullptr) {
+        jstring jIdentity = env->NewStringUTF(participantIdentity.c_str());
+        env->CallVoidMethod(
+            sink,
+            method,
+            kRawSessionId,
+            g_rawEpoch,
+            jIdentity,
+            muted ? JNI_TRUE : JNI_FALSE);
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        if (jIdentity != nullptr) env->DeleteLocalRef(jIdentity);
+        env->DeleteLocalRef(sink);
     }
 
     releaseJniEnv(attached);
@@ -2594,6 +2641,18 @@ public:
                       << " trackSid=" << publicationTrackSid(event.publication)
                       << std::endl;
             stopRemoteVideoReaderForPublicationLocked(event.publication, "muted");
+        } else {
+            // Remote mic muted. The remote() guard keeps our OWN local-mute
+            // events (whose track is not remote) from announcing us as a
+            // muted remote participant. A null subscribed track means the
+            // mute predates our subscription — that initial state is
+            // announced by startRemoteReaderLocked instead.
+            const auto track = event.publication != nullptr ? event.publication->track() : nullptr;
+            if (event.participant != nullptr && track != nullptr && track->remote()) {
+                std::cout << "DEBUG [OrbitLiveKitAudio] remote mic muted identity="
+                          << event.participant->identity() << std::endl;
+                dispatchRemoteAudioMuteChanged(event.participant->identity(), true);
+            }
         }
     }
 
@@ -2612,6 +2671,13 @@ public:
             logRemoteVideoPublicationDetected(event.participant, event.publication, track, "unmuted");
             if (track != nullptr && track->remote()) {
                 startRemoteVideoReaderLocked(track, event.participant, event.publication);
+            }
+        } else {
+            const auto muteTrack = event.publication != nullptr ? event.publication->track() : nullptr;
+            if (event.participant != nullptr && muteTrack != nullptr && muteTrack->remote()) {
+                std::cout << "DEBUG [OrbitLiveKitAudio] remote mic unmuted identity="
+                          << event.participant->identity() << std::endl;
+                dispatchRemoteAudioMuteChanged(event.participant->identity(), false);
             }
         }
     }
@@ -4121,6 +4187,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeDestroySession(JNIEnv* env, jclass, jlo
             g_remoteVideoSink = nullptr;
             g_remoteParticipantConnectedMethod = nullptr;
             g_remoteParticipantDisconnectedMethod = nullptr;
+            g_remoteAudioMuteChangedMethod = nullptr;
             g_remoteVideoTrackAddedMethod = nullptr;
             g_remoteVideoFrameMethod = nullptr;
             g_remoteVideoTrackRemovedMethod = nullptr;
@@ -4246,6 +4313,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetRemoteVideoSink(JNIEnv* env, jclass,
             }
             g_remoteParticipantConnectedMethod = nullptr;
             g_remoteParticipantDisconnectedMethod = nullptr;
+            g_remoteAudioMuteChangedMethod = nullptr;
             g_remoteVideoTrackAddedMethod = nullptr;
             g_remoteVideoFrameMethod = nullptr;
             g_remoteVideoTrackRemovedMethod = nullptr;
@@ -4268,6 +4336,10 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetRemoteVideoSink(JNIEnv* env, jclass,
         sinkClass,
         "onRemoteParticipantDisconnected",
         "(JJLjava/lang/String;Ljava/lang/String;)V");
+    jmethodID audioMuteMethod = env->GetMethodID(
+        sinkClass,
+        "onRemoteAudioMuteChanged",
+        "(JJLjava/lang/String;Z)V");
     jmethodID addedMethod = env->GetMethodID(
         sinkClass,
         "onRemoteVideoTrackAdded",
@@ -4283,6 +4355,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetRemoteVideoSink(JNIEnv* env, jclass,
     env->DeleteLocalRef(sinkClass);
 
     if (partConnectedMethod == nullptr || partDisconnectedMethod == nullptr ||
+        audioMuteMethod == nullptr ||
         addedMethod == nullptr || frameMethod == nullptr || removedMethod == nullptr) {
         if (env->ExceptionCheck()) {
             env->ExceptionDescribe();
@@ -4302,6 +4375,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetRemoteVideoSink(JNIEnv* env, jclass,
         g_remoteVideoSink = newSink;
         g_remoteParticipantConnectedMethod = partConnectedMethod;
         g_remoteParticipantDisconnectedMethod = partDisconnectedMethod;
+        g_remoteAudioMuteChangedMethod = audioMuteMethod;
         g_remoteVideoTrackAddedMethod = addedMethod;
         g_remoteVideoFrameMethod = frameMethod;
         g_remoteVideoTrackRemovedMethod = removedMethod;

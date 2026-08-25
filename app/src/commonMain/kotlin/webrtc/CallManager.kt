@@ -96,6 +96,11 @@ class CallManager(
     private val _activeSpeakers = MutableStateFlow<Set<String>>(emptySet())
     val activeSpeakers: StateFlow<Set<String>> = _activeSpeakers
 
+    // LiveKit identities of remote participants whose mic is muted — drives
+    // the mic-off badges on call tiles and voice-channel member rows.
+    private val _remoteMicMutedIds = MutableStateFlow<Set<String>>(emptySet())
+    val remoteMicMutedIds: StateFlow<Set<String>> = _remoteMicMutedIds
+
     // True for a short window after a key-exchange self-nudge (membership
     // leave+rejoin that repairs missing peer keys) so the call UI can show a
     // calm "Repairing audio link…" status instead of alarming reconnect copy.
@@ -105,6 +110,9 @@ class CallManager(
     init {
         scope.launch {
             livekit.liveKitActiveSpeakers().collect { _activeSpeakers.value = it }
+        }
+        scope.launch {
+            livekit.liveKitRemoteAudioMuted().collect { _remoteMicMutedIds.value = it }
         }
         scope.launch {
             while (true) {

@@ -110,6 +110,7 @@ fun LiveKitGroupCallSurface(
     val isVideoIntent by callManager.isVideoCall.collectAsState()
     val members by callManager.groupCallMembers.collectAsState()
     val selfNudgeRecovery by callManager.selfNudgeRecovery.collectAsState()
+    val remoteMicMutedIds by callManager.remoteMicMutedIds.collectAsState()
     val tokens = rememberCosmicTokens()
 
     if (isMinimized || forceMinimized) {
@@ -202,6 +203,7 @@ fun LiveKitGroupCallSurface(
                             name = tileName(track.participantIdentity),
                             renderer = LiveKitVideoTileRenderer.RemoteTrack(track.trackSid, isScreenShare = false),
                             isScreenShare = false,
+                            isMicMuted = identityIsMicMuted(track.participantIdentity, remoteMicMutedIds),
                             participantIdentity = track.participantIdentity,
                             avatarColor = memberInfoFor(members, track.participantIdentity)?.avatarColor
                                 ?: identityColor(track.participantIdentity),
@@ -236,6 +238,7 @@ fun LiveKitGroupCallSurface(
                             name = displayName,
                             renderer = null,
                             isScreenShare = false,
+                            isMicMuted = identityIsMicMuted(identity, remoteMicMutedIds),
                             participantIdentity = identity,
                             avatarUrl = member?.avatarUrl,
                             avatarColor = member?.avatarColor ?: identityColor(identity)

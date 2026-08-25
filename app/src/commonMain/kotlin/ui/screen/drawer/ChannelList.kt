@@ -360,6 +360,7 @@ internal fun ChannelItem(channel: OrbitChannel, isSelected: Boolean, currentUser
             // metering). Identity is `${userId}:${deviceId}` — match members on
             // the userId part.
             val speakers = callManager?.activeSpeakers?.collectAsState()?.value ?: emptySet()
+            val remoteMicMutedIds = callManager?.remoteMicMutedIds?.collectAsState()?.value ?: emptySet()
 
             Column(modifier = Modifier.padding(start = 24.dp, bottom = 4.dp)) {
                 // If local user is in the call but not in Matrix state yet (e.g. just joined), we can artificially show them
@@ -417,8 +418,10 @@ internal fun ChannelItem(channel: OrbitChannel, isSelected: Boolean, currentUser
                             overflow = TextOverflow.Ellipsis
                         )
                         Spacer(Modifier.weight(1f))
-                        // Muted state would ideally come from m.call.member too, for now just local logic for the current user
-                        if (member.id == currentUser?.id && !isAudioEnabled) {
+                        // Remote mutes come from the native LiveKit room
+                        // delegate; self mute still uses local state.
+                        val isSelfMuted = member.id == currentUser?.id && !isAudioEnabled
+                        if (isSelfMuted || ui.screen.call.identityIsMicMuted(member.id, remoteMicMutedIds)) {
                             Icon(OrbitIcons.MicOff, null, tint = Color(0xFFF23F42), modifier = Modifier.size(14.dp))
                         }
                     }

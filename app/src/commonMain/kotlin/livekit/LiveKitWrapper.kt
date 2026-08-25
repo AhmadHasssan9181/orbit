@@ -60,6 +60,10 @@ expect fun setLiveKitParticipantGain(identity: String, gain: Float)
 // by the native mixer (change-only updates). Empty while not in a call.
 expect fun liveKitActiveSpeakers(): kotlinx.coroutines.flow.StateFlow<Set<String>>
 
+// LiveKit identities whose remote mic track is currently muted (native room
+// delegate: subscribe-time state + TrackMuted/TrackUnmuted). Empty while idle.
+expect fun liveKitRemoteAudioMuted(): kotlinx.coroutines.flow.StateFlow<Set<String>>
+
 // Voice & Video settings: NS/EC/AGC for the native group-call APM chain
 expect fun setLiveKitAudioProcessingOptions(noiseSuppression: Boolean, echoCancellation: Boolean, autoGainControl: Boolean)
 

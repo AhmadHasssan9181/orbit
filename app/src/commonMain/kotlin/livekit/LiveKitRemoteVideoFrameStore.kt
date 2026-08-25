@@ -66,6 +66,11 @@ object LiveKitRemoteVideoFrameStore {
     private val _remoteParticipants = MutableStateFlow<Set<String>>(emptySet())
     val remoteParticipants: StateFlow<Set<String>> = _remoteParticipants
 
+    // LiveKit identities whose remote mic track is currently muted. Fed from
+    // the native room delegate (initial state at subscribe + TrackMuted/Unmuted).
+    private val _remoteAudioMuted = MutableStateFlow<Set<String>>(emptySet())
+    val remoteAudioMuted: StateFlow<Set<String>> = _remoteAudioMuted
+
     private var sequence: Long = 0L
     private var activeTrackSid: String? = null
 
@@ -77,6 +82,14 @@ object LiveKitRemoteVideoFrameStore {
     fun participantDisconnected(participantIdentity: String) {
         if (participantIdentity.isBlank()) return
         _remoteParticipants.value = _remoteParticipants.value - participantIdentity
+        _remoteAudioMuted.value = _remoteAudioMuted.value - participantIdentity
+    }
+
+    fun remoteAudioMuteChanged(participantIdentity: String, muted: Boolean) {
+        if (participantIdentity.isBlank()) return
+        val current = _remoteAudioMuted.value
+        val updated = if (muted) current + participantIdentity else current - participantIdentity
+        if (updated != current) _remoteAudioMuted.value = updated
     }
 
     fun trackStarted(participantIdentity: String, trackSid: String, trackSource: String = "", trackName: String = "") {
@@ -182,6 +195,7 @@ object LiveKitRemoteVideoFrameStore {
         _activeTracks.value = emptyMap()
         _framesByTrack.value = emptyMap()
         _remoteParticipants.value = emptySet()
+        _remoteAudioMuted.value = emptySet()
         _latestFrame.value = null
         _latestCameraFrame.value = null
         _latestScreenShareFrame.value = null
