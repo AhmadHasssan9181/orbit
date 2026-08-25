@@ -129,6 +129,26 @@ fun main() = application {
                         }
                         else -> false
                     }
+                } else if (event.type == androidx.compose.ui.input.key.KeyEventType.KeyDown &&
+                    event.isCtrlPressed && !event.isShiftPressed && !event.isAltPressed &&
+                    event.key == androidx.compose.ui.input.key.Key.K
+                ) {
+                    webrtc.CallShortcuts.onQuickSwitcher?.invoke()
+                    true
+                } else if (event.type == androidx.compose.ui.input.key.KeyEventType.KeyDown &&
+                    event.isAltPressed && !event.isCtrlPressed && !event.isShiftPressed
+                ) {
+                    when (event.key) {
+                        androidx.compose.ui.input.key.Key.DirectionLeft -> {
+                            webrtc.CallShortcuts.onNavigateBack?.invoke()
+                            true
+                        }
+                        androidx.compose.ui.input.key.Key.DirectionRight -> {
+                            webrtc.CallShortcuts.onNavigateForward?.invoke()
+                            true
+                        }
+                        else -> false
+                    }
                 } else {
                     false
                 }

@@ -17,6 +17,13 @@ object CallShortcuts {
     // Return to Active Call: expands a minimized call back into its surface.
     var onReturnToCall: (() -> Unit)? = null
 
+    // App navigation (registered by OrbitApp's shell): Alt+←/→ history and
+    // Ctrl+K quick switcher. Live here because the root Window dispatches
+    // every app-wide keybind through this object.
+    var onNavigateBack: (() -> Unit)? = null
+    var onNavigateForward: (() -> Unit)? = null
+    var onQuickSwitcher: (() -> Unit)? = null
+
     // Push-to-talk (Voice & Video settings): invoked with true while the combo
     // is held and false on release; repeats are idempotent in the handler.
     var onPushToTalk: ((active: Boolean) -> Unit)? = null

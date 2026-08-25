@@ -2,6 +2,7 @@ package ui.screen.main
 
 import ui.screen.chat.*
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -14,9 +15,11 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -38,9 +41,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -53,9 +58,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.buildJsonArray
@@ -400,9 +412,66 @@ private fun MainAppContent(
         return
     }
 
-    val handleChannelClick: (String) -> Unit = { id ->
+    // Alt+←/→ navigation history over channel switches, plus Ctrl+K.
+    var navBackStack by remember { mutableStateOf(listOf<String>()) }
+    var navForwardStack by remember { mutableStateOf(listOf<String>()) }
+    var showQuickSwitcher by remember { mutableStateOf(false) }
+
+    fun navigateTo(id: String) {
+        if (selectedChannelId.isNotBlank() && selectedChannelId != id) {
+            navBackStack = navBackStack + selectedChannelId
+            navForwardStack = emptyList()
+        }
         selectedChannelId = id
         compactOpenChannelId = id
+    }
+
+    fun navigateBack() {
+        val stack = navBackStack
+        if (stack.isEmpty()) return
+        val target = stack.last()
+        navBackStack = stack.dropLast(1)
+        if (selectedChannelId.isNotBlank()) navForwardStack = navForwardStack + selectedChannelId
+        selectedChannelId = target
+        compactOpenChannelId = target
+    }
+
+    fun navigateForward() {
+        val stack = navForwardStack
+        if (stack.isEmpty()) return
+        val target = stack.last()
+        navForwardStack = stack.dropLast(1)
+        if (selectedChannelId.isNotBlank()) navBackStack = navBackStack + selectedChannelId
+        selectedChannelId = target
+        compactOpenChannelId = target
+    }
+
+    // Quick switcher searches every server's channels, loaded when opened.
+    var quickSwitcherEntries by remember { mutableStateOf<List<Pair<OrbitServer, OrbitChannel>>>(emptyList()) }
+    LaunchedEffect(showQuickSwitcher, servers) {
+        if (!showQuickSwitcher) return@LaunchedEffect
+        quickSwitcherEntries = servers.flatMap { server ->
+            try {
+                repository.getChannelsForSpace(server.id).map { server to it }
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+    }
+
+    DisposableEffect(Unit) {
+        webrtc.CallShortcuts.onNavigateBack = { navigateBack() }
+        webrtc.CallShortcuts.onNavigateForward = { navigateForward() }
+        webrtc.CallShortcuts.onQuickSwitcher = { showQuickSwitcher = true }
+        onDispose {
+            webrtc.CallShortcuts.onNavigateBack = null
+            webrtc.CallShortcuts.onNavigateForward = null
+            webrtc.CallShortcuts.onQuickSwitcher = null
+        }
+    }
+
+    val handleChannelClick: (String) -> Unit = { id ->
+        navigateTo(id)
     }
 
     // ─── Settings screen ────────────────────────────────────────
@@ -528,6 +597,17 @@ private fun MainAppContent(
                 )
             }
 
+            if (showQuickSwitcher) {
+                QuickSwitcherDialog(
+                    entries = quickSwitcherEntries,
+                    onSelect = { id ->
+                        showQuickSwitcher = false
+                        navigateTo(id)
+                    },
+                    onDismiss = { showQuickSwitcher = false }
+                )
+            }
+
             val activeRoomId by callManager.activeRoomIdFlow.collectAsState()
             val callState by callManager.callState.collectAsState()
             val isGroupCall by callManager.isGroupCall.collectAsState()
@@ -573,7 +653,7 @@ private fun MainAppContent(
                         forceMinimized = true,
                         onRestore = {
                             val target = activeCallChannel?.id
-                            if (target != null) selectedChannelId = target
+                            if (target != null) navigateTo(target)
                             callManager.isMinimized.value = false
                         }
                     )
@@ -716,6 +796,124 @@ fun ChatScreenWithRepo(
         onBack = onBack,
         modifier = modifier
     )
+}
+
+@Composable
+private fun QuickSwitcherDialog(
+    entries: List<Pair<OrbitServer, OrbitChannel>>,
+    onSelect: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var query by remember { mutableStateOf("") }
+    val results = remember(query, entries) {
+        if (query.isBlank()) {
+            entries.take(10)
+        } else {
+            val q = query.trim().lowercase()
+            entries
+                .filter { (_, channel) -> channel.name.lowercase().contains(q) }
+                .sortedBy { (_, channel) -> channel.name.lowercase().indexOf(q) }
+                .take(10)
+        }
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = Color(0xFF1A1B1E),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 48.dp)
+                .onPreviewKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
+                        results.firstOrNull()?.let { onSelect(it.second.id) }
+                        true
+                    } else {
+                        false
+                    }
+                }
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        Icons.Filled.Search,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.45f),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        placeholder = {
+                            Text(
+                                "Where would you like to go?",
+                                color = Color.White.copy(alpha = 0.4f),
+                                fontSize = 13.sp
+                            )
+                        },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color.Transparent,
+                            unfocusedBorderColor = Color.Transparent
+                        ),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                HorizontalDivider(color = Color.White.copy(alpha = 0.06f))
+
+                LazyColumn(modifier = Modifier.heightIn(max = 320.dp)) {
+                    items(results, key = { it.second.id }) { (server, channel) ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { onSelect(channel.id) }
+                                .padding(horizontal = 6.dp, vertical = 9.dp)
+                        ) {
+                            Icon(
+                                Icons.Filled.Tag,
+                                contentDescription = null,
+                                tint = Color.White.copy(alpha = 0.4f),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                channel.name,
+                                color = Color.White.copy(alpha = 0.85f),
+                                fontSize = 14.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(Modifier.weight(1f))
+                            Text(
+                                server.name,
+                                color = Color.White.copy(alpha = 0.35f),
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    if (results.isEmpty()) {
+                        item {
+                            Text(
+                                "No channels found",
+                                color = Color.White.copy(alpha = 0.4f),
+                                fontSize = 13.sp,
+                                modifier = Modifier.padding(vertical = 12.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 
