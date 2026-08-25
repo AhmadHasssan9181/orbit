@@ -103,11 +103,13 @@ internal fun ChatSettingsPane(settingsManager: SettingsManager) {
 @Composable
 internal fun KeybindsPane() {
     val t = rememberCosmicTokens()
+    val settingsManager = remember { repository.SettingsManager() }
+    val storedPttKeybind by settingsManager.pushToTalkKeybind.collectAsState(PTT_DEFAULT_COMBO)
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SectionHeader("Voice & Video")
         KeybindCard("Toggle Mute", "Ctrl + Shift + M")
         KeybindCard("Toggle Deafen", "Ctrl + Shift + D")
-        KeybindCard("Push to Talk", "Ctrl + Shift + Space (Hold)")
+        KeybindCard("Push to Talk", "${displayPttCombo(storedPttKeybind)} (Hold)")
         KeybindCard("Push to Mute", "None")
 
         SectionHeader("Screen Share")

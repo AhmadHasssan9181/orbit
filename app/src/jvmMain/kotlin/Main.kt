@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.isAltPressed
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
@@ -18,6 +19,8 @@ import androidx.compose.ui.window.Tray
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import ui.screen.settings.normalizedPttKeybind
+import ui.screen.settings.parsePttCombo
 import java.util.concurrent.atomic.AtomicBoolean
 
 // H5: exitApplication() cannot terminate the JVM while JNI-attached native
@@ -48,6 +51,9 @@ fun main() = application {
     val settingsManager = remember { repository.SettingsManager() }
     util.OrbitLog.debugEnabled = settingsManager.debugLoggingSync()
     val minimizeToTray by settingsManager.minimizeToTray.collectAsState(false)
+    // Push-to-talk combo is user-rebindable; parse once per stored change.
+    val storedPttKeybind by settingsManager.pushToTalkKeybind.collectAsState("Unassigned")
+    val pttBinding = remember(storedPttKeybind) { parsePttCombo(normalizedPttKeybind(storedPttKeybind)) }
 
     var showSplash by remember { mutableStateOf(true) }
 
@@ -82,8 +88,12 @@ fun main() = application {
             icon = painterResource("logo.jpeg"),
             onPreviewKeyEvent = { event ->
                 // App-wide call keybinds (see webrtc.CallShortcuts).
-                if (event.isCtrlPressed && event.isShiftPressed &&
-                    event.key == androidx.compose.ui.input.key.Key.Spacebar
+                val binding = pttBinding
+                if (binding != null &&
+                    event.key == binding.key &&
+                    event.isCtrlPressed == binding.ctrl &&
+                    event.isShiftPressed == binding.shift &&
+                    event.isAltPressed == binding.alt
                 ) {
                     // Push-to-talk: momentary mic open for as long as the combo
                     // is held; KeyUp releases it. Auto-repeat KeyDown is fine —

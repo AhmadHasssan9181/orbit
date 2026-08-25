@@ -1,6 +1,7 @@
 package ui.screen.settings
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -234,16 +235,28 @@ internal fun VoiceVideoFullPane(settingsManager: SettingsManager) {
         }
         
         if (inputMode == "Push to Talk") {
-            PrefCard("Push to Talk Keybind", "Hold Ctrl + Shift + Space to open your mic; release to mute again.") {
+            var showKeybindCapture by remember { mutableStateOf(false) }
+            val storedKeybind by settingsManager.pushToTalkKeybind.collectAsState(PTT_DEFAULT_COMBO)
+            val keybindDisplay = displayPttCombo(storedKeybind)
+
+            PrefCard("Push to Talk Keybind", "Hold $keybindDisplay to open your mic; release to mute again.") {
                 Surface(
                     shape = RoundedCornerShape(8.dp),
                     color = Color.White.copy(alpha = 0.1f),
-                    modifier = Modifier.height(36.dp)
+                    modifier = Modifier.height(36.dp).clip(RoundedCornerShape(8.dp)).clickable { showKeybindCapture = true }
                 ) {
                     Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 16.dp)) {
-                        Text("Ctrl + Shift + Space", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text(keybindDisplay, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
+            }
+
+            if (showKeybindCapture) {
+                PttKeybindCaptureDialog(
+                    currentDisplay = keybindDisplay,
+                    onCaptured = { settingsManager.setPushToTalkKeybind(it) },
+                    onDismiss = { showKeybindCapture = false }
+                )
             }
         }
 
