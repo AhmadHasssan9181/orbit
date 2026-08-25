@@ -109,4 +109,16 @@ interface NativeRemoteVideoSink {
     )
 
     fun onRemoteVideoTrackRemoved(sessionId: Long, epoch: Long, participantIdentity: String, trackSid: String)
+
+    /**
+     * Remote mic mute state changed (or initial state announced at subscribe
+     * time). Drives the Discord-style mic-off badges on tiles and the member
+     * list; identities are LiveKit identities (`${userId}:${deviceId}`).
+     */
+    fun onRemoteAudioMuteChanged(
+        sessionId: Long,
+        epoch: Long,
+        participantIdentity: String,
+        muted: Boolean
+    )
 }

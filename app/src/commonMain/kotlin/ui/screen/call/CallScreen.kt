@@ -1067,12 +1067,26 @@ data class RenderNode(
     val isScreenShare: Boolean,
     val isMuted: Boolean = false,
     val isDeafened: Boolean = false,
+    // Remote participant whose mic track is muted (group calls). Local nodes
+    // use isMuted instead.
+    val isMicMuted: Boolean = false,
     // LiveKit identity for remote participants (group calls). Non-null enables
     // per-participant volume/mute controls on the tile; never set on local nodes.
     val participantIdentity: String? = null,
     val avatarUrl: String? = null,
     val avatarColor: Int = 0xFF5865F2.toInt()
 )
+
+/**
+ * Mic-mute match across identity shapes: the muted set holds LiveKit
+ * identities (`${userId}:${deviceId}`) while callers may hold either that
+ * full form (tiles) or a bare Matrix userId (member list).
+ */
+internal fun identityIsMicMuted(identity: String?, mutedIdentities: Set<String>): Boolean {
+    if (identity.isNullOrBlank() || mutedIdentities.isEmpty()) return false
+    if (identity in mutedIdentities) return true
+    return mutedIdentities.any { it.substringBeforeLast(':') == identity }
+}
 
 @Composable
 fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Modifier = Modifier, callManager: webrtc.CallManager? = null) {
@@ -1167,7 +1181,7 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                if (node.isMuted) {
+                if (node.isMuted || node.isMicMuted) {
                     Icon(OrbitIcons.MicOff, null, tint = Color(0xFFF23F42), modifier = Modifier.size(14.dp))
                 }
                 if (node.isDeafened) {

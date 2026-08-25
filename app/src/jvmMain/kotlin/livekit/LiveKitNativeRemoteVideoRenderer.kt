@@ -103,4 +103,17 @@ object LiveKitNativeRemoteVideoRenderer : NativeRemoteVideoSink {
         )
         LiveKitRemoteVideoFrameStore.trackStopped(participantIdentity, trackSid)
     }
+
+    override fun onRemoteAudioMuteChanged(
+        sessionId: Long,
+        epoch: Long,
+        participantIdentity: String,
+        muted: Boolean
+    ) {
+        println(
+            "DEBUG [LiveKitNativeRemoteVideoRenderer] remote audio mute changed " +
+                "sessionId=$sessionId epoch=$epoch participantIdentity=$participantIdentity muted=$muted"
+        )
+        LiveKitRemoteVideoFrameStore.remoteAudioMuteChanged(participantIdentity, muted)
+    }
 }

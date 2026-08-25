@@ -798,6 +798,52 @@ their user speaks — matched via `identity.substringBeforeLast(':') == userId`
 (identities are `${userId}:${deviceId}`); (2) tile name pills go Discord-green
 (`#23A55A`) while speaking. One metering pipeline, three visible surfaces.
 
+## H17 — The remote mic badge (LiveKit track truth, not membership lies)
+
+> 🕯️ *"Discord shows a red mic-slash under every muted avatar." The badge
+> everyone reads a hundred times a call — we shipped it last.*
+
+**Why NOT the m.call.member route:** `capabilities.audio` in the membership
+payload is a static CAPABILITY declaration (`MatrixRtcMembershipContent`
+publishes it once at join / video-toggle). Element Call never republishes it
+on mute either — parsing membership would mean spamming room state on every
+toggle AND lagging by federation round-trips. The real-time truth already
+lives one layer down: LiveKit's own track mute state, in the same cpp room
+delegate that feeds H16's glow.
+
+**Stack (shipped):**
+1. **Initial state:** `startRemoteReaderLocked` dispatches subscribe-time
+   `track->muted()` so late joiners see badges for peers who were ALREADY
+   muted (no event will fire for them).
+2. **Live updates:** `onTrackMuted`/`onTrackUnmuted` gain an audio branch.
+   SDK 0.4.1 trap: `TrackMutedEvent` has NO `.track` member — only
+   `participant` + `publication`. Local/remote discrimination uses
+   `publication->track()->remote()` (our own self-mute fires these handlers
+   too and MUST be excluded). A null subscribed track = mute predates our
+   subscription = handled by #1 instead.
+3. **Dispatch:** `dispatchRemoteAudioMuteChanged(identity, muted)` mirrors
+   the participant-connected dispatcher (sink mutex only — safe under the
+   session mutex every caller holds). JNI signature `(JJLjava/lang/String;Z)V`,
+   cached as `g_remoteAudioMuteChangedMethod`, nulled in BOTH teardowns.
+4. **Kotlin:** `NativeRemoteVideoSink.onRemoteAudioMuteChanged` →
+   `LiveKitRemoteVideoFrameStore._remoteAudioMuted` (Set<String>; pruned in
+   `participantDisconnected`, emptied in `clear()` so teardown is free) →
+   expect/actual `liveKitRemoteAudioMuted()` → `CallManager.remoteMicMutedIds`.
+5. **UI:** shared `identityIsMicMuted(identity, mutedSet)` matcher accepts
+   full `${userId}:${deviceId}` identities AND bare Matrix userIds.
+   `RenderNode.isMicMuted` lights the name-pill MicOff on camera + voice-only
+   tiles; sidebar member rows show the red MicOff next to the speaking ring,
+   replacing the old local-only placeholder ("would ideally come from
+   m.call.member" — it shouldn't; see Why NOT above).
+
+**Files:** `jvmMain/cpp/orbit_livekit_audio.cpp`,
+`commonMain/livekit/NativeMediaEvents.kt`,
+`commonMain/livekit/LiveKitRemoteVideoFrameStore.kt`,
+`jvmMain/livekit/LiveKitNativeRemoteVideoRenderer.kt`,
+`LiveKitWrapper.kt`(+`.jvm.kt`), `webrtc/CallManager.kt`,
+`ui/screen/call/CallScreen.kt` (RenderNode + VideoNodeCard),
+`ui/screen/call/LiveKitGroupCallSurface.kt`, `ui/screen/drawer/ChannelList.kt`.
+
 ## The nudge, de-uglified (recovery-aware status)
 
 > 🕯️ *The membership nudge works like a defibrillator: necessary, effective,
@@ -1082,7 +1128,7 @@ Do NOT file bugs against these:
 | H6 resubscribe recovery | SHIPPED in native stats watcher — guarded one-shot unsubscribe/resubscribe per reader | Fires when jbTargetMs sustains >400ms (3 consecutive polls) with 20s warmup, 90s cooldown, 4-lifetime cap, 120s garbage cap; grep `JBWATCH firing resubscribe` / `JB-RESUB` in run logs to see it work |
 | H8-V3 latecomer nudge | Shipped + unit-tested, needs LIVE multi-peer verification | Join as latecomer to a busy encrypted room, measure deaf window |
 | H10 random-close attribution | Instrumentation live, awaiting next incident | Grep `endCall invoked` chain from the run log |
-| Remote MIC-muted badge on tiles | DESIGNED, not built — but H16 proved the audio→UI event pattern works end-to-end | Clone the [H16](#h16--the-speaking-glow--native-rms-to-the-tile-ring) pipeline with a mute-state source: cpp audio-mute callback OR matrixRTC `m.call.member` audioMuted mapped via `${userId}:${deviceId}` identity convention |
+| Remote MIC-muted badge on tiles | SHIPPED ([H17](#h17--the-remote-mic-badge-livekit-track-truth-not-membership-lies)) — native LiveKit track-mute events + subscribe-time initial state; tiles AND sidebar rows | Verify live: mute in one client, badge appears instantly on the other; late joiner sees already-muted peers correctly |
 | Deafen-of-others badge | IMPOSSIBLE remotely by protocol design | Deafen is local output muting; no wire signal exists. Do not promise it |
 | "Mic suppression not working" reports | Explained: suppression is the SPEAKER-side client's TX setting (their NS/EC), not yours to toggle | NS/EC/AGC toggles now SHIP in Voice & Video (Voice Processing section); RX-side suppression remains out of scope |
 | Long-session partial deafness field reports | Hardened (H8-V4) + fully instrumented; await reproduction logs | Grep `ERROR [CallMediaKeyExchange] olm encryption failed` + nudge lines; if clean, suspect sendToDevice silent loss / OTK pool on SERVER side |
