@@ -36,6 +36,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -62,6 +63,7 @@ import ui.model.OrbitUser
 import ui.icons.OrbitIcons
 import ui.theme.rememberCosmicTokens
 import webrtc.CallManager
+import webrtc.CallShortcuts
 import webrtc.CallState
 import webrtc.GroupCallConnection
 import webrtc.GroupCallStage
@@ -113,6 +115,22 @@ fun LiveKitGroupCallSurface(
     val remoteMicMutedIds by callManager.remoteMicMutedIds.collectAsState()
     val tokens = rememberCosmicTokens()
 
+    var showScreenShareDialog by remember { mutableStateOf(false) }
+
+    // Ctrl+Shift+S (Start/Stop Stream) lands here via the root Window handler.
+    // Registered before the minimized early-return so stopping a share works
+    // from the compact pill too; opening the picker stays expanded-only.
+    DisposableEffect(callManager) {
+        CallShortcuts.onToggleStream = {
+            if (isScreenSharing) {
+                callManager.stopScreenShare()
+            } else if (!isMinimized && !forceMinimized) {
+                showScreenShareDialog = true
+            }
+        }
+        onDispose { CallShortcuts.onToggleStream = null }
+    }
+
     if (isMinimized || forceMinimized) {
         val totalParticipants = (members.map { it.id } + remoteParticipants).filter { it.isNotBlank() }.distinct().size
         GroupCallMiniView(
@@ -134,7 +152,6 @@ fun LiveKitGroupCallSurface(
     }
 
     var layoutMode by remember { mutableStateOf(CallLayoutMode.Grid) }
-    var showScreenShareDialog by remember { mutableStateOf(false) }
     var showSoundboard by remember { mutableStateOf(false) }
 
     val nativeMediaReady = nativeReadiness?.state == NativeMediaState.MediaReady &&

@@ -36,6 +36,13 @@ fun WebRtcEffects(
                 callManager.toggleVideo(!callManager.isLocalVideoEnabled.value)
             }
         }
+        CallShortcuts.onReturnToCall = {
+            if (callManager.callState.value != CallState.IDLE &&
+                callManager.isMinimized.value
+            ) {
+                callManager.isMinimized.value = false
+            }
+        }
         CallShortcuts.onPushToTalk = { active ->
             callManager.setPushToTalkActive(active)
         }
@@ -48,6 +55,7 @@ fun WebRtcEffects(
             CallShortcuts.onToggleMute = null
             CallShortcuts.onToggleDeafen = null
             CallShortcuts.onToggleCamera = null
+            CallShortcuts.onReturnToCall = null
             CallShortcuts.onPushToTalk = null
             CallShortcuts.onAppQuitRequested = null
         }

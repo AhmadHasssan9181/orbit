@@ -117,20 +117,7 @@ internal fun KeybindsPane() {
         KeybindCard("Toggle Camera", "Ctrl + Shift + V")
 
         SectionHeader("Navigation")
-        KeybindCard("Quick Switcher", "Ctrl + K")
-        KeybindCard("Navigate Back", "Alt + Left Arrow")
-        KeybindCard("Navigate Forward", "Alt + Right Arrow")
         KeybindCard("Return to Active Call", "Ctrl + Shift + Alt + V")
-
-        SectionHeader("Messaging")
-        KeybindCard("Mark Server Read", "Shift + Esc")
-        KeybindCard("Mark Channel Read", "Esc")
-        KeybindCard("Focus Message Box", "Tab")
-        
-        Spacer(Modifier.height(16.dp))
-        Button(onClick = {}, colors = ButtonDefaults.buttonColors(containerColor = t.Accent)) {
-            Text("Add a Keybind")
-        }
     }
 }
 
