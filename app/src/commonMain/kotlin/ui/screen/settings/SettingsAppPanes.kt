@@ -107,7 +107,7 @@ internal fun KeybindsPane() {
         SectionHeader("Voice & Video")
         KeybindCard("Toggle Mute", "Ctrl + Shift + M")
         KeybindCard("Toggle Deafen", "Ctrl + Shift + D")
-        KeybindCard("Push to Talk", "V (Hold)")
+        KeybindCard("Push to Talk", "Ctrl + Shift + Space (Hold)")
         KeybindCard("Push to Mute", "None")
 
         SectionHeader("Screen Share")

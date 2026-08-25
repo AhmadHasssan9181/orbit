@@ -21,6 +21,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
+/** How long after a self-nudge the call UI shows calm "repairing" copy instead
+ *  of alarming reconnect/waiting states — covers the 2.5s membership gap plus
+ *  peer reaction time. Read by CallManager; file-scope so the private companion
+ *  of [CallMediaKeyExchange] stays encapsulated. */
+const val NUDGE_RECOVERY_VISIBLE_MS = 20_000L
+
 /**
  * matrixRTC E2EE media-key exchange for encrypted-room calls, mirroring Element
  * Call's deployed protocol: each DEVICE generates a 16-byte key (index starting
@@ -390,6 +396,9 @@ class CallMediaKeyExchange(
             }
         }.onFailure { println("WARN [CallMediaKeyExchange] /keys/claim own failed: ${it.message}") }
     }
+
+    /** UI hook: wall-clock stamp of our last self-nudge (leave+rejoin); 0 = never fired. */
+    fun lastSelfNudgeAtMs(): Long = lastNudgeMs
 
     fun stop() {
         stopped = true
@@ -833,4 +842,7 @@ object CallMediaKeyExchangeManager {
         active?.stop()
         active = null
     }
+
+    /** Stamp of the active exchange's last self-nudge; 0 when no call is live. */
+    fun lastSelfNudgeAtMs(): Long = active?.lastSelfNudgeAtMs() ?: 0L
 }

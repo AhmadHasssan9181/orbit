@@ -71,6 +71,7 @@ against Element sources), `headache_medicine.md` (UI architecture map),
 | We can't hear a peer who joined later | [H8-RX](#h8-v3-rx-dead-for-latecomers) / [H7](#h7-settle-nudge-silent-element-peers) |
 | Audio works, then garbles/chops | [BUG-D](#bug-d-robotic-garbled-audio-in-one-room) |
 | One person too loud/quiet, or mute ONE person's playback | [H15](#h15--per-participant-volume--the-local-mute) |
+| No visual indicator of who is speaking | [H16](#h16--the-speaking-glow--native-rms-to-the-tile-ring) |
 | Key delivery to one device keeps failing long-session | [H8-V4](#h8-v4--one-bad-device-poisoned-the-whole-batch) |
 | Everything is ~2s late for minutes | [H6](#h6--2s-end-to-end-latency-that-never-recovers) |
 | Join hangs forever, or fails then stays connected | [H12](#h12-join-stall--the-watchdog-zombie) |
@@ -192,6 +193,37 @@ Burn these into your brain before touching any key-exchange code:
    instantaneous values. See [H6-RX](#the-jitter-buffer-lie).
 6. In cancellable coroutine code, **always rethrow `CancellationException`
    before any generic catch / `runCatching` swallow** (see Round 8).
+
+## Element's SDK, read from source (the key-maintenance verdict)
+
+> 🕯️ *"We should request keys every now and then, right?" We went and read
+> the SDK instead of guessing. The answer was NO — and ours already does more.*
+
+**Question:** how does Element's matrix-js-sdk keep keys alive for peers on
+bad internet? Should we poll/request keys periodically?
+
+**Answer, from `MatrixRTCSession.ts` + `RTCEncryptionManager.ts`
+(matrix-js-sdk develop):**
+- **ZERO timers.** No setInterval/setTimeout anywhere in key maintenance.
+  Everything is event-driven off membership updates
+  (`onMembershipsUpdate` fires on EVERY recalculation, even no-op ones).
+- `useKeyDelay` default **5000 ms** before a changed key goes live;
+  join-config override fallback 1000 ms. `keyRotationGracePeriodMs` = **10 s**.
+- Rotation law: leave → ALWAYS rotate; join → resend same key if younger than
+  the grace period, else rotate; no change → do nothing.
+- **Send failure is swallowed** (caught + logged) and the member is simply not
+  added to `sharedWith` — the failed peer reappears as "not shared" on the
+  NEXT membership update, which re-triggers a send. Indirect retry only.
+- Inbound: keys that arrive before their membership event are buffered
+  (`keysWithoutMatchingRTCMembership`) and retried.
+- **There is NO key-request mechanism.** The protocol is push-only. Nobody
+  "asks" for keys; senders are re-poked by diffs.
+
+**Verdict:** Orbit's convergence sweeper (10 s UNCONDITIONAL reconcile vs
+Element's diff-only events), success-marked delivery ledger, reply-on-receive,
+settle/latecomer nudges ALREADY EXCEED Element's SDK. Do not add key polling —
+it would be churn, not robustness. Bad-internet accommodation lives in the
+sweeper + nudge paths, not a heartbeat.
 
 ## Rounds 6–7 — heard but not seen (the downgrade mystery)
 
@@ -718,6 +750,97 @@ diverge across calls.
 `ui/screen/call/LiveKitGroupCallSurface.kt`, `ui/screen/call/CallScreen.kt`
 (RenderNode/VideoNodeCard live HERE, not in CallGrid), `ui/screen/call/CallGrid.kt`.
 
+## H16 — The speaking glow (native RMS → the tile ring)
+
+> 🕯️ *"A slight border glow of the user who is speaking." Discord's green
+> halo, day minus-none. Ours is measured in hellfire, at the mixer.*
+
+**The law:** Compose never sees audio frames, and per-participant loudness
+does not exist downstream of `mixOneFrame()` — so speaking detection had to
+be born where H15's gains were born: inside each participant queue.
+
+**Stack, top to bottom (shipped):**
+1. **Metering (cpp):** inside `queueMutex`, over the RAW popped samples
+   (pre-gain — a locally-muted peer still glows when talking; their gain
+   zeroes only their CONTRIBUTION), compute RMS → fast-attack/slow-release
+   EMA (`rms >= ema ? ema = rms : ema = 0.85*ema + 0.15*rms`).
+2. **Hysteresis + hold:** speak start at RMS ≥ 320, stop below 170, hold
+   500 ms after last voice. Kills flicker without feeling laggy.
+3. **Event discipline:** collect sorted speaking identities; emit ONLY on set
+   change, throttled to one event per 150 ms (`g_speakersEmitMutex` +
+   `g_lastSpeakers` compare-and-swap). No event storm while five people chat.
+4. **Dispatch:** worker thread grabs JNI via `getJniEnv("active-speakers")`,
+   builds `NativeMediaEvent$ActiveSpeakersChanged(sessionId, epoch,
+   ArrayList<String>)` through the standard `g_eventSink` path; Kotlin
+   filters stale epochs.
+5. **Kotlin:** sealed event → `LiveKitNativeMediaSession._activeSpeakers`
+   StateFlow (cleared on Disconnected) → expect/actual
+   `liveKitActiveSpeakers()` → CallManager collects into `activeSpeakers`
+   (cleared on endCall).
+6. **UI:** `VideoNodeCard` animates `speakGlow` 0→1 (240 ms tween); border
+   color lerps dark→accent, border width 1→2 dp, accent-tinted shadow scales
+   to 18 dp. Screen-share tiles keep their red ring regardless.
+
+**Semantics worth remembering:** change-only events mean the UI holds the
+LAST set until the next change — no per-frame churn. Locally-muted peers
+appear (by design, see #1). The whole stack dies cleanly on call end:
+`clearParticipants()` resets native emit state, Disconnected clears the flow,
+endCall clears CallManager's copy.
+
+**Files:** `jvmMain/cpp/orbit_livekit_audio.cpp`,
+`commonMain/livekit/NativeMediaEvents.kt`,
+`jvmMain/livekit/LiveKitNativeMediaSession.kt`, `LiveKitWrapper.kt`(+`.jvm.kt`),
+`webrtc/CallManager.kt`, `ui/screen/call/CallScreen.kt` (VideoNodeCard).
+
+## The nudge, de-uglified (recovery-aware status)
+
+> 🕯️ *The membership nudge works like a defibrillator: necessary, effective,
+> terrifying if you don't warn people first.*
+
+**You see:** a self-nudge fires (settle / reactive / latecomer — all stamp
+`lastNudgeMs`). Media session untouched, but the UI may simultaneously show
+"Reconnecting…"/"Waiting for participants' media…" — implying the call died
+exactly while we're repairing it.
+
+**Shipped fix:** `CallMediaKeyExchange.lastSelfNudgeAtMs()` (manager accessor
+for the active exchange) → CallManager polls it once a second into
+`selfNudgeRecovery: StateFlow<Boolean>` (true within
+`NUDGE_RECOVERY_VISIBLE_MS` = 20 s of a nudge — covers the 2.5 s membership
+gap plus peer reaction). The group-call banner swaps its copy while lit:
+"Reconnecting…" → **"Repairing audio link…"**, "Waiting for participants'
+media…" → **"Restoring participants' audio…"**. Same chips, same colors —
+truthful, calm, no fake progress bars. Resets on endCall.
+
+## Settings that lie (the honesty audit)
+
+> 🕯️ *A toggle that does nothing is a lie with a checkbox. We audited every
+> Voice & Video control against reality.*
+
+**Verified genuinely wired** (settings → WebRtcEffects LaunchedEffects →
+CallManager/native): input/output device pickers, input/output volume,
+NS/EC/AGC (`setAudioOptions` → live APM), OrbitZero AI NS, camera picker,
+mirror video, background blur, bitrate, attenuation, SFU override.
+
+**Found lying, and what happened to them:**
+1. **Push to Talk** — selectable in Input Mode, did NOTHING. Now real: hold
+   **Ctrl+Shift+Space** anywhere in the app → mic opens (native
+   `LiveKitNativeAudioSession.setMuted(false)` via `toggleMute(true)`),
+   release → restores the pre-hold mute state. Auto-repeat-proof, IDLE-proof,
+   restored-state-proof (`pttPreHoldAudioEnabled`). Combo (not a bare key)
+   precisely so typing in chat can't trigger it.
+2. **"Toggle Camera Ctrl+Shift+V" keybind card** — advertised, never
+   dispatched. Wired through `CallShortcuts.onToggleCamera`.
+3. **Voice sensitivity slider (-100..0 dB)** — fed nothing (native AGC already
+   auto-determines sensitivity). Deleted from the pane rather than kept as
+   decoration.
+4. **PTT "keybind" surface showing "Unassigned"** — there was no rebind UI and
+   no consumer. Replaced with truthful fixed-combo text; Keybinds pane card
+   updated to match ("Ctrl + Shift + Space (Hold)").
+
+**Left on the table deliberately:** rebindable PTT keys (focus-aware capture
+UI is its own project), Start/Stop Stream shortcut (needs source-picker flow
+first), Navigation-pane shortcuts (unaudited this round).
+
 ---
 
 # CIRCLE IV — APP LIFECYCLE
@@ -953,9 +1076,9 @@ Do NOT file bugs against these:
 | H6 resubscribe recovery | Designed, NOT implemented | One-shot audio resubscribe when jbTargetMs sustains >400ms; guardrails in [H6](#h6--2s-end-to-end-latency-that-never-recovers) |
 | H8-V3 latecomer nudge | Shipped + unit-tested, needs LIVE multi-peer verification | Join as latecomer to a busy encrypted room, measure deaf window |
 | H10 random-close attribution | Instrumentation live, awaiting next incident | Grep `endCall invoked` chain from the run log |
-| Remote MIC-muted badge on tiles | DESIGNED, not built — no native audio event exists (video sink only, `NativeMediaEvents.kt`) | Source candidates: new cpp audio-mute callback OR matrixRTC `m.call.member` audioMuted mapped via `${userId}:${deviceId}` identity convention |
+| Remote MIC-muted badge on tiles | DESIGNED, not built — but H16 proved the audio→UI event pattern works end-to-end | Clone the [H16](#h16--the-speaking-glow--native-rms-to-the-tile-ring) pipeline with a mute-state source: cpp audio-mute callback OR matrixRTC `m.call.member` audioMuted mapped via `${userId}:${deviceId}` identity convention |
 | Deafen-of-others badge | IMPOSSIBLE remotely by protocol design | Deafen is local output muting; no wire signal exists. Do not promise it |
-| "Mic suppression not working" reports | Explained: suppression is the SPEAKER-side client's TX setting (their NS/EC), not yours to toggle | Expose our APM knobs (`orbit.apm.*`, `setLiveKitAudioProcessingOptions`) in settings; RX-side suppression remains out of scope |
+| "Mic suppression not working" reports | Explained: suppression is the SPEAKER-side client's TX setting (their NS/EC), not yours to toggle | NS/EC/AGC toggles now SHIP in Voice & Video (Voice Processing section); RX-side suppression remains out of scope |
 | Long-session partial deafness field reports | Hardened (H8-V4) + fully instrumented; await reproduction logs | Grep `ERROR [CallMediaKeyExchange] olm encryption failed` + nudge lines; if clean, suspect sendToDevice silent loss / OTK pool on SERVER side |
 | H11 RAM under load | Capped + instrumented, verify under 3-person+share load | Read STATS fields; if pendingFin grows → bitmap reuse/dispose path |
 | Cold-decode storm | Throttled (H11), not eliminated | Fires at first peer-key install; revisit if latency regressions return |
@@ -964,6 +1087,8 @@ Do NOT file bugs against these:
 | Deploy / Docker validation | Untouched | MatrixRTC focus/livekit broker deployment checks |
 | packI420 direct-buffer reuse + share capture fps cap | Optimization backlog | `LiveKitLocalScreenShareTrack` allocates fresh direct buffers per frame |
 | App icon | No .ico exists | Author one, wire `windows { iconFile = ... }`; default Java cup shows today |
+| Rebindable PTT key | Fixed combo Ctrl+Shift+Space (honest, wired) | Needs focus-aware key-capture UI; bare letters would swallow chat typing |
+| "Navigation" polish (user ask) | AMBIGUOUS — awaiting user's meaning | In-app navigation vs nav-while-in-call vs something else; ask before building |
 | GitHub Release publication | Offered, awaiting go-ahead | Public action — upload Orbit-0.1.0.msi to a tagged release |
 | MSI upgrade path in the wild | Mechanism verified via upgradeUuid | Bump packageVersion, install over 0.1.0, confirm in-place upgrade |
 

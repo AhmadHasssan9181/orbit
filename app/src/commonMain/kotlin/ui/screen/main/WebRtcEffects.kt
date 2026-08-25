@@ -31,6 +31,14 @@ fun WebRtcEffects(
                 callManager.toggleDeafen()
             }
         }
+        CallShortcuts.onToggleCamera = {
+            if (callManager.callState.value != CallState.IDLE) {
+                callManager.toggleVideo(!callManager.isLocalVideoEnabled.value)
+            }
+        }
+        CallShortcuts.onPushToTalk = { active ->
+            callManager.setPushToTalkActive(active)
+        }
         CallShortcuts.onAppQuitRequested = {
             if (callManager.callState.value != CallState.IDLE) {
                 callManager.endCall()
@@ -39,6 +47,8 @@ fun WebRtcEffects(
         onDispose {
             CallShortcuts.onToggleMute = null
             CallShortcuts.onToggleDeafen = null
+            CallShortcuts.onToggleCamera = null
+            CallShortcuts.onPushToTalk = null
             CallShortcuts.onAppQuitRequested = null
         }
     }
@@ -57,6 +67,11 @@ fun WebRtcEffects(
     val mirrorVideo by settingsManager.mirrorVideo.collectAsState(true)
     val videoBackground by settingsManager.videoBackground.collectAsState("None")
     val sfuOverrideUrl by settingsManager.liveKitServiceUrl.collectAsState("")
+    val inputMode by settingsManager.inputMode.collectAsState("Voice Activity")
+
+    LaunchedEffect(inputMode) {
+        callManager.pushToTalkMode = inputMode == "Push to Talk"
+    }
 
 
     LaunchedEffect(orbitZeroEnabled) {

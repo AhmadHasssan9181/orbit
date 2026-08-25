@@ -233,31 +233,15 @@ internal fun VoiceVideoFullPane(settingsManager: SettingsManager) {
             )
         }
         
-        if (inputMode == "Voice Activity") {
-            val voiceSensitivity by settingsManager.voiceSensitivity.collectAsState(-50f)
-            PrefCard("Automatically determine input sensitivity", "If off, adjust manually.") {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("${voiceSensitivity.toInt()} dB", style = MaterialTheme.typography.labelMedium.copy(color = tokens.Accent, fontWeight = FontWeight.Bold))
-                    Spacer(Modifier.width(8.dp))
-                    Slider(
-                        value = voiceSensitivity,
-                        onValueChange = { settingsManager.setVoiceSensitivity(it) },
-                        valueRange = -100f..0f,
-                        colors = SliderDefaults.colors(thumbColor = tokens.Accent, activeTrackColor = tokens.Accent, inactiveTrackColor = tokens.Text_Muted.copy(alpha = 0.3f)),
-                        modifier = Modifier.width(100.dp)
-                    )
-                }
-            }
-        } else {
-            val pushToTalkKeybind by settingsManager.pushToTalkKeybind.collectAsState("Unassigned")
-            PrefCard("Push to Talk Keybind", "The key used to activate your mic.") {
+        if (inputMode == "Push to Talk") {
+            PrefCard("Push to Talk Keybind", "Hold Ctrl + Shift + Space to open your mic; release to mute again.") {
                 Surface(
                     shape = RoundedCornerShape(8.dp),
                     color = Color.White.copy(alpha = 0.1f),
                     modifier = Modifier.height(36.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 16.dp)) {
-                        Text(pushToTalkKeybind, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Ctrl + Shift + Space", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }

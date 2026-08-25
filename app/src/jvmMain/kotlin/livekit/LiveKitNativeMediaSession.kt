@@ -24,6 +24,11 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
     private var sessionId: Long = 0L
     private var epoch: Long = 0L
 
+    // LiveKit identities currently speaking (remote side), pushed from the
+    // native mixer's per-participant RMS metering. Change-only + throttled.
+    private val _activeSpeakers = kotlinx.coroutines.flow.MutableStateFlow<Set<String>>(emptySet())
+    val activeSpeakers: kotlinx.coroutines.flow.StateFlow<Set<String>> = _activeSpeakers
+
     // Screen-share publish slot (Part F): armed while the user is sharing;
     // actual native publish happens lazily on first frame with its real dimensions.
     private var screenShareArmed = false
@@ -599,11 +604,16 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             }
 
             is NativeMediaEvent.Disconnected -> {
+                _activeSpeakers.value = emptySet()
                 handleNativeDisconnected(event.reason, event.recoverable)
             }
 
             is NativeMediaEvent.Error -> {
                 handleNativeError(event.error)
+            }
+
+            is NativeMediaEvent.ActiveSpeakersChanged -> {
+                _activeSpeakers.value = event.speakers.toSet()
             }
         }
     }

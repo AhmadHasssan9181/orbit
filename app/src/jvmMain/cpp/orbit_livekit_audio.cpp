@@ -282,10 +282,38 @@ struct ParticipantPcmQueue {
     // after the queue lock section. Muted queues still drain so starvation
     // and jitter-depth bookkeeping stay identical.
     float gain{1.0f};
+    // Active-speaker detection: RMS of the RAW (pre-gain) decoded frames.
+    // Fast-attack/slow-release EMA + hysteresis so the glow doesn't flicker
+    // on word gaps; speaking state mutated only inside mixOneFrame's queue
+    // lock section on the mixer thread.
+    float levelEma{0.0f};
+    bool speaking{false};
+    std::int64_t lastVoiceNs{0};
 };
 
 void dispatchMixedAudioFrame(const std::vector<std::int16_t>& samples, std::int64_t timestampNs);
 void dispatchRemoteParticipantConnected(const std::string& participantIdentity, const std::string& participantSid);
+
+// Active-speaker thresholds (raw 16-bit RMS): enter above kSpeakStartLevel,
+// drop below kSpeakStopLevel, hold kSpeakHoldNs through word gaps. Events are
+// emitted at most every kSpeakerEmitMinIntervalNs and only on membership
+// CHANGE of the speaking set.
+constexpr float kSpeakStartLevel = 320.0f;
+constexpr float kSpeakStopLevel = 170.0f;
+constexpr std::int64_t kSpeakHoldNs = 500LL * 1000LL * 1000LL;
+constexpr std::int64_t kSpeakerEmitMinIntervalNs = 150LL * 1000LL * 1000LL;
+
+// Active-speaker emission state: only dispatch on set changes, throttled.
+std::mutex g_speakersEmitMutex;
+std::vector<std::string> g_lastSpeakers;
+std::int64_t g_lastSpeakerEmitNs = 0;
+
+// JNI thread attach helpers (defined near the other callback plumbing).
+bool getJniEnv(JNIEnv** env, bool* attached, const char* callbackType = "jni-callback");
+void releaseJniEnv(bool attached);
+
+void dispatchActiveSpeakersChanged(JNIEnv* env, jlong sessionId, jlong epoch, const std::vector<std::string>& speakers);
+void dispatchNativeEvent(JNIEnv* env, jobject event);
 void dispatchRemoteParticipantDisconnected(const std::string& participantIdentity, const std::string& participantSid);
 void requestAudioTrackResubscribe(const std::string& participantIdentity, const std::string& trackSid, long long jbTargetMs);
 
@@ -860,6 +888,11 @@ public:
             std::lock_guard<std::mutex> queueLock(entry.second->queueMutex);
             entry.second->pcm.clear();
         }
+
+        // Fresh call must not inherit the previous call's speaking set.
+        std::lock_guard<std::mutex> emitLock(g_speakersEmitMutex);
+        g_lastSpeakers.clear();
+        g_lastSpeakerEmitNs = 0;
     }
 
 // Convert input PCM at inSampleRate to outSampleRate using linear interpolation
@@ -993,6 +1026,9 @@ private:
 
         std::vector<std::int32_t> accumulator(kSamplesPerChannel, 0);
         int activeParticipants = 0;
+        std::vector<std::string> speakers;
+        const auto steadyNowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
 
         for (const auto& queue : queues) {
             if (queue == nullptr || !queue->active) {
@@ -1026,6 +1062,43 @@ private:
                 } else {
                     queue->starved = false;
                 }
+
+                // Active-speaker metering on the RAW pre-gain audio: a locally
+                // muted participant still glows while talking.
+                if (samplesToRead > 0) {
+                    double squareSum = 0.0;
+                    for (std::size_t i = 0; i < samplesToRead; ++i) {
+                        const double v = static_cast<double>(frame[i]);
+                        squareSum += v * v;
+                    }
+                    const float rms = static_cast<float>(
+                        std::sqrt(squareSum / static_cast<double>(samplesToRead)));
+                    // Fast attack / slow release so word gaps don't flicker.
+                    queue->levelEma = rms >= queue->levelEma
+                        ? rms
+                        : 0.85f * queue->levelEma + 0.15f * rms;
+                    if (queue->levelEma >= kSpeakStartLevel) {
+                        queue->lastVoiceNs = steadyNowNs;
+                    }
+                    const bool aboveStop = queue->levelEma >= kSpeakStopLevel;
+                    const bool held = queue->lastVoiceNs != 0 &&
+                        steadyNowNs - queue->lastVoiceNs < kSpeakHoldNs;
+                    queue->speaking = queue->levelEma >= kSpeakStartLevel ||
+                        (queue->speaking && aboveStop) ||
+                        (queue->speaking && held);
+                    if (queue->speaking) {
+                        speakers.push_back(queue->participantIdentity);
+                    }
+                } else {
+                    // No fresh audio: let the hold window expire naturally.
+                    const bool held = queue->lastVoiceNs != 0 &&
+                        steadyNowNs - queue->lastVoiceNs < kSpeakHoldNs;
+                    if (!held) {
+                        queue->speaking = false;
+                    } else if (queue->speaking) {
+                        speakers.push_back(queue->participantIdentity);
+                    }
+                }
             }
 
             activeParticipants += 1;
@@ -1037,6 +1110,35 @@ private:
             for (int i = 0; i < kSamplesPerChannel; ++i) {
                 accumulator[static_cast<std::size_t>(i)] += static_cast<std::int32_t>(
                     std::lround(static_cast<double>(frame[static_cast<std::size_t>(i)]) * participantGain));
+            }
+        }
+
+        // Emit speaking-set changes, throttled, only on membership change.
+        {
+            std::sort(speakers.begin(), speakers.end());
+            bool shouldEmit = false;
+            jlong epoch = 0;
+            {
+                std::lock_guard<std::mutex> sessionLock(g_sessionMutex);
+                epoch = g_rawEpoch;
+            }
+            const auto nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            {
+                std::lock_guard<std::mutex> emitLock(g_speakersEmitMutex);
+                if (speakers != g_lastSpeakers && nowNs - g_lastSpeakerEmitNs >= kSpeakerEmitMinIntervalNs) {
+                    g_lastSpeakers = speakers;
+                    g_lastSpeakerEmitNs = nowNs;
+                    shouldEmit = true;
+                }
+            }
+            if (shouldEmit) {
+                JNIEnv* env = nullptr;
+                bool attached = false;
+                if (getJniEnv(&env, &attached, "active-speakers") && env != nullptr) {
+                    dispatchActiveSpeakersChanged(env, kRawSessionId, epoch, speakers);
+                    releaseJniEnv(attached);
+                }
             }
         }
 
@@ -1187,7 +1289,7 @@ bool callbacksStopped(const char* callbackType) {
     return false;
 }
 
-bool getJniEnv(JNIEnv** env, bool* attached, const char* callbackType = "jni-callback") {
+bool getJniEnv(JNIEnv** env, bool* attached, const char* callbackType) {
     *env = nullptr;
     *attached = false;
     if (callbacksStopped(callbackType)) {
@@ -1245,6 +1347,59 @@ void logJniAttachSuccess(const char* callbackType, bool attached) {
         std::cout << "DEBUG [OrbitLiveKitAudio] JNI thread attach succeeded for "
                   << callbackType << std::endl;
     }
+}
+
+void dispatchActiveSpeakersChanged(
+    JNIEnv* env,
+    jlong sessionId,
+    jlong epoch,
+    const std::vector<std::string>& speakers) {
+    if (env == nullptr) {
+        return;
+    }
+
+    jclass eventClass = env->FindClass("livekit/NativeMediaEvent$ActiveSpeakersChanged");
+    if (eventClass == nullptr) {
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        return;
+    }
+
+    jmethodID ctor = env->GetMethodID(eventClass, "<init>", "(JJLjava/util/List;)V");
+    jclass listClass = env->FindClass("java/util/ArrayList");
+    jmethodID listCtor = listClass != nullptr ? env->GetMethodID(listClass, "<init>", "(I)V") : nullptr;
+    jmethodID addMethod = listClass != nullptr ? env->GetMethodID(listClass, "add", "(Ljava/lang/Object;)Z") : nullptr;
+    if (ctor == nullptr || listClass == nullptr || listCtor == nullptr || addMethod == nullptr) {
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        if (eventClass != nullptr) env->DeleteLocalRef(eventClass);
+        if (listClass != nullptr) env->DeleteLocalRef(listClass);
+        return;
+    }
+
+    jobject list = env->NewObject(listClass, listCtor, static_cast<jint>(speakers.size()));
+    if (list != nullptr) {
+        for (const auto& identity : speakers) {
+            jstring jIdentity = env->NewStringUTF(identity.c_str());
+            if (jIdentity != nullptr) {
+                env->CallBooleanMethod(list, addMethod, jIdentity);
+                env->DeleteLocalRef(jIdentity);
+            }
+        }
+
+        jobject event = env->NewObject(eventClass, ctor, sessionId, epoch, list);
+        if (event != nullptr) {
+            dispatchNativeEvent(env, event);
+            env->DeleteLocalRef(event);
+        }
+        env->DeleteLocalRef(list);
+    }
+    env->DeleteLocalRef(listClass);
+    env->DeleteLocalRef(eventClass);
 }
 
 void dispatchMixedAudioFrame(const std::vector<std::int16_t>& samples, std::int64_t timestampNs) {

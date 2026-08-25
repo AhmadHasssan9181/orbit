@@ -82,7 +82,17 @@ fun main() = application {
             icon = painterResource("logo.jpeg"),
             onPreviewKeyEvent = { event ->
                 // App-wide call keybinds (see webrtc.CallShortcuts).
-                if (event.type == androidx.compose.ui.input.key.KeyEventType.KeyDown &&
+                if (event.isCtrlPressed && event.isShiftPressed &&
+                    event.key == androidx.compose.ui.input.key.Key.Spacebar
+                ) {
+                    // Push-to-talk: momentary mic open for as long as the combo
+                    // is held; KeyUp releases it. Auto-repeat KeyDown is fine —
+                    // the handler ignores repeats while already open.
+                    webrtc.CallShortcuts.onPushToTalk?.invoke(
+                        event.type == androidx.compose.ui.input.key.KeyEventType.KeyDown
+                    )
+                    true
+                } else if (event.type == androidx.compose.ui.input.key.KeyEventType.KeyDown &&
                     event.isCtrlPressed && event.isShiftPressed
                 ) {
                     when (event.key) {
@@ -92,6 +102,10 @@ fun main() = application {
                         }
                         androidx.compose.ui.input.key.Key.D -> {
                             webrtc.CallShortcuts.onToggleDeafen?.invoke()
+                            true
+                        }
+                        androidx.compose.ui.input.key.Key.V -> {
+                            webrtc.CallShortcuts.onToggleCamera?.invoke()
                             true
                         }
                         else -> false

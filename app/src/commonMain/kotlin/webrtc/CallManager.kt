@@ -91,6 +91,32 @@ class CallManager(
         return nowMuted
     }
 
+    // Remote participants currently speaking (LiveKit identities), metered by
+    // the native mixer — drives the speaking glow on call tiles.
+    private val _activeSpeakers = MutableStateFlow<Set<String>>(emptySet())
+    val activeSpeakers: StateFlow<Set<String>> = _activeSpeakers
+
+    // True for a short window after a key-exchange self-nudge (membership
+    // leave+rejoin that repairs missing peer keys) so the call UI can show a
+    // calm "Repairing audio link…" status instead of alarming reconnect copy.
+    private val _selfNudgeRecovery = MutableStateFlow(false)
+    val selfNudgeRecovery: StateFlow<Boolean> = _selfNudgeRecovery
+
+    init {
+        scope.launch {
+            livekit.liveKitActiveSpeakers().collect { _activeSpeakers.value = it }
+        }
+        scope.launch {
+            while (true) {
+                val stamp = livekit.CallMediaKeyExchangeManager.lastSelfNudgeAtMs()
+                val recent = stamp != 0L &&
+                    System.currentTimeMillis() - stamp < livekit.NUDGE_RECOVERY_VISIBLE_MS
+                if (_selfNudgeRecovery.value != recent) _selfNudgeRecovery.value = recent
+                delay(1_000)
+            }
+        }
+    }
+
     // Group-call participant roster from MatrixRTC membership (covers voice-only members
     // that produce no video track). Wired via groupMembersProvider in WebRtcEffects.
     var groupMembersProvider: ((String) -> kotlinx.coroutines.flow.Flow<List<ui.model.OrbitUser>>)? = null
@@ -905,6 +931,9 @@ class CallManager(
             runCatching { livekit.setLiveKitParticipantGain(identity, 1f) }
         }
         _participantGains.value = emptyMap()
+        _activeSpeakers.value = emptySet()
+        _selfNudgeRecovery.value = false
+        pttPreHoldAudioEnabled = null
         isMinimized.value = false
         _isScreenSharing.value = false
         isVideoCall.value = false
@@ -923,6 +952,25 @@ class CallManager(
     fun toggleMute(isMuted: Boolean) {
         isLocalAudioEnabled.value = !isMuted
         webRtcClient.toggleMute(isMuted)
+    }
+
+    // Push-to-talk (Voice & Video settings): while enabled and in a call, the
+    // Ctrl+Shift+Space combo momentarily opens the mic and restores the prior
+    // mute state on release. Repeats while the key auto-repeats are ignored.
+    var pushToTalkMode: Boolean = false
+    private var pttPreHoldAudioEnabled: Boolean? = null
+
+    fun setPushToTalkActive(active: Boolean) {
+        if (!pushToTalkMode || _callState.value == CallState.IDLE) return
+        if (active) {
+            if (pttPreHoldAudioEnabled != null) return
+            pttPreHoldAudioEnabled = isLocalAudioEnabled.value
+            if (!isLocalAudioEnabled.value) toggleMute(true)
+        } else {
+            val restore = pttPreHoldAudioEnabled ?: return
+            pttPreHoldAudioEnabled = null
+            if (!restore) toggleMute(false)
+        }
     }
 
     fun toggleVideo(isVideoEnabled: Boolean) {
