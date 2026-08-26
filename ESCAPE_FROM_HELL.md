@@ -1326,7 +1326,11 @@ Do NOT file bugs against these:
 - ✅ Mentions (highlight side) — @room and @member pills on both render paths;
   matrix.to anchor mentions pill-styled; pills targeting the local user get the
   bright highlight. Push-notification side still pending.
-- Message search (/search room-scoped first).
+- ✅ Message search (room-scoped) — header Search button is live: toggles a
+  search bar under the header that filters the loaded conversation in place
+  (case-insensitive body/username match) with a result count; X clears and
+  closes. Server-side /search across history still future scope. HeaderIconBtn
+  also gained an active-tint state (used by Search; ready for Pins).
 - Pinned messages list.
 - ✅ Slash commands — `/me <action>` sends a real `m.emote` event
   (sendEmoteMessage → trixnity emote() builder; incoming emotes/notes now map

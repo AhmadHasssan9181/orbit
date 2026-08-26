@@ -3,8 +3,15 @@ package ui.screen
 import ui.screen.chat.*
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -12,6 +19,10 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
@@ -65,6 +76,15 @@ fun ChatScreen(
         callState != webrtc.CallState.ENDED
     val showVoiceChannelUi = channel.type == ChannelType.VOICE && windowSize.isExpanded
     var pendingGroupJoinCallId by remember(channel.id) { mutableStateOf<String?>(null) }
+    var searchActive by remember(channel.id) { mutableStateOf(false) }
+    var searchQuery by remember(channel.id) { mutableStateOf("") }
+
+    val displayMessages = if (searchActive && searchQuery.isNotBlank()) {
+        val q = searchQuery.trim()
+        messages.filter {
+            it.body.contains(q, ignoreCase = true) || it.username.contains(q, ignoreCase = true)
+        }
+    } else messages
 
     LaunchedEffect(callState, activeRoomId) {
         if (callState != webrtc.CallState.CONNECTING) {
@@ -84,9 +104,23 @@ fun ChatScreen(
                 directProfile = directProfile,
                 onBack = onBack,
                 onVideoCall = { callManager?.startCall(channel.id, true) },
-                onVoiceCall = { callManager?.startCall(channel.id, false) }
+                onVoiceCall = { callManager?.startCall(channel.id, false) },
+                searchActive = searchActive,
+                onToggleSearch = { searchActive = !searchActive }
             )
             HorizontalDivider(color = Separator.copy(alpha = 0.2f), thickness = 1.dp)
+            if (searchActive) {
+                RoomSearchBar(
+                    query = searchQuery,
+                    onQueryChange = { searchQuery = it },
+                    placeholder = "Search in #${channel.name}\u2026",
+                    resultCount = displayMessages.size,
+                    onClose = {
+                        searchActive = false
+                        searchQuery = ""
+                    }
+                )
+            }
             if (showVoiceChannelUi) {
                 VoiceChannelScreen(
                     callManager = callManager!!,
@@ -150,7 +184,7 @@ fun ChatScreen(
 
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     MessageList(
-                        messages = messages,
+                        messages = displayMessages,
                         currentUser = currentUser,
                         modifier = Modifier.fillMaxSize(),
                         onSeen = onSeen,
@@ -208,6 +242,75 @@ private data class GroupCallJoinTarget(
     val callId: String,
     val livekitUrl: String?
 )
+
+@Composable
+private fun RoomSearchBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    placeholder: String,
+    resultCount: Int,
+    onClose: () -> Unit
+) {
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(Input_Bg)
+            .border(1.dp, Separator.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+            .padding(horizontal = 10.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = Icons.Default.Search,
+            contentDescription = null,
+            tint = Text_Muted,
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(Modifier.width(8.dp))
+        BasicTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            modifier = Modifier.weight(1f).focusRequester(focusRequester),
+            textStyle = MaterialTheme.typography.bodySmall.copy(
+                color = Text_White,
+                fontSize = 13.sp
+            ),
+            cursorBrush = SolidColor(Text_White),
+            singleLine = true,
+            decorationBox = { inner ->
+                Box {
+                    if (query.isEmpty()) {
+                        Text(
+                            text = placeholder,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = Text_Muted, fontSize = 13.sp
+                            )
+                        )
+                    }
+                    inner()
+                }
+            }
+        )
+        if (query.isNotBlank()) {
+            Text(
+                text = "$resultCount result${if (resultCount == 1) "" else "s"}",
+                style = MaterialTheme.typography.labelSmall.copy(color = Text_Muted)
+            )
+            Spacer(Modifier.width(8.dp))
+        }
+        IconButton(onClick = onClose, modifier = Modifier.size(24.dp)) {
+            Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = "Close search",
+                tint = Text_Muted,
+                modifier = Modifier.size(14.dp)
+            )
+        }
+    }
+}
 
 private fun parseGroupCallJoinTarget(url: String, fallbackLiveKitUrl: String?): GroupCallJoinTarget {
     if (url.startsWith("matrix-call://")) {
