@@ -78,6 +78,7 @@ import repository.AuthResult
 import repository.AuthStatus
 import repository.CredentialManager
 import repository.MatrixOrbitRepository
+import repository.MemberRoleInfo
 import repository.OrbitRepository
 import repository.SettingsManager
 import ui.assets.OrbitDefaultAvatar
@@ -747,6 +748,8 @@ fun ChatScreenWithRepo(
     var messages by remember(channel.id) { mutableStateOf<List<OrbitMessage>>(emptyList()) }
     var isLoading by remember(channel.id) { mutableStateOf(true) }
     var members by remember(channel.id) { mutableStateOf<List<OrbitUser>>(emptyList()) }
+    var memberRoles by remember(channel.id) { mutableStateOf<Map<String, MemberRoleInfo>>(emptyMap()) }
+    var rolesVersion by remember(channel.id) { mutableStateOf(0) }
     var currentUser by remember { mutableStateOf<OrbitUser?>(null) }
     var typingUsers by remember(channel.id) { mutableStateOf<List<String>>(emptyList()) }
     var readReceipts by remember(channel.id) { mutableStateOf<Map<String, String>>(emptyMap()) }
@@ -773,6 +776,18 @@ fun ChatScreenWithRepo(
             members = emptyList()
         }
         isLoading = false
+    }
+
+    // Roles load once per membership change; moderation actions bump rolesVersion
+    // to force a re-snapshot (power-level edits don't change member counts).
+    LaunchedEffect(channel.id, members.size, rolesVersion) {
+        if (members.isNotEmpty()) {
+            memberRoles = runCatching {
+                repository.getMemberRoles(channel.id, members.map { it.id })
+            }.getOrDefault(emptyMap())
+        } else {
+            memberRoles = emptyMap()
+        }
     }
 
     LaunchedEffect(channel.id) {
@@ -909,6 +924,28 @@ fun ChatScreenWithRepo(
             scope.launch {
                 runCatching { repository.sendReplyMessage(channel.id, replyToEventId, body) }
                 messages = repository.getMessagesForChannel(channel.id, limit = 50)
+            }
+        },
+        memberRoles = memberRoles,
+        onKickUser = { userId ->
+            scope.launch {
+                runCatching { repository.kickUser(channel.id, userId, null).getOrThrow() }
+                runCatching { members = repository.getRoomMembers(channel.id) }
+                rolesVersion++
+            }
+        },
+        onBanUser = { userId ->
+            scope.launch {
+                runCatching { repository.banUser(channel.id, userId, null).getOrThrow() }
+                runCatching { members = repository.getRoomMembers(channel.id) }
+                rolesVersion++
+            }
+        },
+        onSetPowerLevel = { userId, level ->
+            scope.launch {
+                runCatching { repository.setUserPowerLevel(channel.id, userId, level) }
+                    .onFailure { util.OrbitLog.e("Moderation", "power level change failed: ${it.message}") }
+                rolesVersion++
             }
         },
         showMemberList = showMemberList,

@@ -60,6 +60,15 @@ interface OrbitMessagesRepository {
     fun observeReadReceipts(roomId: String): Flow<Map<String, String>>
 }
 
+// Server-truth moderation facts for one member, snapshotted per member-list load.
+data class MemberRoleInfo(
+    val userId: String,
+    val powerLevel: Long,
+    val canKick: Boolean,
+    val canBan: Boolean,
+    val maxSettablePowerLevel: Long
+)
+
 interface OrbitUsersRepository {
     suspend fun updateDisplayName(name: String): Result<Unit>
     suspend fun uploadAvatar(imageBytes: ByteArray): Result<String>
@@ -68,6 +77,10 @@ interface OrbitUsersRepository {
     suspend fun observePresence(userId: String): Flow<UserStatus>
     suspend fun setTyping(roomId: String, isTyping: Boolean)
     fun observeTyping(roomId: String): Flow<List<String>>
+    suspend fun getMemberRoles(roomId: String, memberIds: List<String>): Map<String, MemberRoleInfo>
+    suspend fun kickUser(roomId: String, userId: String, reason: String?): Result<Unit>
+    suspend fun banUser(roomId: String, userId: String, reason: String?): Result<Unit>
+    suspend fun setUserPowerLevel(roomId: String, userId: String, level: Long): Result<Unit>
 }
 
 interface OrbitCallsRepository {

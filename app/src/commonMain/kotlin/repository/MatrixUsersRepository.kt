@@ -201,5 +201,106 @@ class MatrixUsersRepository(private val context: MatrixContext) : OrbitUsersRepo
             } else emptyList()
         }
     }
+
+    override suspend fun getMemberRoles(roomId: String, memberIds: List<String>): Map<String, MemberRoleInfo> {
+        val trixnity = context.trixnityClient ?: return emptyMap()
+        val service = trixnity.user
+        val result = mutableMapOf<String, MemberRoleInfo>()
+        for (id in memberIds) {
+            val powerLevel = runCatching { service.getPowerLevel(RoomId(roomId), UserId(id)).first() }.getOrNull()
+            val pl = when (powerLevel) {
+                is de.connect2x.trixnity.client.user.PowerLevel.User -> powerLevel.level
+                is de.connect2x.trixnity.client.user.PowerLevel.Creator -> 100L
+                else -> 0L
+            }
+            val canKick = runCatching { service.canKickUser(RoomId(roomId), UserId(id)).first() }.getOrDefault(false)
+            val canBan = runCatching { service.canBanUser(RoomId(roomId), UserId(id)).first() }.getOrDefault(false)
+            val maxSettable = runCatching {
+                (service.canSetPowerLevelToMax(RoomId(roomId), UserId(id)).first()
+                        as? de.connect2x.trixnity.client.user.PowerLevel.User)?.level
+            }.getOrNull() ?: 0L
+            result[id] = MemberRoleInfo(
+                userId = id,
+                powerLevel = pl,
+                canKick = canKick,
+                canBan = canBan,
+                maxSettablePowerLevel = maxSettable
+            )
+        }
+        return result
+    }
+
+    override suspend fun kickUser(roomId: String, userId: String, reason: String?): Result<Unit> {
+        return try {
+            val trixnity = context.trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
+            trixnity.api.room.kickUser(RoomId(roomId), UserId(userId), reason).getOrThrow()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun banUser(roomId: String, userId: String, reason: String?): Result<Unit> {
+        return try {
+            val trixnity = context.trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
+            trixnity.api.room.banUser(RoomId(roomId), UserId(userId), reason).getOrThrow()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun setUserPowerLevel(roomId: String, userId: String, level: Long): Result<Unit> {
+        return try {
+            val trixnity = context.trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
+            val service = trixnity.user
+            val maxSettable = runCatching {
+                (service.canSetPowerLevelToMax(RoomId(roomId), UserId(userId)).first()
+                        as? de.connect2x.trixnity.client.user.PowerLevel.User)?.level
+            }.getOrNull()
+            if (maxSettable != null && level > maxSettable) {
+                return Result.failure(IllegalStateException("Insufficient permission to set power level $level"))
+            }
+            val content = fetchPowerLevelsContent(roomId)
+            val newContent = content.copy(users = content.users + (UserId(userId) to level))
+            trixnity.api.room.sendStateEvent(RoomId(roomId), newContent, "").getOrThrow()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    // Read-modify-write source for m.room.power_levels. Missing event → all-defaults
+    // content so a first write still preserves spec defaults.
+    private suspend fun fetchPowerLevelsContent(roomId: String): PowerLevelsEventContent {
+        return try {
+            val response = context.httpClient.get(context.fullUrl("/rooms/$roomId/state/m.room.power_levels")) {
+                header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
+            }
+            if (response.status.value !in 200..299) return PowerLevelsEventContent()
+            val obj = Json.parseToJsonElement(response.bodyAsText()).jsonObject
+            fun longAt(key: String, default: Long): Long = obj[key]?.jsonPrimitive?.longOrNull ?: default
+            val users = obj["users"]?.jsonObject?.mapValues { it.value.jsonPrimitive.longOrNull ?: 0L } ?: emptyMap()
+            val events = obj["events"]?.jsonObject?.mapKeys {
+                EventType(UnknownEventContent::class, it.key)
+            }?.mapValues { it.value.jsonPrimitive.longOrNull ?: 0L } ?: emptyMap()
+            val notifications = obj["notifications"]?.jsonObject?.mapValues { it.value.jsonPrimitive.longOrNull ?: 0L } ?: emptyMap()
+            PowerLevelsEventContent(
+                ban = longAt("ban", PowerLevelsEventContent.BAN_DEFAULT),
+                events = events,
+                eventsDefault = longAt("events_default", PowerLevelsEventContent.EVENTS_DEFAULT),
+                invite = longAt("invite", PowerLevelsEventContent.INVITE_DEFAULT),
+                kick = longAt("kick", PowerLevelsEventContent.KICK_DEFAULT),
+                redact = longAt("redact", PowerLevelsEventContent.REDACT_DEFAULT),
+                stateDefault = longAt("state_default", PowerLevelsEventContent.STATE_DEFAULT),
+                users = users.mapKeys { UserId(it.key) },
+                usersDefault = longAt("users_default", PowerLevelsEventContent.USERS_DEFAULT),
+                notifications = notifications,
+                externalUrl = obj["external_url"]?.jsonPrimitive?.content ?: ""
+            )
+        } catch (e: Exception) {
+            PowerLevelsEventContent()
+        }
+    }
 }
 
