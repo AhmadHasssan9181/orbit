@@ -109,6 +109,10 @@ actual fun liveKitActiveSpeakers(): kotlinx.coroutines.flow.StateFlow<Set<String
 actual fun liveKitRemoteAudioMuted(): kotlinx.coroutines.flow.StateFlow<Set<String>> =
     LiveKitRemoteVideoFrameStore.remoteAudioMuted
 
+actual fun setCallRinging(ringing: Boolean) {
+    CallRingtone.setPlaying(ringing)
+}
+
 actual fun liveKitConnectionQuality(): kotlinx.coroutines.flow.StateFlow<Map<String, ConnectionQualitySample>> =
     LiveKitRemoteVideoFrameStore.connectionQuality
 

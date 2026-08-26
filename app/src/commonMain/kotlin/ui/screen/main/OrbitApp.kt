@@ -625,10 +625,12 @@ private fun MainAppContent(
                     // P2P calls may live outside the dm category or have their channel
                     // unresolvable entirely — they must still surface their UI.
                     (callActive && !isGroupCall)
-            // While the user is looking at the call's own channel, the embedded
+            // While the user is looking at a GROUP call's own channel, the embedded
             // VoiceChannelScreen/ChatScreen surface already renders there — a
             // second fullscreen overlay here blanketed the entire window and made
-            // navigation impossible.
+            // navigation impossible. P2P calls have no embedded surface at all,
+            // so this popup is their ONLY UI and must render even in-channel
+            // (otherwise an incoming DM invite rings invisibly until it expires).
             val viewingCallChannel = activeCallChannel != null && selectedChannelId == activeCallChannel.id
 
             LaunchedEffect(selectedChannelId, activeRoomId, channels) {
@@ -645,7 +647,7 @@ private fun MainAppContent(
                 }
             }
 
-            if (shouldShowPopup && !viewingCallChannel) {
+            if (shouldShowPopup && (!viewingCallChannel || !isGroupCall)) {
                 if (isGroupCall) {
                     LiveKitGroupCallSurface(
                         callManager = callManager,
