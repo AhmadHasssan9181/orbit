@@ -1413,7 +1413,14 @@ Do NOT file bugs against these:
   @<your-localpart> or @room. Limits: local-only (no Matrix push-rule sync —
   other clients unaffected; no OS-notification suppression yet), mention
   detection is a body-substring heuristic rather than parsed m.mentions.
-- Server creation/join-via-invite flows.
+- ✅ Server creation/join-via-invite flows — the rail's + button (all three
+  layouts) opens the Add Server dialog: Create tab builds a space via
+  createSpace and auto-creates #general inside it; Join tab joins by room ID
+  or alias via joinSpace; both select the resulting server on success.
+  Per-server room creation has its own dialog (text/voice toggle,
+  lowercase-hyphen name validation). Limits: the Invite/Discover choice cards
+  are decorative only — there is no server directory behind them, and invites
+  are raw room IDs/aliases rather than shareable invite links.
 
 > Rule: features get added to Settings → Keybinds ONLY when they actually
 > work (H19). Build feature → wire shortcut → restore card.
