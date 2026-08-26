@@ -1302,9 +1302,17 @@ Do NOT file bugs against these:
   taskbar flash, notification is informational only (clicking the balloon
   doesn't focus the app), P2P/group invites both covered via call-state
   transitions.
-- **Soundboard** — `showSoundboard` state exists but appears unwired; either
-  wire short-sound playback through a second audio track or remove the button
-  (honesty rule).
+- ✅ Soundboard — audit found this fully wired and the pending line stale.
+  MusicNote toggle in the controls bar (both P2P CallScreen and
+  LiveKitGroupCallSurface) opens a SoundboardPanel overlay: 12 built-in
+  effect tiles (procedurally synthesized — applause/laugh/airhorn/drumroll/
+  party/wow/nice/ding/bruh/music/meow/quack), custom sounds added via a file
+  picker into SoundboardMixer, volume slider. Tiles route through
+  CallManager.playSoundEffect → livekit.playSoundEffect → SoundboardMixer.
+  Limits: playback is LOCAL ONLY — you hear the effect mixed into your own
+  output; nothing is published to the call as a second audio track, so other
+  participants don't hear it. Custom sounds are session-only (in-memory
+  samples, no persistence).
 - ✅ Join/leave + deafen sound settings now REAL (were write-only) — new
   procedural effects in SoundEffects: "join"/"leave" two-tone chimes fired on
   self connect/disconnect AND on remote-participant count changes during a
