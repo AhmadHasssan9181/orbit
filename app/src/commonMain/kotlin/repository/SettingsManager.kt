@@ -321,6 +321,13 @@ class SettingsManager {
     // Last chosen presence (UserStatus enum name); reapplied to homeserver on startup/change.
     val myStatus = flowSettings.getStringFlow("myStatus", "ONLINE")
     fun setMyStatus(value: String) = settings.putString("myStatus", value)
+
+    // Per-room notification mode ("ALL" / "MENTIONS" / "MUTE"). Local-only:
+    // drives badge counting and the chat-header bell, not server push rules.
+    fun roomNotificationMode(roomId: String): Flow<String> =
+        flowSettings.getStringFlow("roomNotifMode.$roomId", "ALL")
+    fun setRoomNotificationMode(roomId: String, mode: String) =
+        settings.putString("roomNotifMode.$roomId", mode)
     
     val allowListenAlong = flowSettings.getBooleanFlow("allowListenAlong", true)
     fun setAllowListenAlong(value: Boolean) = settings.putBoolean("allowListenAlong", value)

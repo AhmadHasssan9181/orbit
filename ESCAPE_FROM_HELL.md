@@ -1394,7 +1394,15 @@ Do NOT file bugs against these:
   guarded client-side by canSetPowerLevelToMax. Limits: no unban UI (banned
   users aren't in the joined list), no arbitrary PL values (0↔50 toggle only),
   failures surface silently except a log line.
-- Notification settings per room (mute/mentions-only).
+- ✅ Notification settings per room v1 — SettingsManager gains
+  roomNotificationMode(roomId)/setRoomNotificationMode ("ALL"/"MENTIONS"/"MUTE",
+  persisted locally); the previously dead header Notifications button now
+  cycles the mode for the open channel (bell swaps to slashed icon and tints
+  accent when not ALL) and the shell's unread-badge collector enforces it:
+  MUTE drops the message entirely, MENTIONS counts only bodies containing
+  @<your-localpart> or @room. Limits: local-only (no Matrix push-rule sync —
+  other clients unaffected; no OS-notification suppression yet), mention
+  detection is a body-substring heuristic rather than parsed m.mentions.
 - Server creation/join-via-invite flows.
 
 > Rule: features get added to Settings → Keybinds ONLY when they actually
