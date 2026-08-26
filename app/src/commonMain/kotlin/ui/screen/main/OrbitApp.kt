@@ -89,6 +89,7 @@ import ui.layout.WindowSizeClass
 import ui.layout.windowSizeClassFor
 import ui.model.ChannelCategory
 import ui.model.ChannelType
+import ui.model.MessageContent
 import ui.model.OrbitChannel
 import ui.model.OrbitMessage
 import ui.model.OrbitServer
@@ -689,6 +690,7 @@ fun ChatScreenWithRepo(
     var members by remember(channel.id) { mutableStateOf<List<OrbitUser>>(emptyList()) }
     var currentUser by remember { mutableStateOf<OrbitUser?>(null) }
     var typingUsers by remember(channel.id) { mutableStateOf<List<String>>(emptyList()) }
+    var readReceipts by remember(channel.id) { mutableStateOf<Map<String, String>>(emptyMap()) }
     var activeCall by remember(channel.id) { mutableStateOf<repository.CallEvent.Invite?>(null) }
     var activeGroupCallUrl by remember(channel.id) { mutableStateOf<String?>(null) }
 
@@ -725,6 +727,10 @@ fun ChatScreenWithRepo(
     }
 
     LaunchedEffect(channel.id) {
+        repository.observeReadReceipts(channel.id).collect { readReceipts = it }
+    }
+
+    LaunchedEffect(channel.id) {
         repository.observeActiveCall(channel.id).collect { activeCall = it }
     }
 
@@ -743,10 +749,14 @@ fun ChatScreenWithRepo(
         )
     } else null
 
+    val annotatedMessages = remember(messages, readReceipts, currentUser) {
+        annotateSeenMessages(messages, readReceipts, currentUser)
+    }
+
     ChatScreen(
         repository = repository,
         channel = channel,
-        messages = messages,
+        messages = annotatedMessages,
         members = members,
         currentUser = currentUser,
         directProfile = directProfile,
@@ -796,6 +806,30 @@ fun ChatScreenWithRepo(
         onBack = onBack,
         modifier = modifier
     )
+}
+
+// A message is "seen" when another user's latest read receipt points at or after
+// it in the currently loaded window. Reaction pseudo-events are never marked.
+private fun annotateSeenMessages(
+    messages: List<OrbitMessage>,
+    readReceipts: Map<String, String>,
+    currentUser: OrbitUser?
+): List<OrbitMessage> {
+    if (currentUser == null || readReceipts.isEmpty() || messages.isEmpty()) return messages
+    val positions = HashMap<String, Int>()
+    messages.forEachIndexed { i, m -> positions.putIfAbsent(m.id, i) }
+    val lastReadPos = HashMap<String, Int>()
+    readReceipts.forEach { (userId, eventId) ->
+        positions[eventId]?.let { pos ->
+            lastReadPos[userId] = maxOf(lastReadPos[userId] ?: -1, pos)
+        }
+    }
+    if (lastReadPos.isEmpty()) return messages
+    return messages.mapIndexed { i, m ->
+        if (m.userId != currentUser.id || m.content is MessageContent.Reaction) return@mapIndexed m
+        val readers = lastReadPos.filterValues { it >= i }.keys.toList()
+        if (readers.isEmpty() && m.readReceipts.isEmpty()) m else m.copy(readReceipts = readers)
+    }
 }
 
 @Composable

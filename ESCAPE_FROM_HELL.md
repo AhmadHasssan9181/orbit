@@ -1257,8 +1257,8 @@ Do NOT file bugs against these:
   device menu (Element re-negotiates via m.call.negotiate).
 - **Raise hand** — Element-style: custom `m.call.member` field or reaction;
   hand icon overlay on tile + roster sort bump. Cheap, high delight.
-- **Spotlight / pin participant** — pin a tile to spotlight slot (layout mode
-  exists: Grid/Focus; add explicit Pin action to the new context menu).
+- ✅ Spotlight / pin participant — right-click a tile → Pin; forces Focus-style
+  spotlight even in Grid mode, beats paged shares in slot priority.
 - **Screen-share resolution/FPS picker** — capture pipeline caps exist; expose
   picker in ScreenShareDialog (720p30 default for bad internet).
 - **Simulcast/bandwidth adaptation** — LiveKit supports it natively; verify
@@ -1273,8 +1273,8 @@ Do NOT file bugs against these:
   longer render their own minimized pill; popup owns it).
 - ✅ Right-click context menu on tiles: volume slider %, Mute-for-me,
   Reset volume (this round).
-- **Add to context menu:** Pin/Unpin tile · Raise hand · Copy user ID ·
-  "Mute stream" label for share tiles (= same local gain, clearer wording).
+- **Add to context menu:** Raise hand · Copy user ID · "Mute stream" label
+  for share tiles (= same local gain, clearer wording). (Pin/Unpin already in.)
 - **In-call device switcher quick menu** — mic/speaker/camera pickers inline
   in the call controls (AudioDeviceMenu exists — surface it on hover of the
   chevron next to mute, Discord-style).
@@ -1291,10 +1291,14 @@ Do NOT file bugs against these:
 
 ## C. MESSAGING
 
-- Typing indicators (`m.typing` ephemeral events — repository likely has sync
-  access already; render "X is typing…" under header).
-- Read receipts + unread separator + jump-to-unread (no read-state system
-  exists yet — this unblocks Mark Server/Channel Read shortcuts too).
+- ✅ Typing indicators — `observeTyping` flow → "X is typing…" overlay under
+  the message list, display names mapped from room members.
+- ✅ Read receipts (display) — `RoomUserStore.getAllReceipts(roomId)` observed
+  per room; own messages get a Discord-style "Seen ✓✓" row once another
+  member's read receipt reaches or passes them. (Send side existed: onSeen →
+  setReadMarkers.)
+- **Unread separator + jump-to-unread** (receipt plumbing now exists; needs
+  last-read tracking per channel — unblocks Mark Server/Channel Read too).
 - Edit / delete / redact messages (Matrix supports both natively).
 - Replies + threads (`m.in_reply_to` first; threads later).
 - Reactions (m.relation annotation) with picker.
@@ -1303,14 +1307,14 @@ Do NOT file bugs against these:
 - Mentions (@user → push notification + highlight).
 - Message search (/search room-scoped first).
 - Pinned messages list.
-- Quick Switcher Ctrl+K — build fuzzy channel jump dialog, THEN re-add the
-  deleted Keybinds card.
 - Slash commands (/me at minimum).
 
 ## D. NAVIGATION / APP SHELL
 
-- Back/forward navigation history stack (Alt+←/→) over selectedChannelId
-  transitions — small state machine in OrbitApp, then restore the cards.
+- ✅ Back/forward navigation history stack (Alt+←/→) over selectedChannelId
+  transitions — small state machine in OrbitApp.
+- ✅ Quick Switcher Ctrl+K — fuzzy channel jump dialog across all servers
+  (Keybinds card restored as real).
 - Unread badges on server icons (setting exists; ensure counts aggregate).
 - Status system: online/idle/DND/invisible presence + custom status text.
 - Profile editing (display name/avatar upload via profile API).

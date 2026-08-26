@@ -9,16 +9,20 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import ui.assets.OrbitChatDoodleBackground
+import ui.model.MessageContent
 import ui.model.OrbitMessage
 import ui.model.OrbitUser
 
@@ -77,6 +81,16 @@ internal fun MessageList(
         }
     }
 
+    // Latest own message someone has read — renders the "Seen" row under it.
+    val lastSeenOwnMessageId = remember(messages, currentUser) {
+        currentUser ?: return@remember null
+        messages.lastOrNull {
+            it.userId == currentUser.id &&
+                it.readReceipts.isNotEmpty() &&
+                it.content !is MessageContent.Reaction
+        }?.id
+    }
+
     Box(modifier = modifier.fillMaxWidth()) {
         OrbitChatDoodleBackground(
             selectedId = ui.theme.LocalChatWallpaper.current,
@@ -89,28 +103,37 @@ internal fun MessageList(
             verticalArrangement = Arrangement.spacedBy(0.dp)
         ) {
             items(grouped, key = { it.key }) { group ->
-                if (ui.theme.LocalCompactMode.current) {
-                    when (group) {
-                        is MessageGroup.Single -> DenseMessageBody(group.message)
-                        is MessageGroup.Dense -> {
-                            for (msg in group.messages) DenseMessageBody(msg)
+                val groupMessageIds = when (group) {
+                    is MessageGroup.Single -> listOf(group.message.id)
+                    is MessageGroup.Dense -> group.messages.map { it.id }
+                }
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    if (ui.theme.LocalCompactMode.current) {
+                        when (group) {
+                            is MessageGroup.Single -> DenseMessageBody(group.message)
+                            is MessageGroup.Dense -> {
+                                for (msg in group.messages) DenseMessageBody(msg)
+                            }
                         }
-                    }
-                } else {
-                    when (group) {
-                        is MessageGroup.Single -> MessageBubbleFull(group.message, currentUser)
-                        is MessageGroup.Dense  -> {
-                            if (ui.theme.LocalIsLiteMode.current) {
-                                for (msg in group.messages) {
-                                    MessageBubbleFull(msg, currentUser)
-                                }
-                            } else {
-                                MessageBubbleFull(group.messages[0], currentUser)
-                                for (i in 1 until group.messages.size) {
-                                    DenseMessageBody(group.messages[i])
+                    } else {
+                        when (group) {
+                            is MessageGroup.Single -> MessageBubbleFull(group.message, currentUser)
+                            is MessageGroup.Dense  -> {
+                                if (ui.theme.LocalIsLiteMode.current) {
+                                    for (msg in group.messages) {
+                                        MessageBubbleFull(msg, currentUser)
+                                    }
+                                } else {
+                                    MessageBubbleFull(group.messages[0], currentUser)
+                                    for (i in 1 until group.messages.size) {
+                                        DenseMessageBody(group.messages[i])
+                                    }
                                 }
                             }
                         }
+                    }
+                    if (groupMessageIds.contains(lastSeenOwnMessageId)) {
+                        SeenIndicator()
                     }
                 }
             }
@@ -178,4 +201,27 @@ internal fun groupMessages(messages: List<OrbitMessage>): List<MessageGroup> {
     if (curGroup.isNotEmpty())
         result.add(if (curGroup.size == 1) MessageGroup.Single(curGroup[0]) else MessageGroup.Dense(curGroup.toList()))
     return result
+}
+
+@Composable
+private fun SeenIndicator() {
+    Row(
+        modifier = Modifier.padding(start = 62.dp, top = 1.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            Icons.Filled.DoneAll,
+            contentDescription = "Seen",
+            tint = Accent,
+            modifier = Modifier.size(14.dp)
+        )
+        Spacer(Modifier.width(3.dp))
+        Text(
+            text = "Seen",
+            style = androidx.compose.material3.MaterialTheme.typography.labelSmall.copy(
+                color = Accent.copy(alpha = 0.85f),
+                fontSize = 10.sp
+            )
+        )
+    }
 }

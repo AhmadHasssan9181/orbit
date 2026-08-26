@@ -14,6 +14,7 @@ import de.connect2x.trixnity.client.room.message.roomMessageBuilder
 import de.connect2x.trixnity.client.room.message.text
 import de.connect2x.trixnity.client.store.Room
 import de.connect2x.trixnity.client.store.RoomOutboxMessage
+import de.connect2x.trixnity.client.store.RoomUserStore
 import de.connect2x.trixnity.client.store.TimelineEvent
 import de.connect2x.trixnity.client.store.eventId
 import de.connect2x.trixnity.client.store.repository.room.room
@@ -37,6 +38,7 @@ import de.connect2x.trixnity.core.model.events.m.call.CallEventContent
 import de.connect2x.trixnity.core.model.events.m.call.Purpose
 import de.connect2x.trixnity.core.model.events.m.call.StreamMetadata
 import de.connect2x.trixnity.core.model.events.m.ReactionEventContent
+import de.connect2x.trixnity.core.model.events.m.ReceiptType
 import de.connect2x.trixnity.core.model.events.m.RelatesTo
 import de.connect2x.trixnity.core.model.events.m.room.AudioInfo
 import de.connect2x.trixnity.core.model.events.m.room.CreateEventContent
@@ -75,7 +77,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.take
@@ -257,6 +261,28 @@ class MatrixMessagesRepository(val context: MatrixContext) : OrbitMessagesReposi
 
     override suspend fun sendReadReceipt(roomId: String, eventId: String) {
         context.trixnityClient?.api?.room?.setReadMarkers(RoomId(roomId), EventId(eventId), EventId(eventId))
+    }
+
+    override fun observeReadReceipts(roomId: String): Flow<Map<String, String>> {
+        val trixnity = context.trixnityClient ?: return flowOf(emptyMap())
+        val roomUserStore = try {
+            trixnity.di.get<RoomUserStore>()
+        } catch (e: Exception) {
+            return flowOf(emptyMap())
+        }
+        // Outer flow re-emits when the set of receipt-holding users changes; inner
+        // flows emit per-user. combine keeps every user's latest read event id.
+        return roomUserStore.getAllReceipts(RoomId(roomId)).flatMapLatest { userReceipts ->
+            if (userReceipts.isEmpty()) {
+                flowOf(emptyMap<String, String>())
+            } else {
+                combine(userReceipts.entries.map { (userId, receiptsFlow) ->
+                    receiptsFlow.map { receipts ->
+                        receipts?.receipts?.get(ReceiptType.Read)?.let { userId.full to it.eventId.full }
+                    }
+                }) { pairs -> pairs.filterNotNull().toMap() }
+            }
+        }
     }
 
     override suspend fun registerPusher(pushKey: String, appId: String, url: String) {
