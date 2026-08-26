@@ -333,6 +333,7 @@ class MatrixSyncRepository(
                             state.messages.add(orbitMessage)
                             state.flow.tryEmit(listOf(orbitMessage))
                         }
+                        context.globalMessageArrivals.tryEmit(roomId to orbitMessage)
                     }
                 }
             }

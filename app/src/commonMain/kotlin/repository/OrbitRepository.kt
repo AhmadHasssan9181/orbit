@@ -54,6 +54,8 @@ interface OrbitMessagesRepository {
     suspend fun sendReadReceipt(roomId: String, eventId: String)
     suspend fun registerPusher(pushKey: String, appId: String, url: String)
     fun observeMessages(channelId: String): Flow<List<OrbitMessage>>
+    // Live arrivals for EVERY room as (matrixRoomId, message); drives unread counts in the shell.
+    fun observeIncomingMessages(): Flow<Pair<String, OrbitMessage>>
     // Other users' public read receipts in a room: userId -> eventId of their latest read message.
     fun observeReadReceipts(roomId: String): Flow<Map<String, String>>
 }

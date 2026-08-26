@@ -171,6 +171,13 @@ class MatrixContext(val homeserverUrl: String) {
     // Room ids whose call-related state changed; group-call observers re-resolve on tick.
     val groupCallStateChanges = MutableSharedFlow<String>(extraBufferCapacity = 64)
 
+    // Live chat-message arrivals for EVERY room as (matrixRoomId, message);
+    // the app shell consumes this to maintain unread counts per channel.
+    val globalMessageArrivals = kotlinx.coroutines.flow.MutableSharedFlow<Pair<String, OrbitMessage>>(
+        extraBufferCapacity = 256,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
+    )
+
     val liveMessageStates = mutableMapOf<String, LiveMessageState>()
     val activeCalls = mutableMapOf<String, MutableStateFlow<CallEvent.Invite?>>()
     val activeGroupCalls = mutableMapOf<String, MutableStateFlow<String?>>()

@@ -179,6 +179,7 @@ internal fun DmListContent(
     onChannelClick: (String) -> Unit,
     onVoiceCall: ((String) -> Unit)? = null,
     onVideoCall: ((String) -> Unit)? = null,
+    unreadCounts: Map<String, Int> = emptyMap(),
     modifier: Modifier = Modifier
 ) {
     val isLiteMode = ui.theme.LocalIsLiteMode.current
@@ -207,6 +208,7 @@ internal fun DmListContent(
                 avatarColor = 0xFF7C6AF0.toInt(), // Replace with hashToColor or actual if you have it
                 status = UserStatus.ONLINE, // Placeholder
                 isSelected = ch.id == selectedChannelId,
+                unreadCount = maxOf(unreadCounts[ch.id] ?: 0, unreadCounts[ch.matrixRoomId] ?: 0),
                 onClick = { onChannelClick(ch.id) },
                 onVoiceCall = { onVoiceCall?.invoke(ch.id) },
                 onVideoCall = { onVideoCall?.invoke(ch.id) },
@@ -227,7 +229,8 @@ internal fun DmItem(
     onVoiceCall: (() -> Unit)? = null,
     onVideoCall: (() -> Unit)? = null,
     lastMessage: String = "Tap to chat with $displayName",
-    time: String = "12:00 PM"
+    time: String = "12:00 PM",
+    unreadCount: Int = 0
 ) {
     val isLiteMode = ui.theme.LocalIsLiteMode.current
     val interactionSource = remember { MutableInteractionSource() }
@@ -395,6 +398,25 @@ internal fun DmItem(
                 if (isOrbitVerifiedUser(displayName)) {
                     Spacer(Modifier.width(5.dp))
                     OrbitVerifiedBadge(modifier = Modifier.size(13.dp))
+                }
+            }
+            if (unreadCount > 0 && !isSelected) {
+                Spacer(Modifier.width(6.dp))
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(Color(0xFFF23F42))
+                        .padding(horizontal = 6.dp, vertical = 1.dp)
+                ) {
+                    Text(
+                        text = if (unreadCount > 99) "99+" else unreadCount.toString(),
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            color = Color.White,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        maxLines = 1
+                    )
                 }
             }
             // Action icons on hover like Discord
