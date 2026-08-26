@@ -1322,8 +1322,23 @@ Do NOT file bugs against these:
   peer-arrival blips need the native LiveKit path (P2P ADM calls only get
   self connect/disconnect sounds), and a rapid disconnect right after a peer
   leaves may double-fire the leave blip (participant-reset ordering).
-- **PiP window** — separate always-on-top Compose window showing active
-  speaker when main window minimized (Windows-native parity).
+- ✅ PiP window — separate always-on-top Compose window (jvmMain
+  `ui/screen/call/CallPipWindow.kt`, hosted from Main.kt next to the Tray)
+  that appears only while a call is CONNECTING/CONNECTED AND the main window
+  is minimized or tray-hidden; 320×190 undecorated, bottom-right. Content:
+  screen-share frame first, else the active speaker's camera track
+  (`liveKitActiveSpeakers()` matched against
+  LiveKitRemoteVideoFrameStore.activeTracks/framesByTrack), else the latest
+  flowing remote frame, else an audio-only card with participant count;
+  mute/deafen badges plus a hang-up button overlay it. Clicking anywhere
+  restores/focuses the main window (shared restoreMainWindow() also used by
+  the tray menu); ✕ dismisses until the next call; auto-hides when the main
+  window comes back or the call ends. CallManager reaches Main.kt via the new
+  snapshot-backed `webrtc.ActiveCallBridge` registered in WebRtcEffects.
+  Limits: fixed position (not draggable), no call timer/label on video,
+  active-speaker matching assumes LiveKit identity space (falls back to the
+  latest camera frame if it misses), and the window takes OS focus when
+  clicked like Discord's does.
 
 ## C. MESSAGING
 

@@ -22,6 +22,7 @@ fun WebRtcEffects(
 
     // Register app-wide call keybinds (dispatched from the root Window key handler).
     DisposableEffect(callManager) {
+        ActiveCallBridge.register(callManager)
         CallShortcuts.onToggleMute = {
             if (callManager.callState.value != CallState.IDLE) {
                 callManager.toggleMute(callManager.isLocalAudioEnabled.value)
@@ -53,6 +54,7 @@ fun WebRtcEffects(
             }
         }
         onDispose {
+            ActiveCallBridge.register(null)
             CallShortcuts.onToggleMute = null
             CallShortcuts.onToggleDeafen = null
             CallShortcuts.onToggleCamera = null

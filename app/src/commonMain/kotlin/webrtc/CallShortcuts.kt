@@ -1,5 +1,9 @@
 package webrtc
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+
 /**
  * App-wide call keybinds. The call layer registers handlers; the desktop Window
  * dispatches key events here so shortcuts work regardless of which pane has focus.
@@ -32,4 +36,18 @@ object CallShortcuts {
     // shutting down, so an active call can publish its leave membership while
     // the exit watchdog's grace window is still open.
     var onAppQuitRequested: (() -> Unit)? = null
+}
+
+/**
+ * Bridge between the app-shell call layer and OS-level windows composed
+ * outside the app tree (the floating call PiP window in Main.kt).
+ * Snapshot-backed so a late registration still triggers recomposition.
+ */
+object ActiveCallBridge {
+    var callManager: CallManager? by mutableStateOf<CallManager?>(null)
+        private set
+
+    fun register(manager: CallManager?) {
+        callManager = manager
+    }
 }
