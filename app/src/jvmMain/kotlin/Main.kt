@@ -155,6 +155,7 @@ fun main() = application {
             }
         ) {
             windowRef = window
+            util.CallNotifier.attachWindow(window)
             Column(modifier = Modifier.fillMaxSize()) {
                 CustomTitleBar(state = state, onClose = ::closeRequested)
                 OrbitApp(modifier = Modifier.weight(1f))

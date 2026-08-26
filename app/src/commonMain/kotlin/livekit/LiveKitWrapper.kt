@@ -72,6 +72,11 @@ expect fun liveKitConnectionQuality(): kotlinx.coroutines.flow.StateFlow<Map<Str
 // is ringing. Idempotent — repeated calls with the same value are no-ops.
 expect fun setCallRinging(ringing: Boolean)
 
+// System-level call notification (tray balloon on Windows) for incoming and
+// missed calls. Suppressed by the platform actual while the app owns focus —
+// the in-app overlay covers the focused case.
+expect fun showCallNotification(title: String, body: String)
+
 // Voice & Video settings: NS/EC/AGC for the native group-call APM chain
 expect fun setLiveKitAudioProcessingOptions(noiseSuppression: Boolean, echoCancellation: Boolean, autoGainControl: Boolean)
 

@@ -33,6 +33,7 @@ Audit B (Kotlin wiring/UI), findings and disposition:
 - [ ] MINOR deferred: `observeCallMembers` leaks an unscoped scan job per room switch (needs resolver dedup map like siblings).
 - [ ] MINOR deferred: two `LiveKitGroupCallSurfaces` composed at once during voice-channel calls (double BufferedImage conversion per tile).
 - [ ] MINOR deferred: notification sound settings (`joinLeaveSound`, `callRingtone`, `deafenSound`) are write-only; voice-message playback is a println stub (`AudioPlayer.jvm.kt`); CallEventGate fails open when own profile isn't loaded yet; two `SettingsManager` instances / debugLogging needs restart.
+  - PARTIALLY RESOLVED 2026-08-26: `callRingtone` wired since round 11 (ring loop); `joinLeaveSound` + `deafenSound` now real — procedural "join"/"leave" chimes on self connect/disconnect and remote-participant diffs, "deafen"/"undeafen" sweeps on deafen-state change (WebRtcEffects effects → SoundboardMixer SoundEffects). Voice-message playback is also no longer a stub (waveform AudioMessageCard drives util.AudioPlayer). Still open: CallEventGate fail-open, dual SettingsManager/debugLogging restart note.
 - [ ] INFO deferred: `matrix-call://` still emitted/parsed despite E6 note claiming removal — doc vs code disagreement to reconcile.
 
 ---
