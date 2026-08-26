@@ -48,6 +48,8 @@ interface OrbitMessagesRepository {
     suspend fun sendAudioMessage(channelId: String, mxcUrl: String, filename: String, mimeType: String, durationMs: Int? = null, size: Long? = null): Result<String>
     suspend fun editMessage(roomId: String, eventId: String, newBody: String): Result<Unit>
     suspend fun deleteMessage(roomId: String, eventId: String): Result<Unit>
+    suspend fun pinMessage(roomId: String, eventId: String, pinned: Boolean): Result<Unit>
+    suspend fun getPinnedMessageIds(roomId: String): Result<List<String>>
     suspend fun sendReadReceipt(roomId: String, eventId: String)
     suspend fun registerPusher(pushKey: String, appId: String, url: String)
     fun observeMessages(channelId: String): Flow<List<OrbitMessage>>

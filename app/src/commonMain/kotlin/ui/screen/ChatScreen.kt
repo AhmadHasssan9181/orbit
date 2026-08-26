@@ -4,11 +4,13 @@ import ui.screen.chat.*
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -60,6 +62,7 @@ fun ChatScreen(
     onReact: ((String, String) -> Unit)? = null,
     onEditMessage: ((String, String) -> Unit)? = null,
     onDeleteMessage: ((String) -> Unit)? = null,
+    onTogglePin: ((String) -> Unit)? = null,
     showMemberList: Boolean = true,
     onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier
@@ -78,6 +81,7 @@ fun ChatScreen(
     var pendingGroupJoinCallId by remember(channel.id) { mutableStateOf<String?>(null) }
     var searchActive by remember(channel.id) { mutableStateOf(false) }
     var searchQuery by remember(channel.id) { mutableStateOf("") }
+    var pinsActive by remember(channel.id) { mutableStateOf(false) }
 
     val displayMessages = if (searchActive && searchQuery.isNotBlank()) {
         val q = searchQuery.trim()
@@ -106,7 +110,9 @@ fun ChatScreen(
                 onVideoCall = { callManager?.startCall(channel.id, true) },
                 onVoiceCall = { callManager?.startCall(channel.id, false) },
                 searchActive = searchActive,
-                onToggleSearch = { searchActive = !searchActive }
+                onToggleSearch = { searchActive = !searchActive },
+                pinsActive = pinsActive,
+                onTogglePins = { pinsActive = !pinsActive }
             )
             HorizontalDivider(color = Separator.copy(alpha = 0.2f), thickness = 1.dp)
             if (searchActive) {
@@ -190,7 +196,8 @@ fun ChatScreen(
                         onSeen = onSeen,
                         onReact = onReact,
                         onEditMessage = onEditMessage,
-                        onDeleteMessage = onDeleteMessage
+                        onDeleteMessage = onDeleteMessage,
+                        onTogglePin = onTogglePin
                     )
                     
                     // Typing Indicator Overlay
@@ -231,9 +238,101 @@ fun ChatScreen(
         if (!showVoiceChannelUi) {
             when {
                 directProfile != null && windowSize.isExpanded -> DirectProfilePanel(directProfile)
+                pinsActive -> PinnedMessagesPanel(
+                    pinned = messages.filter { it.isPinned },
+                    canUnpin = onTogglePin != null,
+                    onUnpin = { onTogglePin?.invoke(it) }
+                )
                 ui.theme.LocalShowMemberList.current && windowSize.isExpanded -> MemberListPanel(members = members)
             }
         }
+        }
+    }
+}
+
+@Composable
+private fun PinnedMessagesPanel(
+    pinned: List<OrbitMessage>,
+    canUnpin: Boolean,
+    onUnpin: (String) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .width(280.dp)
+            .fillMaxHeight()
+            .background(Members_Bg)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(Icons.Default.PushPin, contentDescription = null, tint = Accent, modifier = Modifier.size(16.dp))
+            Text(
+                text = "Pinned Messages",
+                style = MaterialTheme.typography.titleSmall.copy(color = Text_White)
+            )
+        }
+        HorizontalDivider(color = Separator.copy(alpha = 0.2f), thickness = 1.dp)
+
+        if (pinned.isEmpty()) {
+            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Text(
+                    text = "No pinned messages.\nUse the \u2026 menu on a message to pin it.",
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        color = Text_Muted, fontSize = 12.sp
+                    ),
+                    modifier = Modifier.padding(16.dp)
+                )
+            }
+        } else {
+            androidx.compose.foundation.lazy.LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                items(pinned.size) { index ->
+                    val message = pinned[index]
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { }
+                            .padding(horizontal = 14.dp, vertical = 10.dp)
+                    ) {
+                        Text(
+                            text = message.username,
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                color = Accent, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+                            )
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = message.body,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = Text_Secondary, fontSize = 12.sp
+                            ),
+                            maxLines = 3,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = message.formatShortTime(),
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = Text_Muted, fontSize = 10.sp
+                                )
+                            )
+                            if (canUnpin) {
+                                Spacer(Modifier.weight(1f))
+                                androidx.compose.material3.TextButton(
+                                    onClick = { onUnpin(message.id) },
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                    modifier = Modifier.height(24.dp)
+                                ) {
+                                    Text("Unpin", color = Text_Muted, fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
+                    HorizontalDivider(color = Separator.copy(alpha = 0.15f), thickness = 1.dp)
+                }
+            }
         }
     }
 }
