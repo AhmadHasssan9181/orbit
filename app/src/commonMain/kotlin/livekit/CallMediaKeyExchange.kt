@@ -257,7 +257,18 @@ class CallMediaKeyExchange(
                 }.getOrNull().orEmpty()
                 if (livekitIds.isEmpty()) continue
                 val now = nowMs()
-                latecomers.observe(livekitIds, ownLivekitIdentity, now)
+                latecomers.observe(livekitIds, ownLivekitIdentity, now) { newIdentity ->
+                    println("DEBUG [CallMediaKeyExchange] new/rejoined LiveKit participant: $newIdentity -> clearing delivery cache")
+                    deliveredIndex.invalidate(newIdentity)
+                    receivedPeerIdentities.remove(newIdentity)
+                    val dev = callDeviceFromParticipantIdentity(newIdentity)
+                    if (dev != null) {
+                        scope.launch {
+                            val (payload, keyIndex) = mutex.withLock { currentPayload() to ring.currentIndex }
+                            distribute(payload, setOf(dev), keyIndex)
+                        }
+                    }
+                }
                 val overdue = latecomers.overdue(receivedPeerIdentities, now, LATECOMER_GRACE_MS)
                 if (overdue.isEmpty()) continue
                 val lastNudge = lastNudgeMs
@@ -276,7 +287,7 @@ class CallMediaKeyExchange(
                 println(
                     "WARN [CallMediaKeyExchange] latecomer nudge: ${overdue.size} participant(s) " +
                         "$overdue present >=${LATECOMER_GRACE_MS / 1000}s without sending a key; " +
-                        "forcing membership leave+rejoin attempt=$nudgesFired/$NUDGE_MAX_PER_CALL"
+                        "refreshing membership attempt=$nudgesFired/$NUDGE_MAX_PER_CALL"
                 )
                 runCatching { callback() }
                     .onFailure { println("WARN [CallMediaKeyExchange] latecomer nudge failed: ${it.message}") }
@@ -399,6 +410,10 @@ class CallMediaKeyExchange(
 
     /** UI hook: wall-clock stamp of our last self-nudge (leave+rejoin); 0 = never fired. */
     fun lastSelfNudgeAtMs(): Long = lastNudgeMs
+
+    fun rearmOwnKey() {
+        deliverNativeMediaKey(ownLivekitIdentity, ring.currentKey, ring.currentIndex)
+    }
 
     fun stop() {
         stopped = true
@@ -557,13 +572,8 @@ class CallMediaKeyExchange(
      * reply, one each.
      */
     private fun maybeReplyWithOwnKey(sender: String, claimedDevice: String) {
-        val deviceKey = "$sender:$claimedDevice"
-        val now = nowMs()
-        synchronized(lastReplyToDeviceMs) {
-            val last = lastReplyToDeviceMs[deviceKey] ?: 0L
-            if (now - last < REPLY_ON_RECEIVE_MIN_INTERVAL_MS) return
-            lastReplyToDeviceMs[deviceKey] = now
-        }
+        val identity = CallMediaKeys.participantIdentity(sender, claimedDevice)
+        deliveredIndex.invalidate(identity)
         scope.launch {
             if (stopped) return@launch
             // Snapshot payload+index atomically under the roster mutex so a
@@ -784,22 +794,22 @@ class CallMediaKeyExchange(
     }
 
     private companion object {
-        const val RETRY_WATCH_INTERVAL_MS = 1_500L
-        const val DIAG_ZERO_INBOUND_GRACE_MS = 25_000L
-        const val NUDGE_WATCH_INTERVAL_MS = 10_000L
-        const val NUDGE_SETTLE_DELAY_MS = 5_000L
+        const val RETRY_WATCH_INTERVAL_MS = 1_000L
+        const val DIAG_ZERO_INBOUND_GRACE_MS = 20_000L
+        const val NUDGE_WATCH_INTERVAL_MS = 8_000L
+        const val NUDGE_SETTLE_DELAY_MS = 15_000L
         const val NUDGE_GRACE_MS = 45_000L
-        const val NUDGE_COOLDOWN_MS = 90_000L
-        const val NUDGE_MAX_PER_CALL = 2
-        const val REPLY_ON_RECEIVE_MIN_INTERVAL_MS = 3_000L
-        const val CONVERGE_INTERVAL_MS = 10_000L
+        const val NUDGE_COOLDOWN_MS = 60_000L
+        const val NUDGE_MAX_PER_CALL = 3
+        const val REPLY_ON_RECEIVE_MIN_INTERVAL_MS = 1_500L
+        const val CONVERGE_INTERVAL_MS = 2_500L
         // Minimum spacing between post-failure /keys/query refreshes per user.
-        const val DEVICE_KEY_REFRESH_MIN_INTERVAL_MS = 30_000L
-        const val LATECOMER_WATCH_INTERVAL_MS = 3_000L
+        const val DEVICE_KEY_REFRESH_MIN_INTERVAL_MS = 15_000L
+        const val LATECOMER_WATCH_INTERVAL_MS = 2_000L
         // A participant present this long without EVER sending us a key is
         // almost certainly a throttled client that ignored our join diff —
         // healthy clients deliver within a few seconds of seeing new members.
-        const val LATECOMER_GRACE_MS = 8_000L
+        const val LATECOMER_GRACE_MS = 4_000L
         // Devices only seen in the roster (not currently in the LiveKit room)
         // stay sweep-eligible for this long after their last roster appearance —
         // long enough to rescue a peer whose membership event flickered out,
@@ -845,4 +855,8 @@ object CallMediaKeyExchangeManager {
 
     /** Stamp of the active exchange's last self-nudge; 0 when no call is live. */
     fun lastSelfNudgeAtMs(): Long = active?.lastSelfNudgeAtMs() ?: 0L
+
+    fun rearmOwnKey() {
+        active?.rearmOwnKey()
+    }
 }

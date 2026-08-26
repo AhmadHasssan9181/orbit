@@ -531,6 +531,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
 
             is NativeMediaEvent.Connected -> {
                 println("DEBUG [LiveKitNativeMediaSession] native connected")
+                CallMediaKeyExchangeManager.rearmOwnKey()
                 updateReadiness(
                     state = NativeMediaState.LiveKitConnected,
                     connected = true,
@@ -558,6 +559,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
 
             is NativeMediaEvent.AudioPublished -> {
                 println("DEBUG [LiveKitNativeMediaSession] audio published")
+                CallMediaKeyExchangeManager.rearmOwnKey()
                 updateReadiness(
                     state = NativeMediaState.AudioPublished,
                     connected = true,

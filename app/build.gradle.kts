@@ -133,7 +133,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(org.jetbrains.compose.desktop.application.dsl.TargetFormat.Msi)
             packageName = "Orbit"
-            packageVersion = "0.1.0"
+            packageVersion = "0.1.5"
             description = "Orbit — Matrix voice/video calls client"
             vendor = "Orbit"
 

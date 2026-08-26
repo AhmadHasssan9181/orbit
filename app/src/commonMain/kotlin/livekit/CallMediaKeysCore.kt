@@ -53,6 +53,11 @@ class DeliveredKeyIndex {
     }
 
     @Synchronized
+    fun invalidate(identity: String) {
+        delivered.remove(identity)
+    }
+
+    @Synchronized
     fun isUnderdelivered(identity: String, currentIndex: Int): Boolean =
         (delivered[identity] ?: -1) < currentIndex
 
@@ -73,13 +78,14 @@ class LatecomerTracker {
     private val firstSeenMs = mutableMapOf<String, Long>()
 
     @Synchronized
-    fun observe(livekitIdentities: Collection<String>, ownIdentity: String, nowMs: Long) {
+    fun observe(livekitIdentities: Collection<String>, ownIdentity: String, nowMs: Long, onNewParticipant: ((String) -> Unit)? = null) {
         val live = livekitIdentities.toSet()
         firstSeenMs.keys.retainAll(live)
         for (identity in live) {
             if (identity == ownIdentity) continue
             if (!firstSeenMs.containsKey(identity)) {
                 firstSeenMs[identity] = nowMs
+                onNewParticipant?.invoke(identity)
             }
         }
     }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <atomic>
@@ -30,10 +31,17 @@ public:
     void SetBlurAmount(int amount) { blur_amount_.store(amount); }
     void SetEnabled(bool enabled) { enabled_.store(enabled); }
 
+    // Loads an image (jpg/png/...) to composite behind the speaker instead of
+    // the blur fallback. Returns false when the file cannot be decoded.
+    bool SetBackgroundImage(const std::string& image_path);
+    void ClearBackgroundImage();
+
 private:
     std::unique_ptr<cv::dnn::Net> net_;
     std::atomic<int> blur_amount_{20};
     std::atomic<bool> enabled_{true};
+    std::mutex bg_mutex_;
+    std::shared_ptr<cv::Mat> background_image_;
 };
 
 class OrbitVideoProcessorSource : public webrtc::AdaptedVideoTrackSource {
