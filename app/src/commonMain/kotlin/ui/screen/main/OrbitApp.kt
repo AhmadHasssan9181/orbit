@@ -325,6 +325,14 @@ private fun MainAppContent(
 
     var currentUser by remember { mutableStateOf<OrbitUser?>(null) }
 
+    // Presence: chosen status persists locally and is (re)applied to the homeserver.
+    val myStatusStored by settingsManager.myStatus.collectAsState("ONLINE")
+    val myActiveStatus = runCatching { UserStatus.valueOf(myStatusStored) }.getOrDefault(UserStatus.ONLINE)
+
+    LaunchedEffect(myActiveStatus) {
+        runCatching { repository.setPresence(myActiveStatus) }
+    }
+
     // Compact navigation state
     var selectedBottomTab by remember { mutableStateOf(BottomNavTab.DMs) }
     // Navigation stack for compact: null = list, non-null = chat open
@@ -338,6 +346,8 @@ private fun MainAppContent(
             avatarColor = 0xFF7C6AF0.toInt(), status = UserStatus.ONLINE
         )
     }
+
+    val displayCurrentUser = currentUser?.copy(status = myActiveStatus)
 
     // ─── Load servers ───────────────────────────────────────────
     LaunchedEffect(Unit) {
@@ -499,7 +509,7 @@ private fun MainAppContent(
                     channels = channels,
                     selectedServerId = selectedServerId,
                     selectedChannelId = selectedChannelId,
-                    currentUser = currentUser,
+                    currentUser = displayCurrentUser,
                     isLoadingChannels = isLoadingChannels,
                     selectedBottomTab = selectedBottomTab,
                     compactOpenChannelId = compactOpenChannelId,
@@ -523,7 +533,7 @@ private fun MainAppContent(
                     channels = channels,
                     selectedServerId = selectedServerId,
                     selectedChannelId = selectedChannelId,
-                    currentUser = currentUser,
+                    currentUser = displayCurrentUser,
                     isLoadingChannels = isLoadingChannels,
                     repository = repository,
                     callManager = callManager,
@@ -541,7 +551,7 @@ private fun MainAppContent(
                     channels = channels,
                     selectedServerId = selectedServerId,
                     selectedChannelId = selectedChannelId,
-                    currentUser = currentUser,
+                    currentUser = displayCurrentUser,
                     isLoadingChannels = isLoadingChannels,
                     repository = repository,
                     callManager = callManager,
@@ -696,6 +706,12 @@ fun ChatScreenWithRepo(
     var activeCall by remember(channel.id) { mutableStateOf<repository.CallEvent.Invite?>(null) }
     var activeGroupCallUrl by remember(channel.id) { mutableStateOf<String?>(null) }
 
+    // Mirror the shell's chosen presence into the chat surface.
+    val statusSettings = remember { SettingsManager() }
+    val myStatusStored by statusSettings.myStatus.collectAsState("ONLINE")
+    val myActiveStatus = runCatching { UserStatus.valueOf(myStatusStored) }.getOrDefault(UserStatus.ONLINE)
+    val displayCurrentUser = currentUser?.copy(status = myActiveStatus)
+
     LaunchedEffect(channel.id) {
         isLoading = true
         try {
@@ -760,7 +776,7 @@ fun ChatScreenWithRepo(
         channel = channel,
         messages = annotatedMessages,
         members = members,
-        currentUser = currentUser,
+        currentUser = displayCurrentUser,
         directProfile = directProfile,
         typingUsers = typingUsers,
         activeCall = activeCall,

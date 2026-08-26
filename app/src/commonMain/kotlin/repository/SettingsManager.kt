@@ -317,6 +317,10 @@ class SettingsManager {
     
     val idleTimeout = flowSettings.getStringFlow("idleTimeout", "5 minutes")
     fun setIdleTimeout(value: String) = settings.putString("idleTimeout", value)
+
+    // Last chosen presence (UserStatus enum name); reapplied to homeserver on startup/change.
+    val myStatus = flowSettings.getStringFlow("myStatus", "ONLINE")
+    fun setMyStatus(value: String) = settings.putString("myStatus", value)
     
     val allowListenAlong = flowSettings.getBooleanFlow("allowListenAlong", true)
     fun setAllowListenAlong(value: Boolean) = settings.putBoolean("allowListenAlong", value)

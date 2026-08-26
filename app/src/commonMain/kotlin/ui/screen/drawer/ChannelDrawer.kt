@@ -10,6 +10,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
+import repository.SettingsManager
 import ui.model.*
 
 import ui.screen.auth.*
@@ -133,10 +135,18 @@ fun ChannelDrawer(
         }
 
         HorizontalDivider(color = Separator.copy(alpha = 0.3f), thickness = 1.dp)
+        val drawerScope = rememberCoroutineScope()
+        val drawerSettings = remember { SettingsManager() }
         UserProfileBar(
             user = currentUser,
             onMicToggle = {},
-            onSettingsClick = onOpenSettings ?: {}
+            onSettingsClick = onOpenSettings ?: {},
+            onStatusSelected = if (repository != null) { status ->
+                drawerScope.launch {
+                    runCatching { repository.setPresence(status) }
+                    drawerSettings.setMyStatus(status.name)
+                }
+            } else null
         )
     }
 }
