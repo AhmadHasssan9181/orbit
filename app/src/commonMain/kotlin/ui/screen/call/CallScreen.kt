@@ -920,6 +920,53 @@ fun SoundboardPanel(
 //  SCREEN SHARE DIALOG
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Quality / FPS pill row used by the share dialog; both write the same
+// SettingsManager keys the capture paths already read at share start.
+@Composable
+private fun ShareOptionRow(
+    label: String,
+    options: List<String>,
+    selected: String,
+    onSelect: (String) -> Unit
+) {
+    val tokens = rememberCosmicTokens()
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(
+            label,
+            color = Color.White.copy(alpha = 0.6f),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.width(72.dp)
+        )
+        options.forEach { option ->
+            val isSelected = option.equals(selected, ignoreCase = true)
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = if (isSelected) tokens.Accent.copy(alpha = 0.25f) else Color(0xFF2B2D31),
+                border = BorderStroke(
+                    1.dp,
+                    if (isSelected) tokens.Accent else Color.White.copy(alpha = 0.08f)
+                ),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onSelect(option) }
+            ) {
+                Text(
+                    option,
+                    color = if (isSelected) Color.White else Color.White.copy(alpha = 0.7f),
+                    fontSize = 12.sp,
+                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                )
+            }
+        }
+    }
+}
+
 @Composable
 fun ScreenShareDialog(
     callManager: CallManager,
@@ -930,6 +977,15 @@ fun ScreenShareDialog(
     var isLoading by remember { mutableStateOf(true) }
     var loadError by remember { mutableStateOf<String?>(null) }
     var shareSystemAudio by remember { mutableStateOf(false) }
+    // Pre-share pickers for the SAME settings the capture paths read at
+    // startScreenShare; persisted on source selection below.
+    val shareSettings = remember { repository.SettingsManager() }
+    var shareQuality by remember {
+        mutableStateOf(runCatching { shareSettings.screenShareQualitySync() }.getOrDefault("1080p"))
+    }
+    var shareFps by remember {
+        mutableStateOf(runCatching { shareSettings.screenShareFpsSync() }.getOrDefault(30))
+    }
     val tokens = rememberCosmicTokens()
 
     LaunchedEffect(Unit) {
@@ -987,6 +1043,8 @@ fun ScreenShareDialog(
                                     .hoverable(hoverInteraction)
                                     .clickable {
                                         callManager.setStreamAudioEnabled(shareSystemAudio)
+                                        shareSettings.setScreenShareQuality(shareQuality.lowercase())
+                                        shareSettings.setScreenShareFps(shareFps.coerceIn(5, 60))
                                         onSourceSelected(source)
                                     },
                                 colors = CardDefaults.cardColors(
@@ -1022,6 +1080,22 @@ fun ScreenShareDialog(
                             }
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    ShareOptionRow(
+                        label = "Quality",
+                        options = listOf("720p", "1080p", "1440p", "Source"),
+                        selected = shareQuality,
+                        onSelect = { shareQuality = it }
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    ShareOptionRow(
+                        label = "Frame rate",
+                        options = listOf("15", "30", "60"),
+                        selected = shareFps.toString(),
+                        onSelect = { shareFps = it.toInt() }
+                    )
 
                     Spacer(modifier = Modifier.height(16.dp))
 
