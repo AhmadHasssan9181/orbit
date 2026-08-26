@@ -115,6 +115,8 @@ fun LiveKitGroupCallSurface(
     val selfNudgeRecovery by callManager.selfNudgeRecovery.collectAsState()
     val remoteMicMutedIds by callManager.remoteMicMutedIds.collectAsState()
     val connectionQuality by callManager.remoteConnectionQuality.collectAsState()
+    val raisedHands by callManager.raisedHands.collectAsState()
+    val myHandRaised by callManager.isMyHandRaised.collectAsState()
     val tokens = rememberCosmicTokens()
 
     var showScreenShareDialog by remember { mutableStateOf(false) }
@@ -215,6 +217,7 @@ fun LiveKitGroupCallSurface(
                         isScreenShare = false,
                         isMuted = isMuted,
                         isDeafened = isDeafened,
+                        isHandRaised = myHandRaised,
                         avatarColor = 0xFF5865F2.toInt()
                     )
                 )
@@ -238,6 +241,7 @@ fun LiveKitGroupCallSurface(
                             isMicMuted = identityIsMicMuted(track.participantIdentity, remoteMicMutedIds),
                             participantIdentity = track.participantIdentity,
                             qualitySample = connectionQuality[track.participantIdentity],
+                            isHandRaised = identityHasRaisedHand(track.participantIdentity, raisedHands),
                             avatarColor = memberInfoFor(members, track.participantIdentity)?.avatarColor
                                 ?: identityColor(track.participantIdentity),
                             avatarUrl = memberInfoFor(members, track.participantIdentity)?.avatarUrl
@@ -274,6 +278,7 @@ fun LiveKitGroupCallSurface(
                             isMicMuted = identityIsMicMuted(identity, remoteMicMutedIds),
                             participantIdentity = identity,
                             qualitySample = connectionQuality[identity],
+                            isHandRaised = identityHasRaisedHand(identity, raisedHands),
                             avatarUrl = member?.avatarUrl,
                             avatarColor = member?.avatarColor ?: identityColor(identity)
                         )

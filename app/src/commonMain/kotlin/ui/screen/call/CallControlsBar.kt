@@ -176,6 +176,19 @@ fun CallControlsBar(
 
             // ── UTILITY GROUP ──
 
+            // Raise hand (io.orbit.raise_hand room event; everyone's tiles show the badge)
+            val myHandRaised by callManager.isMyHandRaised.collectAsState()
+            ControlButtonWithTooltip(
+                icon = Icons.Default.PanTool,
+                tooltip = if (myHandRaised) "Lower Hand" else "Raise Hand",
+                isActive = myHandRaised,
+                activeColor = Color(0xFFFAA81A),
+                activeIconColor = Color(0xFF111214),
+                inactiveColor = Color(0xFF313338),
+                inactiveIconColor = Color.White,
+                onClick = { callManager.toggleRaiseHand() }
+            )
+
             // Grid/Focus layout toggle
             ControlButtonWithTooltip(
                 icon = if (layoutMode == CallLayoutMode.Grid) Icons.Default.GridView else Icons.Default.CropFree,

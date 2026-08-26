@@ -11,6 +11,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.runtime.staticCompositionLocalOf
+import repository.CredentialManager
 import repository.TurnServer
 
 val LocalCallManager = staticCompositionLocalOf<CallManager?> { null }
@@ -166,6 +167,30 @@ class CallManager(
     // LiveKit identity of the current group-call join; reused for membership
     // re-affirmation when the camera is toggled mid-call.
     private var groupCallLivekitIdentity: String? = null
+
+    // Raise hand: Matrix userIds whose hand is currently up in the active call.
+    // Fed from io.orbit.raise_hand room events; cleared when the call ends.
+    private val _raisedHands = MutableStateFlow<Set<String>>(emptySet())
+    val raisedHands: StateFlow<Set<String>> = _raisedHands
+    val isMyHandRaised = MutableStateFlow(false)
+    var sendRaiseHand: (suspend (roomId: String, callId: String, raised: Boolean) -> Unit)? = null
+
+    fun setHandRaised(senderId: String, raised: Boolean) {
+        if (senderId.isBlank()) return
+        _raisedHands.value = if (raised) _raisedHands.value + senderId else _raisedHands.value - senderId
+    }
+
+    fun toggleRaiseHand() {
+        val room = activeRoomId ?: return
+        val myId = CredentialManager.userId ?: return
+        val next = !isMyHandRaised.value
+        isMyHandRaised.value = next
+        setHandRaised(myId, next)
+        val currentCall = callId
+        scope.launch {
+            sendRaiseHand?.invoke(room, currentCall ?: "", next)
+        }
+    }
 
     private val pendingLocalCandidates = mutableListOf<IceCandidateModel>()
     // Remote ICE candidates can arrive before our setRemoteDescription completes
@@ -951,6 +976,8 @@ class CallManager(
         _participantGains.value = emptyMap()
         _activeSpeakers.value = emptySet()
         _selfNudgeRecovery.value = false
+        _raisedHands.value = emptySet()
+        isMyHandRaised.value = false
         pttPreHoldAudioEnabled = null
         isMinimized.value = false
         _isScreenSharing.value = false

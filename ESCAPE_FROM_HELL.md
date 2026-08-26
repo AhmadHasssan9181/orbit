@@ -1256,8 +1256,11 @@ Do NOT file bugs against these:
 - **Device hot-swap mid-call** — `setAudioInputDevice` etc. exist, but verify
   a LIVE call re-negotiates without drop; add UI affordance from the call
   device menu (Element re-negotiates via m.call.negotiate).
-- **Raise hand** — Element-style: custom `m.call.member` field or reaction;
-  hand icon overlay on tile + roster sort bump. Cheap, high delight.
+- ✅ Raise hand — custom `io.orbit.raise_hand` room event (call_id + raised
+  bool) → `CallEvent.HandRaised` → CallManager.raisedHands; yellow Raise Hand
+  button in the shared CallControlsBar utility group toggles own hand, amber
+  PanTool badge on every raised participant's tile (local tile included).
+  Hands clear on call end.
 - ✅ Spotlight / pin participant — right-click a tile → Pin; forces Focus-style
   spotlight even in Grid mode, beats paged shares in slot priority.
 - **Screen-share resolution/FPS picker** — capture pipeline caps exist; expose
@@ -1274,8 +1277,9 @@ Do NOT file bugs against these:
   longer render their own minimized pill; popup owns it).
 - ✅ Right-click context menu on tiles: volume slider %, Mute-for-me,
   Reset volume (this round).
-- **Add to context menu:** Raise hand · Copy user ID · "Mute stream" label
-  for share tiles (= same local gain, clearer wording). (Pin/Unpin already in.)
+- **Add to context menu:** Copy user ID · "Mute stream" label
+  for share tiles (= same local gain, clearer wording). (Pin/Unpin, raise-hand
+  button already in.)
 - **In-call device switcher quick menu** — mic/speaker/camera pickers inline
   in the call controls (AudioDeviceMenu exists — surface it on hover of the
   chevron next to mute, Discord-style).

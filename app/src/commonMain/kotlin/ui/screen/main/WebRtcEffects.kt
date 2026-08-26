@@ -212,6 +212,13 @@ fun WebRtcEffects(
                             callManager.endCall(notifyRemote = false)
                         }
                     }
+                    is repository.CallEvent.HandRaised -> {
+                        // H4 echo guard already dropped our own devices' events; the
+                        // local button owns our state, so only remote senders land here.
+                        if (event.roomId == callManager.activeRoomIdFlow.value) {
+                            callManager.setHandRaised(event.senderId, event.raised)
+                        }
+                    }
                 }
             }
         }
@@ -267,6 +274,16 @@ fun WebRtcEffects(
 
             }).onFailure { error ->
                 println("DEBUG: [WebRTC] Failed to send call hangup: ${error.message}")
+            }
+        }
+
+        callManager.sendRaiseHand = { roomId, callId, raised ->
+            repository.sendCallEvent(roomId, "io.orbit.raise_hand", buildJsonObject {
+                put("call_id", callId)
+                put("raised", raised)
+                put("version", "1")
+            }).onFailure { error ->
+                println("DEBUG: [WebRTC] Failed to send raise-hand event: ${error.message}")
             }
         }
 

@@ -132,6 +132,8 @@ sealed class CallEvent {
     data class Negotiate(override val roomId: String, override val callId: String, val sdp: String, val type: String, override val senderId: String, override val partyId: String? = null) : CallEvent()
     data class Candidate(override val roomId: String, override val callId: String, val sdp: String, val sdpMid: String, val sdpMLineIndex: Int, override val senderId: String, override val partyId: String? = null) : CallEvent()
     data class Hangup(override val roomId: String, override val callId: String, override val senderId: String, override val partyId: String? = null) : CallEvent()
+    // Orbit-specific raise-hand signal (io.orbit.raise_hand room event).
+    data class HandRaised(override val roomId: String, override val callId: String, override val senderId: String, val raised: Boolean, override val partyId: String? = null) : CallEvent()
 }
 
 data class AuthResult(
