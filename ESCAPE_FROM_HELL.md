@@ -1332,8 +1332,21 @@ Do NOT file bugs against these:
   when the parent isn't in local store. Threads remain future scope.
 - ✅ Reactions rendering + adding — chips already aggregated per emoji; picker
   adds `m.reaction` annotations.
-- File/image upload with thumbnail previews + download (sending is wired;
-  previews still plain).
+- ✅ File/image/video/audio upload + rich previews — audit confirmed this
+  shipped earlier and the pending line was stale. Sending: input-bar
+  pickers → onSendAttachment → uploadMedia then typed m.image/m.file/m.audio
+  events (size recorded; images/videos keep width/height hooks). Rendering:
+  images via Coil AsyncImage against the authed
+  `/_matrix/client/v1/media/download` endpoint (singleton ImageLoader's ktor
+  client attaches the Bearer token to /_matrix/ URLs), pending-upload
+  placeholder while url is blank/upload://; videos show sender-provided
+  thumbnails with an in-app NativeVideoPlayer play overlay; audio gets a
+  waveform player card; files get type-aware icon cards (pdf/zip/media/generic)
+  with name · size · mime. Download affordances open the media URL in the
+  system browser. Limits: no native save-to-disk dialog, no in-app image
+  lightbox/zoom, Orbit's own uploads don't generate thumbnail blobs (video
+  posters only render when another client supplied one), stickers render as
+  fixed 128dp images.
 - ✅ Markdown/rich-text rendering — `formatted_body` (org.matrix.custom.html)
   now renders via a lightweight tag parser (RichText.kt): bold/italic/underline/
   strike, code + pre blocks, blockquote, headings, lists, links (clickable via
