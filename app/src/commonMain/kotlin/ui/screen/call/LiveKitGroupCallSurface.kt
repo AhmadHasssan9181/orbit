@@ -83,8 +83,9 @@ private fun identityColor(identity: String?): Int =
 
 private fun memberInfoFor(members: List<OrbitUser>, identity: String?): OrbitUser? {
     if (identity.isNullOrBlank()) return null
-    return members.firstOrNull { it.id == identity }
-        ?: members.firstOrNull { it.id.endsWith(identity) || identity.endsWith(it.id) }
+    val base = identity.substringBeforeLast(':')
+    return members.firstOrNull { it.id == identity || it.id == base }
+        ?: members.firstOrNull { it.id.endsWith(identity) || identity.endsWith(it.id) || it.id.endsWith(base) || base.endsWith(it.id) }
 }
 
 @Composable
@@ -199,8 +200,16 @@ fun LiveKitGroupCallSurface(
             }
             val cameraTracks = activeTracks.values.filter { !it.isScreenShare }
             val screenShareTracks = activeTracks.values.filter { it.isScreenShare }
-            val identitiesWithVideo = cameraTracks.map { it.participantIdentity }.toSet()
+            val identitiesWithVideo = cameraTracks.flatMap { 
+                listOf(it.participantIdentity, it.participantIdentity.substringBeforeLast(':')) 
+            }.toSet()
             val selfId = CredentialManager.userId
+
+            fun isSelf(id: String): Boolean {
+                val self = selfId ?: return false
+                val base = id.substringBeforeLast(':')
+                return id == self || base == self || id.startsWith("$self:")
+            }
 
             fun tileName(identity: String?): String =
                 memberInfoFor(members, identity)?.displayName?.takeIf { it.isNotBlank() }
@@ -261,9 +270,9 @@ fun LiveKitGroupCallSurface(
                         )
                     )
                 }
-                val voiceIdentities = (members.map { it.id } + remoteParticipants)
-                    .filter { id -> id.isNotBlank() && id != selfId && id !in identitiesWithVideo }
-                    .distinct()
+                val voiceIdentities = remoteParticipants
+                    .filter { id -> id.isNotBlank() && !isSelf(id) && id !in identitiesWithVideo && id.substringBeforeLast(':') !in identitiesWithVideo }
+                    .distinctBy { it.substringBeforeLast(':') }
 
                 voiceIdentities.forEach { identity ->
                     val member = memberInfoFor(members, identity)

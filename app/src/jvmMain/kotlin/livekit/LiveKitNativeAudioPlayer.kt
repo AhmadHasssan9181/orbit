@@ -228,13 +228,6 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
         }.asCoroutineDispatcher()
     }
 
-    // Pre-roll rebuilt after the output line has fully drained (silence gap,
-    // line open). Without it, production pace == consumption pace, so every
-    // write lands on an empty device buffer and the dry-line storm reads as
-    // screeching under load.
-    private val PRIME_FRAMES = 5
-    @Volatile private var primed = false
-
     private val firstFrameParamsLogged = AtomicLong(0)
     private val sizeMismatches = AtomicLong(0)
 
@@ -267,9 +260,6 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
                 val pcm = audioQueue.poll(50, TimeUnit.MILLISECONDS)
                 if (pcm == null) {
                     CallPathStats.onPlayerIdle()
-                    // Queue exhausted: the line will run dry shortly. Re-arm the
-                    // pre-roll so the next audio spurt writes onto a cushion.
-                    primed = false
                     continue
                 }
                 if (outputMuted) continue // Deafened: discard frame, keep queue draining
@@ -277,17 +267,6 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
                 val (sr, ch) = synchronized(lock) { currentSampleRate to currentChannels }
                 if (sr <= 0 || ch <= 0) continue
                 val out = synchronized(lock) { ensureLine(sr, ch) } ?: continue
-                if (!primed && audioQueue.size < PRIME_FRAMES) {
-                    // Hold the head frame until a small backlog accumulates (or
-                    // ~60ms elapses), then release everything in a burst so the
-                    // device buffer refills instead of running at zero depth.
-                    var heldMs = 0
-                    while (isActive && audioQueue.size < PRIME_FRAMES && heldMs < 60) {
-                        delay(5)
-                        heldMs += 5
-                    }
-                }
-                primed = true
                 runCatching {
                     // True underrun = output line fully drained while remote frames are still flowing
                     val available = runCatching { out.available() }.getOrDefault(-1)

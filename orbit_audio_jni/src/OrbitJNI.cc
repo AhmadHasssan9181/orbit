@@ -9,6 +9,11 @@
 
 extern "C" {
 
+// Keeps the most recently injected processor source alive so
+// setVirtualBackgroundImage can reach it between injections. Replaced (and the
+// previous reference released) on every injectVideoProcessor.
+static webrtc::scoped_refptr<orbit::OrbitVideoProcessorSource> g_activeProcessorSource;
+
 JNIEXPORT void JNICALL
 Java_webrtc_OrbitAudioEngine_injectCustomAdm(JNIEnv* env, jobject /* this */, jobject java_adm) {
     // 1. Create our custom ADM using direct initialization because the constructor is explicit
@@ -64,6 +69,19 @@ Java_webrtc_OrbitVideoEngine_injectVideoProcessor(JNIEnv* env, jobject /* this *
     // Replace the handle with our new wrapped source
     auto* new_source_ptr = new webrtc::scoped_refptr<webrtc::VideoTrackSourceInterface>(processor_source);
     env->SetLongField(java_source, handle_fid, reinterpret_cast<jlong>(new_source_ptr));
+
+    g_activeProcessorSource = processor_source;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_webrtc_OrbitVideoEngine_setVirtualBackgroundImage(JNIEnv* env, jobject /* this */, jstring image_path) {
+    if (!g_activeProcessorSource) return JNI_FALSE;
+
+    const char* path_str = env->GetStringUTFChars(image_path, nullptr);
+    std::string path_cpp(path_str);
+    env->ReleaseStringUTFChars(image_path, path_str);
+
+    return g_activeProcessorSource->GetProcessor()->SetBackgroundImage(path_cpp) ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL

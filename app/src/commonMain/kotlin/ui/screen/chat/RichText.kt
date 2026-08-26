@@ -67,7 +67,7 @@ internal fun parseMatrixHtml(html: String, p: RichTextPalette): AnnotatedString 
         if (idx < 0) return // stray close tag — ignore, don't touch the stack
         while (stack.size > idx) {
             stack.removeAt(stack.size - 1)
-            b.pop(1)
+            b.pop()
         }
     }
 
@@ -285,7 +285,7 @@ internal fun buildPlainTextRich(
                     )
                 )
                 b.append(g[1])
-                b.pop(1)
+                b.pop()
             }
             g[3].isNotEmpty() -> styled(b, g[3], SpanStyle(fontWeight = FontWeight.Bold), p)
             g[5].isNotEmpty() -> styled(b, g[5], SpanStyle(textDecoration = TextDecoration.Underline), p)
@@ -304,7 +304,7 @@ internal fun buildPlainTextRich(
 private fun styled(b: AnnotatedString.Builder, text: String, style: SpanStyle, p: RichTextPalette) {
     b.pushStyle(style)
     b.append(text)
-    b.pop(1)
+    b.pop()
 }
 
 private fun mentionStyle(targetsMe: Boolean, p: RichTextPalette) = if (targetsMe) {
@@ -340,7 +340,7 @@ private fun appendPlainWithMentions(
                 if (runStart < i) b.append(text.substring(runStart, i))
                 b.pushStyle(mentionStyle(targetsMe, p))
                 b.append(text.substring(i, j))
-                b.pop(1)
+                b.pop()
                 i = j
                 runStart = i
                 continue

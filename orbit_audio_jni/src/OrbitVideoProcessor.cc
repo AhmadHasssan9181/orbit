@@ -15,15 +15,33 @@ bool OrbitVideoProcessor::LoadModel(const std::string& model_path) {
     try {
         cv::dnn::Net new_net = cv::dnn::readNetFromONNX(model_path);
         if (new_net.empty()) return false;
-        
+
         new_net.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
         new_net.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
-        
+
         net_ = std::make_unique<cv::dnn::Net>(new_net);
         return true;
     } catch (const std::exception& e) {
         return false;
     }
+}
+
+bool OrbitVideoProcessor::SetBackgroundImage(const std::string& image_path) {
+    try {
+        cv::Mat img = cv::imread(image_path, cv::IMREAD_COLOR);
+        if (img.empty()) return false;
+
+        std::lock_guard<std::mutex> lock(bg_mutex_);
+        background_image_ = std::make_shared<cv::Mat>(img);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+void OrbitVideoProcessor::ClearBackgroundImage() {
+    std::lock_guard<std::mutex> lock(bg_mutex_);
+    background_image_.reset();
 }
 
 webrtc::VideoFrame OrbitVideoProcessor::ProcessFrame(const webrtc::VideoFrame& frame) {
@@ -57,12 +75,24 @@ webrtc::VideoFrame OrbitVideoProcessor::ProcessFrame(const webrtc::VideoFrame& f
     cv::Mat mask;
     cv::resize(mask_small, mask, cv::Size(width, height));
 
-    // 4. Blur Background
-    cv::Mat blurred;
-    int ksize = (blur_amount_.load() / 2) * 2 + 1; // Must be odd
-    cv::GaussianBlur(rgb_mat, blurred, cv::Size(ksize, ksize), 0);
+    // 4/5. Composite: custom image when loaded, Gaussian-blur fallback otherwise.
+    // The image pointer is grabbed under lock, then used outside it so the
+    // per-frame work never holds the mutex.
+    std::shared_ptr<cv::Mat> bg;
+    {
+        std::lock_guard<std::mutex> lock(bg_mutex_);
+        bg = background_image_;
+    }
 
-    // 5. Composite
+    cv::Mat blurred;
+    bool use_image = bg && !bg->empty();
+    if (!use_image) {
+        int ksize = (blur_amount_.load() / 2) * 2 + 1; // Must be odd
+        cv::GaussianBlur(rgb_mat, blurred, cv::Size(ksize, ksize), 0);
+    } else {
+        cv::resize(*bg, blurred, cv::Size(width, height));
+    }
+
     cv::Mat output(height, width, CV_8UC3);
     for (int y = 0; y < height; ++y) {
         float* mask_row = mask.ptr<float>(y);

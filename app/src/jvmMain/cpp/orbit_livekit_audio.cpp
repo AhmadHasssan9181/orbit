@@ -226,6 +226,7 @@ bool g_rawDisconnecting = false;
 // Set via nativeConfigureE2EE before connect; survives reconnects until the
 // next configure call. Read in connectRoom under g_sessionMutex.
 bool g_e2eeRequested = false;
+std::map<std::string, std::pair<std::vector<std::uint8_t>, int>> g_participantMediaKeys;
 
 bool isSupportedAudioChannels(jint channels) {
     return channels == kChannels || channels == kMaxChannels;
@@ -384,7 +385,7 @@ public:
             std::lock_guard<std::mutex> lock(mutex_);
             source_ = source;
             running_ = source_ != nullptr;
-            hasLatest_ = false;
+            queue_.clear();
             lastStatsLog_ = std::chrono::steady_clock::now();
         }
         if (!source) {
@@ -399,8 +400,7 @@ public:
         {
             std::lock_guard<std::mutex> lock(mutex_);
             running_ = false;
-            hasLatest_ = false;
-            latest_ = AudioSourceFramePacket{};
+            queue_.clear();
         }
         cv_.notify_all();
         if (worker_.joinable()) {
@@ -444,16 +444,18 @@ public:
                 setLastCaptureError("audio source worker is not running");
                 return false;
             }
-            if (hasLatest_) {
+            if (queue_.size() >= 8) {
+                queue_.pop_front();
                 framesDroppedDueBackpressure_.fetch_add(1, std::memory_order_relaxed);
                 logBackpressureDropThrottled();
             }
-            latest_.samples = std::move(samples);
-            latest_.sampleRate = sampleRate;
-            latest_.channels = channels;
-            latest_.samplesPerChannel = samplesPerChannel;
-            latest_.timestampNs = timestampNs;
-            hasLatest_ = true;
+            AudioSourceFramePacket packet;
+            packet.samples = std::move(samples);
+            packet.sampleRate = sampleRate;
+            packet.channels = channels;
+            packet.samplesPerChannel = samplesPerChannel;
+            packet.timestampNs = timestampNs;
+            queue_.push_back(std::move(packet));
         }
         cv_.notify_one();
         return true;
@@ -514,13 +516,15 @@ private:
             std::shared_ptr<livekit::AudioSource> source;
             {
                 std::unique_lock<std::mutex> lock(mutex_);
-                cv_.wait(lock, [this] { return !running_ || hasLatest_; });
-                if (!running_) {
+                cv_.wait(lock, [this] { return !running_ || !queue_.empty(); });
+                if (!running_ && queue_.empty()) {
                     break;
                 }
-                packet = std::move(latest_);
-                latest_ = AudioSourceFramePacket{};
-                hasLatest_ = false;
+                if (queue_.empty()) {
+                    continue;
+                }
+                packet = std::move(queue_.front());
+                queue_.pop_front();
                 source = source_;
             }
 
@@ -744,9 +748,8 @@ private:
     std::condition_variable cv_;
     std::thread worker_;
     bool running_{false};
-    bool hasLatest_{false};
     std::shared_ptr<livekit::AudioSource> source_;
-    AudioSourceFramePacket latest_;
+    std::deque<AudioSourceFramePacket> queue_;
     std::chrono::steady_clock::time_point lastStatsLog_{};
     std::string lastCaptureError_;
     int formatDiagnosticsLogged_{0};
@@ -814,32 +817,42 @@ public:
         mixedCallbackStartedLogged_ = false;
     }
 
-    void addParticipant(const std::string& identity) {
-        if (identity.empty()) {
+    void addParticipant(const std::string& trackSid, const std::string& participantIdentity = "") {
+        if (trackSid.empty()) {
             return;
         }
 
-        std::lock_guard<std::mutex> lock(mutex_);
-        auto& queue = participants_[identity];
-        if (queue == nullptr) {
-            queue = std::make_shared<ParticipantPcmQueue>(identity);
-            std::cout << "DEBUG [OrbitLiveKitAudio] remote audio participant added: "
-                      << identity << std::endl;
+        std::shared_ptr<ParticipantPcmQueue> queue;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto& existing = participants_[trackSid];
+            if (existing == nullptr) {
+                existing = std::make_shared<ParticipantPcmQueue>(trackSid);
+                std::cout << "DEBUG [OrbitLiveKitAudio] remote audio participant added: "
+                          << trackSid << " (identity=" << participantIdentity << ")" << std::endl;
+            }
+            existing->active = true;
+            queue = existing;
         }
-        queue->active = true;
         // Re-apply any gain the UI set before this queue existed so a mute or
         // slider position survives participant reconnects mid-call.
         float rememberedGain = 1.0f;
         bool hasRememberedGain = false;
         {
             std::lock_guard<std::mutex> gainLock(g_participantGainsMutex);
-            auto it = g_participantGains.find(identity);
+            auto it = g_participantGains.find(trackSid);
             if (it != g_participantGains.end()) {
                 rememberedGain = it->second;
                 hasRememberedGain = true;
+            } else if (!participantIdentity.empty()) {
+                auto idIt = g_participantGains.find(participantIdentity);
+                if (idIt != g_participantGains.end()) {
+                    rememberedGain = idIt->second;
+                    hasRememberedGain = true;
+                }
             }
         }
-        if (hasRememberedGain) {
+        if (hasRememberedGain && queue != nullptr) {
             std::lock_guard<std::mutex> queueLock(queue->queueMutex);
             queue->gain = rememberedGain;
         }
@@ -1254,6 +1267,28 @@ void setParticipantGainEverywhere(const std::string& identity, float gain) {
         g_participantGains[identity] = gain;
     }
     g_audioMixer.applyParticipantGain(identity, gain);
+
+    std::vector<std::string> trackSidsToUpdate;
+    {
+        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        for (const auto& entry : g_remoteAudioReaders) {
+            if (entry.second != nullptr) {
+                const auto& participantId = entry.second->participantIdentity;
+                if (participantId == identity ||
+                    participantId.rfind(identity, 0) == 0 ||
+                    identity.rfind(participantId, 0) == 0 ||
+                    participantId.find(identity) != std::string::npos ||
+                    identity.find(participantId) != std::string::npos) {
+                    trackSidsToUpdate.push_back(entry.second->trackSid);
+                }
+            }
+        }
+    }
+    for (const auto& trackSid : trackSidsToUpdate) {
+        g_audioMixer.applyParticipantGain(trackSid, gain);
+    }
+    std::cout << "DEBUG [OrbitLiveKitAudio] setParticipantGainEverywhere identity="
+              << identity << " gain=" << gain << " matchedTracks=" << trackSidsToUpdate.size() << std::endl;
 }
 
 void initializeSdkOnce() {
@@ -1691,7 +1726,7 @@ void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track, const
         // both feeding one identity-keyed queue doubles its inflow (garbled
         // playback) and lets either track's teardown rip the shared queue
         // away from the other.
-        g_audioMixer.addParticipant(reader->trackSid);
+        g_audioMixer.addParticipant(reader->trackSid, reader->participantIdentity);
         reader->stream = livekit::AudioStream::fromTrack(track, options);
         reader->track = track;
         // Announce the subscribe-time mute state so late joiners see the badge
@@ -2461,7 +2496,7 @@ void startRemoteVideoReaderLocked(
 
     try {
         livekit::VideoStream::Options options;
-        options.capacity = 2;
+        options.capacity = 8;
         options.format = livekit::VideoBufferType::RGBA;
 
         auto reader = std::make_shared<RemoteVideoReader>();
@@ -3749,6 +3784,14 @@ bool connectRoom(
                           << (e2eeManager->enabled() ? "true" : "false")
                           << " keyProvider=" << (e2eeManager->keyProvider() != nullptr ? "present" : "MISSING")
                           << std::endl;
+                if (e2eeManager->keyProvider() != nullptr) {
+                    for (const auto& [identity, keyInfo] : g_participantMediaKeys) {
+                        e2eeManager->keyProvider()->setKey(identity, keyInfo.first, keyInfo.second);
+                        std::cout << "DEBUG [OrbitLiveKitAudio] e2ee flushed cached key identity=" << identity
+                                  << " keyIndex=" << keyInfo.second
+                                  << " keyLen=" << keyInfo.first.size() << std::endl;
+                    }
+                }
             } else {
                 std::cerr << "WARN [OrbitLiveKitAudio] E2EE requested but room has no e2ee manager" << std::endl;
             }
@@ -4425,7 +4468,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetRemoteVideoSink(JNIEnv* env, jclass,
     jmethodID connQualityMethod = env->GetMethodID(
         sinkClass,
         "onRemoteConnectionQuality",
-        "(JJLjava/lang/String;JJJD)V");
+        "(JJLjava/lang/String;JJD)V");
     jmethodID addedMethod = env->GetMethodID(
         sinkClass,
         "onRemoteVideoTrackAdded",
@@ -4644,17 +4687,19 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetParticipantMediaKey(
 
     try {
         std::lock_guard<std::mutex> lock(g_sessionMutex);
-        if (!g_connected || g_room == nullptr) {
-            std::cerr << "WARN [OrbitLiveKitAudio] e2ee set key ignored room not connected identity=" << identityString << std::endl;
-            return kStatusStaleEvent;
+        g_participantMediaKeys[identityString] = {keyBytes, static_cast<int>(keyIndex)};
+
+        if (g_room != nullptr) {
+            auto* e2eeManager = g_room->e2eeManager();
+            if (e2eeManager != nullptr && e2eeManager->keyProvider() != nullptr) {
+                e2eeManager->keyProvider()->setKey(identityString, keyBytes, static_cast<int>(keyIndex));
+                std::cout << "DEBUG [OrbitLiveKitAudio] e2ee participant key installed identity=" << identityString
+                          << " keyIndex=" << keyIndex
+                          << " keyLen=" << keyLength << std::endl;
+                return kStatusOk;
+            }
         }
-        auto* e2eeManager = g_room->e2eeManager();
-        if (e2eeManager == nullptr || e2eeManager->keyProvider() == nullptr) {
-            std::cerr << "WARN [OrbitLiveKitAudio] e2ee set key ignored no manager/provider identity=" << identityString << std::endl;
-            return kStatusNativeException;
-        }
-        e2eeManager->keyProvider()->setKey(identityString, keyBytes, static_cast<int>(keyIndex));
-        std::cout << "DEBUG [OrbitLiveKitAudio] e2ee participant key installed identity=" << identityString
+        std::cout << "DEBUG [OrbitLiveKitAudio] e2ee participant key cached (room not connected yet) identity=" << identityString
                   << " keyIndex=" << keyIndex
                   << " keyLen=" << keyLength << std::endl;
         return kStatusOk;
