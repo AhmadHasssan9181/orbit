@@ -1356,7 +1356,16 @@ Do NOT file bugs against these:
 - ✅ Quick Switcher Ctrl+K — fuzzy channel jump dialog across all servers
   (Keybinds card restored as real).
 - Unread badges on server icons (setting exists; ensure counts aggregate).
-- Status system: online/idle/DND/invisible presence + custom status text.
+- ✅ Presence/status v1 — profile popover's status pill is now a real picker
+  (Online/Idle/Do not disturb/Offline): selecting calls setPresence (Matrix
+  online/unavailable/offline; DND maps to unavailable since spec lacks it) and
+  persists the choice via SettingsManager.myStatus, which OrbitApp re-applies on
+  startup/change and mirrors into the drawer bar + chat surface. Member-list
+  rows observe live presence per visible user (dots/name dimming track the
+  homeserver; section headers regroup on next member refresh). Custom status
+  TEXT still missing (needs account-data convention for cross-client visibility);
+  DM-list dots still placeholder. Settings "Presence Settings" pane chips
+  (idle timeout etc.) remain cosmetic.
 - Profile editing (display name/avatar upload via profile API).
 - Member list grouping by role/power level.
 - Notification settings per room (mute/mentions-only).

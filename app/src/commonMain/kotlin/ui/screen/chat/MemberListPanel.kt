@@ -15,8 +15,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,7 +45,10 @@ import ui.screen.media.*
 import ui.screen.main.*
 
 @Composable
-internal fun MemberListPanel(members: List<OrbitUser>) {
+internal fun MemberListPanel(
+    members: List<OrbitUser>,
+    observePresence: (suspend (String) -> kotlinx.coroutines.flow.Flow<UserStatus>)? = null
+) {
     val allUsers  = members
     val online    = allUsers.filter { it.status == UserStatus.ONLINE }
     val idle      = allUsers.filter { it.status == UserStatus.IDLE }
@@ -61,22 +68,41 @@ internal fun MemberListPanel(members: List<OrbitUser>) {
         ) {
             if (online.isNotEmpty()) {
                 item { MemberSectionLabel("ONLINE — ${online.size}") }
-                items(online, key = { it.id }) { MemberItem(it) }
+                items(online, key = { it.id }) { MemberItem(it, observePresence) }
             }
             if (idle.isNotEmpty()) {
                 item { MemberSectionLabel("IDLE — ${idle.size}") }
-                items(idle, key = { it.id }) { MemberItem(it) }
+                items(idle, key = { it.id }) { MemberItem(it, observePresence) }
             }
             if (dnd.isNotEmpty()) {
                 item { MemberSectionLabel("DO NOT DISTURB") }
-                items(dnd, key = { it.id }) { MemberItem(it) }
+                items(dnd, key = { it.id }) { MemberItem(it, observePresence) }
             }
             if (offline.isNotEmpty()) {
                 item { MemberSectionLabel("OFFLINE — ${offline.size}") }
-                items(offline, key = { it.id }) { MemberItem(it) }
+                items(offline, key = { it.id }) { MemberItem(it, observePresence) }
             }
         }
     }
+}
+
+// Live presence per visible row: section headers regroup on the next member
+// refresh, but dots/labels track homeserver presence while composed.
+@Composable
+private fun rememberLiveStatus(
+    user: OrbitUser,
+    observePresence: (suspend (String) -> kotlinx.coroutines.flow.Flow<UserStatus>)?
+): UserStatus {
+    var status by remember(user.id) { mutableStateOf(user.status) }
+    LaunchedEffect(user.id) {
+        val flow = runCatching { observePresence?.invoke(user.id) }.getOrNull() ?: return@LaunchedEffect
+        runCatching {
+            flow.collect {
+                if (it != status) status = it
+            }
+        }
+    }
+    return status
 }
 
 @Composable
@@ -94,13 +120,17 @@ private fun MemberSectionLabel(label: String) {
 }
 
 @Composable
-private fun MemberItem(user: OrbitUser) {
+private fun MemberItem(
+    user: OrbitUser,
+    observePresence: (suspend (String) -> kotlinx.coroutines.flow.Flow<UserStatus>)? = null
+) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
     val bgColor by animateColorAsState(
         targetValue = if (isHovered) MessageHover_Bg else Color.Transparent,
         label = "memberHover"
     )
+    val liveStatus = rememberLiveStatus(user, observePresence)
 
     Row(
         modifier = Modifier
@@ -138,7 +168,7 @@ private fun MemberItem(user: OrbitUser) {
                     modifier = Modifier.fillMaxSize()
                 )
             }
-            val dotColor = memberStatusColor(user.status)
+            val dotColor = memberStatusColor(liveStatus)
             Box(
                 modifier = Modifier
                     .size(10.dp)
@@ -155,7 +185,7 @@ private fun MemberItem(user: OrbitUser) {
                 Text(
                     text = user.displayName,
                     style = MaterialTheme.typography.bodySmall.copy(
-                        color = if (user.status == UserStatus.OFFLINE)
+                        color = if (liveStatus == UserStatus.OFFLINE)
                             Text_Muted.copy(alpha = 0.6f) else Text_Secondary,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Normal

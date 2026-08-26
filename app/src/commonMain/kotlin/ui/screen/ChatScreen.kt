@@ -297,7 +297,10 @@ fun ChatScreen(
                     canUnpin = onTogglePin != null,
                     onUnpin = { onTogglePin?.invoke(it) }
                 )
-                ui.theme.LocalShowMemberList.current && windowSize.isExpanded -> MemberListPanel(members = members)
+                ui.theme.LocalShowMemberList.current && windowSize.isExpanded -> MemberListPanel(
+                    members = members,
+                    observePresence = repository?.let { it::observePresence }
+                )
             }
         }
         }

@@ -50,7 +50,8 @@ import ui.screen.main.*
 internal fun UserProfileBar(
     user: OrbitUser,
     onMicToggle: () -> Unit,
-    onSettingsClick: () -> Unit
+    onSettingsClick: () -> Unit,
+    onStatusSelected: ((UserStatus) -> Unit)? = null
 ) {
     var showProfilePopover by remember { mutableStateOf(false) }
     var showVoicePopover by remember { mutableStateOf(false) }
@@ -142,7 +143,8 @@ internal fun UserProfileBar(
                     onSettingsClick = {
                         showProfilePopover = false
                         onSettingsClick()
-                    }
+                    },
+                    onStatusSelected = onStatusSelected
                 )
             }
         }
@@ -379,8 +381,10 @@ internal fun VoiceSettingRow(
 @Composable
 internal fun ProfilePopoverContent(
     user: OrbitUser,
-    onSettingsClick: () -> Unit
+    onSettingsClick: () -> Unit,
+    onStatusSelected: ((UserStatus) -> Unit)? = null
 ) {
+    var showStatusMenu by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .background(UserBar_Bg)
@@ -427,6 +431,7 @@ internal fun ProfilePopoverContent(
                 .clip(RoundedCornerShape(8.dp))
                 .background(Accent.copy(alpha = 0.10f))
                 .border(1.dp, Accent.copy(alpha = 0.18f), RoundedCornerShape(8.dp))
+                .clickable(enabled = onStatusSelected != null) { showStatusMenu = !showStatusMenu }
                 .padding(horizontal = 9.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -443,8 +448,74 @@ internal fun ProfilePopoverContent(
                     color = Text_Secondary,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 11.sp
-                )
+                ),
+                modifier = Modifier.weight(1f)
             )
+            if (onStatusSelected != null) {
+                Icon(
+                    Icons.Default.KeyboardArrowDown,
+                    contentDescription = if (showStatusMenu) "Hide status options" else "Change status",
+                    tint = Text_Muted,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+        }
+
+        if (showStatusMenu && onStatusSelected != null) {
+            Column(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Accent.copy(alpha = 0.05f))
+                    .border(1.dp, Separator.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                    .padding(vertical = 4.dp)
+            ) {
+                listOf(UserStatus.ONLINE, UserStatus.IDLE, UserStatus.DO_NOT_DISTURB, UserStatus.OFFLINE).forEach { status ->
+                    val interactionSource = remember { MutableInteractionSource() }
+                    val isHovered by interactionSource.collectIsHoveredAsState()
+                    val optionBg by animateColorAsState(
+                        targetValue = if (isHovered) ChannelHover_Bg else Color.Transparent,
+                        label = "statusOptionBg"
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(optionBg)
+                            .hoverable(interactionSource)
+                            .clickable(interactionSource = interactionSource, indication = null) {
+                                showStatusMenu = false
+                                onStatusSelected(status)
+                            }
+                            .padding(horizontal = 9.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(statusColor(status))
+                        )
+                        Spacer(Modifier.width(7.dp))
+                        Text(
+                            text = statusLabel(status),
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = if (status == user.status) Text_White else Text_Secondary,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 11.sp
+                            ),
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (status == user.status) {
+                            Icon(
+                                Icons.Default.Check,
+                                contentDescription = null,
+                                tint = Accent,
+                                modifier = Modifier.size(13.dp)
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         ProfilePopoverAction(
