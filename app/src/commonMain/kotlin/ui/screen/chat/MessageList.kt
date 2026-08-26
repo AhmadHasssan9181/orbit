@@ -5,7 +5,7 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -13,11 +13,13 @@ import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
@@ -39,6 +41,7 @@ internal fun MessageList(
     messages: List<OrbitMessage>,
     currentUser: OrbitUser?,
     modifier: Modifier = Modifier,
+    firstUnreadId: String? = null,
     onSeen: (String) -> Unit = {},
     onReact: ((String, String) -> Unit)? = null,
     onEditMessage: ((String, String) -> Unit)? = null,
@@ -50,6 +53,18 @@ internal fun MessageList(
     val grouped   = groupMessages(messages)
     val coroutineScope = rememberCoroutineScope()
     val reduceMotion = ui.theme.LocalReduceMotion.current
+
+    // Group holding the first message that arrived while the user was away this session.
+    val unreadSeparatorIndex = remember(grouped, firstUnreadId) {
+        firstUnreadId?.let { id ->
+            grouped.indexOfFirst { group ->
+                when (group) {
+                    is MessageGroup.Single -> group.message.id == id
+                    is MessageGroup.Dense  -> group.messages.any { it.id == id }
+                }
+            }.takeIf { it >= 0 }
+        }
+    }
 
     // Only auto-scroll when the user is already at (or near) the bottom, or on first load /
     // channel switch — never yank the viewport while they're reading history.
@@ -107,12 +122,15 @@ internal fun MessageList(
             contentPadding = PaddingValues(vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(0.dp)
         ) {
-            items(grouped, key = { it.key }) { group ->
+            itemsIndexed(grouped, key = { _, group -> group.key }) { index, group ->
                 val groupMessageIds = when (group) {
                     is MessageGroup.Single -> listOf(group.message.id)
                     is MessageGroup.Dense -> group.messages.map { it.id }
                 }
                 Column(modifier = Modifier.fillMaxWidth()) {
+                    if (index == unreadSeparatorIndex) {
+                        UnreadSeparatorRow()
+                    }
                     if (ui.theme.LocalCompactMode.current) {
                         when (group) {
                             is MessageGroup.Single -> DenseMessageBody(group.message)
@@ -171,30 +189,74 @@ internal fun MessageList(
             derivedStateOf { listState.canScrollForward }
         }
 
-        androidx.compose.animation.AnimatedVisibility(
-            visible = showScrollToBottom,
+        val showJumpToUnread by remember(unreadSeparatorIndex) {
+            derivedStateOf {
+                val target = unreadSeparatorIndex ?: return@derivedStateOf false
+                listState.layoutInfo.visibleItemsInfo.none { it.index == target }
+            }
+        }
+
+        Column(
             modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
-            enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.scaleIn(),
-            exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.scaleOut()
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            FloatingActionButton(
-                onClick = {
-                    coroutineScope.launch {
-                        if (grouped.isNotEmpty()) {
-                            if (reduceMotion) {
-                                listState.scrollToItem(grouped.size - 1)
-                            } else {
-                                listState.animateScrollToItem(grouped.size - 1)
+            androidx.compose.animation.AnimatedVisibility(
+                visible = showJumpToUnread,
+                enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.scaleIn(),
+                exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.scaleOut()
+            ) {
+                Surface(
+                    onClick = {
+                        coroutineScope.launch {
+                            unreadSeparatorIndex?.let { target ->
+                                if (reduceMotion) listState.scrollToItem(target) else listState.animateScrollToItem(target)
                             }
                         }
+                    },
+                    shape = CircleShape,
+                    color = Accent,
+                    contentColor = Color.White,
+                    shadowElevation = 4.dp
+                ) {
+                    Row(
+                        modifier = Modifier.padding(start = 14.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Jump to unread",
+                            style = androidx.compose.material3.MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Spacer(Modifier.width(2.dp))
+                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Jump to unread", modifier = Modifier.size(18.dp))
                     }
-                },
-                containerColor = Accent,
-                contentColor = Color.White,
-                shape = CircleShape,
-                modifier = Modifier.size(48.dp)
+                }
+            }
+
+            androidx.compose.animation.AnimatedVisibility(
+                visible = showScrollToBottom,
+                enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.scaleIn(),
+                exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.scaleOut()
             ) {
-                Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Scroll to bottom", modifier = Modifier.size(24.dp))
+                FloatingActionButton(
+                    onClick = {
+                        coroutineScope.launch {
+                            if (grouped.isNotEmpty()) {
+                                if (reduceMotion) {
+                                    listState.scrollToItem(grouped.size - 1)
+                                } else {
+                                    listState.animateScrollToItem(grouped.size - 1)
+                                }
+                            }
+                        }
+                    },
+                    containerColor = Accent,
+                    contentColor = Color.White,
+                    shape = CircleShape,
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Scroll to bottom", modifier = Modifier.size(24.dp))
+                }
             }
         }
     }
@@ -229,6 +291,28 @@ internal fun groupMessages(messages: List<OrbitMessage>): List<MessageGroup> {
     if (curGroup.isNotEmpty())
         result.add(if (curGroup.size == 1) MessageGroup.Single(curGroup[0]) else MessageGroup.Dense(curGroup.toList()))
     return result
+}
+
+@Composable
+private fun UnreadSeparatorRow() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(modifier = Modifier.weight(1f).height(1.dp).background(Accent.copy(alpha = 0.55f)))
+        Text(
+            text = "NEW",
+            style = androidx.compose.material3.MaterialTheme.typography.labelSmall.copy(
+                color = Accent,
+                fontWeight = FontWeight.Bold,
+                fontSize = 10.sp
+            ),
+            modifier = Modifier.padding(horizontal = 8.dp)
+        )
+        Box(modifier = Modifier.weight(1f).height(1.dp).background(Accent.copy(alpha = 0.55f)))
+    }
 }
 
 @Composable

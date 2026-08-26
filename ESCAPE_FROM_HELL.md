@@ -1305,8 +1305,19 @@ Do NOT file bugs against these:
   per room; own messages get a Discord-style "Seen ✓✓" row once another
   member's read receipt reaches or passes them. (Send side existed: onSeen →
   setReadMarkers.)
-- **Unread separator + jump-to-unread** (receipt plumbing now exists; needs
-  last-read tracking per channel — unblocks Mark Server/Channel Read too).
+- ✅ Unread separator + jump-to-unread v1 — the shell records each room's
+  first message that arrived while it was away this session (the same filtered
+  arrivals stream as the badges, so mute/mentions modes and own-message /
+  edit / reaction exclusions apply); markers survive OPENING the room (that's
+  when the separator shows) and are dropped when you leave it again.
+  MessageList renders a Discord-style "NEW" divider above that message's
+  group plus a floating "Jump to unread" pill (stacked over the scroll-to-
+  bottom FAB, hidden while the marker row is visible) that scrolls the list to
+  it. Limits: session-local only (no persisted read markers, no offline catch-
+  up — a fresh app launch starts clean with no separator), the marker clears
+  on LEAVING the channel rather than on scrolling past it, and the
+  Mark Server/Channel Read actions this was expected to unblock remain future
+  scope.
 - ✅ Message actions — the hover toolbar's dead buttons are real: React opens
   an 8-emoji quick picker (duplicate-guarded per user) → `sendReaction`
   annotation; Edit (own text only) opens a dialog → `m.replace` edit; More →
@@ -1363,8 +1374,7 @@ Do NOT file bugs against these:
   index, and surfaces red count pills (99+ cap) on ServerRail home/server
   icons, ChannelList channel rows and non-lite DM rows. Limits: counts are
   session-local only (no persistence, no offline catch-up — the stream starts
-  at "now"); lite-mode WhatsApp DM rows have no badge yet; in-chat unread
-  separator/jump-to-unread remains pending below.
+  at "now"); lite-mode WhatsApp DM rows have no badge yet.
 - ✅ Presence/status v1 — profile popover's status pill is now a real picker
   (Online/Idle/Do not disturb/Offline): selecting calls setPresence (Matrix
   online/unavailable/offline; DND maps to unavailable since spec lacks it) and

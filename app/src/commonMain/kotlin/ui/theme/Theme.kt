@@ -114,6 +114,9 @@ val LocalDateFormat = compositionLocalOf<String> { "DD/MM/YYYY" }
 /** Members of the open room, so message UI can resolve avatars without extra lookups. */
 val LocalRoomMembers = compositionLocalOf<List<ui.model.OrbitUser>> { emptyList() }
 
+/** Room id → id of the first message that arrived while the room was away this session. */
+val LocalRoomUnreadMarkers = compositionLocalOf<Map<String, String>> { emptyMap() }
+
 /**
  * Discord/Revolt-style semantic color tokens derived from MaterialTheme.
  * Every screen should use these tokens instead of hard-coding colors.
