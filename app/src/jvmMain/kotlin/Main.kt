@@ -19,6 +19,7 @@ import androidx.compose.ui.window.Tray
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import ui.screen.call.ActiveCallPipWindow
 import ui.screen.settings.normalizedPttKeybind
 import ui.screen.settings.parsePttCombo
 import java.util.concurrent.atomic.AtomicBoolean
@@ -64,6 +65,9 @@ fun main() = application {
     } else {
         val state = rememberWindowState()
         var windowRef by remember { mutableStateOf<java.awt.Window?>(null) }
+        // Tracks the tray-hide path so the floating call PiP window knows when
+        // the main window is gone (iconify is read straight off [state]).
+        var mainWindowPresentable by remember { mutableStateOf(true) }
 
         // Quit: end any active call first (the leave publish races the exit
         // watchdog inside its grace window, never blocks), then exit.
@@ -76,7 +80,17 @@ fun main() = application {
         // Close hides to tray only when tray mode is explicitly enabled in
         // settings; otherwise closing the window quits the whole app.
         fun closeRequested() {
-            if (minimizeToTray) windowRef?.isVisible = false else quitOrbit()
+            if (minimizeToTray) {
+                windowRef?.isVisible = false
+                mainWindowPresentable = false
+            } else quitOrbit()
+        }
+
+        fun restoreMainWindow() {
+            state.isMinimized = false
+            windowRef?.isVisible = true
+            mainWindowPresentable = true
+            windowRef?.toFront()
         }
 
         Window(
@@ -165,12 +179,15 @@ fun main() = application {
         Tray(
             icon = painterResource("logo.jpeg"),
             menu = {
-                Item("Open Orbit", onClick = {
-                    windowRef?.isVisible = true
-                    windowRef?.toFront()
-                })
+                Item("Open Orbit", onClick = { restoreMainWindow() })
                 Item("Quit", onClick = { quitOrbit() })
             }
+        )
+
+        // Floating call window while Orbit itself is minimized / tray-hidden.
+        ActiveCallPipWindow(
+            mainWindowPresentable = mainWindowPresentable && !state.isMinimized,
+            onRestoreMainWindow = ::restoreMainWindow
         )
     }
 }
