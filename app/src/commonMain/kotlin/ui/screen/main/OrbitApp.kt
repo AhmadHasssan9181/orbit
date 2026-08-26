@@ -842,6 +842,12 @@ fun ChatScreenWithRepo(
                 messages = repository.getMessagesForChannel(channel.id, limit = 50)
             }
         },
+        onSendReply = { replyToEventId, body ->
+            scope.launch {
+                runCatching { repository.sendReplyMessage(channel.id, replyToEventId, body) }
+                messages = repository.getMessagesForChannel(channel.id, limit = 50)
+            }
+        },
         showMemberList = showMemberList,
         onBack = onBack,
         modifier = modifier

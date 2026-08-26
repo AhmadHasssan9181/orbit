@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.Reply
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -51,7 +52,8 @@ internal fun MessageBubbleFull(
     onReact: ((String, String) -> Unit)? = null,
     onEditMessage: ((String, String) -> Unit)? = null,
     onDeleteMessage: ((String) -> Unit)? = null,
-    onTogglePin: ((String) -> Unit)? = null
+    onTogglePin: ((String) -> Unit)? = null,
+    onReply: ((String) -> Unit)? = null
 ) {
     val isLiteMode = ui.theme.LocalIsLiteMode.current
     if (isLiteMode) {
@@ -196,6 +198,9 @@ internal fun MessageBubbleFull(
                     .padding(horizontal = 2.dp),
                 horizontalArrangement = Arrangement.spacedBy(0.dp)
             ) {
+                if (onReply != null) {
+                    MessageActionBtn(Icons.Default.Reply, "Reply") { onReply(message.id) }
+                }
                 if (onReact != null) {
                     Box {
                         MessageActionBtn(OrbitIcons.Emoji, "React") { showReactionMenu = true }

@@ -1310,9 +1310,15 @@ Do NOT file bugs against these:
 - ✅ Message actions — the hover toolbar's dead buttons are real: React opens
   an 8-emoji quick picker (duplicate-guarded per user) → `sendReaction`
   annotation; Edit (own text only) opens a dialog → `m.replace` edit; More →
-  Copy Text + Delete with confirm → redact. Dead Reply button removed until
-  reply threading is implemented (honesty rule).
-- Replies + threads (`m.in_reply_to` first; threads later).
+  Copy Text + Pin/Unpin + Delete with confirm → redact. (The dead Reply button
+  returned as a real feature in the replies round below.)
+- ✅ Replies v1 (`m.in_reply_to`) — hover-toolbar Reply sets a replying-to
+  state; an accent-bar preview strip ("Replying to <name>" + snippet, X to
+  cancel) sits above the input bar and intercepts the next send →
+  sendReplyMessage wraps the body in RelatesTo.Reply/ReplyTo. Incoming replies
+  render via ReplyQuoteBlock: parent event resolved through getTimelineEvent
+  for quoted sender + body snippet (≤200 chars), graceful empty-quote fallback
+  when the parent isn't in local store. Threads remain future scope.
 - ✅ Reactions rendering + adding — chips already aggregated per emoji; picker
   adds `m.reaction` annotations.
 - File/image upload with thumbnail previews + download (sending is wired;
