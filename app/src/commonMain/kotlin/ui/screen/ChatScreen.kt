@@ -68,6 +68,8 @@ fun ChatScreen(
     onKickUser: ((String) -> Unit)? = null,
     onBanUser: ((String) -> Unit)? = null,
     onSetPowerLevel: ((String, Long) -> Unit)? = null,
+    notifMode: String = "ALL",
+    onCycleNotificationMode: (() -> Unit)? = null,
     showMemberList: Boolean = true,
     onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier
@@ -118,7 +120,9 @@ fun ChatScreen(
                 searchActive = searchActive,
                 onToggleSearch = { searchActive = !searchActive },
                 pinsActive = pinsActive,
-                onTogglePins = { pinsActive = !pinsActive }
+                onTogglePins = { pinsActive = !pinsActive },
+                notifMode = notifMode,
+                onCycleNotificationMode = onCycleNotificationMode
             )
             HorizontalDivider(color = Separator.copy(alpha = 0.2f), thickness = 1.dp)
             if (searchActive) {

@@ -13,6 +13,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -55,7 +57,9 @@ internal fun ChatHeader(
     searchActive: Boolean = false,
     onToggleSearch: () -> Unit = {},
     pinsActive: Boolean = false,
-    onTogglePins: () -> Unit = {}
+    onTogglePins: () -> Unit = {},
+    notifMode: String = "ALL",
+    onCycleNotificationMode: (() -> Unit)? = null
 ) {
     val windowSize = LocalWindowSizeClass.current
     Row(
@@ -146,7 +150,20 @@ internal fun ChatHeader(
                 HeaderIconBtn(OrbitIcons.Video, "Video Call", onClick = { onVideoCall?.invoke() })
             }
             HeaderIconBtn(Icons.Default.Search, "Search", onClick = onToggleSearch, isActive = searchActive)
-            HeaderIconBtn(OrbitIcons.Notifications, "Notifications")
+            if (onCycleNotificationMode != null) {
+                HeaderIconBtn(
+                    icon = if (notifMode == "MUTE") Icons.Default.NotificationsOff else Icons.Default.Notifications,
+                    desc = when (notifMode) {
+                        "MUTE" -> "Notifications: Muted"
+                        "MENTIONS" -> "Notifications: Mentions only"
+                        else -> "Notifications: All messages"
+                    },
+                    isActive = notifMode != "ALL",
+                    onClick = onCycleNotificationMode
+                )
+            } else {
+                HeaderIconBtn(OrbitIcons.Notifications, "Notifications")
+            }
             HeaderIconBtn(OrbitIcons.Pin, "Pins", onClick = onTogglePins, isActive = pinsActive)
             HeaderIconBtn(OrbitIcons.Members, "Members")
         }

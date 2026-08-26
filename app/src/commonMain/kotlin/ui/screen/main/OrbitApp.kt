@@ -356,6 +356,7 @@ private fun MainAppContent(
     // arrivals stream while the room isn't open, cleared when it is opened.
     val unreadCounts = remember { mutableStateMapOf<String, Int>() }
     var channelServerById by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    val notificationModes = remember { mutableStateMapOf<String, String>() }
 
     LaunchedEffect(servers) {
         val index = mutableMapOf<String, String>()
@@ -363,6 +364,14 @@ private fun MainAppContent(
             runCatching { repository.getChannelsForSpace(server.id) }.getOrNull()?.forEach { ch ->
                 index[ch.id] = server.id
                 ch.matrixRoomId?.let { index[it] = server.id }
+                launch {
+                    runCatching {
+                        settingsManager.roomNotificationMode(ch.id).collect { mode ->
+                            notificationModes[ch.id] = mode
+                            ch.matrixRoomId?.let { mr -> notificationModes[mr] = mode }
+                        }
+                    }
+                }
             }
         }
         channelServerById = index
@@ -371,6 +380,15 @@ private fun MainAppContent(
     LaunchedEffect(Unit) {
         repository.observeIncomingMessages().collect { (roomId, msg) ->
             if (msg.content is MessageContent.Edit || msg.content is MessageContent.Reaction) return@collect
+            when (notificationModes[roomId] ?: "ALL") {
+                "MUTE" -> return@collect
+                "MENTIONS" -> {
+                    val ownId = currentUser?.id ?: return@collect
+                    val localpart = ownId.substringBefore(':')
+                    val mentioned = msg.body.contains("@$localpart") || msg.body.contains("@room")
+                    if (!mentioned) return@collect
+                }
+            }
             val ownId = currentUser?.id
             if (ownId != null && (msg.userId == ownId || msg.userId.endsWith(ownId) || ownId.endsWith(msg.userId))) return@collect
             if (roomId == selectedChannelId || roomId == compactOpenChannelId) return@collect
@@ -762,6 +780,10 @@ fun ChatScreenWithRepo(
     val myActiveStatus = runCatching { UserStatus.valueOf(myStatusStored) }.getOrDefault(UserStatus.ONLINE)
     val displayCurrentUser = currentUser?.copy(status = myActiveStatus)
 
+    // Per-room notification mode cycled from the header bell.
+    val roomNotifFlow = remember(channel.id) { statusSettings.roomNotificationMode(channel.id) }
+    val roomNotifMode by roomNotifFlow.collectAsState("ALL")
+
     LaunchedEffect(channel.id) {
         isLoading = true
         try {
@@ -947,6 +969,15 @@ fun ChatScreenWithRepo(
                     .onFailure { util.OrbitLog.e("Moderation", "power level change failed: ${it.message}") }
                 rolesVersion++
             }
+        },
+        notifMode = roomNotifMode,
+        onCycleNotificationMode = {
+            val next = when (roomNotifMode) {
+                "ALL" -> "MENTIONS"
+                "MENTIONS" -> "MUTE"
+                else -> "ALL"
+            }
+            scope.launch { runCatching { statusSettings.setRoomNotificationMode(channel.id, next) } }
         },
         showMemberList = showMemberList,
         onBack = onBack,
