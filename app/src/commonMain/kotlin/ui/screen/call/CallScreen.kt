@@ -77,6 +77,7 @@ fun CallScreen(
     val isMinimized by callManager.isMinimized.collectAsState()
     val isIncomingCall by callManager.isIncomingCall.collectAsState()
     val isVideoCall by callManager.isVideoCall.collectAsState()
+    val isMyHandRaised by callManager.isMyHandRaised.collectAsState()
     val isVideoEnabled by callManager.isLocalVideoEnabled.collectAsState()
     val isScreenSharing by callManager.isScreenSharing.collectAsState()
     val isRemoteScreenSharing by callManager.isRemoteScreenSharing.collectAsState()
@@ -301,9 +302,9 @@ fun CallScreen(
                 nodes.add(RenderNode("remote", callerName, remoteRenderer, isScreenShare = false, avatarColor = 0xFFF23F42.toInt()))
             }
             if (isVideoEnabled && !isScreenSharing) {
-                nodes.add(RenderNode("local", "You", localRenderer, isScreenShare = false, isMuted = isMuted, isDeafened = isDeafened))
+                nodes.add(RenderNode("local", "You", localRenderer, isScreenShare = false, isMuted = isMuted, isDeafened = isDeafened, isHandRaised = isMyHandRaised))
             } else if (!isScreenSharing) {
-                nodes.add(RenderNode("local", "You", null, isScreenShare = false, isMuted = isMuted, isDeafened = isDeafened))
+                nodes.add(RenderNode("local", "You", null, isScreenShare = false, isMuted = isMuted, isDeafened = isDeafened, isHandRaised = isMyHandRaised))
             }
 
             Box(
@@ -1077,6 +1078,8 @@ data class RenderNode(
     // Latest jitter/RTT/loss sample from the native stats watcher (remote
     // audio tiles); renders Discord-style signal bars when present.
     val qualitySample: livekit.ConnectionQualitySample? = null,
+    // Participant's hand is currently raised (io.orbit.raise_hand events).
+    val isHandRaised: Boolean = false,
     val avatarUrl: String? = null,
     val avatarColor: Int = 0xFF5865F2.toInt()
 )
@@ -1090,6 +1093,16 @@ internal fun identityIsMicMuted(identity: String?, mutedIdentities: Set<String>)
     if (identity.isNullOrBlank() || mutedIdentities.isEmpty()) return false
     if (identity in mutedIdentities) return true
     return mutedIdentities.any { it.substringBeforeLast(':') == identity }
+}
+
+/**
+ * Raise-hand match: the set holds Matrix userIds (event senders) while tile
+ * identities may be full LiveKit form (`${userId}:${deviceId}`) or bare mxids.
+ */
+internal fun identityHasRaisedHand(identity: String?, raisedUserIds: Set<String>): Boolean {
+    if (identity.isNullOrBlank() || raisedUserIds.isEmpty()) return false
+    if (identity in raisedUserIds) return true
+    return identity.substringBeforeLast(':') in raisedUserIds
 }
 
 /**
@@ -1213,6 +1226,24 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                         )
                     }
                 }
+            }
+        }
+
+        // Raised-hand badge (Discord-style top-left)
+        if (node.isHandRaised) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(8.dp)
+                    .background(Color(0xFFFAA81A).copy(alpha = 0.92f), RoundedCornerShape(6.dp))
+                    .padding(horizontal = 7.dp, vertical = 5.dp)
+            ) {
+                Icon(
+                    Icons.Default.PanTool,
+                    contentDescription = "Hand raised",
+                    tint = Color(0xFF111214),
+                    modifier = Modifier.size(14.dp)
+                )
             }
         }
 
