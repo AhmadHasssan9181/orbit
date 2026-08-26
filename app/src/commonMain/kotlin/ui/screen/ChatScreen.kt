@@ -70,6 +70,7 @@ fun ChatScreen(
     onSetPowerLevel: ((String, Long) -> Unit)? = null,
     notifMode: String = "ALL",
     onCycleNotificationMode: (() -> Unit)? = null,
+    firstUnreadId: String? = null,
     showMemberList: Boolean = true,
     onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier
@@ -203,6 +204,7 @@ fun ChatScreen(
                         messages = displayMessages,
                         currentUser = currentUser,
                         modifier = Modifier.fillMaxSize(),
+                        firstUnreadId = firstUnreadId,
                         onSeen = onSeen,
                         onReact = onReact,
                         onEditMessage = onEditMessage,

@@ -357,6 +357,7 @@ private fun MainAppContent(
     val unreadCounts = remember { mutableStateMapOf<String, Int>() }
     var channelServerById by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     val notificationModes = remember { mutableStateMapOf<String, String>() }
+    val firstUnreadByRoom = remember { mutableStateMapOf<String, String>() }
 
     LaunchedEffect(servers) {
         val index = mutableMapOf<String, String>()
@@ -393,10 +394,22 @@ private fun MainAppContent(
             if (ownId != null && (msg.userId == ownId || msg.userId.endsWith(ownId) || ownId.endsWith(msg.userId))) return@collect
             if (roomId == selectedChannelId || roomId == compactOpenChannelId) return@collect
             unreadCounts[roomId] = (unreadCounts[roomId] ?: 0) + 1
+            // Arrivals stream is oldest-first: remember the first message that
+            // landed while the room was away, so the in-chat separator can point at it.
+            if (roomId !in firstUnreadByRoom) firstUnreadByRoom[roomId] = msg.id
         }
     }
 
+    var lastOpenRoomIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     LaunchedEffect(selectedChannelId, compactOpenChannelId) {
+        val nowOpen = setOfNotNull(selectedChannelId.takeIf { it.isNotBlank() }, compactOpenChannelId)
+        // Unread markers survive the channel being OPEN (that's when the separator
+        // renders); they are dropped once you leave the room again.
+        (lastOpenRoomIds - nowOpen).forEach { closedId ->
+            firstUnreadByRoom.remove(closedId)
+            channels.firstOrNull { it.id == closedId }?.matrixRoomId?.let { firstUnreadByRoom.remove(it) }
+        }
+        lastOpenRoomIds = nowOpen
         selectedChannelId.takeIf { it.isNotBlank() }?.let { unreadCounts.remove(it) }
         compactOpenChannelId?.let { unreadCounts.remove(it) }
     }
@@ -561,7 +574,10 @@ private fun MainAppContent(
     }
 
     // ─── Route to appropriate layout ────────────────────────────
-    CompositionLocalProvider(LocalCallManager provides callManager) {
+    CompositionLocalProvider(
+        LocalCallManager provides callManager,
+        ui.theme.LocalRoomUnreadMarkers provides firstUnreadByRoom.toMap()
+    ) {
         Box(modifier = modifier) {
             when (windowSize) {
                 WindowSizeClass.Compact -> CompactLayout(
@@ -784,6 +800,10 @@ fun ChatScreenWithRepo(
     val roomNotifFlow = remember(channel.id) { statusSettings.roomNotificationMode(channel.id) }
     val roomNotifMode by roomNotifFlow.collectAsState("ALL")
 
+    // First message that arrived while this room was away this session (shell-owned).
+    val unreadMarkers = ui.theme.LocalRoomUnreadMarkers.current
+    val firstUnreadId = unreadMarkers[channel.matrixRoomId ?: ""] ?: unreadMarkers[channel.id]
+
     LaunchedEffect(channel.id) {
         isLoading = true
         try {
@@ -979,6 +999,7 @@ fun ChatScreenWithRepo(
             }
             scope.launch { runCatching { statusSettings.setRoomNotificationMode(channel.id, next) } }
         },
+        firstUnreadId = firstUnreadId,
         showMemberList = showMemberList,
         onBack = onBack,
         modifier = modifier
