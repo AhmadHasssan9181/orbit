@@ -33,6 +33,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
@@ -1360,6 +1362,7 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
             ) {
                 val menuGains by callManager.participantGains.collectAsState()
                 val menuVolume = menuGains[menuIdentity] ?: 1f
+                val clipboard = LocalClipboardManager.current
 
                 Text(
                     node.name,
@@ -1405,9 +1408,19 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                     },
                     enabled = menuVolume != 1f
                 )
+                // Share tiles carry the same local-gain semantics; "stream"
+                // just names the thing being muted more clearly.
+                val streamWording = node.isScreenShare
                 DropdownMenuItem(
                     text = {
-                        Text(if (menuVolume == 0f) "Unmute for me" else "Mute for me")
+                        Text(
+                            when {
+                                streamWording && menuVolume == 0f -> "Unmute stream"
+                                streamWording -> "Mute stream"
+                                menuVolume == 0f -> "Unmute for me"
+                                else -> "Mute for me"
+                            }
+                        )
                     },
                     leadingIcon = {
                         Icon(
@@ -1418,6 +1431,20 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                     },
                     onClick = {
                         callManager.toggleParticipantMute(menuIdentity)
+                        participantMenuOpen = false
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Copy user ID") },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Filled.ContentCopy,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    },
+                    onClick = {
+                        clipboard.setText(AnnotatedString(menuIdentity))
                         participantMenuOpen = false
                     }
                 )

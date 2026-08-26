@@ -1277,9 +1277,12 @@ Do NOT file bugs against these:
   longer render their own minimized pill; popup owns it).
 - ✅ Right-click context menu on tiles: volume slider %, Mute-for-me,
   Reset volume (this round).
-- **Add to context menu:** Copy user ID · "Mute stream" label
-  for share tiles (= same local gain, clearer wording). (Pin/Unpin, raise-hand
-  button already in.)
+- ✅ Context-menu additions: "Copy user ID" copies the tile's participant
+  identity to the clipboard (Compose LocalClipboardManager); share tiles now
+  say "Mute stream"/"Unmute stream" instead of "Mute for me" for the SAME
+  local-gain action. Limits: copied ID is the LiveKit identity space string
+  (what tiles/media use), not necessarily the raw Matrix mxid; no paste-
+  confirmation toast beyond the menu closing.
 - **In-call device switcher quick menu** — mic/speaker/camera pickers inline
   in the call controls (AudioDeviceMenu exists — surface it on hover of the
   chevron next to mute, Discord-style).
