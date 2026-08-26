@@ -12,8 +12,17 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -35,6 +44,7 @@ import ui.assets.OrbitVerifiedBadge
 import ui.assets.isOrbitVerifiedUser
 import ui.model.OrbitUser
 import ui.model.UserStatus
+import repository.MemberRoleInfo
 
 import ui.screen.auth.*
 import ui.screen.settings.*
@@ -47,13 +57,15 @@ import ui.screen.main.*
 @Composable
 internal fun MemberListPanel(
     members: List<OrbitUser>,
-    observePresence: (suspend (String) -> kotlinx.coroutines.flow.Flow<UserStatus>)? = null
+    observePresence: (suspend (String) -> kotlinx.coroutines.flow.Flow<UserStatus>)? = null,
+    memberRoles: Map<String, MemberRoleInfo> = emptyMap(),
+    ownUserId: String? = null,
+    onKickUser: ((String) -> Unit)? = null,
+    onBanUser: ((String) -> Unit)? = null,
+    onSetPowerLevel: ((String, Long) -> Unit)? = null
 ) {
     val allUsers  = members
-    val online    = allUsers.filter { it.status == UserStatus.ONLINE }
-    val idle      = allUsers.filter { it.status == UserStatus.IDLE }
-    val dnd       = allUsers.filter { it.status == UserStatus.DO_NOT_DISTURB }
-    val offline   = allUsers.filter { it.status == UserStatus.OFFLINE }
+    val rolesActive = memberRoles.values.any { it.powerLevel > 0 }
 
     Column(
         modifier = Modifier
@@ -66,24 +78,78 @@ internal fun MemberListPanel(
             contentPadding = PaddingValues(top = 10.dp, bottom = 8.dp),
             verticalArrangement = Arrangement.spacedBy(1.dp)
         ) {
-            if (online.isNotEmpty()) {
-                item { MemberSectionLabel("ONLINE — ${online.size}") }
-                items(online, key = { it.id }) { MemberItem(it, observePresence) }
-            }
-            if (idle.isNotEmpty()) {
-                item { MemberSectionLabel("IDLE — ${idle.size}") }
-                items(idle, key = { it.id }) { MemberItem(it, observePresence) }
-            }
-            if (dnd.isNotEmpty()) {
-                item { MemberSectionLabel("DO NOT DISTURB") }
-                items(dnd, key = { it.id }) { MemberItem(it, observePresence) }
-            }
-            if (offline.isNotEmpty()) {
-                item { MemberSectionLabel("OFFLINE — ${offline.size}") }
-                items(offline, key = { it.id }) { MemberItem(it, observePresence) }
+            if (rolesActive) {
+                val admins = allUsers.filter { (memberRoles[it.id]?.powerLevel ?: 0L) >= 100L }
+                    .sortedBy { presenceRank(it.status) }
+                val mods = allUsers.filter {
+                    val pl = memberRoles[it.id]?.powerLevel ?: 0L; pl in 50..99
+                }.sortedBy { presenceRank(it.status) }
+                val plainMembers = allUsers.filter { (memberRoles[it.id]?.powerLevel ?: 0L) < 50L }
+                    .sortedBy { presenceRank(it.status) }
+
+                if (admins.isNotEmpty()) {
+                    item(key = "section-admin") { MemberSectionLabel("ADMIN — ${admins.size}") }
+                    items(admins, key = { it.id }) {
+                        MemberItem(it, observePresence, memberRoles[it.id], ownUserId, onKickUser, onBanUser, onSetPowerLevel)
+                    }
+                }
+                if (mods.isNotEmpty()) {
+                    item(key = "section-mods") { MemberSectionLabel("MODERATORS — ${mods.size}") }
+                    items(mods, key = { it.id }) {
+                        MemberItem(it, observePresence, memberRoles[it.id], ownUserId, onKickUser, onBanUser, onSetPowerLevel)
+                    }
+                }
+                if (plainMembers.isNotEmpty()) {
+                    item(key = "section-members") { MemberSectionLabel("MEMBERS — ${plainMembers.size}") }
+                    items(plainMembers, key = { it.id }) {
+                        MemberItem(it, observePresence, memberRoles[it.id], ownUserId, onKickUser, onBanUser, onSetPowerLevel)
+                    }
+                }
+            } else {
+                val online    = allUsers.filter { it.status == UserStatus.ONLINE }
+                val idle      = allUsers.filter { it.status == UserStatus.IDLE }
+                val dnd       = allUsers.filter { it.status == UserStatus.DO_NOT_DISTURB }
+                val offline   = allUsers.filter { it.status == UserStatus.OFFLINE }
+
+                if (online.isNotEmpty()) {
+                    item { MemberSectionLabel("ONLINE — ${online.size}") }
+                    items(online, key = { it.id }) { MemberItem(it, observePresence) }
+                }
+                if (idle.isNotEmpty()) {
+                    item { MemberSectionLabel("IDLE — ${idle.size}") }
+                    items(idle, key = { it.id }) { MemberItem(it, observePresence) }
+                }
+                if (dnd.isNotEmpty()) {
+                    item { MemberSectionLabel("DO NOT DISTURB") }
+                    items(dnd, key = { it.id }) { MemberItem(it, observePresence) }
+                }
+                if (offline.isNotEmpty()) {
+                    item { MemberSectionLabel("OFFLINE — ${offline.size}") }
+                    items(offline, key = { it.id }) { MemberItem(it, observePresence) }
+                }
             }
         }
     }
+}
+
+private fun presenceRank(status: UserStatus): Int = when (status) {
+    UserStatus.ONLINE -> 0
+    UserStatus.IDLE -> 1
+    UserStatus.DO_NOT_DISTURB -> 2
+    UserStatus.OFFLINE -> 3
+}
+
+private fun roleLabel(powerLevel: Long): String = when {
+    powerLevel >= 100L -> "Admin"
+    powerLevel >= 50L -> "Moderator"
+    else -> "Member"
+}
+
+@Composable
+private fun roleColor(powerLevel: Long): Color = when {
+    powerLevel >= 100L -> Color(0xFFF23F42)
+    powerLevel >= 50L -> Color(0xFFFAA81A)
+    else -> Text_Muted
 }
 
 // Live presence per visible row: section headers regroup on the next member
@@ -122,7 +188,12 @@ private fun MemberSectionLabel(label: String) {
 @Composable
 private fun MemberItem(
     user: OrbitUser,
-    observePresence: (suspend (String) -> kotlinx.coroutines.flow.Flow<UserStatus>)? = null
+    observePresence: (suspend (String) -> kotlinx.coroutines.flow.Flow<UserStatus>)? = null,
+    roleInfo: MemberRoleInfo? = null,
+    ownUserId: String? = null,
+    onKickUser: ((String) -> Unit)? = null,
+    onBanUser: ((String) -> Unit)? = null,
+    onSetPowerLevel: ((String, Long) -> Unit)? = null
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
@@ -131,6 +202,36 @@ private fun MemberItem(
         label = "memberHover"
     )
     val liveStatus = rememberLiveStatus(user, observePresence)
+
+    val pl = roleInfo?.powerLevel ?: 0L
+    val isSelf = ownUserId != null &&
+        (user.id == ownUserId || user.id.endsWith(ownUserId) || ownUserId.endsWith(user.id))
+    val kickVisible = !isSelf && onKickUser != null && roleInfo?.canKick == true
+    val banVisible = !isSelf && onBanUser != null && roleInfo?.canBan == true
+    val promoteVisible = !isSelf && onSetPowerLevel != null && pl < 50L &&
+        (roleInfo?.maxSettablePowerLevel ?: 0L) >= 50L
+    val demoteVisible = !isSelf && onSetPowerLevel != null && pl >= 50L &&
+        (roleInfo?.maxSettablePowerLevel ?: 0L) >= 50L
+    val anyAction = kickVisible || banVisible || promoteVisible || demoteVisible
+    var moderationMenuOpen by remember(user.id) { mutableStateOf(false) }
+    var banConfirmOpen by remember(user.id) { mutableStateOf(false) }
+
+    if (banConfirmOpen) {
+        AlertDialog(
+            onDismissRequest = { banConfirmOpen = false },
+            title = { Text("Ban ${user.displayName}?") },
+            text = { Text("They will be removed from this channel and unable to rejoin.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    banConfirmOpen = false
+                    onBanUser?.invoke(user.id)
+                }) { Text("Ban", color = Color(0xFFF23F42)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { banConfirmOpen = false }) { Text("Cancel") }
+            }
+        )
+    }
 
     Row(
         modifier = Modifier
@@ -200,7 +301,69 @@ private fun MemberItem(
                 }
             }
             Spacer(Modifier.height(2.dp))
-            MemberRolePill(label = "Member", color = Color(user.avatarColor))
+            if (pl > 0L) {
+                MemberRolePill(label = roleLabel(pl), color = roleColor(pl))
+            }
+        }
+
+        if (anyAction && isHovered) {
+            Box {
+                IconButton(
+                    onClick = { moderationMenuOpen = true },
+                    modifier = Modifier.size(20.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.MoreVert,
+                        contentDescription = "Moderate ${user.displayName}",
+                        tint = Text_Muted,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+                DropdownMenu(
+                    expanded = moderationMenuOpen,
+                    onDismissRequest = { moderationMenuOpen = false }
+                ) {
+                    if (promoteVisible) {
+                        DropdownMenuItem(
+                            text = { Text("Promote to Moderator") },
+                            onClick = {
+                                moderationMenuOpen = false
+                                onSetPowerLevel?.invoke(user.id, 50L)
+                            }
+                        )
+                    }
+                    if (demoteVisible) {
+                        DropdownMenuItem(
+                            text = { Text("Remove Moderator") },
+                            onClick = {
+                                moderationMenuOpen = false
+                                onSetPowerLevel?.invoke(user.id, 0L)
+                            }
+                        )
+                    }
+                    if (kickVisible || banVisible) {
+                        HorizontalDivider()
+                    }
+                    if (kickVisible) {
+                        DropdownMenuItem(
+                            text = { Text("Kick", color = Color(0xFFFAA81A)) },
+                            onClick = {
+                                moderationMenuOpen = false
+                                onKickUser?.invoke(user.id)
+                            }
+                        )
+                    }
+                    if (banVisible) {
+                        DropdownMenuItem(
+                            text = { Text("Ban", color = Color(0xFFF23F42)) },
+                            onClick = {
+                                moderationMenuOpen = false
+                                banConfirmOpen = true
+                            }
+                        )
+                    }
+                }
+            }
         }
     }
 }

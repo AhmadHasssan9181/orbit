@@ -1381,10 +1381,21 @@ Do NOT file bugs against these:
   name field → `updateDisplayName`, both refreshing from getCurrentUser after
   save. Caveats: uploads are labeled PNG regardless of picked format; other UI
   surfaces pick up the change on next reload; no inline error surface on failure.
-- Member list grouping by role/power level.
+- ✅ Member list role grouping + moderation basics v1 — roles snapshot per
+  member-list load via new getMemberRoles (trixnity UserService getPowerLevel /
+  canKickUser / canBanUser / canSetPowerLevelToMax; PowerLevel.Creator maps to
+  100). When any member has PL > 0 the panel groups ADMIN (≥100) / MODERATORS
+  (50–99) / MEMBERS with presence-ranked rows and Admin/Moderator pills;
+  otherwise legacy presence sections (covers DMs/rooms without a PL event).
+  Hover ⋯ per row offers Kick / Ban (confirm dialog) / Promote to Moderator
+  / Remove Moderator, each gated by server-truth flags and hidden on your own
+  row; kick/ban call api.room.kickUser/banUser, power-level edits are
+  read-modify-write of m.room.power_levels (raw state GET + typed sendStateEvent)
+  guarded client-side by canSetPowerLevelToMax. Limits: no unban UI (banned
+  users aren't in the joined list), no arbitrary PL values (0↔50 toggle only),
+  failures surface silently except a log line.
 - Notification settings per room (mute/mentions-only).
 - Server creation/join-via-invite flows.
-- Moderation: kick/ban/power levels (needs power-level UI + guards).
 
 > Rule: features get added to Settings → Keybinds ONLY when they actually
 > work (H19). Build feature → wire shortcut → restore card.

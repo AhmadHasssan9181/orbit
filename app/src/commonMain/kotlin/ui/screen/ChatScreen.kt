@@ -64,6 +64,10 @@ fun ChatScreen(
     onDeleteMessage: ((String) -> Unit)? = null,
     onTogglePin: ((String) -> Unit)? = null,
     onSendReply: ((String, String) -> Unit)? = null,
+    memberRoles: Map<String, repository.MemberRoleInfo> = emptyMap(),
+    onKickUser: ((String) -> Unit)? = null,
+    onBanUser: ((String) -> Unit)? = null,
+    onSetPowerLevel: ((String, Long) -> Unit)? = null,
     showMemberList: Boolean = true,
     onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier
@@ -299,7 +303,12 @@ fun ChatScreen(
                 )
                 ui.theme.LocalShowMemberList.current && windowSize.isExpanded -> MemberListPanel(
                     members = members,
-                    observePresence = repository?.let { it::observePresence }
+                    observePresence = repository?.let { it::observePresence },
+                    memberRoles = memberRoles,
+                    ownUserId = currentUser?.id,
+                    onKickUser = onKickUser,
+                    onBanUser = onBanUser,
+                    onSetPowerLevel = onSetPowerLevel
                 )
             }
         }
