@@ -1307,10 +1307,16 @@ Do NOT file bugs against these:
   setReadMarkers.)
 - **Unread separator + jump-to-unread** (receipt plumbing now exists; needs
   last-read tracking per channel — unblocks Mark Server/Channel Read too).
-- Edit / delete / redact messages (Matrix supports both natively).
+- ✅ Message actions — the hover toolbar's dead buttons are real: React opens
+  an 8-emoji quick picker (duplicate-guarded per user) → `sendReaction`
+  annotation; Edit (own text only) opens a dialog → `m.replace` edit; More →
+  Copy Text + Delete with confirm → redact. Dead Reply button removed until
+  reply threading is implemented (honesty rule).
 - Replies + threads (`m.in_reply_to` first; threads later).
-- Reactions (m.relation annotation) with picker.
-- File/image upload with thumbnail previews + download.
+- ✅ Reactions rendering + adding — chips already aggregated per emoji; picker
+  adds `m.reaction` annotations.
+- File/image upload with thumbnail previews + download (sending is wired;
+  previews still plain).
 - Markdown/rich-text rendering of `org.matrix.custom.html`.
 - Mentions (@user → push notification + highlight).
 - Message search (/search room-scoped first).

@@ -46,6 +46,9 @@ fun ChatScreen(
     onSendAttachment: ((ByteArray, String, String) -> Unit)? = null,
     onTyping: (Boolean) -> Unit = {},
     onSeen: (String) -> Unit = {},
+    onReact: ((String, String) -> Unit)? = null,
+    onEditMessage: ((String, String) -> Unit)? = null,
+    onDeleteMessage: ((String) -> Unit)? = null,
     showMemberList: Boolean = true,
     onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier
@@ -150,7 +153,10 @@ fun ChatScreen(
                         messages = messages,
                         currentUser = currentUser,
                         modifier = Modifier.fillMaxSize(),
-                        onSeen = onSeen
+                        onSeen = onSeen,
+                        onReact = onReact,
+                        onEditMessage = onEditMessage,
+                        onDeleteMessage = onDeleteMessage
                     )
                     
                     // Typing Indicator Overlay

@@ -804,6 +804,24 @@ fun ChatScreenWithRepo(
         onSeen = { eventId ->
             scope.launch { repository.sendReadReceipt(channel.id, eventId) }
         },
+        onReact = { eventId, emoji ->
+            scope.launch {
+                runCatching { repository.sendReaction(channel.id, eventId, emoji) }
+                messages = repository.getMessagesForChannel(channel.id, limit = 50)
+            }
+        },
+        onEditMessage = { eventId, newBody ->
+            scope.launch {
+                runCatching { repository.editMessage(channel.id, eventId, newBody) }
+                messages = repository.getMessagesForChannel(channel.id, limit = 50)
+            }
+        },
+        onDeleteMessage = { eventId ->
+            scope.launch {
+                runCatching { repository.deleteMessage(channel.id, eventId) }
+                messages = repository.getMessagesForChannel(channel.id, limit = 50)
+            }
+        },
         showMemberList = showMemberList,
         onBack = onBack,
         modifier = modifier
