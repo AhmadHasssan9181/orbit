@@ -1317,8 +1317,15 @@ Do NOT file bugs against these:
   adds `m.reaction` annotations.
 - File/image upload with thumbnail previews + download (sending is wired;
   previews still plain).
-- Markdown/rich-text rendering of `org.matrix.custom.html`.
-- Mentions (@user → push notification + highlight).
+- ✅ Markdown/rich-text rendering — `formatted_body` (org.matrix.custom.html)
+  now renders via a lightweight tag parser (RichText.kt): bold/italic/underline/
+  strike, code + pre blocks, blockquote, headings, lists, links (clickable via
+  LinkAnnotation), HTML entities, unknown tags stripped, `<mx-reply>` dropped.
+  Plain bodies get markdown-lite (**bold**, *italic*, `code`, ~~strike~~) +
+  autolinked URLs.
+- ✅ Mentions (highlight side) — @room and @member pills on both render paths;
+  matrix.to anchor mentions pill-styled; pills targeting the local user get the
+  bright highlight. Push-notification side still pending.
 - Message search (/search room-scoped first).
 - Pinned messages list.
 - Slash commands (/me at minimum).
