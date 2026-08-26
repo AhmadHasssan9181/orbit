@@ -1328,7 +1328,11 @@ Do NOT file bugs against these:
   bright highlight. Push-notification side still pending.
 - Message search (/search room-scoped first).
 - Pinned messages list.
-- Slash commands (/me at minimum).
+- ✅ Slash commands — `/me <action>` sends a real `m.emote` event
+  (sendEmoteMessage → trixnity emote() builder; incoming emotes/notes now map
+  to Emote/Notice content instead of Unsupported, rendered as italic "* action").
+  `/shrug` appends ¯\\_(ツ)_/¯. Bare `/me` sends nothing. Unknown `/foo` passes
+  through as plain text.
 
 ## D. NAVIGATION / APP SHELL
 

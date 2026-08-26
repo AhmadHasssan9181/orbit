@@ -768,7 +768,20 @@ fun ChatScreenWithRepo(
         onSend = { body ->
             scope.launch {
                 try {
-                    repository.sendMessage(channel.id, body)
+                    val trimmed = body.trim()
+                    when {
+                        // Slash commands — /me sends an m.emote, /shrug appends the classic shrug
+                        trimmed.startsWith("/me ") || trimmed == "/me" -> {
+                            val action = trimmed.removePrefix("/me").trim()
+                            if (action.isNotEmpty()) repository.sendEmoteMessage(channel.id, action).getOrThrow()
+                        }
+                        trimmed.startsWith("/shrug") -> {
+                            val suffix = trimmed.removePrefix("/shrug").trim()
+                            val text = "¯\\_(ツ)_/¯" + if (suffix.isNotEmpty()) " $suffix" else ""
+                            repository.sendMessage(channel.id, text).getOrThrow()
+                        }
+                        else -> repository.sendMessage(channel.id, body)
+                    }
                     val loaded = repository.getMessagesForChannel(channel.id, limit = 50)
                     messages = loaded
                 } catch (e: Exception) {

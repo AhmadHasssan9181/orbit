@@ -11,6 +11,7 @@ import de.connect2x.trixnity.client.room
 import de.connect2x.trixnity.client.cryptodriver.vodozemac.vodozemac
 import de.connect2x.trixnity.client.media.okio.okio
 import de.connect2x.trixnity.client.room.message.roomMessageBuilder
+import de.connect2x.trixnity.client.room.message.emote
 import de.connect2x.trixnity.client.room.message.text
 import de.connect2x.trixnity.client.store.Room
 import de.connect2x.trixnity.client.store.RoomOutboxMessage
@@ -158,6 +159,18 @@ class MatrixMessagesRepository(val context: MatrixContext) : OrbitMessagesReposi
             val trixnity = context.trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
             val txnId = trixnity.room.sendMessage(RoomId(channelId)) {
                 text(body)
+            }
+            Result.success(txnId)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun sendEmoteMessage(channelId: String, body: String): Result<String> {
+        return try {
+            val trixnity = context.trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
+            val txnId = trixnity.room.sendMessage(RoomId(channelId)) {
+                emote(body)
             }
             Result.success(txnId)
         } catch (e: Exception) {
@@ -363,6 +376,8 @@ class MatrixMessagesRepository(val context: MatrixContext) : OrbitMessagesReposi
     private fun parseTrixnityMessageContent(content: RoomMessageEventContent): MessageContent {
         return when (content) {
             is TextBased.Text -> MessageContent.Text(body = content.body, formattedBody = content.formattedBody)
+            is TextBased.Emote -> MessageContent.Emote(body = content.body)
+            is TextBased.Notice -> MessageContent.Notice(body = content.body)
             is FileBased.Image -> {
                 val url = context.convertMxcUrl(content.url ?: "")
                 MessageContent.Image(
