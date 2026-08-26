@@ -1074,6 +1074,9 @@ data class RenderNode(
     // LiveKit identity for remote participants (group calls). Non-null enables
     // per-participant volume/mute controls on the tile; never set on local nodes.
     val participantIdentity: String? = null,
+    // Latest jitter/RTT/loss sample from the native stats watcher (remote
+    // audio tiles); renders Discord-style signal bars when present.
+    val qualitySample: livekit.ConnectionQualitySample? = null,
     val avatarUrl: String? = null,
     val avatarColor: Int = 0xFF5865F2.toInt()
 )
@@ -1087,6 +1090,35 @@ internal fun identityIsMicMuted(identity: String?, mutedIdentities: Set<String>)
     if (identity.isNullOrBlank() || mutedIdentities.isEmpty()) return false
     if (identity in mutedIdentities) return true
     return mutedIdentities.any { it.substringBeforeLast(':') == identity }
+}
+
+/**
+ * Discord-style ascending signal bars: 3 lit = good (green), 2 = degraded
+ * (yellow), 1 = bad (red). Unlit bars stay dim.
+ */
+@Composable
+internal fun ConnectionQualityBars(bars: Int, modifier: Modifier = Modifier) {
+    val litColor = when {
+        bars >= 3 -> Color(0xFF23A55A)
+        bars == 2 -> Color(0xFFFAA81A)
+        else -> Color(0xFFF23F42)
+    }
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.Bottom,
+        horizontalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        listOf(4.dp, 7.dp, 10.dp).forEachIndexed { index, height ->
+            Box(
+                modifier = Modifier
+                    .size(width = 3.dp, height = height)
+                    .background(
+                        if (index < bars) litColor else Color.White.copy(alpha = 0.25f),
+                        RoundedCornerShape(1.dp)
+                    )
+            )
+        }
+    }
 }
 
 @Composable
@@ -1230,6 +1262,20 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                     Text("LIVE", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold)
                 }
             }
+        }
+
+        // Connection-quality signal bars (top-right, remote audio tiles only):
+        // 3 bars green / 2 yellow / 1 red from the native jitter/RTT/loss feed.
+        val sampleBars = node.qualitySample?.bars ?: 0
+        if (!node.isScreenShare && node.participantIdentity != null && sampleBars > 0) {
+            ConnectionQualityBars(
+                bars = sampleBars,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp)
+                    .background(Color(0xFF111214).copy(alpha = 0.7f), RoundedCornerShape(4.dp))
+                    .padding(horizontal = 5.dp, vertical = 4.dp)
+            )
         }
 
         // Per-participant volume / local mute — remote group-call tiles only

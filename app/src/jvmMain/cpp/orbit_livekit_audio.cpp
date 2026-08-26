@@ -119,6 +119,7 @@ jobject g_remoteVideoSink = nullptr;
 jmethodID g_remoteParticipantConnectedMethod = nullptr;
 jmethodID g_remoteParticipantDisconnectedMethod = nullptr;
 jmethodID g_remoteAudioMuteChangedMethod = nullptr;
+jmethodID g_remoteConnectionQualityMethod = nullptr;
 jmethodID g_remoteVideoTrackAddedMethod = nullptr;
 jmethodID g_remoteVideoFrameMethod = nullptr;
 jmethodID g_remoteVideoTrackRemovedMethod = nullptr;
@@ -157,6 +158,10 @@ struct RemoteAudioReader {
     int jbHighStreak{0};
     std::atomic<int> resubCount{0};
     std::atomic<long long> lastResubSteadyMs{-1};
+    // Per-interval RTP counters for the connection-quality bars (-1 = no prior
+    // sample yet). Touched only by this reader's stats pass every ~5s.
+    std::atomic<long long> prevPacketsReceived{-1};
+    std::atomic<long long> prevPacketsLost{-1};
 };
 
 struct RemoteVideoReader {
@@ -317,6 +322,7 @@ void dispatchActiveSpeakersChanged(JNIEnv* env, jlong sessionId, jlong epoch, co
 void dispatchNativeEvent(JNIEnv* env, jobject event);
 void dispatchRemoteParticipantDisconnected(const std::string& participantIdentity, const std::string& participantSid);
 void dispatchRemoteAudioMuteChanged(const std::string& participantIdentity, bool muted);
+void dispatchRemoteConnectionQuality(const std::string& participantIdentity, long long jitterMs, long long rttMs, double lossPct);
 void requestAudioTrackResubscribe(const std::string& participantIdentity, const std::string& trackSid, long long jbTargetMs);
 
 struct PcmDiagnostics {
@@ -1727,6 +1733,9 @@ void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track, const
                         if (statsFuture.wait_for(std::chrono::milliseconds(50)) == std::future_status::ready) {
                             double rttSec = -1.0;
                             double remoteFractionLost = -1.0;
+                            long long jitterMs = -1;
+                            long long packetsReceived = -1;
+                            long long packetsLost = -1;
                             for (const auto& stat : statsFuture.get()) {
                                 const auto* inbound = std::get_if<livekit::RtcInboundRtpStats>(&stat.stats);
                                 if (inbound != nullptr) {
@@ -1743,6 +1752,9 @@ void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track, const
                                         : -1LL;
                                     const long long jbTargetSumMs = static_cast<long long>(
                                         inbound->inbound.jitter_buffer_target_delay * 1000.0);
+                                    jitterMs = static_cast<long long>(inbound->received.jitter * 1000.0);
+                                    packetsReceived = static_cast<long long>(inbound->received.packets_received);
+                                    packetsLost = static_cast<long long>(inbound->received.packets_lost);
                                     std::cout << "RXSTAT sid=" << reader->trackSid
                                               << " recv=" << inbound->received.packets_received
                                               << " lost=" << inbound->received.packets_lost
@@ -1811,9 +1823,30 @@ void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track, const
                                     remoteFractionLost = remoteInbound->remote_inbound.fraction_lost;
                                 }
                             }
+                            // Connection-quality bars: per-interval loss from the
+                            // RTP counter deltas, plus jitter and RTT captured
+                            // above. -1 = unknown (no sample yet).
+                            double lossPct = -1.0;
+                            if (packetsReceived >= 0 && packetsLost >= 0) {
+                                const long long prevRecv =
+                                    reader->prevPacketsReceived.exchange(packetsReceived, std::memory_order_relaxed);
+                                const long long prevLost =
+                                    reader->prevPacketsLost.exchange(packetsLost, std::memory_order_relaxed);
+                                const double deltaRecv = static_cast<double>(packetsReceived - prevRecv);
+                                const double deltaLost = static_cast<double>(packetsLost - prevLost);
+                                if (prevRecv >= 0 && deltaRecv >= 0.0 && deltaLost >= 0.0) {
+                                    lossPct = deltaRecv + deltaLost > 0.0
+                                        ? deltaLost * 100.0 / (deltaRecv + deltaLost)
+                                        : 0.0;
+                                }
+                            }
+                            const long long rttMs =
+                                rttSec >= 0.0 ? static_cast<long long>(rttSec * 1000.0 + 0.5) : -1LL;
+                            dispatchRemoteConnectionQuality(
+                                reader->participantIdentity, jitterMs, rttMs, lossPct);
                             if (rttSec >= 0.0) {
                                 std::cout << "RXRTT sid=" << reader->trackSid
-                                          << " rttMs=" << static_cast<long long>(rttSec * 1000.0)
+                                          << " rttMs=" << rttMs
                                           << " remoteFractionLostPct="
                                           << static_cast<long long>(remoteFractionLost * 100.0)
                                           << std::endl;
@@ -2033,6 +2066,53 @@ void dispatchRemoteAudioMuteChanged(const std::string& participantIdentity, bool
             g_rawEpoch,
             jIdentity,
             muted ? JNI_TRUE : JNI_FALSE);
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        if (jIdentity != nullptr) env->DeleteLocalRef(jIdentity);
+        env->DeleteLocalRef(sink);
+    }
+
+    releaseJniEnv(attached);
+}
+
+// Per-participant connection quality (jitter/RTT/loss sampled every ~5s by
+// each remote audio reader's stats pass). Drives the Discord-style signal
+// bars on call tiles; -1 values mean "no sample yet".
+void dispatchRemoteConnectionQuality(const std::string& participantIdentity, long long jitterMs, long long rttMs, double lossPct) {
+    if (participantIdentity.empty() || callbacksStopped("remote-connection-quality")) {
+        return;
+    }
+
+    JNIEnv* env = nullptr;
+    bool attached = false;
+    if (!getJniEnv(&env, &attached, "remote-connection-quality") || env == nullptr) {
+        return;
+    }
+    logJniAttachSuccess("remote-connection-quality", attached);
+
+    jobject sink = nullptr;
+    jmethodID method = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_remoteVideoSinkMutex);
+        if (g_remoteVideoSink != nullptr && g_remoteConnectionQualityMethod != nullptr) {
+            sink = env->NewLocalRef(g_remoteVideoSink);
+            method = g_remoteConnectionQualityMethod;
+        }
+    }
+
+    if (sink != nullptr && method != nullptr) {
+        jstring jIdentity = env->NewStringUTF(participantIdentity.c_str());
+        env->CallVoidMethod(
+            sink,
+            method,
+            kRawSessionId,
+            g_rawEpoch,
+            jIdentity,
+            static_cast<jlong>(jitterMs),
+            static_cast<jlong>(rttMs),
+            static_cast<jdouble>(lossPct));
         if (env->ExceptionCheck()) {
             env->ExceptionDescribe();
             env->ExceptionClear();
@@ -4188,6 +4268,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeDestroySession(JNIEnv* env, jclass, jlo
             g_remoteParticipantConnectedMethod = nullptr;
             g_remoteParticipantDisconnectedMethod = nullptr;
             g_remoteAudioMuteChangedMethod = nullptr;
+            g_remoteConnectionQualityMethod = nullptr;
             g_remoteVideoTrackAddedMethod = nullptr;
             g_remoteVideoFrameMethod = nullptr;
             g_remoteVideoTrackRemovedMethod = nullptr;
@@ -4314,6 +4395,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetRemoteVideoSink(JNIEnv* env, jclass,
             g_remoteParticipantConnectedMethod = nullptr;
             g_remoteParticipantDisconnectedMethod = nullptr;
             g_remoteAudioMuteChangedMethod = nullptr;
+            g_remoteConnectionQualityMethod = nullptr;
             g_remoteVideoTrackAddedMethod = nullptr;
             g_remoteVideoFrameMethod = nullptr;
             g_remoteVideoTrackRemovedMethod = nullptr;
@@ -4340,6 +4422,10 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetRemoteVideoSink(JNIEnv* env, jclass,
         sinkClass,
         "onRemoteAudioMuteChanged",
         "(JJLjava/lang/String;Z)V");
+    jmethodID connQualityMethod = env->GetMethodID(
+        sinkClass,
+        "onRemoteConnectionQuality",
+        "(JJLjava/lang/String;JJJD)V");
     jmethodID addedMethod = env->GetMethodID(
         sinkClass,
         "onRemoteVideoTrackAdded",
@@ -4355,7 +4441,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetRemoteVideoSink(JNIEnv* env, jclass,
     env->DeleteLocalRef(sinkClass);
 
     if (partConnectedMethod == nullptr || partDisconnectedMethod == nullptr ||
-        audioMuteMethod == nullptr ||
+        audioMuteMethod == nullptr || connQualityMethod == nullptr ||
         addedMethod == nullptr || frameMethod == nullptr || removedMethod == nullptr) {
         if (env->ExceptionCheck()) {
             env->ExceptionDescribe();
@@ -4376,6 +4462,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetRemoteVideoSink(JNIEnv* env, jclass,
         g_remoteParticipantConnectedMethod = partConnectedMethod;
         g_remoteParticipantDisconnectedMethod = partDisconnectedMethod;
         g_remoteAudioMuteChangedMethod = audioMuteMethod;
+        g_remoteConnectionQualityMethod = connQualityMethod;
         g_remoteVideoTrackAddedMethod = addedMethod;
         g_remoteVideoFrameMethod = frameMethod;
         g_remoteVideoTrackRemovedMethod = removedMethod;

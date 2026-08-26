@@ -109,6 +109,9 @@ actual fun liveKitActiveSpeakers(): kotlinx.coroutines.flow.StateFlow<Set<String
 actual fun liveKitRemoteAudioMuted(): kotlinx.coroutines.flow.StateFlow<Set<String>> =
     LiveKitRemoteVideoFrameStore.remoteAudioMuted
 
+actual fun liveKitConnectionQuality(): kotlinx.coroutines.flow.StateFlow<Map<String, ConnectionQualitySample>> =
+    LiveKitRemoteVideoFrameStore.connectionQuality
+
 actual fun setLiveKitAudioProcessingOptions(noiseSuppression: Boolean, echoCancellation: Boolean, autoGainControl: Boolean) {
     OrbitApm.setAudioProcessingOptions(noiseSuppression, echoCancellation, autoGainControl)
 }

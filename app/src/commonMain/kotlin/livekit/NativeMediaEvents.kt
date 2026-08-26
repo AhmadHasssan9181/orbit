@@ -121,4 +121,18 @@ interface NativeRemoteVideoSink {
         participantIdentity: String,
         muted: Boolean
     )
+
+    /**
+     * Sampled every ~5s per remote audio track from WebRTC stats. Drives the
+     * connection-quality bars on tiles; `-1` means no sample for that metric
+     * yet.
+     */
+    fun onRemoteConnectionQuality(
+        sessionId: Long,
+        epoch: Long,
+        participantIdentity: String,
+        jitterMs: Long,
+        rttMs: Long,
+        lossPct: Double
+    )
 }
