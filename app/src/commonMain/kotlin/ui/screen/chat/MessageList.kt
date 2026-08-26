@@ -43,7 +43,8 @@ internal fun MessageList(
     onReact: ((String, String) -> Unit)? = null,
     onEditMessage: ((String, String) -> Unit)? = null,
     onDeleteMessage: ((String) -> Unit)? = null,
-    onTogglePin: ((String) -> Unit)? = null
+    onTogglePin: ((String) -> Unit)? = null,
+    onReply: ((String) -> Unit)? = null
 ) {
     val listState = rememberLazyListState()
     val grouped   = groupMessages(messages)
@@ -127,7 +128,8 @@ internal fun MessageList(
                                 onReact = onReact,
                                 onEditMessage = onEditMessage,
                                 onDeleteMessage = onDeleteMessage,
-                                onTogglePin = onTogglePin
+                                onTogglePin = onTogglePin,
+                                onReply = onReply
                             )
                             is MessageGroup.Dense  -> {
                                 if (ui.theme.LocalIsLiteMode.current) {
@@ -148,7 +150,8 @@ internal fun MessageList(
                                         onReact = onReact,
                                         onEditMessage = onEditMessage,
                                         onDeleteMessage = onDeleteMessage,
-                                        onTogglePin = onTogglePin
+                                        onTogglePin = onTogglePin,
+                                        onReply = onReply
                                     )
                                     for (i in 1 until group.messages.size) {
                                         DenseMessageBody(group.messages[i])

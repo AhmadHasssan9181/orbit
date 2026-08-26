@@ -63,6 +63,7 @@ fun ChatScreen(
     onEditMessage: ((String, String) -> Unit)? = null,
     onDeleteMessage: ((String) -> Unit)? = null,
     onTogglePin: ((String) -> Unit)? = null,
+    onSendReply: ((String, String) -> Unit)? = null,
     showMemberList: Boolean = true,
     onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier
@@ -82,6 +83,7 @@ fun ChatScreen(
     var searchActive by remember(channel.id) { mutableStateOf(false) }
     var searchQuery by remember(channel.id) { mutableStateOf("") }
     var pinsActive by remember(channel.id) { mutableStateOf(false) }
+    var replyingTo by remember(channel.id) { mutableStateOf<OrbitMessage?>(null) }
 
     val displayMessages = if (searchActive && searchQuery.isNotBlank()) {
         val q = searchQuery.trim()
@@ -197,7 +199,8 @@ fun ChatScreen(
                         onReact = onReact,
                         onEditMessage = onEditMessage,
                         onDeleteMessage = onDeleteMessage,
-                        onTogglePin = onTogglePin
+                        onTogglePin = onTogglePin,
+                        onReply = { id -> replyingTo = messages.firstOrNull { it.id == id } }
                     )
                     
                     // Typing Indicator Overlay
@@ -225,9 +228,60 @@ fun ChatScreen(
                         }
                     }
                 }
+                if (replyingTo != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 2.dp)
+                            .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp))
+                            .background(Input_Bg)
+                            .padding(start = 0.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .width(3.dp)
+                                .height(28.dp)
+                                .background(Accent)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Replying to ${replyingTo?.username}",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = Accent,
+                                    fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                                    fontSize = 11.sp
+                                )
+                            )
+                            Text(
+                                text = replyingTo?.body ?: "",
+                                style = MaterialTheme.typography.bodySmall.copy(color = Text_Muted, fontSize = 12.sp),
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
+                        }
+                        IconButton(onClick = { replyingTo = null }, modifier = Modifier.size(24.dp)) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Cancel reply",
+                                tint = Text_Muted,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
+                }
                 MessageInputBar(
                     placeholder = directProfile?.let { "Message @${it.displayName}" } ?: "Message #${channel.name}",
-                    onSend = onSend,
+                    onSend = { body ->
+                        val target = replyingTo
+                        if (target != null && onSendReply != null) {
+                            onSendReply(target.id, body)
+                            replyingTo = null
+                        } else {
+                            onSend(body)
+                        }
+                    },
                     onSendAttachment = onSendAttachment,
                     onTyping = onTyping
                 )

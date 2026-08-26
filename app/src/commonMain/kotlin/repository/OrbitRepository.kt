@@ -41,6 +41,7 @@ interface OrbitMessagesRepository {
     suspend fun getMessagesForChannel(channelId: String, limit: Int = 50, fromToken: String? = null): List<OrbitMessage>
     suspend fun sendMessage(channelId: String, body: String): Result<String>
     suspend fun sendEmoteMessage(channelId: String, body: String): Result<String>
+    suspend fun sendReplyMessage(roomId: String, replyToEventId: String, body: String): Result<String>
     suspend fun sendReaction(channelId: String, eventId: String, key: String): Result<String>
     suspend fun uploadMedia(bytes: ByteArray, mimeType: String, filename: String): Result<String>
     suspend fun sendImageMessage(channelId: String, mxcUrl: String, filename: String, mimeType: String, width: Int? = null, height: Int? = null, size: Long? = null): Result<String>

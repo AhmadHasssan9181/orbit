@@ -180,6 +180,23 @@ class MatrixMessagesRepository(val context: MatrixContext) : OrbitMessagesReposi
         }
     }
 
+    override suspend fun sendReplyMessage(roomId: String, replyToEventId: String, body: String): Result<String> {
+        return try {
+            val trixnity = context.trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
+            val txnId = trixnity.room.sendMessage(RoomId(roomId)) {
+                content(
+                    TextBased.Text(
+                        body = body,
+                        relatesTo = RelatesTo.Reply(RelatesTo.ReplyTo(EventId(replyToEventId)))
+                    )
+                )
+            }
+            Result.success(txnId)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     override suspend fun pinMessage(roomId: String, eventId: String, pinned: Boolean): Result<Unit> {
         return try {
             val trixnity = context.trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
@@ -361,7 +378,7 @@ class MatrixMessagesRepository(val context: MatrixContext) : OrbitMessagesReposi
         }
     }
 
-    fun timelineEventToOrbitMessage(timelineEvent: TimelineEvent): OrbitMessage? {
+    suspend fun timelineEventToOrbitMessage(timelineEvent: TimelineEvent): OrbitMessage? {
         val contentResult = timelineEvent.content
         val event = timelineEvent.event as? RoomEvent<*> ?: return null
         val eventId = timelineEvent.eventId.full
@@ -392,7 +409,19 @@ class MatrixMessagesRepository(val context: MatrixContext) : OrbitMessagesReposi
                     } else parseTrixnityMessageContent(content)
                 }
                 relatesTo is RelatesTo.Reply -> {
-                    MessageContent.Reply(inReplyToEventId = relatesTo.eventId.full, quotedSenderId = "", quotedBody = "", actualContent = parseTrixnityMessageContent(content))
+                    val parentId = relatesTo.replyTo?.eventId?.full ?: relatesTo.eventId?.full
+                    var quotedSender = ""
+                    var quotedBody = ""
+                    if (!parentId.isNullOrBlank()) {
+                        runCatching {
+                            context.trixnityClient?.room?.getTimelineEvent(timelineEvent.roomId, EventId(parentId))?.first()?.let { parent ->
+                                quotedSender = parent.sender.full
+                                val parentContent = parent.content?.getOrNull()
+                                if (parentContent is TextBased) quotedBody = parentContent.body.take(200)
+                            }
+                        }
+                    }
+                    MessageContent.Reply(inReplyToEventId = parentId ?: "", quotedSenderId = quotedSender, quotedBody = quotedBody, actualContent = parseTrixnityMessageContent(content))
                 }
                 else -> parseTrixnityMessageContent(content)
             }
