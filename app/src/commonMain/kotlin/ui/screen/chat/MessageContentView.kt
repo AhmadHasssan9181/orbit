@@ -62,7 +62,23 @@ internal fun MessageContentView(
 
 @Composable
 private fun TextMessageBody(content: ui.model.MessageContent.Text, isCompact: Boolean) {
-    val annotated = remember(content.body) { buildAnnotatedMessageText(content.body) }
+    val members = ui.theme.LocalRoomMembers.current
+    val tokens = rememberCosmicTokens()
+    val currentUserId = repository.CredentialManager.userId
+    val annotated = remember(content.body, content.formattedBody, members, tokens, currentUserId) {
+        buildRichMessageText(
+            plainBody = content.body,
+            formattedBody = content.formattedBody,
+            members = members.map { it.displayName to it.id },
+            currentUserId = currentUserId,
+            palette = RichTextPalette(
+                text = tokens.Text_Secondary,
+                muted = tokens.Text_Muted,
+                accent = tokens.Accent,
+                codeBg = tokens.Input_Bg
+            )
+        )
+    }
     Text(
         text = annotated,
         style = MaterialTheme.typography.bodyMedium.copy(
@@ -71,10 +87,6 @@ private fun TextMessageBody(content: ui.model.MessageContent.Text, isCompact: Bo
             lineHeight = 20.sp
         )
     )
-}
-
-private fun buildAnnotatedMessageText(body: String): androidx.compose.ui.text.AnnotatedString {
-    return androidx.compose.ui.text.buildAnnotatedString { append(body) }
 }
 
 @Composable
