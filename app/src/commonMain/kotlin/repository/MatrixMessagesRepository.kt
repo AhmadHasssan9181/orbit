@@ -45,6 +45,7 @@ import de.connect2x.trixnity.core.model.events.m.room.AudioInfo
 import de.connect2x.trixnity.core.model.events.m.room.CreateEventContent
 import de.connect2x.trixnity.core.model.events.m.room.FileInfo
 import de.connect2x.trixnity.core.model.events.m.room.ImageInfo
+import de.connect2x.trixnity.core.model.events.m.room.PinnedEventsEventContent
 import de.connect2x.trixnity.core.model.events.m.room.RoomMessageEventContent
 import de.connect2x.trixnity.core.model.events.m.room.RoomMessageEventContent.FileBased
 import de.connect2x.trixnity.core.model.events.m.room.RoomMessageEventContent.TextBased
@@ -148,7 +149,8 @@ class MatrixMessagesRepository(val context: MatrixContext) : OrbitMessagesReposi
                 val timelineEvent = flowEvent.first()
                 timelineEventToOrbitMessage(timelineEvent)?.let { events.add(it) }
             }
-            events.reversed()
+            val pinnedIds = fetchPinnedEventIds(channelId).toHashSet()
+            events.reversed().map { it.copy(isPinned = it.id in pinnedIds) }
         } catch (e: Exception) {
             emptyList()
         }
@@ -175,6 +177,39 @@ class MatrixMessagesRepository(val context: MatrixContext) : OrbitMessagesReposi
             Result.success(txnId)
         } catch (e: Exception) {
             Result.failure(e)
+        }
+    }
+
+    override suspend fun pinMessage(roomId: String, eventId: String, pinned: Boolean): Result<Unit> {
+        return try {
+            val trixnity = context.trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
+            val current = fetchPinnedEventIds(roomId).toMutableSet()
+            if (pinned) current.add(eventId) else current.remove(eventId)
+            trixnity.api.room.sendStateEvent(
+                RoomId(roomId),
+                PinnedEventsEventContent(pinned = current.map { EventId(it) }),
+                ""
+            ).getOrThrow()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun getPinnedMessageIds(roomId: String): Result<List<String>> {
+        return Result.success(fetchPinnedEventIds(roomId))
+    }
+
+    private suspend fun fetchPinnedEventIds(roomId: String): List<String> {
+        return try {
+            val response = context.httpClient.get(context.fullUrl("/rooms/$roomId/state/m.room.pinned_events")) {
+                header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
+            }
+            if (response.status.value !in 200..299) return emptyList()
+            val obj = Json.parseToJsonElement(response.bodyAsText()).jsonObject
+            (obj["pinned"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.content } ?: emptyList()
+        } catch (e: Exception) {
+            emptyList()
         }
     }
 

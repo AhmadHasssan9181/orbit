@@ -146,6 +146,7 @@ data class OrbitMessage(
     // Aggregated reactions: emoji key -> list of sender userIds
     val reactions: Map<String, List<String>> = emptyMap(),
     val replyToEventId: String? = null,
+    val isPinned: Boolean = false,
     val readReceipts: List<String> = emptyList(),
     val transactionId: String? = null
 ) {

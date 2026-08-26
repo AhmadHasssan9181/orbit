@@ -835,6 +835,13 @@ fun ChatScreenWithRepo(
                 messages = repository.getMessagesForChannel(channel.id, limit = 50)
             }
         },
+        onTogglePin = { eventId ->
+            scope.launch {
+                val currentlyPinned = messages.firstOrNull { it.id == eventId }?.isPinned == true
+                runCatching { repository.pinMessage(channel.id, eventId, !currentlyPinned) }
+                messages = repository.getMessagesForChannel(channel.id, limit = 50)
+            }
+        },
         showMemberList = showMemberList,
         onBack = onBack,
         modifier = modifier

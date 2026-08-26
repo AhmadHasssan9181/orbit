@@ -50,7 +50,8 @@ internal fun MessageBubbleFull(
     currentUser: OrbitUser?,
     onReact: ((String, String) -> Unit)? = null,
     onEditMessage: ((String, String) -> Unit)? = null,
-    onDeleteMessage: ((String) -> Unit)? = null
+    onDeleteMessage: ((String) -> Unit)? = null,
+    onTogglePin: ((String) -> Unit)? = null
 ) {
     val isLiteMode = ui.theme.LocalIsLiteMode.current
     if (isLiteMode) {
@@ -221,6 +222,12 @@ internal fun MessageBubbleFull(
                             expanded = showMoreMenu,
                             canDelete = canDelete,
                             messageBody = message.body,
+                            isPinned = message.isPinned,
+                            pinEnabled = onTogglePin != null,
+                            onTogglePin = {
+                                showMoreMenu = false
+                                onTogglePin?.invoke(message.id)
+                            },
                             onDelete = {
                                 showMoreMenu = false
                                 showDeleteConfirm = true
@@ -306,6 +313,9 @@ private fun MessageMoreMenu(
     expanded: Boolean,
     canDelete: Boolean,
     messageBody: String,
+    isPinned: Boolean,
+    pinEnabled: Boolean,
+    onTogglePin: () -> Unit = {},
     onDelete: () -> Unit,
     onCopyText: () -> Unit,
     onDismiss: () -> Unit
@@ -323,6 +333,25 @@ private fun MessageMoreMenu(
                 onCopyText()
             }
         )
+        if (pinEnabled) {
+            androidx.compose.material3.DropdownMenuItem(
+                text = {
+                    Text(
+                        if (isPinned) "Unpin Message" else "Pin Message",
+                        color = Color.White, fontSize = 13.sp
+                    )
+                },
+                leadingIcon = {
+                    Icon(
+                        ui.icons.OrbitIcons.Pin,
+                        contentDescription = null,
+                        tint = if (isPinned) Accent else Text_Muted,
+                        modifier = Modifier.size(16.dp)
+                    )
+                },
+                onClick = onTogglePin
+            )
+        }
         if (canDelete) {
             androidx.compose.material3.DropdownMenuItem(
                 text = { Text("Delete Message", color = Color(0xFFF23F42), fontSize = 13.sp) },

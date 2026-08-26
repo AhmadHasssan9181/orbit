@@ -1331,7 +1331,12 @@ Do NOT file bugs against these:
   (case-insensitive body/username match) with a result count; X clears and
   closes. Server-side /search across history still future scope. HeaderIconBtn
   also gained an active-tint state (used by Search; ready for Pins).
-- Pinned messages list.
+- ✅ Pinned messages — real `m.room.pinned_events` state event: More-menu
+  Pin/Unpin (OrbitMessagesRepository.pinMessage read-modify-write via typed
+  PinnedEventsEventContent), pinned ids fetched per channel load and marked on
+  messages (isPinned), header Pins button toggles a Pinned Messages side panel
+  (username/snippet/time rows + Unpin; pins from other clients like Element
+  show up too). Interop-compatible with Element.
 - ✅ Slash commands — `/me <action>` sends a real `m.emote` event
   (sendEmoteMessage → trixnity emote() builder; incoming emotes/notes now map
   to Emote/Notice content instead of Unsupported, rendered as italic "* action").
