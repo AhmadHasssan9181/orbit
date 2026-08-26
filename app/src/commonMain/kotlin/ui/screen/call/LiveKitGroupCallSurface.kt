@@ -37,6 +37,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -161,6 +162,11 @@ fun LiveKitGroupCallSurface(
 
     var layoutMode by remember { mutableStateOf(CallLayoutMode.Grid) }
     var showSoundboard by remember { mutableStateOf(false) }
+    // Right-click Pin: spotlight one participant until unpinned or call ends.
+    var pinnedNodeId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(callState) {
+        if (callState == CallState.IDLE || callState == CallState.ENDED) pinnedNodeId = null
+    }
 
     val nativeMediaReady = nativeReadiness?.state == NativeMediaState.MediaReady &&
         nativeReadiness?.audioPublished == true
@@ -280,7 +286,9 @@ fun LiveKitGroupCallSurface(
                     .fillMaxSize()
                     .padding(horizontal = 12.dp)
                     .padding(top = 12.dp, bottom = 96.dp),
-                callManager = callManager
+                callManager = callManager,
+                pinnedNodeId = pinnedNodeId,
+                onPinToggle = { id -> pinnedNodeId = if (pinnedNodeId == id) null else id }
             )
         } else {
             GroupCallJoinStatus(

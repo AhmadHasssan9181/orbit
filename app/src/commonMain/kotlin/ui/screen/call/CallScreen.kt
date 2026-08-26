@@ -1090,7 +1090,7 @@ internal fun identityIsMicMuted(identity: String?, mutedIdentities: Set<String>)
 }
 
 @Composable
-fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Modifier = Modifier, callManager: webrtc.CallManager? = null) {
+fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Modifier = Modifier, callManager: webrtc.CallManager? = null, isPinned: Boolean = false, onPinToggle: ((String) -> Unit)? = null) {
     // Active-speaker glow: native mixer meters remote voices; a tile whose
     // participant is talking gets an animated accent ring + soft halo.
     val speakers = if (callManager != null) callManager.activeSpeakers.collectAsState().value else emptySet()
@@ -1344,6 +1344,22 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                         participantMenuOpen = false
                     }
                 )
+                if (onPinToggle != null && node.id != "local" && node.id != "local_share") {
+                    DropdownMenuItem(
+                        text = { Text(if (isPinned) "Unpin" else "Pin") },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Filled.PushPin,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        },
+                        onClick = {
+                            onPinToggle(node.id)
+                            participantMenuOpen = false
+                        }
+                    )
+                }
             }
         }
     }
