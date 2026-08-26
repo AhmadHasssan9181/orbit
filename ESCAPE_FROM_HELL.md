@@ -1289,11 +1289,31 @@ Do NOT file bugs against these:
   no embedded surface). Decline sends `m.call.hangup`; invite expires per
   lifetimeMs; procedural 440+480 Hz ringtone loops while ringing
   (`setCallRinging`, honors the "Incoming call ringtone" setting).
-- **Call notifications** — system toast/tray flash when invited or when a
-  call starts in a watched room.
+- ✅ Call notifications — system tray balloon on INCOMING calls ("<caller> is
+  calling…") and on MISSED calls (invite expired or caller hung up while
+  ringing; answering suppresses it). Fires only while the main window lacks
+  focus (AWT WindowFocusListener) — the in-app Accept/Voice/Decline overlay
+  covers the focused case. Honors the existing Desktop-notifications toggle.
+  Implementation: expect/actual `showCallNotification` (LiveKitWrapper pair)
+  → jvmMain `util.CallNotifier`, which reuses the TrayIcon Compose Desktop
+  already registered (no second tray icon) and no-ops when no tray exists;
+  caller display names resolve async from room members at invite time
+  (`webrtc.IncomingCallRegistry`, mxid-localpart fallback). Limits: no
+  taskbar flash, notification is informational only (clicking the balloon
+  doesn't focus the app), P2P/group invites both covered via call-state
+  transitions.
 - **Soundboard** — `showSoundboard` state exists but appears unwired; either
   wire short-sound playback through a second audio track or remove the button
   (honesty rule).
+- ✅ Join/leave + deafen sound settings now REAL (were write-only) — new
+  procedural effects in SoundEffects: "join"/"leave" two-tone chimes fired on
+  self connect/disconnect AND on remote-participant count changes during a
+  connected native call (LiveKitRemoteVideoFrameStore.remoteParticipants diff);
+  "deafen"/"undeafen" short sweeps on local deafen-state changes. Each honors
+  its existing Voice & Video toggle (joinLeaveSound / deafenSound). Limits:
+  peer-arrival blips need the native LiveKit path (P2P ADM calls only get
+  self connect/disconnect sounds), and a rapid disconnect right after a peer
+  leaves may double-fire the leave blip (participant-reset ordering).
 - **PiP window** — separate always-on-top Compose window showing active
   speaker when main window minimized (Windows-native parity).
 

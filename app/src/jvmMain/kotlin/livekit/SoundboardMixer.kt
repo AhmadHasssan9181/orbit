@@ -247,6 +247,10 @@ private object SoundEffects {
         "music" -> chime(listOf(523.25f, 659.25f, 783.99f, 1046.5f))
         "meow" -> meow()
         "quack" -> quack()
+        "join" -> chime(listOf(523.25f, 783.99f))
+        "leave" -> chime(listOf(783.99f, 523.25f))
+        "deafen" -> sweep(600f, 200f, 0.16f)
+        "undeafen" -> sweep(200f, 600f, 0.16f)
         else -> null
     }
 

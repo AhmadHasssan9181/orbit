@@ -113,6 +113,10 @@ actual fun setCallRinging(ringing: Boolean) {
     CallRingtone.setPlaying(ringing)
 }
 
+actual fun showCallNotification(title: String, body: String) {
+    util.CallNotifier.show(title, body)
+}
+
 actual fun liveKitConnectionQuality(): kotlinx.coroutines.flow.StateFlow<Map<String, ConnectionQualitySample>> =
     LiveKitRemoteVideoFrameStore.connectionQuality
 

@@ -96,6 +96,80 @@ fun WebRtcEffects(
         }
     }
 
+    // System tray notification for incoming calls and missed ones (window
+    // unfocused only — the in-app overlay covers the focused case), honoring
+    // the Desktop notifications toggle. Answering (CONNECTING) suppresses the
+    // missed variant; invite expiry or a remote hangup during the ring fires it.
+    val desktopNotifsEnabled by settingsManager.desktopNotifs.collectAsState(true)
+    LaunchedEffect(callManager, desktopNotifsEnabled) {
+        var ringingIncoming = false
+        var answeredThisCall = false
+        callManager.callState.collect { state ->
+            when {
+                state == CallState.RINGING && callManager.isIncomingCall.value && !ringingIncoming -> {
+                    ringingIncoming = true
+                    answeredThisCall = false
+                    if (desktopNotifsEnabled) {
+                        val caller = webrtc.IncomingCallRegistry.callerName ?: "Someone"
+                        livekit.showCallNotification("Incoming call", "$caller is calling\u2026")
+                    }
+                }
+                state == CallState.CONNECTING || state == CallState.CONNECTED -> answeredThisCall = true
+                (state == CallState.IDLE || state == CallState.ENDED) && ringingIncoming -> {
+                    if (!answeredThisCall && desktopNotifsEnabled) {
+                        val caller = webrtc.IncomingCallRegistry.callerName ?: "Someone"
+                        livekit.showCallNotification("Missed call", "Missed call from $caller")
+                    }
+                    ringingIncoming = false
+                    webrtc.IncomingCallRegistry.clear()
+                }
+            }
+        }
+    }
+
+    // Join/leave blips: self connect/disconnect plus remote peers arriving or
+    // leaving during a connected native call, honoring the join/leave toggle.
+    val joinLeaveSoundEnabled by settingsManager.joinLeaveSound.collectAsState(true)
+    LaunchedEffect(callManager, joinLeaveSoundEnabled) {
+        var selfConnected = false
+        var knownPeers: Set<String>? = null
+        combine(
+            callManager.callState,
+            livekit.LiveKitRemoteVideoFrameStore.remoteParticipants
+        ) { state, peers -> state to peers }.collect { (state, peers) ->
+            when {
+                state == CallState.CONNECTED -> {
+                    if (joinLeaveSoundEnabled && !selfConnected) livekit.playSoundEffect("join")
+                    val known = knownPeers
+                    if (selfConnected && known != null && peers.size != known.size) {
+                        if (joinLeaveSoundEnabled) {
+                            livekit.playSoundEffect(if (peers.size > known.size) "join" else "leave")
+                        }
+                    }
+                    knownPeers = peers
+                    selfConnected = true
+                }
+                else -> {
+                    if (selfConnected && joinLeaveSoundEnabled) livekit.playSoundEffect("leave")
+                    selfConnected = false
+                    knownPeers = null
+                }
+            }
+        }
+    }
+
+    // Deafen/undeafen blips on local deafen-state changes, honoring the toggle.
+    val deafenSoundEnabled by settingsManager.deafenSound.collectAsState(true)
+    LaunchedEffect(callManager, deafenSoundEnabled) {
+        var previous: Boolean? = null
+        callManager.isDeafened.collect { deafened ->
+            val prev = previous
+            previous = deafened
+            if (!deafenSoundEnabled || prev == null || prev == deafened) return@collect
+            livekit.playSoundEffect(if (deafened) "deafen" else "undeafen")
+        }
+    }
+
 
     LaunchedEffect(orbitZeroEnabled) {
         webRtcClient.setOrbitZeroEnabled(orbitZeroEnabled)
@@ -186,7 +260,19 @@ fun WebRtcEffects(
                 }
 
                 when (event) {
-                    is repository.CallEvent.Invite -> callManager.handleCallInvite(event.roomId, event.callId, event.sdp, event.lifetimeMs)
+                    is repository.CallEvent.Invite -> {
+                        // Resolve the caller's display name for system notifications;
+                        // the ring-state effect reads it once RINGING actually starts.
+                        scope.launch {
+                            val displayName = runCatching {
+                                repository.getRoomMembers(event.roomId)
+                                    .firstOrNull { it.id == event.senderId || event.senderId.startsWith(it.id) }
+                                    ?.displayName
+                            }.getOrNull()
+                            webrtc.IncomingCallRegistry.register(event.senderId, displayName)
+                        }
+                        callManager.handleCallInvite(event.roomId, event.callId, event.sdp, event.lifetimeMs)
+                    }
                     is repository.CallEvent.Answer -> {
                         callManager.handleCallAnswer(event.sdp)
                         event.partyId?.let { selectedPartyId ->
