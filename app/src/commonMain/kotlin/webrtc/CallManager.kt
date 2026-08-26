@@ -101,6 +101,13 @@ class CallManager(
     private val _remoteMicMutedIds = MutableStateFlow<Set<String>>(emptySet())
     val remoteMicMutedIds: StateFlow<Set<String>> = _remoteMicMutedIds
 
+    // Latest WebRTC-stats sample per remote identity (jitter/RTT/loss) —
+    // drives the connection-quality bars on call tiles.
+    private val _remoteConnectionQuality =
+        MutableStateFlow<Map<String, livekit.ConnectionQualitySample>>(emptyMap())
+    val remoteConnectionQuality: StateFlow<Map<String, livekit.ConnectionQualitySample>> =
+        _remoteConnectionQuality
+
     // True for a short window after a key-exchange self-nudge (membership
     // leave+rejoin that repairs missing peer keys) so the call UI can show a
     // calm "Repairing audio link…" status instead of alarming reconnect copy.
@@ -113,6 +120,9 @@ class CallManager(
         }
         scope.launch {
             livekit.liveKitRemoteAudioMuted().collect { _remoteMicMutedIds.value = it }
+        }
+        scope.launch {
+            livekit.liveKitConnectionQuality().collect { _remoteConnectionQuality.value = it }
         }
         scope.launch {
             while (true) {

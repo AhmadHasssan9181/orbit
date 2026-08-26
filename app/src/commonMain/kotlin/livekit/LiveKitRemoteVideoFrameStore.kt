@@ -52,6 +52,27 @@ data class LiveKitLocalVideoFrame(
     val sequence: Long
 )
 
+/**
+ * One WebRTC-stats sample for a remote participant's audio connection.
+ * `-1` means the metric had no sample yet in this interval.
+ */
+data class ConnectionQualitySample(
+    val jitterMs: Long = -1L,
+    val rttMs: Long = -1L,
+    val lossPct: Double = -1.0
+) {
+    /** Discord-style 1..3 signal bars; 0 when nothing measurable yet. */
+    val bars: Int
+        get() {
+            if (lossPct < 0.0 && jitterMs < 0 && rttMs < 0) return 0
+            var score = 3
+            if (lossPct >= 2.0 || (rttMs >= 0 && rttMs > 150)) score -= 1
+            if (jitterMs >= 0 && jitterMs > 30) score -= 1
+            if (lossPct >= 5.0 || (rttMs >= 0 && rttMs > 300)) score -= 2
+            return score.coerceIn(0, 3)
+        }
+}
+
 object LiveKitRemoteVideoFrameStore {
     private val _latestFrame = MutableStateFlow<LiveKitRemoteVideoFrame?>(null)
     val latestFrame: StateFlow<LiveKitRemoteVideoFrame?> = _latestFrame
@@ -71,6 +92,11 @@ object LiveKitRemoteVideoFrameStore {
     private val _remoteAudioMuted = MutableStateFlow<Set<String>>(emptySet())
     val remoteAudioMuted: StateFlow<Set<String>> = _remoteAudioMuted
 
+    // Latest connection-quality sample per remote identity (jitter/RTT/loss),
+    // pushed by the native stats watcher every ~5s.
+    private val _connectionQuality = MutableStateFlow<Map<String, ConnectionQualitySample>>(emptyMap())
+    val connectionQuality: StateFlow<Map<String, ConnectionQualitySample>> = _connectionQuality
+
     private var sequence: Long = 0L
     private var activeTrackSid: String? = null
 
@@ -83,6 +109,23 @@ object LiveKitRemoteVideoFrameStore {
         if (participantIdentity.isBlank()) return
         _remoteParticipants.value = _remoteParticipants.value - participantIdentity
         _remoteAudioMuted.value = _remoteAudioMuted.value - participantIdentity
+        _connectionQuality.value = _connectionQuality.value - participantIdentity
+    }
+
+    fun remoteConnectionQuality(
+        participantIdentity: String,
+        jitterMs: Long,
+        rttMs: Long,
+        lossPct: Double
+    ) {
+        if (participantIdentity.isBlank()) return
+        _connectionQuality.value = _connectionQuality.value + (
+            participantIdentity to ConnectionQualitySample(
+                jitterMs = jitterMs,
+                rttMs = rttMs,
+                lossPct = lossPct
+            )
+            )
     }
 
     fun remoteAudioMuteChanged(participantIdentity: String, muted: Boolean) {
@@ -196,6 +239,7 @@ object LiveKitRemoteVideoFrameStore {
         _framesByTrack.value = emptyMap()
         _remoteParticipants.value = emptySet()
         _remoteAudioMuted.value = emptySet()
+        _connectionQuality.value = emptyMap()
         _latestFrame.value = null
         _latestCameraFrame.value = null
         _latestScreenShareFrame.value = null

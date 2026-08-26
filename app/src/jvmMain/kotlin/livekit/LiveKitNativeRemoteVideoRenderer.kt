@@ -116,4 +116,15 @@ object LiveKitNativeRemoteVideoRenderer : NativeRemoteVideoSink {
         )
         LiveKitRemoteVideoFrameStore.remoteAudioMuteChanged(participantIdentity, muted)
     }
+
+    override fun onRemoteConnectionQuality(
+        sessionId: Long,
+        epoch: Long,
+        participantIdentity: String,
+        jitterMs: Long,
+        rttMs: Long,
+        lossPct: Double
+    ) {
+        LiveKitRemoteVideoFrameStore.remoteConnectionQuality(participantIdentity, jitterMs, rttMs, lossPct)
+    }
 }

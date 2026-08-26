@@ -1245,10 +1245,11 @@ Do NOT file bugs against these:
 - ✅ Join watchdog vs slow joins; zombie-session teardown (H12).
 - ✅ Speaker detection native→UI glow (H16); remote mic-muted badges (H17).
 - ✅ Per-participant local volume/mute via native mixer gains (H15).
-- **Per-tile connection quality** — Discord shows 3-bar signal per voice user;
-  Element exposes stats via `getStats()`. We already parse jbTargetMs/RTT in
-  the native watcher → emit per-participant `{jitterMs, rttMs, lossPct}` over
-  the existing JNI event channel → colored bars/badge on each tile.
+- ✅ Per-tile connection quality — native stats watcher samples
+  `getStats()` every ~5s per RemoteAudioReader (jitter, RTT, interval packet-loss
+  delta) → `onRemoteConnectionQuality` JNI channel → `ConnectionQualitySample`
+  StateFlow → 3-bar signal badge (green/yellow/red) top-right of every remote
+  call tile; hidden when no measurable sample yet.
 - **Connection-stats dialog** — the "Voice Connection" debug panel: current
   SFU url, ICE state, bitrate in/out, jitter, packet loss, codec. Data source
   exists (STATS line); needs a settings/call-menu pane rendering it live.

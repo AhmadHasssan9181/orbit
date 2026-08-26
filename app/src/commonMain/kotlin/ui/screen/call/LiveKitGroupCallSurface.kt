@@ -114,6 +114,7 @@ fun LiveKitGroupCallSurface(
     val members by callManager.groupCallMembers.collectAsState()
     val selfNudgeRecovery by callManager.selfNudgeRecovery.collectAsState()
     val remoteMicMutedIds by callManager.remoteMicMutedIds.collectAsState()
+    val connectionQuality by callManager.remoteConnectionQuality.collectAsState()
     val tokens = rememberCosmicTokens()
 
     var showScreenShareDialog by remember { mutableStateOf(false) }
@@ -236,6 +237,7 @@ fun LiveKitGroupCallSurface(
                             isScreenShare = false,
                             isMicMuted = identityIsMicMuted(track.participantIdentity, remoteMicMutedIds),
                             participantIdentity = track.participantIdentity,
+                            qualitySample = connectionQuality[track.participantIdentity],
                             avatarColor = memberInfoFor(members, track.participantIdentity)?.avatarColor
                                 ?: identityColor(track.participantIdentity),
                             avatarUrl = memberInfoFor(members, track.participantIdentity)?.avatarUrl
@@ -271,6 +273,7 @@ fun LiveKitGroupCallSurface(
                             isScreenShare = false,
                             isMicMuted = identityIsMicMuted(identity, remoteMicMutedIds),
                             participantIdentity = identity,
+                            qualitySample = connectionQuality[identity],
                             avatarUrl = member?.avatarUrl,
                             avatarColor = member?.avatarColor ?: identityColor(identity)
                         )

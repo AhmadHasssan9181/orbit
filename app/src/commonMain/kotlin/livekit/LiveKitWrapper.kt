@@ -64,6 +64,10 @@ expect fun liveKitActiveSpeakers(): kotlinx.coroutines.flow.StateFlow<Set<String
 // delegate: subscribe-time state + TrackMuted/TrackUnmuted). Empty while idle.
 expect fun liveKitRemoteAudioMuted(): kotlinx.coroutines.flow.StateFlow<Set<String>>
 
+// Latest WebRTC-stats sample per remote identity (jitter/RTT/loss, ~5s
+// cadence) for the connection-quality bars on call tiles.
+expect fun liveKitConnectionQuality(): kotlinx.coroutines.flow.StateFlow<Map<String, livekit.ConnectionQualitySample>>
+
 // Voice & Video settings: NS/EC/AGC for the native group-call APM chain
 expect fun setLiveKitAudioProcessingOptions(noiseSuppression: Boolean, echoCancellation: Boolean, autoGainControl: Boolean)
 
