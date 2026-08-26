@@ -51,7 +51,11 @@ internal fun ChatHeader(
     directProfile: OrbitUser? = null,
     onBack: (() -> Unit)? = null,
     onVideoCall: (() -> Unit)? = null,
-    onVoiceCall: (() -> Unit)? = null
+    onVoiceCall: (() -> Unit)? = null,
+    searchActive: Boolean = false,
+    onToggleSearch: () -> Unit = {},
+    pinsActive: Boolean = false,
+    onTogglePins: () -> Unit = {}
 ) {
     val windowSize = LocalWindowSizeClass.current
     Row(
@@ -141,9 +145,9 @@ internal fun ChatHeader(
                 HeaderIconBtn(OrbitIcons.Call, "Voice Call", onClick = { onVoiceCall?.invoke() })
                 HeaderIconBtn(OrbitIcons.Video, "Video Call", onClick = { onVideoCall?.invoke() })
             }
-            HeaderIconBtn(Icons.Default.Search, "Search")
+            HeaderIconBtn(Icons.Default.Search, "Search", onClick = onToggleSearch, isActive = searchActive)
             HeaderIconBtn(OrbitIcons.Notifications, "Notifications")
-            HeaderIconBtn(OrbitIcons.Pin, "Pins")
+            HeaderIconBtn(OrbitIcons.Pin, "Pins", onClick = onTogglePins, isActive = pinsActive)
             HeaderIconBtn(OrbitIcons.Members, "Members")
         }
     }
@@ -153,12 +157,17 @@ internal fun ChatHeader(
 internal fun HeaderIconBtn(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     desc: String,
+    isActive: Boolean = false,
     onClick: () -> Unit = {}
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
     val tint by animateColorAsState(
-        targetValue = if (isHovered) Text_White else Text_Muted,
+        targetValue = when {
+            isActive -> Accent
+            isHovered -> Text_White
+            else -> Text_Muted
+        },
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
         label = "headerIconTint"
     )
