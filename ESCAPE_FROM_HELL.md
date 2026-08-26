@@ -1263,8 +1263,15 @@ Do NOT file bugs against these:
   Hands clear on call end.
 - ✅ Spotlight / pin participant — right-click a tile → Pin; forces Focus-style
   spotlight even in Grid mode, beats paged shares in slot priority.
-- **Screen-share resolution/FPS picker** — capture pipeline caps exist; expose
-  picker in ScreenShareDialog (720p30 default for bad internet).
+- ✅ Screen-share resolution/FPS picker — ScreenShareDialog now has Quality
+  (720p/1080p/1440p/Source) and Frame rate (15/30/60) pill rows; selection is
+  persisted to the EXISTING screenShareQuality/screenShareFps settings on
+  source pick, which both capture paths already read at startScreenShare
+  (P2P: VideoDesktopSource.setMaxFrameSize/setFrameRate; group: same capturer
+  + armScreenSharePublish fps → native videoEncoding.max_framerate). Limits:
+  applied at share START only (changing mid-share needs stop/restart); group-
+  path resolution cap comes from the shared capturer, native publish takes
+  dims lazily from the first frame.
 - **Simulcast/bandwidth adaptation** — LiveKit supports it natively; verify
   dynacast enabled; low priority while group sizes stay small.
 - **Custom image virtual background** — only Blur wired today
