@@ -41,7 +41,9 @@ fun CallGrid(
     tokens: CosmicTokens,
     layoutMode: CallLayoutMode = CallLayoutMode.Grid,
     modifier: Modifier = Modifier,
-    callManager: CallManager? = null
+    callManager: CallManager? = null,
+    pinnedNodeId: String? = null,
+    onPinToggle: ((String) -> Unit)? = null
 ) {
     if (nodes.isEmpty()) {
         Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -64,9 +66,13 @@ fun CallGrid(
     val spotlightShareNode = screenShareNodes.getOrNull(clampedPage)
 
     // ── Focus Mode: spotlight one participant, thumbnails on side ──
-    if (layoutMode == CallLayoutMode.Focus && nodes.size >= 2) {
-        // Spotlight = paged screen share, else remote camera, else first node
-        val spotlightNode = spotlightShareNode ?: nodes.find { it.id == "remote" } ?: nodes.first()
+    // A pinned tile forces the spotlight layout regardless of mode toggle;
+    // pinned beats paged shares beats default remote pick.
+    if ((layoutMode == CallLayoutMode.Focus || pinnedNodeId != null) && nodes.size >= 2) {
+        val spotlightNode = nodes.find { it.id == pinnedNodeId }
+            ?: spotlightShareNode
+            ?: nodes.find { it.id == "remote" }
+            ?: nodes.first()
 
         val thumbnailNodes = nodes.filter { it.id != spotlightNode.id }
 
@@ -82,6 +88,8 @@ fun CallGrid(
                 onPageChange = { sharePage = it },
                 tokens = tokens,
                 callManager = callManager,
+                isPinned = spotlightNode.id == pinnedNodeId,
+                onPinToggle = onPinToggle,
                 modifier = Modifier
                     .weight(3f)
                     .fillMaxHeight()
@@ -100,6 +108,8 @@ fun CallGrid(
                             node,
                             tokens,
                             callManager = callManager,
+                            isPinned = node.id == pinnedNodeId,
+                            onPinToggle = onPinToggle,
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxWidth()
@@ -119,7 +129,7 @@ fun CallGrid(
                 modifier = modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                VideoNodeCard(nodes.first(), tokens, callManager = callManager, modifier = Modifier.weight(1f).fillMaxWidth())
+                VideoNodeCard(nodes.first(), tokens, callManager = callManager, isPinned = nodes.first().id == pinnedNodeId, onPinToggle = onPinToggle, modifier = Modifier.weight(1f).fillMaxWidth())
                 EmptyVoicePanel(modifier = Modifier.weight(1f).fillMaxWidth())
             }
         }
@@ -139,12 +149,14 @@ fun CallGrid(
                         onPageChange = { sharePage = it },
                         tokens = tokens,
                         callManager = callManager,
+                        isPinned = (spotlightShareNode ?: nodes.first()).id == pinnedNodeId,
+                        onPinToggle = onPinToggle,
                         modifier = Modifier
                             .weight(if (nonShareNodes.isEmpty()) 1f else 2.5f)
                             .fillMaxWidth()
                     )
                     nonShareNodes.firstOrNull()?.let { other ->
-                        VideoNodeCard(other, tokens, callManager = callManager, modifier = Modifier.weight(1f).fillMaxWidth())
+                        VideoNodeCard(other, tokens, callManager = callManager, isPinned = other.id == pinnedNodeId, onPinToggle = onPinToggle, modifier = Modifier.weight(1f).fillMaxWidth())
                     }
                 }
             } else {
@@ -154,7 +166,7 @@ fun CallGrid(
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     nodes.forEach { node ->
-                        VideoNodeCard(node, tokens, callManager = callManager, modifier = Modifier.weight(1f).fillMaxHeight())
+                        VideoNodeCard(node, tokens, callManager = callManager, isPinned = node.id == pinnedNodeId, onPinToggle = onPinToggle, modifier = Modifier.weight(1f).fillMaxHeight())
                     }
                 }
             }
@@ -174,6 +186,8 @@ fun CallGrid(
                         onPageChange = { sharePage = it },
                         tokens = tokens,
                         callManager = callManager,
+                        isPinned = (spotlightShareNode ?: nodes.first()).id == pinnedNodeId,
+                        onPinToggle = onPinToggle,
                         modifier = Modifier.weight(2.5f).fillMaxWidth()
                     )
                     if (nonShareNodes.isNotEmpty()) {
@@ -182,7 +196,7 @@ fun CallGrid(
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             nonShareNodes.forEach { node ->
-                                VideoNodeCard(node, tokens, callManager = callManager, modifier = Modifier.weight(1f).fillMaxHeight())
+                                VideoNodeCard(node, tokens, callManager = callManager, isPinned = node.id == pinnedNodeId, onPinToggle = onPinToggle, modifier = Modifier.weight(1f).fillMaxHeight())
                             }
                         }
                     }
@@ -200,7 +214,7 @@ fun CallGrid(
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             rowNodes.forEach { node ->
-                                VideoNodeCard(node, tokens, callManager = callManager, modifier = Modifier.weight(1f).fillMaxHeight())
+                                VideoNodeCard(node, tokens, callManager = callManager, isPinned = node.id == pinnedNodeId, onPinToggle = onPinToggle, modifier = Modifier.weight(1f).fillMaxHeight())
                             }
                             // If odd number, add empty space
                             if (rowNodes.size < 2) {
@@ -226,10 +240,18 @@ private fun ShareSpotlightBox(
     onPageChange: (Int) -> Unit,
     tokens: CosmicTokens,
     callManager: CallManager? = null,
+    isPinned: Boolean = false,
+    onPinToggle: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Box(modifier = modifier) {
-        VideoNodeCard(node, tokens, callManager = callManager, modifier = Modifier.fillMaxSize())
+        VideoNodeCard(
+            node, tokens,
+            callManager = callManager,
+            isPinned = isPinned,
+            onPinToggle = onPinToggle,
+            modifier = Modifier.fillMaxSize()
+        )
         if (shareCount > 1) {
             SharePagerArrows(
                 page = selectedPage,

@@ -155,9 +155,14 @@ fun ChatScreen(
                     
                     // Typing Indicator Overlay
                     if (typingUsers.isNotEmpty()) {
+                        val typingNames = typingUsers.map { id ->
+                            members.firstOrNull { it.id == id || id.startsWith(it.id) }?.displayName
+                                ?.takeIf { it.isNotBlank() }
+                                ?: id.substringBefore(':').ifBlank { id }
+                        }
                         val typingText = when {
-                            typingUsers.size == 1 -> "${typingUsers[0]} is typing..."
-                            typingUsers.size == 2 -> "${typingUsers[0]} and ${typingUsers[1]} are typing..."
+                            typingNames.size == 1 -> "${typingNames[0]} is typing..."
+                            typingNames.size == 2 -> "${typingNames[0]} and ${typingNames[1]} are typing..."
                             else -> "Several people are typing..."
                         }
                         Surface(
