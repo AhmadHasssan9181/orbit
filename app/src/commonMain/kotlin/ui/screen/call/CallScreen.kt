@@ -1481,14 +1481,20 @@ fun AudioDeviceMenu(
 ) {
     var inputs by remember { mutableStateOf<List<String>>(emptyList()) }
     var outputs by remember { mutableStateOf<List<String>>(emptyList()) }
+    var cameras by remember { mutableStateOf<List<String>>(emptyList()) }
     var selectedInput by remember { mutableStateOf<String?>(null) }
     var selectedOutput by remember { mutableStateOf<String?>(null) }
     val settingsManager = remember { repository.SettingsManager() }
+    // Camera selection is setting-driven: WebRtcEffects observes cameraDevice
+    // and hot-switches the capture device, so persisting here is enough mid-call.
+    val savedCamera by settingsManager.cameraDevice.collectAsState("Default")
 
     LaunchedEffect(expanded) {
         if (expanded) {
             inputs = callManager.webRtcClient.getAudioInputDevices()
             outputs = callManager.webRtcClient.getAudioOutputDevices()
+            cameras = listOf("Default") +
+                callManager.webRtcClient.getVideoCaptureDevices().filter { it != "Default" }
             selectedInput = callManager.webRtcClient.getSelectedAudioInputDevice()
             selectedOutput = callManager.webRtcClient.getSelectedAudioOutputDevice()
         }
@@ -1576,6 +1582,45 @@ fun AudioDeviceMenu(
                 trailingIcon = {
                     if (isSelected) {
                         Icon(Icons.Default.Check, contentDescription = "Active device", tint = Color(0xFF23A559), modifier = Modifier.size(16.dp))
+                    }
+                }
+            )
+        }
+        HorizontalDivider(color = Color.White.copy(alpha = 0.05f), modifier = Modifier.padding(vertical = 4.dp))
+
+        // ── CAMERA ──
+        Text(
+            "CAMERA",
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            style = MaterialTheme.typography.labelSmall.copy(
+                color = Color.White.copy(alpha = 0.4f),
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.5.sp
+            )
+        )
+        cameras.forEach { device ->
+            val isSelected = device == savedCamera
+            DropdownMenuItem(
+                text = {
+                    Text(
+                        device,
+                        color = if (isSelected) Color.White else Color.White.copy(alpha = 0.75f),
+                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                        fontSize = 13.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                },
+                onClick = {
+                    settingsManager.setCameraDevice(device)
+                    onDismiss()
+                },
+                leadingIcon = {
+                    Icon(OrbitIcons.Video, null, tint = Color.White.copy(alpha = 0.4f), modifier = Modifier.size(16.dp))
+                },
+                trailingIcon = {
+                    if (isSelected) {
+                        Icon(Icons.Default.Check, contentDescription = "Active camera", tint = Color(0xFF23A559), modifier = Modifier.size(16.dp))
                     }
                 }
             )

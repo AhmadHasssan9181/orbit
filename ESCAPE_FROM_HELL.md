@@ -1283,9 +1283,16 @@ Do NOT file bugs against these:
   local-gain action. Limits: copied ID is the LiveKit identity space string
   (what tiles/media use), not necessarily the raw Matrix mxid; no paste-
   confirmation toast beyond the menu closing.
-- **In-call device switcher quick menu** — mic/speaker/camera pickers inline
-  in the call controls (AudioDeviceMenu exists — surface it on hover of the
-  chevron next to mute, Discord-style).
+- ✅ In-call device switcher quick menu — the chevron next to mute already
+  opened AudioDeviceMenu (mic input + speaker output pickers, both call
+  paths); this round added the missing CAMERA section: enumerates
+  getVideoCaptureDevices() when opened, selection persists via the
+  cameraDevice setting which WebRtcEffects already observes and hot-switches
+  mid-call (setVideoCaptureDevice), check-marked current device. Limits:
+  opens on click (not hover — click is Discord's actual behavior too);
+  camera hot-switch relies on the existing native setVideoCaptureDevice path
+  (same mechanism as the Settings pane, runtime-unverified with multiple
+  cameras plugged in).
 - ✅ Ringing / incoming-call UX for DM calls — pulsing overlay with
   Accept/Voice/Decline (CallScreen) now reachable from ANY screen: the app-level
   popup no longer hides while viewing the call's own DM channel (P2P calls have
