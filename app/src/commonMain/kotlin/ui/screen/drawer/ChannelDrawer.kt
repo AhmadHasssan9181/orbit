@@ -35,6 +35,7 @@ fun ChannelDrawer(
     onOpenRolesClick: (() -> Unit)? = null,
     selectedWhatsAppTab: String = "Chats",
     repository: repository.OrbitRepository? = null,
+    unreadCounts: Map<String, Int> = emptyMap(),
     modifier: Modifier = Modifier
 ) {
     var showInviteDialog by remember { mutableStateOf(false) }
@@ -115,6 +116,7 @@ fun ChannelDrawer(
                 DmListContent(
                     channels = channels,
                     selectedChannelId = selectedChannelId,
+                    unreadCounts = unreadCounts,
                     onChannelClick = onChannelClick,
                     onVoiceCall = { callManager?.startCall(it, false) },
                     onVideoCall = { callManager?.startCall(it, true) },
@@ -127,6 +129,7 @@ fun ChannelDrawer(
                     selectedChannelId = selectedChannelId,
                     currentUser = currentUser,
                     repository = repository,
+                    unreadCounts = unreadCounts,
                     onChannelClick = onChannelClick,
                     onCreateRoomClick = onCreateRoomClick,
                     modifier = Modifier.weight(1f)

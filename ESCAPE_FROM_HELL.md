@@ -1355,7 +1355,16 @@ Do NOT file bugs against these:
   transitions — small state machine in OrbitApp.
 - ✅ Quick Switcher Ctrl+K — fuzzy channel jump dialog across all servers
   (Keybinds card restored as real).
-- Unread badges on server icons (setting exists; ensure counts aggregate).
+- ✅ Unread badges v1 — every synced chat message funnels through a new
+  globalMessageArrivals SharedFlow (MatrixContext) exposed as
+  observeIncomingMessages; OrbitApp keeps a session-local per-room unread map
+  (own messages, edits, reactions and already-open channels excluded; counts
+  clear when the channel opens), aggregates per server via a channel→server
+  index, and surfaces red count pills (99+ cap) on ServerRail home/server
+  icons, ChannelList channel rows and non-lite DM rows. Limits: counts are
+  session-local only (no persistence, no offline catch-up — the stream starts
+  at "now"); lite-mode WhatsApp DM rows have no badge yet; in-chat unread
+  separator/jump-to-unread remains pending below.
 - ✅ Presence/status v1 — profile popover's status pill is now a real picker
   (Online/Idle/Do not disturb/Offline): selecting calls setPresence (Matrix
   online/unavailable/offline; DND maps to unavailable since spec lacks it) and
@@ -1366,7 +1375,12 @@ Do NOT file bugs against these:
   TEXT still missing (needs account-data convention for cross-client visibility);
   DM-list dots still placeholder. Settings "Presence Settings" pane chips
   (idle timeout etc.) remain cosmetic.
-- Profile editing (display name/avatar upload via profile API).
+- ✅ Profile editing — already real (audited, not rebuilt this pass):
+  Settings → My Account has avatar click → OS image picker →
+  `uploadAvatar` (media upload + setProfileField AvatarUrl) and Edit Profile →
+  name field → `updateDisplayName`, both refreshing from getCurrentUser after
+  save. Caveats: uploads are labeled PNG regardless of picked format; other UI
+  surfaces pick up the change on next reload; no inline error surface on failure.
 - Member list grouping by role/power level.
 - Notification settings per room (mute/mentions-only).
 - Server creation/join-via-invite flows.

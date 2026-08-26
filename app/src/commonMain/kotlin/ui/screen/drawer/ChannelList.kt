@@ -57,6 +57,7 @@ internal fun ChannelListContent(
     selectedChannelId: String?,
     currentUser: OrbitUser?,
     repository: repository.OrbitRepository? = null,
+    unreadCounts: Map<String, Int> = emptyMap(),
     onChannelClick: (String) -> Unit,
     onCreateRoomClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
@@ -78,7 +79,8 @@ internal fun ChannelListContent(
         }
         if (roomsExpanded) {
             items(channels, key = { it.id }) { ch ->
-                ChannelItem(ch, ch.id == selectedChannelId, currentUser, repository) { onChannelClick(ch.id) }
+                val chUnread = maxOf(unreadCounts[ch.id] ?: 0, unreadCounts[ch.matrixRoomId] ?: 0)
+                ChannelItem(ch, ch.id == selectedChannelId, currentUser, repository, unreadCount = chUnread) { onChannelClick(ch.id) }
             }
             if (channels.isEmpty()) {
                 item(key = "empty_rooms") {
@@ -197,7 +199,7 @@ internal fun ChannelSectionHeader(
 }
 
 @Composable
-internal fun ChannelItem(channel: OrbitChannel, isSelected: Boolean, currentUser: OrbitUser?, repository: repository.OrbitRepository? = null, onClick: () -> Unit) {
+internal fun ChannelItem(channel: OrbitChannel, isSelected: Boolean, currentUser: OrbitUser?, repository: repository.OrbitRepository? = null, unreadCount: Int = 0, onClick: () -> Unit) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
     val callManager = webrtc.LocalCallManager.current
@@ -306,6 +308,26 @@ internal fun ChannelItem(channel: OrbitChannel, isSelected: Boolean, currentUser
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f)
         )
+
+        if (unreadCount > 0 && !isSelected) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(Accent.copy(alpha = 0.22f))
+                    .padding(horizontal = 6.dp, vertical = 1.dp)
+            ) {
+                Text(
+                    text = if (unreadCount > 99) "99+" else unreadCount.toString(),
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        color = AccentLight,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    maxLines = 1
+                )
+            }
+            Spacer(Modifier.width(5.dp))
+        }
 
         if (channel.type == ChannelType.VOICE && isLive) {
             val livePulse by rememberInfiniteTransition(label = "liveChipPulse").animateFloat(

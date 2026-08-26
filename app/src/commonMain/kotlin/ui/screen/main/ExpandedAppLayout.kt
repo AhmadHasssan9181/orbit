@@ -37,6 +37,8 @@ fun ExpandedLayout(
     onAddServer: () -> Unit,
     onCreateRoom: () -> Unit,
     onOpenRoles: () -> Unit,
+    unreadCounts: Map<String, Int> = emptyMap(),
+    unreadByServer: Map<String, Int> = emptyMap(),
     modifier: Modifier = Modifier
 ) {
     val tokens = rememberCosmicTokens()
@@ -59,7 +61,8 @@ fun ExpandedLayout(
             onServerClick = onServerClick,
             onAddServerClick = onAddServer,
             selectedWhatsAppTab = selectedWhatsAppTab,
-            onWhatsAppTabClick = { selectedWhatsAppTab = it }
+            onWhatsAppTabClick = { selectedWhatsAppTab = it },
+            unreadByServer = unreadByServer
         )
 
         if (selectedServer != null) {
@@ -73,6 +76,7 @@ fun ExpandedLayout(
                     avatarColor = 0xFF7C6AF0.toInt(), status = UserStatus.ONLINE
                 ),
                 repository = repository,
+                unreadCounts = unreadCounts,
                 onChannelClick = onChannelClick,
                 onOpenSettings = onOpenSettings,
                 onCreateRoomClick = onCreateRoom,

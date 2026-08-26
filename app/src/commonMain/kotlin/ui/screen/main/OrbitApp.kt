@@ -49,6 +49,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -349,6 +350,46 @@ private fun MainAppContent(
 
     val displayCurrentUser = currentUser?.copy(status = myActiveStatus)
 
+    // ─── Unread tracking ────────────────────────────────────────
+    // Counts keyed by matrix room id; incremented from the global sync
+    // arrivals stream while the room isn't open, cleared when it is opened.
+    val unreadCounts = remember { mutableStateMapOf<String, Int>() }
+    var channelServerById by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+
+    LaunchedEffect(servers) {
+        val index = mutableMapOf<String, String>()
+        servers.forEach { server ->
+            runCatching { repository.getChannelsForSpace(server.id) }.getOrNull()?.forEach { ch ->
+                index[ch.id] = server.id
+                ch.matrixRoomId?.let { index[it] = server.id }
+            }
+        }
+        channelServerById = index
+    }
+
+    LaunchedEffect(Unit) {
+        repository.observeIncomingMessages().collect { (roomId, msg) ->
+            if (msg.content is MessageContent.Edit || msg.content is MessageContent.Reaction) return@collect
+            val ownId = currentUser?.id
+            if (ownId != null && (msg.userId == ownId || msg.userId.endsWith(ownId) || ownId.endsWith(msg.userId))) return@collect
+            if (roomId == selectedChannelId || roomId == compactOpenChannelId) return@collect
+            unreadCounts[roomId] = (unreadCounts[roomId] ?: 0) + 1
+        }
+    }
+
+    LaunchedEffect(selectedChannelId, compactOpenChannelId) {
+        selectedChannelId.takeIf { it.isNotBlank() }?.let { unreadCounts.remove(it) }
+        compactOpenChannelId?.let { unreadCounts.remove(it) }
+    }
+
+    val unreadByServer = remember(unreadCounts.toMap(), channelServerById) {
+        val totals = mutableMapOf<String, Int>()
+        unreadCounts.forEach { (roomId, count) ->
+            channelServerById[roomId]?.let { sid -> totals[sid] = (totals[sid] ?: 0) + count }
+        }
+        totals
+    }
+
     // ─── Load servers ───────────────────────────────────────────
     LaunchedEffect(Unit) {
         try {
@@ -525,6 +566,8 @@ private fun MainAppContent(
                     onAddServer = { showJoinServer = true },
                     onCreateRoom = { showCreateRoom = true },
                     onOpenRoles = { showServerRoles = true },
+                    unreadCounts = unreadCounts.toMap(),
+                    unreadByServer = unreadByServer,
                     modifier = Modifier.fillMaxSize()
                 )
 
@@ -543,6 +586,8 @@ private fun MainAppContent(
                     onAddServer = { showJoinServer = true },
                     onCreateRoom = { showCreateRoom = true },
                     onOpenRoles = { showServerRoles = true },
+                    unreadCounts = unreadCounts.toMap(),
+                    unreadByServer = unreadByServer,
                     modifier = Modifier.fillMaxSize()
                 )
 
@@ -561,6 +606,8 @@ private fun MainAppContent(
                     onAddServer = { showJoinServer = true },
                     onCreateRoom = { showCreateRoom = true },
                     onOpenRoles = { showServerRoles = true },
+                    unreadCounts = unreadCounts.toMap(),
+                    unreadByServer = unreadByServer,
                     modifier = Modifier.fillMaxSize()
                 )
             }

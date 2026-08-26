@@ -51,6 +51,8 @@ fun CompactLayout(
     onAddServer: () -> Unit,
     onCreateRoom: () -> Unit,
     onOpenRoles: () -> Unit,
+    unreadCounts: Map<String, Int> = emptyMap(),
+    unreadByServer: Map<String, Int> = emptyMap(),
     modifier: Modifier = Modifier
 ) {
     val tokens = rememberCosmicTokens()

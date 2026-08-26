@@ -378,6 +378,10 @@ class MatrixMessagesRepository(val context: MatrixContext) : OrbitMessagesReposi
         }
     }
 
+    override fun observeIncomingMessages(): Flow<Pair<String, OrbitMessage>> {
+        return context.globalMessageArrivals.asSharedFlow()
+    }
+
     suspend fun timelineEventToOrbitMessage(timelineEvent: TimelineEvent): OrbitMessage? {
         val contentResult = timelineEvent.content
         val event = timelineEvent.event as? RoomEvent<*> ?: return null

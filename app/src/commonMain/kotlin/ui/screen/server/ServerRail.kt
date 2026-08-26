@@ -55,6 +55,7 @@ fun ServerRail(
     onAddServerClick: () -> Unit = {},
     selectedWhatsAppTab: String = "Chats",
     onWhatsAppTabClick: (String) -> Unit = {},
+    unreadByServer: Map<String, Int> = emptyMap(),
     modifier: Modifier = Modifier
 ) {
     val isLiteMode = ui.theme.LocalIsLiteMode.current
@@ -75,9 +76,11 @@ fun ServerRail(
         // DM / Home icon — always first, like Discord
         item(key = "home") {
             val isSelected = selectedServerId == servers.firstOrNull { it.isDM }?.id
+            val homeUnread = servers.firstOrNull { it.isDM }?.id?.let { unreadByServer[it] } ?: 0
             ServerRailItem(
                 isSelected = isSelected,
                 isHovered = false,
+                unreadCount = homeUnread,
                 onClick = { servers.firstOrNull { it.isDM }?.let { onServerClick(it.id) } }
             ) {
                 OrbitBrandMark(
@@ -117,6 +120,7 @@ fun ServerRail(
             ServerRailItem(
                 isSelected = isSelected,
                 isHovered = isHovered,
+                unreadCount = unreadByServer[server.id] ?: 0,
                 onClick = { onServerClick(server.id) }
             ) {
                 Box(
@@ -246,6 +250,7 @@ private fun ServerRailItem(
     isSelected: Boolean,
     isHovered: Boolean,
     onClick: () -> Unit,
+    unreadCount: Int = 0,
     content: @Composable () -> Unit
 ) {
     // Left pill indicator — exactly like Discord/Revolt
@@ -292,6 +297,27 @@ private fun ServerRailItem(
                 .background(pillColor)
         )
         content()
+        if (unreadCount > 0) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = (-1).dp, y = 3.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xFFF23F42))
+                    .padding(horizontal = 5.dp, vertical = 1.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (unreadCount > 99) "99+" else unreadCount.toString(),
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        color = Color.White,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    maxLines = 1
+                )
+            }
+        }
     }
 }
 
