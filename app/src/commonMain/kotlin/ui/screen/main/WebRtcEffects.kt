@@ -3,6 +3,7 @@ package ui.screen.main
 import androidx.compose.runtime.*
 import webrtc.*
 import repository.*
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.*
 import ui.screen.chat.*
@@ -79,6 +80,20 @@ fun WebRtcEffects(
 
     LaunchedEffect(inputMode) {
         callManager.pushToTalkMode = inputMode == "Push to Talk"
+    }
+
+    // Incoming-call ringtone: loop while a DM invite is ringing, honoring the
+    // Voice & Video toggle. Stops on accept (CONNECTING), decline/expiry (IDLE).
+    LaunchedEffect(callManager, settingsManager) {
+        combine(
+            callManager.callState,
+            callManager.isIncomingCall,
+            settingsManager.callRingtone
+        ) { state, incoming, enabled ->
+            state == CallState.RINGING && incoming && enabled
+        }.collect { ringing ->
+            livekit.setCallRinging(ringing)
+        }
     }
 
 

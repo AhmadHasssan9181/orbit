@@ -1279,9 +1279,12 @@ Do NOT file bugs against these:
 - **In-call device switcher quick menu** — mic/speaker/camera pickers inline
   in the call controls (AudioDeviceMenu exists — surface it on hover of the
   chevron next to mute, Discord-style).
-- **Ringing / incoming-call UX for DM calls** — invite events arrive already
-  (`m.call.invite`); needs a ring overlay + accept/decline + timeout
-  (lifetimeMs already parsed). Biggest missing DM-call piece.
+- ✅ Ringing / incoming-call UX for DM calls — pulsing overlay with
+  Accept/Voice/Decline (CallScreen) now reachable from ANY screen: the app-level
+  popup no longer hides while viewing the call's own DM channel (P2P calls have
+  no embedded surface). Decline sends `m.call.hangup`; invite expires per
+  lifetimeMs; procedural 440+480 Hz ringtone loops while ringing
+  (`setCallRinging`, honors the "Incoming call ringtone" setting).
 - **Call notifications** — system toast/tray flash when invited or when a
   call starts in a watched room.
 - **Soundboard** — `showSoundboard` state exists but appears unwired; either

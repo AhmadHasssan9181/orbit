@@ -68,6 +68,10 @@ expect fun liveKitRemoteAudioMuted(): kotlinx.coroutines.flow.StateFlow<Set<Stri
 // cadence) for the connection-quality bars on call tiles.
 expect fun liveKitConnectionQuality(): kotlinx.coroutines.flow.StateFlow<Map<String, livekit.ConnectionQualitySample>>
 
+// Incoming-call ringtone: start/stop the looping local ring while a DM invite
+// is ringing. Idempotent — repeated calls with the same value are no-ops.
+expect fun setCallRinging(ringing: Boolean)
+
 // Voice & Video settings: NS/EC/AGC for the native group-call APM chain
 expect fun setLiveKitAudioProcessingOptions(noiseSuppression: Boolean, echoCancellation: Boolean, autoGainControl: Boolean)
 
