@@ -39,7 +39,10 @@ internal fun MessageList(
     messages: List<OrbitMessage>,
     currentUser: OrbitUser?,
     modifier: Modifier = Modifier,
-    onSeen: (String) -> Unit = {}
+    onSeen: (String) -> Unit = {},
+    onReact: ((String, String) -> Unit)? = null,
+    onEditMessage: ((String, String) -> Unit)? = null,
+    onDeleteMessage: ((String) -> Unit)? = null
 ) {
     val listState = rememberLazyListState()
     val grouped   = groupMessages(messages)
@@ -117,14 +120,32 @@ internal fun MessageList(
                         }
                     } else {
                         when (group) {
-                            is MessageGroup.Single -> MessageBubbleFull(group.message, currentUser)
+                            is MessageGroup.Single -> MessageBubbleFull(
+                                group.message,
+                                currentUser,
+                                onReact = onReact,
+                                onEditMessage = onEditMessage,
+                                onDeleteMessage = onDeleteMessage
+                            )
                             is MessageGroup.Dense  -> {
                                 if (ui.theme.LocalIsLiteMode.current) {
                                     for (msg in group.messages) {
-                                        MessageBubbleFull(msg, currentUser)
+                                        MessageBubbleFull(
+                                            msg,
+                                            currentUser,
+                                            onReact = onReact,
+                                            onEditMessage = onEditMessage,
+                                            onDeleteMessage = onDeleteMessage
+                                        )
                                     }
                                 } else {
-                                    MessageBubbleFull(group.messages[0], currentUser)
+                                    MessageBubbleFull(
+                                        group.messages[0],
+                                        currentUser,
+                                        onReact = onReact,
+                                        onEditMessage = onEditMessage,
+                                        onDeleteMessage = onDeleteMessage
+                                    )
                                     for (i in 1 until group.messages.size) {
                                         DenseMessageBody(group.messages[i])
                                     }

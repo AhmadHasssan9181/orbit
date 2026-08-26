@@ -18,7 +18,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -43,13 +45,28 @@ import ui.screen.media.*
 import ui.screen.main.*
 
 @Composable
-internal fun MessageBubbleFull(message: OrbitMessage, currentUser: OrbitUser?) {
+internal fun MessageBubbleFull(
+    message: OrbitMessage,
+    currentUser: OrbitUser?,
+    onReact: ((String, String) -> Unit)? = null,
+    onEditMessage: ((String, String) -> Unit)? = null,
+    onDeleteMessage: ((String) -> Unit)? = null
+) {
     val isLiteMode = ui.theme.LocalIsLiteMode.current
     if (isLiteMode) {
         val isCurrentUser = currentUser != null && message.userId == currentUser.id
         WhatsAppMessageBubble(message, isCurrentUser)
         return
     }
+
+    val isOwn = currentUser != null && message.userId == currentUser.id
+    val canEdit = isOwn && onEditMessage != null && message.content is ui.model.MessageContent.Text
+    val canDelete = isOwn && onDeleteMessage != null
+
+    var showReactionMenu by remember { mutableStateOf(false) }
+    var showMoreMenu by remember { mutableStateOf(false) }
+    var showEditDialog by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
 
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
@@ -178,19 +195,181 @@ internal fun MessageBubbleFull(message: OrbitMessage, currentUser: OrbitUser?) {
                     .padding(horizontal = 2.dp),
                 horizontalArrangement = Arrangement.spacedBy(0.dp)
             ) {
-                MessageActionBtn(OrbitIcons.Emoji, "React")
-                MessageActionBtn(OrbitIcons.Reply, "Reply")
-                MessageActionBtn(Icons.Default.Edit, "Edit")
-                MessageActionBtn(Icons.Default.MoreHoriz, "More")
+                if (onReact != null) {
+                    Box {
+                        MessageActionBtn(OrbitIcons.Emoji, "React") { showReactionMenu = true }
+                        ReactionPickerMenu(
+                            expanded = showReactionMenu,
+                            alreadyAdded = { emoji -> currentUser?.id != null && message.reactions[emoji]?.contains(currentUser.id) == true },
+                            onPick = { emoji ->
+                                showReactionMenu = false
+                                if (currentUser == null || message.reactions[emoji]?.contains(currentUser.id) != true) {
+                                    onReact(message.id, emoji)
+                                }
+                            },
+                            onDismiss = { showReactionMenu = false }
+                        )
+                    }
+                }
+                if (canEdit) {
+                    MessageActionBtn(Icons.Default.Edit, "Edit") { showEditDialog = true }
+                }
+                if (canDelete || !isOwn) {
+                    Box {
+                        MessageActionBtn(Icons.Default.MoreHoriz, "More") { showMoreMenu = true }
+                        MessageMoreMenu(
+                            expanded = showMoreMenu,
+                            canDelete = canDelete,
+                            messageBody = message.body,
+                            onDelete = {
+                                showMoreMenu = false
+                                showDeleteConfirm = true
+                            },
+                            onCopyText = { showMoreMenu = false },
+                            onDismiss = { showMoreMenu = false }
+                        )
+                    }
+                }
+            }
+        }
+
+        // Edit dialog (own text messages)
+        if (showEditDialog) {
+            MessageEditDialog(
+                initialBody = message.body,
+                onConfirm = { newBody ->
+                    showEditDialog = false
+                    if (newBody.isNotBlank()) onEditMessage?.invoke(message.id, newBody)
+                },
+                onDismiss = { showEditDialog = false }
+            )
+        }
+
+        // Delete confirmation (own messages)
+        if (showDeleteConfirm) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { showDeleteConfirm = false },
+                title = { Text("Delete message") },
+                text = { Text("This will permanently remove the message for everyone.") },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(onClick = {
+                        showDeleteConfirm = false
+                        onDeleteMessage?.invoke(message.id)
+                    }) { Text("Delete", color = Color(0xFFF23F42)) }
+                },
+                dismissButton = {
+                    androidx.compose.material3.TextButton(onClick = { showDeleteConfirm = false }) {
+                        Text("Cancel")
+                    }
+                },
+                containerColor = Color(0xFF1E1F22),
+                titleContentColor = Color.White,
+                textContentColor = Text_Muted
+            )
+        }
+    }
+}
+
+private val QuickReactionEmojis = listOf("👍", "❤️", "😂", "🔥", "🎉", "😮", "😢", "👀")
+
+@Composable
+private fun ReactionPickerMenu(
+    expanded: Boolean,
+    alreadyAdded: (String) -> Boolean,
+    onPick: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    androidx.compose.material3.DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF1E1F22)
+    ) {
+        Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)) {
+            QuickReactionEmojis.take(4).forEach { emoji ->
+                androidx.compose.material3.IconButton(onClick = { onPick(emoji) }, modifier = Modifier.size(36.dp)) {
+                    Text(emoji, fontSize = 18.sp)
+                }
+            }
+        }
+        Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)) {
+            QuickReactionEmojis.drop(4).forEach { emoji ->
+                androidx.compose.material3.IconButton(onClick = { onPick(emoji) }, modifier = Modifier.size(36.dp)) {
+                    Text(emoji, fontSize = 18.sp)
+                }
             }
         }
     }
 }
 
 @Composable
+private fun MessageMoreMenu(
+    expanded: Boolean,
+    canDelete: Boolean,
+    messageBody: String,
+    onDelete: () -> Unit,
+    onCopyText: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    androidx.compose.material3.DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF1E1F22)
+    ) {
+        androidx.compose.material3.DropdownMenuItem(
+            text = { Text("Copy Text", color = Color.White, fontSize = 13.sp) },
+            onClick = {
+                clipboard.setText(androidx.compose.ui.text.AnnotatedString(messageBody))
+                onCopyText()
+            }
+        )
+        if (canDelete) {
+            androidx.compose.material3.DropdownMenuItem(
+                text = { Text("Delete Message", color = Color(0xFFF23F42), fontSize = 13.sp) },
+                onClick = onDelete
+            )
+        }
+    }
+}
+
+@Composable
+private fun MessageEditDialog(
+    initialBody: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var editBody by remember { mutableStateOf(initialBody) }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit message") },
+        text = {
+            androidx.compose.material3.OutlinedTextField(
+                value = editBody,
+                onValueChange = { editBody = it },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 2,
+                maxLines = 6
+            )
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = { onConfirm(editBody.trim()) }) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+        containerColor = Color(0xFF1E1F22),
+        titleContentColor = Color.White,
+        textContentColor = Text_Muted
+    )
+}
+
+@Composable
 internal fun MessageActionBtn(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
-    desc: String
+    desc: String,
+    onClick: () -> Unit = {}
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
@@ -210,7 +389,7 @@ internal fun MessageActionBtn(
         label = "messageActionScale"
     )
     IconButton(
-        onClick = {},
+        onClick = onClick,
         modifier = Modifier
             .size(28.dp)
             .clip(RoundedCornerShape(5.dp))
