@@ -21,6 +21,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.SolidColor
+import ui.components.OrbitListRow
+import ui.components.OrbitRowLeading
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -483,15 +490,12 @@ private fun MainAppContent(
     // ─── Loading screen ─────────────────────────────────────────
     if (isLoadingServers) {
         Box(
-            modifier = Modifier.fillMaxSize().background(rememberCosmicTokens().Bg),
+            modifier = Modifier
+                .fillMaxSize()
+                .background(rememberCosmicTokens().Bg),
             contentAlignment = Alignment.Center
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator(color = rememberCosmicTokens().Accent)
-                Spacer(Modifier.height(12.dp))
-                Text("Loading rooms...", color = Color.White.copy(alpha = 0.6f),
-                    style = MaterialTheme.typography.bodySmall)
-            }
+            AppBootState()
         }
         return
     }
@@ -883,6 +887,7 @@ fun ChatScreenWithRepo(
         currentUser = displayCurrentUser,
         directProfile = directProfile,
         typingUsers = typingUsers,
+        isLoadingMessages = isLoading,
         activeCall = activeCall,
         activeGroupCallUrl = activeGroupCallUrl,
         onSend = { body ->
@@ -1030,115 +1035,141 @@ private fun annotateSeenMessages(
     }
 }
 
+/**
+ * Ctrl+K quick switcher.
+ *
+ * Rebuilt around the shared components. The previous version was a `Surface`
+ * with three hard-coded `Color.White.copy(alpha = …)` values that never
+ * changed with the theme, a Material `OutlinedTextField` inside it (so the
+ * field drew its own border inside a bordered card), and no keyboard
+ * navigation at all — arrow keys did nothing, so "quick" meant "type, then
+ * click with the mouse". It now has ↑/↓, Enter, and Escape-to-close.
+ */
 @Composable
 private fun QuickSwitcherDialog(
     entries: List<Pair<OrbitServer, OrbitChannel>>,
     onSelect: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val t = rememberCosmicTokens()
     var query by remember { mutableStateOf("") }
+    var selectedIndex by remember { mutableStateOf(0) }
+    val focusRequester = remember { FocusRequester() }
+
     val results = remember(query, entries) {
         if (query.isBlank()) {
-            entries.take(10)
+            entries.take(12)
         } else {
             val q = query.trim().lowercase()
             entries
                 .filter { (_, channel) -> channel.name.lowercase().contains(q) }
                 .sortedBy { (_, channel) -> channel.name.lowercase().indexOf(q) }
-                .take(10)
+                .take(12)
         }
     }
 
+    LaunchedEffect(query) { selectedIndex = 0 }
+    LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
+
     Dialog(onDismissRequest = onDismiss) {
         Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = Color(0xFF1A1B1E),
-            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
+            shape = RoundedCornerShape(16.dp),
+            color = t.Elevated,
+            border = BorderStroke(1.dp, t.SeparatorStrong),
+            shadowElevation = 24.dp,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 48.dp)
+                .padding(horizontal = 64.dp)
                 .onPreviewKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
-                        results.firstOrNull()?.let { onSelect(it.second.id) }
-                        true
-                    } else {
-                        false
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when (event.key) {
+                        Key.DirectionDown -> {
+                            selectedIndex = (selectedIndex + 1).coerceAtMost(results.lastIndex.coerceAtLeast(0))
+                            true
+                        }
+                        Key.DirectionUp -> {
+                            selectedIndex = (selectedIndex - 1).coerceAtLeast(0)
+                            true
+                        }
+                        Key.Enter -> {
+                            results.getOrNull(selectedIndex)?.let { onSelect(it.second.id) }
+                            true
+                        }
+                        androidx.compose.ui.input.key.Key.Escape -> {
+                            onDismiss()
+                            true
+                        }
+                        else -> false
                     }
                 }
         ) {
-            Column(modifier = Modifier.padding(12.dp)) {
+            Column(modifier = Modifier.padding(vertical = 8.dp)) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
                 ) {
                     Icon(
                         Icons.Filled.Search,
                         contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.45f),
-                        modifier = Modifier.size(18.dp)
+                        tint = t.Text_Subtle,
+                        modifier = Modifier.size(17.dp)
                     )
-                    OutlinedTextField(
-                        value = query,
-                        onValueChange = { query = it },
-                        placeholder = {
+                    Box(modifier = Modifier.weight(1f)) {
+                        if (query.isEmpty()) {
                             Text(
-                                "Where would you like to go?",
-                                color = Color.White.copy(alpha = 0.4f),
-                                fontSize = 13.sp
+                                "Jump to a room…",
+                                color = t.Text_Subtle,
+                                fontSize = 14.sp
                             )
-                        },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Color.Transparent,
-                            unfocusedBorderColor = Color.Transparent
+                        }
+                        BasicTextField(
+                            value = query,
+                            onValueChange = { query = it },
+                            modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                color = t.Text_White,
+                                fontSize = 14.sp
+                            ),
+                            cursorBrush = SolidColor(t.Accent),
+                            singleLine = true
+                        )
+                    }
+                    Text(
+                        text = "Esc",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            color = t.Text_Subtle,
+                            fontSize = 10.sp
                         ),
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(t.Sunken)
+                            .padding(horizontal = 5.dp, vertical = 2.dp)
                     )
                 }
 
-                HorizontalDivider(color = Color.White.copy(alpha = 0.06f))
+                HorizontalDivider(
+                    color = t.Separator,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                )
 
-                LazyColumn(modifier = Modifier.heightIn(max = 320.dp)) {
-                    items(results, key = { it.second.id }) { (server, channel) ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { onSelect(channel.id) }
-                                .padding(horizontal = 6.dp, vertical = 9.dp)
-                        ) {
-                            Icon(
-                                Icons.Filled.Tag,
-                                contentDescription = null,
-                                tint = Color.White.copy(alpha = 0.4f),
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Text(
-                                channel.name,
-                                color = Color.White.copy(alpha = 0.85f),
-                                fontSize = 14.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Spacer(Modifier.weight(1f))
-                            Text(
-                                server.name,
-                                color = Color.White.copy(alpha = 0.35f),
-                                fontSize = 11.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                    if (results.isEmpty()) {
-                        item {
-                            Text(
-                                "No channels found",
-                                color = Color.White.copy(alpha = 0.4f),
-                                fontSize = 13.sp,
-                                modifier = Modifier.padding(vertical = 12.dp)
+                if (results.isEmpty()) {
+                    Text(
+                        "No rooms match “$query”",
+                        color = t.Text_Muted,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 18.dp)
+                    )
+                } else {
+                    LazyColumn(modifier = Modifier.heightIn(max = 340.dp)) {
+                        itemsIndexed(results, key = { _, pair -> pair.second.id }) { index, (server, channel) ->
+                            val isActive = index == selectedIndex
+                            QuickSwitcherRow(
+                                channelName = channel.name,
+                                serverName = server.name,
+                                isActive = isActive,
+                                onClick = { onSelect(channel.id) },
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 1.dp)
                             )
                         }
                     }
@@ -1146,6 +1177,39 @@ private fun QuickSwitcherDialog(
             }
         }
     }
+}
+
+@Composable
+private fun QuickSwitcherRow(
+    channelName: String,
+    serverName: String,
+    isActive: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val t = rememberCosmicTokens()
+    OrbitListRow(
+        title = channelName,
+        onClick = onClick,
+        modifier = modifier,
+        selected = isActive,
+        height = 36.dp,
+        horizontalPadding = 8.dp,
+        showSelectionBar = false,
+        leading = OrbitRowLeading(icon = OrbitIcons.TextChannel),
+        titleStyle = MaterialTheme.typography.bodyMedium.copy(
+            color = if (isActive) t.Text_White else t.Text_Secondary,
+            fontSize = 13.5.sp
+        ),
+        trailing = {
+            Text(
+                text = serverName,
+                style = MaterialTheme.typography.labelSmall.copy(color = t.Text_Subtle, fontSize = 11.sp),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    )
 }
 
 

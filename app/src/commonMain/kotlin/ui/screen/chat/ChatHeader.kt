@@ -1,52 +1,66 @@
 package ui.screen.chat
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.Spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsOff
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.components.OrbitIconButton
+import ui.components.OrbitMenu
+import ui.components.OrbitMenuDivider
+import ui.components.OrbitMenuItem
 import ui.icons.OrbitIcons
 import ui.layout.LocalWindowSizeClass
 import ui.model.ChannelType
 import ui.model.OrbitChannel
 import ui.model.OrbitUser
+import ui.theme.OrbitMotion
+import ui.theme.OrbitRadius
+import ui.theme.OrbitSpace
+import ui.theme.rememberCosmicTokens
 
-import ui.screen.auth.*
-import ui.screen.settings.*
-import ui.screen.drawer.*
-import ui.screen.server.*
-import ui.screen.call.*
-import ui.screen.media.*
-import ui.screen.main.*
-
+/**
+ * Room header.
+ *
+ * Previously a flat 48dp strip: a bare hash glyph, a bold title, and a topic
+ * that pushed the actions off the edge of the window on any room with a long
+ * name. The topic is now a second line that truncates, the actions never move,
+ * and the whole bar carries a hover state so the pointer's position over the
+ * header means something.
+ */
 @Composable
 internal fun ChatHeader(
     channel: OrbitChannel,
@@ -61,151 +75,199 @@ internal fun ChatHeader(
     notifMode: String = "ALL",
     onCycleNotificationMode: (() -> Unit)? = null
 ) {
+    val t = rememberCosmicTokens()
     val windowSize = LocalWindowSizeClass.current
+    val compact = windowSize.isCompact
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+    var showMore by remember { mutableStateOf(false) }
+
+    val barBg by animateColorAsState(
+        targetValue = if (hovered) t.Header_Bg.copy(alpha = 0.98f) else t.Header_Bg,
+        animationSpec = OrbitMotion.SnappyColor,
+        label = "headerBg"
+    )
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Header_Bg)
-            .height(if (windowSize.isCompact) 56.dp else 48.dp)
-            .padding(horizontal = if (windowSize.isCompact) 4.dp else 16.dp),
+            .background(barBg)
+            .hoverable(interaction)
+            .height(if (compact) 56.dp else 52.dp)
+            .padding(horizontal = if (compact) OrbitSpace.xs else OrbitSpace.md),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            // Back button for compact (phone) and medium (tablet) layouts
+        // ── Identity ────────────────────────────────────────────
+        Row(
+            modifier = Modifier.weight(1f, fill = false),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             if (onBack != null && !windowSize.isExpanded) {
-                IconButton(onClick = onBack, modifier = Modifier.size(40.dp)) {
-                    Icon(
-                        imageVector = Icons.Default.ArrowBack,
-                        contentDescription = "Back",
-                        tint = Text_White,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
+                OrbitIconButton(
+                    icon = Icons.Default.ArrowBack,
+                    contentDescription = "Back",
+                    onClick = onBack,
+                    size = 34.dp,
+                    iconSize = 18.dp,
+                    shape = CircleShape
+                )
+                Spacer(Modifier.width(OrbitSpace.xs))
             }
+
             val isLiteMode = ui.theme.LocalIsLiteMode.current
-            if (directProfile != null) {
-                SmallUserAvatar(directProfile, size = 28.dp)
-            } else if (isLiteMode) {
-                Box(
-                    modifier = Modifier.size(36.dp).clip(CircleShape).background(AccentGhost),
+            when {
+                directProfile != null -> SmallUserAvatar(directProfile, size = 30.dp)
+                isLiteMode -> Box(
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(CircleShape)
+                        .background(t.AccentGhost),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
                         text = channel.name.take(2).uppercase(),
-                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold, color = Color.White)
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            color = t.Accent,
+                            fontSize = 12.sp
+                        )
                     )
                 }
-            } else {
-                // Channel icon — Discord uses grey hash, Revolt uses coloured
-                when (channel.type) {
-                    ChannelType.TEXT -> Icon(
-                        imageVector = OrbitIcons.TextChannel,
+                else -> Box(
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(OrbitRadius.smShape)
+                        .background(t.Sunken),
+                    contentAlignment = Alignment.Center
+                ) {
+                    androidx.compose.material3.Icon(
+                        imageVector = if (channel.type == ChannelType.TEXT) OrbitIcons.TextChannel else OrbitIcons.VoiceChannel,
                         contentDescription = null,
-                        tint = Text_Muted,
-                        modifier = Modifier.size(20.dp).alpha(0.7f)
-                    )
-                    ChannelType.VOICE -> Icon(
-                        imageVector = OrbitIcons.VoiceChannel,
-                        contentDescription = null,
-                        tint = Text_Muted,
-                        modifier = Modifier.size(20.dp).alpha(0.7f)
+                        tint = t.Text_Muted,
+                        modifier = Modifier.size(16.dp)
                     )
                 }
             }
 
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = directProfile?.displayName ?: channel.name,
-                style = MaterialTheme.typography.titleSmall.copy(
-                    fontWeight = FontWeight.Bold,
-                    color = Text_White
-                ),
-                maxLines = 1
-            )
+            Spacer(Modifier.width(OrbitSpace.md))
 
-            if (channel.topic.isNotBlank()) {
-                Box(
-                    modifier = Modifier
-                        .padding(horizontal = 12.dp)
-                        .width(1.dp)
-                        .height(16.dp)
-                        .background(Text_Muted.copy(alpha = 0.3f))
-                )
+            Column(modifier = Modifier.weight(1f, fill = false)) {
                 Text(
-                    text = channel.topic,
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        color = Text_Muted,
-                        fontSize = 12.sp
+                    text = directProfile?.displayName ?: channelDisplayNameForHeader(channel),
+                    style = MaterialTheme.typography.titleSmall.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        color = t.Text_White,
+                        fontSize = 14.sp,
+                        letterSpacing = 0.sp,
+                        lineHeight = 18.sp
                     ),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                val subtitle = when {
+                    directProfile != null && directProfile.username.isNotBlank() -> "@${directProfile.username}"
+                    channel.topic.isNotBlank() -> channel.topic
+                    else -> null
+                }
+                if (subtitle != null) {
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            color = t.Text_Muted,
+                            fontSize = 11.sp,
+                            lineHeight = 14.sp
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        Spacer(Modifier.width(OrbitSpace.md))
+
+        // ── Actions ─────────────────────────────────────────────
+        Row(horizontalArrangement = Arrangement.spacedBy(1.dp)) {
             if (directProfile != null) {
-                HeaderIconBtn(OrbitIcons.Call, "Voice Call", onClick = { onVoiceCall?.invoke() })
-                HeaderIconBtn(OrbitIcons.Video, "Video Call", onClick = { onVideoCall?.invoke() })
-            }
-            HeaderIconBtn(Icons.Default.Search, "Search", onClick = onToggleSearch, isActive = searchActive)
-            if (onCycleNotificationMode != null) {
-                HeaderIconBtn(
-                    icon = if (notifMode == "MUTE") Icons.Default.NotificationsOff else Icons.Default.Notifications,
-                    desc = when (notifMode) {
-                        "MUTE" -> "Notifications: Muted"
-                        "MENTIONS" -> "Notifications: Mentions only"
-                        else -> "Notifications: All messages"
-                    },
-                    isActive = notifMode != "ALL",
-                    onClick = onCycleNotificationMode
+                OrbitIconButton(
+                    icon = OrbitIcons.Call,
+                    contentDescription = "Start a voice call",
+                    onClick = { onVoiceCall?.invoke() },
+                    tooltip = "Voice call",
+                    size = 32.dp,
+                    iconSize = 17.dp
                 )
-            } else {
-                HeaderIconBtn(OrbitIcons.Notifications, "Notifications")
+                OrbitIconButton(
+                    icon = OrbitIcons.Video,
+                    contentDescription = "Start a video call",
+                    onClick = { onVideoCall?.invoke() },
+                    tooltip = "Video call",
+                    size = 32.dp,
+                    iconSize = 17.dp
+                )
             }
-            HeaderIconBtn(OrbitIcons.Pin, "Pins", onClick = onTogglePins, isActive = pinsActive)
-            HeaderIconBtn(OrbitIcons.Members, "Members")
+            OrbitIconButton(
+                icon = Icons.Default.Search,
+                contentDescription = "Search this room",
+                onClick = onToggleSearch,
+                active = searchActive,
+                tooltip = "Search",
+                size = 32.dp,
+                iconSize = 16.dp
+            )
+            if (onCycleNotificationMode != null) {
+                OrbitIconButton(
+                    icon = if (notifMode == "MUTE") Icons.Default.NotificationsOff else Icons.Default.Notifications,
+                    contentDescription = when (notifMode) {
+                        "MUTE" -> "Notifications muted"
+                        "MENTIONS" -> "Notifications: mentions only"
+                        else -> "Notifications: all messages"
+                    },
+                    onClick = onCycleNotificationMode,
+                    active = notifMode != "ALL",
+                    tooltip = when (notifMode) {
+                        "MUTE" -> "Muted"
+                        "MENTIONS" -> "Mentions only"
+                        else -> "All messages"
+                    },
+                    size = 32.dp,
+                    iconSize = 16.dp
+                )
+            }
+            OrbitIconButton(
+                icon = OrbitIcons.Pin,
+                contentDescription = "Pinned messages",
+                onClick = onTogglePins,
+                active = pinsActive,
+                tooltip = "Pins",
+                size = 32.dp,
+                iconSize = 16.dp
+            )
+            OrbitIconButton(
+                icon = OrbitIcons.Members,
+                contentDescription = "Members",
+                onClick = { },
+                tooltip = "Members",
+                size = 32.dp,
+                iconSize = 16.dp
+            )
+            OrbitIconButton(
+                icon = Icons.Default.MoreHoriz,
+                contentDescription = "Room options",
+                onClick = { showMore = !showMore },
+                tooltip = "More",
+                size = 32.dp,
+                iconSize = 16.dp
+            )
         }
     }
 }
 
-@Composable
-internal fun HeaderIconBtn(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    desc: String,
-    isActive: Boolean = false,
-    onClick: () -> Unit = {}
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val isHovered by interactionSource.collectIsHoveredAsState()
-    val tint by animateColorAsState(
-        targetValue = when {
-            isActive -> Accent
-            isHovered -> Text_White
-            else -> Text_Muted
-        },
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "headerIconTint"
-    )
-    val bgColor by animateColorAsState(
-        targetValue = if (isHovered) AccentGhost.copy(alpha = 0.40f) else Color.Transparent,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "headerIconBg"
-    )
-    val iconScale by animateFloatAsState(
-        targetValue = if (isHovered) 1.08f else 1f,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "headerIconScale"
-    )
-    IconButton(
-        onClick = onClick,
-        modifier = Modifier
-            .size(32.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(bgColor),
-        interactionSource = interactionSource
-    ) {
-        Icon(icon, desc, tint = tint, modifier = Modifier.size(18.dp).scale(iconScale))
+/** Voice rooms get their " (Call)" suffix stripped in the header too. */
+private fun channelDisplayNameForHeader(channel: OrbitChannel): String =
+    if (channel.type == ChannelType.VOICE) {
+        channel.name.removeSuffix(" (Call)")
+    } else {
+        channel.name
     }
-}

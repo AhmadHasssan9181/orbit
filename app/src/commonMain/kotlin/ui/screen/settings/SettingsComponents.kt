@@ -1,19 +1,24 @@
 package ui.screen.settings
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.hoverable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsHoveredAsState
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -21,85 +26,96 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.components.OrbitButton
+import ui.components.OrbitButtonTone
+import ui.components.OrbitSegmentedControl
+import ui.components.OrbitSwitch
+import ui.components.orbitClickable
+import ui.components.rememberOrbitInteraction
+import ui.theme.OrbitMotion
+import ui.theme.OrbitRadius
+import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
 
-import ui.screen.auth.*
-import ui.screen.settings.*
-import ui.screen.drawer.*
-import ui.screen.server.*
-import ui.screen.call.*
-import ui.screen.media.*
-import ui.screen.main.*
-
-// ─── Reusable PrefCard ───────────────────────────────────────────
-
+/**
+ * Settings primitives.
+ *
+ * `PrefCard` used to make the *whole card* clickable with an empty `onClick`,
+ * which meant a slider inside a card swallowed every click on the card and
+ * hovering a static information row lit it up like a button. Cards are now
+ * inert; only the actual control is interactive. That single change removes
+ * most of the ways the settings screen used to feel broken.
+ */
 @Composable
 internal fun PrefCard(
     title: String,
     description: String? = null,
     vertical: Boolean = false,
+    icon: ImageVector? = null,
     content: @Composable () -> Unit
 ) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val isHovered by interactionSource.collectIsHoveredAsState()
-    val tokens = rememberCosmicTokens()
-    
-    val bgColor by animateColorAsState(
-        targetValue = if (isHovered) tokens.CardBgHover else tokens.CardBg,
-        animationSpec = tween(150),
-        label = "cardBg"
-    )
+    val t = rememberCosmicTokens()
+
+    val surface = Modifier
+        .fillMaxWidth()
+        .clip(OrbitRadius.mdShape)
+        .background(t.CardBg)
+        .border(1.dp, t.Separator, OrbitRadius.mdShape)
 
     if (vertical) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .background(bgColor)
-                .hoverable(interactionSource)
-                .clickable(interactionSource = interactionSource, indication = null, onClick = {})
-                .padding(horizontal = 14.dp, vertical = 11.dp)
-        ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyMedium.copy(
-                    fontWeight = FontWeight.Bold,
-                    color = tokens.Text_White
-                )
-            )
-            if (!description.isNullOrBlank()) {
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    text = description,
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        color = tokens.Text_Muted,
-                        fontSize = 11.sp
-                    )
-                )
-            }
-            Spacer(Modifier.height(12.dp))
+        Column(modifier = surface.padding(OrbitSpace.lg)) {
+            PrefCardHeading(title, description, icon)
+            Spacer(Modifier.height(OrbitSpace.md))
             content()
         }
     } else {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .background(bgColor)
-                .hoverable(interactionSource)
-                .clickable(interactionSource = interactionSource, indication = null, onClick = {})
-                .padding(horizontal = 14.dp, vertical = 11.dp),
+            modifier = surface.padding(horizontal = OrbitSpace.lg, vertical = OrbitSpace.md),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+            PrefCardHeading(title, description, icon, Modifier.weight(1f).padding(end = OrbitSpace.lg))
+            content()
+        }
+    }
+}
+
+@Composable
+private fun PrefCardHeading(
+    title: String,
+    description: String?,
+    icon: ImageVector?,
+    modifier: Modifier = Modifier
+) {
+    val t = rememberCosmicTokens()
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+        if (icon != null) {
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(OrbitRadius.smShape)
+                    .background(t.Sunken),
+                contentAlignment = Alignment.Center
+            ) {
+                androidx.compose.material3.Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = t.Text_Muted,
+                    modifier = Modifier.size(15.dp)
+                )
+            }
+            Spacer(Modifier.width(OrbitSpace.md))
+        }
+        Column {
             Text(
                 text = title,
                 style = MaterialTheme.typography.bodyMedium.copy(
-                    fontWeight = FontWeight.Bold,
-                    color = tokens.Text_White
+                    fontWeight = FontWeight.SemiBold,
+                    color = t.Text_White,
+                    fontSize = 13.5.sp
                 )
             )
             if (!description.isNullOrBlank()) {
@@ -107,33 +123,38 @@ internal fun PrefCard(
                 Text(
                     text = description,
                     style = MaterialTheme.typography.bodySmall.copy(
-                        color = tokens.Text_Muted,
-                        fontSize = 11.sp
+                        color = t.Text_Muted,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp
                     )
                 )
             }
         }
-        content()
-        }
     }
 }
 
-// ─── Section Header ──────────────────────────────────────────────
-
 @Composable
-internal fun SectionHeader(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.titleSmall.copy(
-            fontWeight = FontWeight.ExtraBold,
-            color = rememberCosmicTokens().Text_White,
-            letterSpacing = 0.5.sp
-        ),
-        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
-    )
+internal fun SectionHeader(text: String, subtitle: String? = null) {
+    val t = rememberCosmicTokens()
+    Column(modifier = Modifier.padding(top = OrbitSpace.xl, bottom = OrbitSpace.sm)) {
+        Text(
+            text = text.uppercase(),
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontWeight = FontWeight.SemiBold,
+                color = t.Text_Muted,
+                letterSpacing = 0.8.sp,
+                fontSize = 10.sp
+            )
+        )
+        if (subtitle != null) {
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall.copy(color = t.Text_Subtle, fontSize = 12.sp)
+            )
+        }
+    }
 }
-
-// ─── Hero Info Card ──────────────────────────────────────────────
 
 @Composable
 internal fun HeroCard(
@@ -145,70 +166,58 @@ internal fun HeroCard(
     buttonText: String? = null,
     onButtonClick: () -> Unit = {}
 ) {
-    val tokens = rememberCosmicTokens()
-    val bgMod = if (gradient != null) {
-        Modifier.background(Brush.horizontalGradient(gradient))
-    } else {
-        Modifier.background(tokens.CardBg)
-    }
+    val t = rememberCosmicTokens()
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .then(bgMod)
-            .padding(22.dp),
+            .clip(OrbitRadius.mdShape)
+            .background(if (gradient != null) Brush.horizontalGradient(gradient) else Brush.linearGradient(listOf(t.CardBg, t.CardBg)))
+            .border(1.dp, t.Separator, OrbitRadius.mdShape)
+            .padding(OrbitSpace.xxl),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Icon(icon, null, tint = iconTint, modifier = Modifier.size(52.dp))
-        Spacer(Modifier.height(16.dp))
-        Text(title, style = MaterialTheme.typography.titleMedium, color = if (gradient != null) Color.White else tokens.Text_White, fontWeight = FontWeight.ExtraBold, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-        Spacer(Modifier.height(6.dp))
-        Text(subtitle, style = MaterialTheme.typography.bodySmall, color = if (gradient != null) Color.White.copy(alpha = 0.8f) else tokens.Text_Muted, textAlign = androidx.compose.ui.text.style.TextAlign.Center, lineHeight = 18.sp)
+        Box(
+            modifier = Modifier
+                .size(46.dp)
+                .clip(OrbitRadius.lgShape)
+                .background(iconTint.copy(alpha = 0.14f)),
+            contentAlignment = Alignment.Center
+        ) {
+            androidx.compose.material3.Icon(icon, null, tint = iconTint, modifier = Modifier.size(24.dp))
+        }
+        Spacer(Modifier.height(OrbitSpace.md))
+        Text(
+            title,
+            style = MaterialTheme.typography.titleMedium.copy(
+                color = t.Text_White,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 16.sp
+            ),
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(OrbitSpace.xs))
+        Text(
+            subtitle,
+            style = MaterialTheme.typography.bodySmall.copy(color = t.Text_Muted, lineHeight = 18.sp),
+            textAlign = TextAlign.Center
+        )
         if (buttonText != null) {
-            Spacer(Modifier.height(20.dp))
-            Button(onClick = onButtonClick, colors = ButtonDefaults.buttonColors(containerColor = if (gradient != null) Color.White.copy(0.2f) else tokens.Accent)) {
-                Text(buttonText, color = Color.White, fontWeight = FontWeight.Bold)
-            }
+            Spacer(Modifier.height(OrbitSpace.lg))
+            OrbitButton(text = buttonText, onClick = onButtonClick, tone = OrbitButtonTone.Primary)
         }
     }
 }
 
-// ─── Chip Group ──────────────────────────────────────────────────
-
+/** Segmented selector, themed to match the rest of the app. */
 @Composable
 internal fun ChipGroup(options: List<String>, selected: String, onSelect: (String) -> Unit) {
-    val tokens = rememberCosmicTokens()
-    androidx.compose.foundation.lazy.LazyRow(
-        modifier = Modifier.widthIn(max = 300.dp),
-        horizontalArrangement = Arrangement.spacedBy(5.dp)
-    ) {
-        items(options) { opt ->
-            val isSelected = selected == opt
-            val bgColor by animateColorAsState(
-                targetValue = if (isSelected) tokens.Accent else tokens.CardBg,
-                label = "chipBg"
-            )
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(bgColor)
-                    .clickable { onSelect(opt) }
-                    .padding(horizontal = 10.dp, vertical = 5.dp)
-            ) {
-                Text(
-                    text = opt,
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        color = if (isSelected) Color.White else tokens.Text_Muted,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                        fontSize = 11.sp
-                    )
-                )
-            }
-        }
-    }
+    OrbitSegmentedControl(
+        options = options,
+        selected = selected,
+        onSelect = onSelect,
+        label = { it }
+    )
 }
-
-// ─── Cosmic Switch ───────────────────────────────────────────────
 
 @Composable
 internal fun CosmicSwitch(
@@ -216,31 +225,25 @@ internal fun CosmicSwitch(
     onCheckedChange: (Boolean) -> Unit,
     activeColor: Color? = null
 ) {
-    val active = activeColor ?: rememberCosmicTokens().Accent
-    Switch(
-        checked = checked,
-        onCheckedChange = onCheckedChange,
-        colors = SwitchDefaults.colors(
-            checkedThumbColor   = Color.White,
-            checkedTrackColor   = active,
-            uncheckedThumbColor = rememberCosmicTokens().Text_Muted,
-            uncheckedTrackColor = rememberCosmicTokens().CardBg
-        )
-    )
+    val t = rememberCosmicTokens()
+    OrbitSwitch(checked = checked, onCheckedChange = onCheckedChange)
 }
-
-// ─── Status Badge ────────────────────────────────────────────────
 
 @Composable
 internal fun StatusBadge(text: String, color: Color) {
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(5.dp))
+            .clip(OrbitRadius.xsShape)
             .background(color.copy(alpha = 0.15f))
-            .padding(horizontal = 9.dp, vertical = 3.dp)
+            .padding(horizontal = 8.dp, vertical = 3.dp)
     ) {
-        Text(text, style = MaterialTheme.typography.labelSmall.copy(
-            color = color, fontWeight = FontWeight.Bold, fontSize = 11.sp
-        ))
+        Text(
+            text,
+            style = MaterialTheme.typography.labelSmall.copy(
+                color = color,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 10.5.sp
+            )
+        )
     }
 }

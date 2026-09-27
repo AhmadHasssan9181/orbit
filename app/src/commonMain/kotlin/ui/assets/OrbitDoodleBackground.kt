@@ -20,40 +20,54 @@ import ui.theme.LocalActiveTheme
 import ui.theme.LocalIsLiteMode
 import ui.theme.Theme
 
-import ui.screen.auth.*
-import ui.screen.settings.*
-import ui.screen.drawer.*
-import ui.screen.server.*
-import ui.screen.call.*
-import ui.screen.media.*
-import ui.screen.main.*
-
+/**
+ * Chat wallpapers.
+ *
+ * Every variant used to be a saturated accent sitting behind every single
+ * message in every room: a tiled field of outlined icons in electric blue,
+ * mint, cyan, violet and pink, permanently on, because `OrbitChatDoodleBackground`
+ * was called unconditionally from the message list. On a busy conversation the
+ * pattern fought the text for every glyph on screen.
+ *
+ * Two changes: the strokes are desaturated to sit *behind* the content rather
+ * than compete with it, and the default wallpaper no longer draws a pattern at
+ * all — it is a flat, very slightly tinted canvas. The doodles remain available,
+ * as a deliberate choice.
+ */
 enum class OrbitDoodleWallpaper(
     val id: String,
     val label: String,
     val background: Color,
-    val stroke: Color
+    val stroke: Color,
+    /** The default is a flat canvas: a pattern behind a wall of text is noise. */
+    val patterned: Boolean = true
 ) {
-    Dark01("dark-01", "Dark 01", Color(0xFF0B1220), Color(0xFF6EA8FF)),
-    Dark02("dark-02", "Dark 02", Color(0xFF071A1A), Color(0xFF5DE4C7)),
-    Dark03("dark-03", "Dark 03", Color(0xFF101827), Color(0xFF93C5FD)),
-    Dark04("dark-04", "Dark 04", Color(0xFF102018), Color(0xFF7DD3A7)),
-    Light01("light-01", "Light 01", Color(0xFFF5EFE3), Color(0xFF8A7A62)),
-    Light02("light-02", "Light 02", Color(0xFFF6F7F3), Color(0xFF9CA3AF)),
-    Light03("light-03", "Light 03", Color(0xFFEFE2CE), Color(0xFF9B7C54)),
-    Light04("light-04", "Light 04", Color(0xFFEDF5F8), Color(0xFF7BA6B4)),
-    Grey01("grey-01", "Grey 01", Color(0xFF8D948D), Color(0xFF374151)),
-    Grey02("grey-02", "Grey 02", Color(0xFFC7C9C3), Color(0xFF6B7280)),
-    Grey03("grey-03", "Grey 03", Color(0xFF51585D), Color(0xFFD1D5DB)),
-    Grey04("grey-04", "Grey 04", Color(0xFFA7A89F), Color(0xFF4B5563)),
-    Amoled01("amoled-01", "Amoled 01", Color(0xFF000000), Color(0xFF5B6472)),
-    Amoled02("amoled-02", "Amoled 02", Color(0xFF020202), Color(0xFF2F855A)),
-    Amoled03("amoled-03", "Amoled 03", Color(0xFF000000), Color(0xFF6D5DFB)),
-    Amoled04("amoled-04", "Amoled 04", Color(0xFF020003), Color(0xFFA855F7)),
-    Mixed01("mixed-01", "Mixed 01", Color(0xFF101729), Color(0xFF7C3AED)),
-    Mixed02("mixed-02", "Mixed 02", Color(0xFF0B2A28), Color(0xFF38BDF8)),
-    Mixed03("mixed-03", "Mixed 03", Color(0xFF0E2434), Color(0xFF22D3EE)),
-    Mixed04("mixed-04", "Mixed 04", Color(0xFF2B0D24), Color(0xFFEC4899))
+    Plain("plain", "Plain", Color(0xFF14171D), Color(0xFF2E3542), patterned = false),
+
+    Dark01("dark-01", "Slate", Color(0xFF14171D), Color(0xFF6C7BE0)),
+    Dark02("dark-02", "Teal", Color(0xFF0F1512), Color(0xFF4FA3A0)),
+    Dark03("dark-03", "Steel", Color(0xFF101519), Color(0xFF5B8FC7)),
+    Dark04("dark-04", "Moss", Color(0xFF141A17), Color(0xFF7BA05B)),
+
+    Light01("light-01", "Sand", Color(0xFFFAFBFC), Color(0xFFC08A5E)),
+    Light02("light-02", "Paper", Color(0xFFFFFFFF), Color(0xFFB4BCC9)),
+    Light03("light-03", "Clay", Color(0xFFF7F8FA), Color(0xFFBF6A60)),
+    Light04("light-04", "Ice", Color(0xFFFAFBFC), Color(0xFF5C87C4)),
+
+    Grey01("grey-01", "Graphite", Color(0xFF1B1F27), Color(0xFF5B6472)),
+    Grey02("grey-02", "Slate Grey", Color(0xFF181C22), Color(0xFF697180)),
+    Grey03("grey-03", "Ash", Color(0xFF1F242C), Color(0xFF8B93A3)),
+    Grey04("grey-04", "Concrete", Color(0xFF181C22), Color(0xFF565E6D)),
+
+    Amoled01("amoled-01", "OLED Slate", Color(0xFF000000), Color(0xFF3A4250), patterned = false),
+    Amoled02("amoled-02", "OLED Moss", Color(0xFF000000), Color(0xFF2F3A32)),
+    Amoled03("amoled-03", "OLED Iris", Color(0xFF000000), Color(0xFF3A3660)),
+    Amoled04("amoled-04", "OLED Warm", Color(0xFF000000), Color(0xFF4A3A2A)),
+
+    Mixed01("mixed-01", "Dusk", Color(0xFF16171F), Color(0xFF6C7BE0)),
+    Mixed02("mixed-02", "Pine", Color(0xFF12161A), Color(0xFF4FA3A0)),
+    Mixed03("mixed-03", "Marine", Color(0xFF12161C), Color(0xFF5B8FC7)),
+    Mixed04("mixed-04", "Rosewood", Color(0xFF1A1418), Color(0xFFAE7099))
 }
 
 val OrbitDoodleWallpaperOptions: List<String> = listOf("Auto") + OrbitDoodleWallpaper.entries.map { it.label }
@@ -71,14 +85,11 @@ fun orbitDoodleWallpaperIdForLabel(label: String): String {
 @Composable
 private fun resolvedOrbitDoodleWallpaper(selectedId: String): OrbitDoodleWallpaper {
     OrbitDoodleWallpaper.entries.firstOrNull { it.id == selectedId }?.let { return it }
+    // "Auto" and anything unrecognised: match the active theme's canvas, flat.
     return when (LocalActiveTheme.current) {
         Theme.Light -> OrbitDoodleWallpaper.Light02
-        Theme.Amoled -> OrbitDoodleWallpaper.Amoled03
-        Theme.Ocean -> OrbitDoodleWallpaper.Mixed03
-        Theme.Forest -> OrbitDoodleWallpaper.Dark04
-        Theme.Sunset -> OrbitDoodleWallpaper.Mixed04
-        Theme.Cyberpunk -> OrbitDoodleWallpaper.Mixed04
-        else -> if (LocalIsLiteMode.current) OrbitDoodleWallpaper.Dark02 else OrbitDoodleWallpaper.Mixed01
+        Theme.Amoled -> OrbitDoodleWallpaper.Amoled01
+        else -> if (LocalIsLiteMode.current) OrbitDoodleWallpaper.Dark02 else OrbitDoodleWallpaper.Plain
     }
 }
 
@@ -94,16 +105,17 @@ fun OrbitChatDoodleBackground(
             .fillMaxSize()
             .background(wallpaper.background)
     ) {
+        if (!wallpaper.patterned) return@Box
         Canvas(Modifier.fillMaxSize()) {
-            drawDoodleWallpaper(wallpaper.stroke.copy(alpha = 0.24f * intensity))
-            drawRect(Color.Black.copy(alpha = if (wallpaper.background.luminanceApprox() > 0.55f) 0.02f else 0.10f))
+            // 0.11 instead of 0.24: a texture, not a pattern you read.
+            drawDoodleWallpaper(wallpaper.stroke.copy(alpha = 0.11f * intensity))
         }
     }
 }
 
 private fun DrawScope.drawDoodleWallpaper(tint: Color) {
-    val tile = 150.dp.toPx()
-    val stroke = Stroke(width = 2.1.dp.toPx(), cap = StrokeCap.Round)
+    val tile = 190.dp.toPx()
+    val stroke = Stroke(width = 1.6.dp.toPx(), cap = StrokeCap.Round)
     var row = 0
     var y = -tile * 0.30f
     while (y < size.height + tile) {
@@ -111,7 +123,7 @@ private fun DrawScope.drawDoodleWallpaper(tint: Color) {
         var x = -tile * 0.22f + if (row % 2 == 0) 0f else tile * 0.46f
         while (x < size.width + tile) {
             val center = Offset(x + tile * 0.50f, y + tile * 0.50f)
-            val scale = tile / 150f
+            val scale = tile / 190f
             rotate((row * 9 + col * 13) % 28 - 14f, center) {
                 when ((row * 5 + col * 7) % 9) {
                     0 -> drawDoodleChat(center, scale, tint, stroke)
@@ -261,10 +273,6 @@ private fun DrawScope.drawDoodleCommunity(center: Offset, scale: Float, tint: Co
         cornerRadius = CornerRadius(12f * scale, 12f * scale),
         style = stroke
     )
-}
-
-private fun Color.luminanceApprox(): Float {
-    return (red * 0.299f) + (green * 0.587f) + (blue * 0.114f)
 }
 
 private fun DrawScope.drawDoodleLine(color: Color, start: Offset, end: Offset, stroke: Stroke) {

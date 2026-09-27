@@ -1,52 +1,78 @@
 package ui.screen.server
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.*
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.DonutLarge
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ui.assets.OrbitBrandMark
 import ui.assets.OrbitServerAssetIcon
-import ui.icons.OrbitIcons
+import ui.components.OrbitCountBadge
+import ui.components.OrbitScrollbar
 import ui.model.OrbitServer
-
 import ui.theme.LocalIsLiteMode
+import ui.theme.OrbitMotion
+import ui.theme.OrbitRadius
+import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
 
-import ui.screen.auth.*
-import ui.screen.settings.*
-import ui.screen.drawer.*
-import ui.screen.server.*
-import ui.screen.call.*
-import ui.screen.media.*
-import ui.screen.main.*
-
-// ─── Cosmic Design Tokens ──────────────────────────────────────
-
+/**
+ * The server rail.
+ *
+ * Discord's rail is good and worth keeping: a 68px column of squircles with a
+ * selection pill. What was wrong here was the execution — the pill was
+ * hard-coded to a neon red for unread counts, the "add" and "discover" tiles
+ * used a background that did not exist in the token set, hovering animated the
+ * corner radius of a shape the user could not see, and there was no way to
+ * find out which space a tile was without clicking it.
+ *
+ * Now: labelled on hover, one accent, a real token for every surface, and a
+ * scrollbar that only shows up when there are more spaces than fit.
+ */
 @Composable
 fun ServerRail(
     servers: List<OrbitServer>,
@@ -64,266 +90,278 @@ fun ServerRail(
         return
     }
 
-    LazyColumn(
+    val t = rememberCosmicTokens()
+    val listState = rememberLazyListState()
+    val spaces = servers.filter { !it.isDM }
+    val dmServer = servers.firstOrNull { it.isDM }
+
+    Box(
         modifier = modifier
             .fillMaxHeight()
-            .width(68.dp)
-            .background(Rail_Bg),
-        contentPadding = PaddingValues(vertical = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.Top)
+            .width(72.dp)
+            .background(t.Rail_Bg)
     ) {
-        // DM / Home icon — always first, like Discord
-        item(key = "home") {
-            val isSelected = selectedServerId == servers.firstOrNull { it.isDM }?.id
-            val homeUnread = servers.firstOrNull { it.isDM }?.id?.let { unreadByServer[it] } ?: 0
-            ServerRailItem(
-                isSelected = isSelected,
-                isHovered = false,
-                unreadCount = homeUnread,
-                onClick = { servers.firstOrNull { it.isDM }?.let { onServerClick(it.id) } }
-            ) {
-                OrbitBrandMark(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(
-                            RoundedCornerShape(
-                                animateDpAsState(
-                                    if (isSelected) 15.dp else 22.dp,
-                                    spring(stiffness = Spring.StiffnessMedium),
-                                    label = "homeCorner"
-                                ).value
-                            )
-                        ),
-                    showGlow = isSelected
-                )
-            }
-        }
-
-        // Divider like Discord/Revolt
-        item(key = "divider") {
-            HorizontalDivider(
-                modifier = Modifier
-                    .width(32.dp)
-                    .padding(vertical = 2.dp),
-                color = Separator,
-                thickness = 2.dp
-            )
-        }
-
-        // Server icons
-        items(servers.filter { !it.isDM }, key = { it.id }) { server ->
-            val isSelected = server.id == selectedServerId
-            val interactionSource = remember { MutableInteractionSource() }
-            val isHovered by interactionSource.collectIsHoveredAsState()
-
-            ServerRailItem(
-                isSelected = isSelected,
-                isHovered = isHovered,
-                unreadCount = unreadByServer[server.id] ?: 0,
-                onClick = { onServerClick(server.id) }
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .hoverable(interactionSource)
-                        .clip(
-                            RoundedCornerShape(
-                                animateDpAsState(
-                                    if (isSelected || isHovered) 15.dp else 22.dp,
-                                    spring(stiffness = Spring.StiffnessMedium),
-                                    label = "srvCorner"
-                                ).value
-                            )
-                        )
-                        .background(
-                            Brush.linearGradient(
-                                listOf(
-                                    Color(server.iconColor),
-                                    Color(server.iconColor).copy(alpha = 0.7f)
-                                )
-                            )
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (server.avatarUrl != null) {
-                        coil3.compose.AsyncImage(
-                            model = server.avatarUrl,
-                            contentDescription = server.name,
-                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    } else {
-                        val initials = getInitials(server.name)
-                        OrbitServerAssetIcon(
-                            label = initials,
-                            color = Color(server.iconColor),
-                            modifier = Modifier.fillMaxSize()
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxHeight(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                top = OrbitSpace.md,
+                bottom = OrbitSpace.md
+            ),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(OrbitSpace.xs)
+        ) {
+            // ── Home / DMs ─────────────────────────────────────────
+            if (dmServer != null) {
+                item(key = "home") {
+                    ServerRailItem(
+                        selected = dmServer.id == selectedServerId,
+                        unreadCount = unreadByServer[dmServer.id] ?: 0,
+                        onClick = { onServerClick(dmServer.id) },
+                        label = dmServer.name
+                    ) { hovered ->
+                        OrbitBrandMark(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(
+                                    RoundedCornerShape(
+                                        animateRailCorner(selected = dmServer.id == selectedServerId, hovered = hovered)
+                                    )
+                                ),
+                            showGlow = dmServer.id == selectedServerId
                         )
                     }
                 }
             }
-        }
 
-        // Add Server button
-        item(key = "add") {
-            ServerRailItem(
-                isSelected = false,
-                isHovered = false,
-                onClick = onAddServerClick
-            ) {
-                val interactionSource = remember { MutableInteractionSource() }
-                val isHovered by interactionSource.collectIsHoveredAsState()
+            item(key = "divider") {
                 Box(
                     modifier = Modifier
-                        .size(44.dp)
-                        .hoverable(interactionSource)
-                        .clip(
-                            RoundedCornerShape(
-                                animateDpAsState(
-                                    if (isHovered) 15.dp else 22.dp,
-                                    spring(stiffness = Spring.StiffnessMedium),
-                                    label = "addCorner"
-                                ).value
-                            )
-                        )
-                        .background(
-                            if (isHovered) Accent.copy(alpha = 0.14f)
-                            else MaterialTheme.colorScheme.surfaceContainer
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = OrbitIcons.Add,
-                        contentDescription = "Add Server",
-                        tint = if (isHovered) AccentLight else Text_Muted,
-                        modifier = Modifier.size(21.dp)
+                        .width(30.dp)
+                        .height(1.5.dp)
+                        .clip(CircleShape)
+                        .background(t.Separator)
+                )
+            }
+
+            items(spaces, key = { it.id }) { server ->
+                val isSelected = server.id == selectedServerId
+                ServerRailItem(
+                    selected = isSelected,
+                    unreadCount = unreadByServer[server.id] ?: 0,
+                    onClick = { onServerClick(server.id) },
+                    label = server.name
+                ) { hovered ->
+                    val shape = RoundedCornerShape(
+                        animateRailCorner(selected = isSelected, hovered = hovered)
                     )
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(shape)
+                            .background(
+                                Brush.linearGradient(
+                                    listOf(
+                                        Color(server.iconColor),
+                                        Color(server.iconColor).copy(alpha = 0.78f)
+                                    )
+                                )
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (server.avatarUrl != null) {
+                            coil3.compose.AsyncImage(
+                                model = server.avatarUrl,
+                                contentDescription = server.name,
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                modifier = Modifier.fillMaxWidth().size(42.dp)
+                            )
+                        } else {
+                            OrbitServerAssetIcon(
+                                label = initialsOf(server.name),
+                                color = Color(server.iconColor),
+                                modifier = Modifier.size(42.dp)
+                            )
+                        }
+                    }
                 }
+            }
+
+            item(key = "add") {
+                RailActionTile(
+                    icon = Icons.Default.Add,
+                    description = "Create or join a server",
+                    onClick = onAddServerClick
+                )
+            }
+            item(key = "discover") {
+                RailActionTile(
+                    icon = Icons.Default.Explore,
+                    description = "Discover servers",
+                    onClick = onAddServerClick
+                )
             }
         }
 
-        // Discover button
-        item(key = "discover") {
-            ServerRailItem(
-                isSelected = false,
-                isHovered = false,
-                onClick = onAddServerClick
-            ) {
-                val interactionSource = remember { MutableInteractionSource() }
-                val isHovered by interactionSource.collectIsHoveredAsState()
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .hoverable(interactionSource)
-                        .clip(
-                            RoundedCornerShape(
-                                animateDpAsState(
-                                    if (isHovered) 15.dp else 22.dp,
-                                    spring(stiffness = Spring.StiffnessMedium),
-                                    label = "discoverCorner"
-                                ).value
-                            )
-                        )
-                        .background(
-                            if (isHovered) Accent.copy(alpha = 0.14f)
-                            else MaterialTheme.colorScheme.surfaceContainer
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Explore,
-                        contentDescription = "Join a server",
-                        tint = if (isHovered) AccentLight else Text_Muted,
-                        modifier = Modifier.size(21.dp)
-                    )
-                }
-            }
-        }
+        OrbitScrollbar(listState = listState, modifier = Modifier.align(Alignment.CenterEnd))
     }
 }
 
-// ─── ServerRailItem — Discord-style pill + squircle ──────────
+/**
+ * The rail's signature shape change: a rounded square at rest that tightens
+ * toward a squircle when the tile is selected or hovered. It is the one place
+ * in the app where animating the *shape* is the point, so it gets its own
+ * spec rather than a generic duration.
+ */
+@Composable
+private fun animateRailCorner(selected: Boolean, hovered: Boolean) =
+    animateDpAsState(
+        targetValue = if (selected || hovered) 14.dp else 18.dp,
+        animationSpec = OrbitMotion.BouncyDp,
+        label = "railCorner"
+    ).value
 
 @Composable
 private fun ServerRailItem(
-    isSelected: Boolean,
-    isHovered: Boolean,
+    selected: Boolean,
+    unreadCount: Int,
     onClick: () -> Unit,
-    unreadCount: Int = 0,
-    content: @Composable () -> Unit
+    label: String,
+    content: @Composable (hovered: Boolean) -> Unit
 ) {
-    // Left pill indicator — exactly like Discord/Revolt
+    val t = rememberCosmicTokens()
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+
+    // Left selection pill.
     val pillHeight by animateDpAsState(
         targetValue = when {
-            isSelected -> 34.dp
-            isHovered -> 18.dp
+            selected -> 30.dp
+            hovered -> 16.dp
             else -> 0.dp
         },
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessLow
-        ),
-        label = "pillH"
+        animationSpec = OrbitMotion.BouncyDp,
+        label = "railPillHeight"
     )
     val pillColor by animateColorAsState(
         targetValue = when {
-            isSelected -> Accent
-            isHovered -> Text_White
+            selected -> t.Accent
+            hovered -> t.Text_Muted
             else -> Color.Transparent
         },
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessLow
-        ),
-        label = "pillColor"
+        animationSpec = OrbitMotion.SnappyColor,
+        label = "railPillColor"
+    )
+    // Mute a non-selected tile slightly so the active one carries the eye.
+    val tileAlpha by animateFloatAsState(
+        targetValue = if (selected) 1f else 0.82f,
+        animationSpec = OrbitMotion.Snappy,
+        label = "railTileAlpha"
     )
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(48.dp)
-            .clickable(onClick = onClick),
+            .height(50.dp),
         contentAlignment = Alignment.Center
     ) {
-        // Left pill
         Box(
             modifier = Modifier
                 .align(Alignment.CenterStart)
-                .offset(x = (-2).dp)
-                .width(4.dp)
+                .padding(start = 3.dp)
+                .width(3.dp)
                 .height(pillHeight)
-                .clip(RoundedCornerShape(topEnd = 4.dp, bottomEnd = 4.dp))
+                .clip(RoundedCornerShape(topEnd = 3.dp, bottomEnd = 3.dp))
                 .background(pillColor)
         )
-        content()
-        if (unreadCount > 0) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .offset(x = (-1).dp, y = 3.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Color(0xFFF23F42))
-                    .padding(horizontal = 5.dp, vertical = 1.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = if (unreadCount > 99) "99+" else unreadCount.toString(),
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        color = Color.White,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold
-                    ),
-                    maxLines = 1
-                )
+
+        Box(
+            modifier = Modifier
+                .size(50.dp)
+                .alpha(tileAlpha)
+                .hoverable(interaction)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    role = Role.Button,
+                    onClick = onClick
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            content(hovered)
+
+            if (unreadCount > 0) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(end = 3.dp, top = 2.dp)
+                ) {
+                    OrbitCountBadge(count = unreadCount, color = t.Danger)
+                }
             }
         }
+
+        // Name, revealed on hover — the only way to know a space without opening it.
+        ui.components.HoverTooltip(
+            text = label,
+            visible = hovered,
+            modifier = Modifier
+        ) { }
     }
 }
 
-// ─── Helpers ─────────────────────────────────────────────────
+@Composable
+private fun RailActionTile(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    description: String,
+    onClick: () -> Unit
+) {
+    val t = rememberCosmicTokens()
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
 
-private fun getInitials(name: String): String = when {
+    val bg by animateColorAsState(
+        targetValue = if (hovered) t.CardBgHover else t.CardBg,
+        animationSpec = OrbitMotion.SnappyColor,
+        label = "railActionBg"
+    )
+    val tint by animateColorAsState(
+        targetValue = if (hovered) t.AccentLight else t.Text_Muted,
+        animationSpec = OrbitMotion.SnappyColor,
+        label = "railActionTint"
+    )
+    val scale by animateFloatAsState(
+        targetValue = if (hovered) 1.06f else 1f,
+        animationSpec = OrbitMotion.Snappy,
+        label = "railActionScale"
+    )
+
+    Box(modifier = Modifier.fillMaxWidth().height(50.dp), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .scale(scale)
+                .clip(RoundedCornerShape(animateRailCorner(selected = false, hovered = hovered)))
+                .background(bg)
+                .border(1.dp, if (hovered) t.AccentBorder else t.Separator, RoundedCornerShape(18.dp))
+                .hoverable(interaction)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    role = Role.Button,
+                    onClick = onClick
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = description, tint = tint, modifier = Modifier.size(18.dp))
+        }
+        ui.components.HoverTooltip(text = description, visible = hovered) { }
+    }
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────
+
+internal fun initialsOf(name: String): String = when {
     name.isBlank() -> "?"
     name.length <= 2 -> name.uppercase()
     else -> name.split(Regex("\\s+"))
@@ -332,7 +370,7 @@ private fun getInitials(name: String): String = when {
         .joinToString("") { it.first().uppercase() }
 }
 
-// ─── Lite Mode Messenger Rail ────────────────────────────────────
+// ─── Lite Mode Messenger Rail ────────────────────────────────────────────
 
 @Composable
 private fun WhatsAppRail(selectedTab: String, onTabClick: (String) -> Unit, modifier: Modifier = Modifier) {
@@ -340,20 +378,19 @@ private fun WhatsAppRail(selectedTab: String, onTabClick: (String) -> Unit, modi
         modifier = modifier
             .fillMaxHeight()
             .width(60.dp)
-            .background(Rail_Bg)
-            .padding(vertical = 12.dp),
+            .background(ui.theme.rememberCosmicTokens().Rail_Bg)
+            .padding(vertical = OrbitSpace.md),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceBetween
+        verticalArrangement = Arrangement.Top
     ) {
-        // Top nav items
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+            verticalArrangement = Arrangement.spacedBy(OrbitSpace.xs)
         ) {
-            LiteRailItem(OrbitIcons.TextChannel, "Chats", isSelected = selectedTab == "Chats", onClick = { onTabClick("Chats") })
-            LiteRailItem(OrbitIcons.Call, "Calls", isSelected = selectedTab == "Calls", onClick = { onTabClick("Calls") })
+            LiteRailItem(ui.icons.OrbitIcons.TextChannel, "Chats", isSelected = selectedTab == "Chats", onClick = { onTabClick("Chats") })
+            LiteRailItem(ui.icons.OrbitIcons.Call, "Calls", isSelected = selectedTab == "Calls", onClick = { onTabClick("Calls") })
             LiteRailItem(Icons.Default.DonutLarge, "Status", isSelected = selectedTab == "Status", onClick = { onTabClick("Status") })
-            LiteRailItem(OrbitIcons.Members, "Groups", isSelected = selectedTab == "Communities", onClick = { onTabClick("Communities") })
+            LiteRailItem(ui.icons.OrbitIcons.Members, "Groups", isSelected = selectedTab == "Communities", onClick = { onTabClick("Communities") })
         }
     }
 }
@@ -365,47 +402,52 @@ private fun LiteRailItem(
     isSelected: Boolean,
     onClick: () -> Unit
 ) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val isHovered by interactionSource.collectIsHoveredAsState()
+    val t = rememberCosmicTokens()
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
 
     val bgColor by animateColorAsState(
         targetValue = when {
-            isSelected -> rememberCosmicTokens().ChannelSelected_Bg
-            isHovered -> rememberCosmicTokens().ChannelHover_Bg
+            isSelected -> t.ChannelSelected_Bg
+            hovered -> t.ChannelHover_Bg
             else -> Color.Transparent
         },
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        animationSpec = OrbitMotion.SnappyColor,
         label = "liteRailBg"
     )
     val iconTint by animateColorAsState(
         targetValue = when {
-            isSelected -> Accent
-            isHovered -> Text_White
-            else -> Text_Muted
+            isSelected -> t.Accent
+            hovered -> t.Text_White
+            else -> t.Text_Muted
         },
+        animationSpec = OrbitMotion.SnappyColor,
         label = "liteRailTint"
     )
 
     Column(
         modifier = Modifier
-            .size(52.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .size(50.dp)
+            .clip(OrbitRadius.mdShape)
             .background(bgColor)
-            .hoverable(interactionSource)
-            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick),
+            .hoverable(interaction)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            ),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Icon(imageVector = icon, contentDescription = label, tint = iconTint, modifier = Modifier.size(20.dp))
+        Icon(imageVector = icon, contentDescription = label, tint = iconTint, modifier = Modifier.size(19.dp))
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall.copy(
                 color = iconTint,
-                fontSize = 8.sp,
+                fontSize = 8.5.sp,
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
             ),
             maxLines = 1
         )
     }
 }
-

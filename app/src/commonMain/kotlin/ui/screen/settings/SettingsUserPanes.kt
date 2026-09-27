@@ -55,7 +55,7 @@ internal fun ProfilesPane(repository: OrbitRepository) {
             Box(
                 modifier = Modifier.fillMaxWidth().height(180.dp)
                     .clip(RoundedCornerShape(12.dp))
-                    .background(Brush.horizontalGradient(listOf(Color(0xFF6366F1), Color(0xFF8B5CF6), Color(0xFFA78BFA))))
+                    .background(Brush.horizontalGradient(listOf(Color(0xFF6E67DE), Color(0xFF7B74E8), Color(0xFF928CF0))))
             ) {
                 if (!currentExtras.bannerUrl.isNullOrBlank()) {
                     coil3.compose.AsyncImage(

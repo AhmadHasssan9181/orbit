@@ -16,10 +16,24 @@ import webrtc.*
 import repository.*
 import ui.screen.chat.*
 import androidx.compose.foundation.background
+import ui.components.OrbitMessageSkeleton
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Alignment
 import ui.icons.*
 import ui.theme.*
+
+/**
+ * Loading state for a room that hasn't resolved yet.
+ *
+ * Skeletons at the shape of the content, rather than a spinner: switching rooms
+ * used to blank the pane and spin, which reads as a crash on a fast click.
+ */
+@Composable
+internal fun RoomLoadingPlaceholder() {
+    Column(modifier = Modifier.fillMaxSize().padding(top = 52.dp)) {
+        repeat(5) { OrbitMessageSkeleton(avatar = it == 0 || it == 3) }
+    }
+}
 
 @Composable
 fun MediumLayout(
@@ -89,10 +103,7 @@ fun MediumLayout(
         val selectedChannel = channels.find { it.id == selectedChannelId }
         Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
             when {
-                isLoadingChannels -> Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) { CircularProgressIndicator(color = tokens.Accent) }
+                isLoadingChannels -> RoomLoadingPlaceholder()
 
                 selectedChannel == null -> ChatEmptyState(
                     serverName = selectedServer?.name ?: "Orbit",

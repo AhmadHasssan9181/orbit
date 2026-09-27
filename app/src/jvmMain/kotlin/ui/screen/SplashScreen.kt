@@ -63,7 +63,7 @@ fun SplashScreenContent(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color(0xFF0D0D12)),
+            .background(Color(0xFF08090C)),
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -120,7 +120,7 @@ fun SplashScreenContent(
                                 .size(14.dp)
                                 .alpha(alpha)
                                 .background(ballColors[i], CircleShape)
-                                .border(2.dp, Color(0xFF0D0D12), CircleShape)
+                                .border(2.dp, Color(0xFF08090C), CircleShape)
                         )
                     }
                 }

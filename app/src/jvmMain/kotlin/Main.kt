@@ -8,6 +8,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.isAltPressed
 import androidx.compose.ui.input.key.isCtrlPressed
@@ -15,8 +16,11 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Tray
 import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import ui.screen.call.ActiveCallPipWindow
@@ -56,7 +60,14 @@ fun main() = application {
     val storedPttKeybind by settingsManager.pushToTalkKeybind.collectAsState("Unassigned")
     val pttBinding = remember(storedPttKeybind) { parsePttCombo(normalizedPttKeybind(storedPttKeybind)) }
 
-    val state = rememberWindowState()
+    // A messenger is a window you keep open all day, so it opens large enough
+    // to show the rail, the channel list, the chat and the member panel at
+    // once (68 + 248 + 264 = 580dp of chrome) and is positioned rather than
+    // cascading off the top-left corner of the screen.
+    val state = rememberWindowState(
+        size = androidx.compose.ui.unit.DpSize(1320.dp, 860.dp),
+        position = WindowPosition(Alignment.Center)
+    )
     var windowRef by remember { mutableStateOf<java.awt.Window?>(null) }
     // Tracks the tray-hide path so the floating call PiP window knows when
     // the main window is gone (iconify is read straight off [state]).

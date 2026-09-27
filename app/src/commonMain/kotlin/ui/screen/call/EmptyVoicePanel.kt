@@ -51,7 +51,7 @@ fun EmptyVoicePanel(modifier: Modifier = Modifier) {
                 brush = Brush.verticalGradient(
                     colors = listOf(
                         tokens.Accent.copy(alpha = 0.06f),
-                        Color(0xFF18191C)
+                        Color(0xFF14171D)
                     )
                 )
             ),
@@ -80,7 +80,7 @@ fun EmptyVoicePanel(modifier: Modifier = Modifier) {
                     modifier = Modifier
                         .size(48.dp)
                         .clip(CircleShape)
-                        .background(Color(0xFF2B2D31)),
+                        .background(Color(0xFF1F242C)),
                     contentAlignment = Alignment.Center
                 ) {
                     OrbitDefaultAvatar(

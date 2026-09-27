@@ -177,7 +177,7 @@ fun GifPicker(commonHttpClient: HttpClient, onGifSelected: (ByteArray) -> Unit) 
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
                         errorMessage!!,
-                        color = Color(0xFFF23F42),
+                        color = Color(0xFFD65A54),
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(horizontal = 16.dp)
                     )

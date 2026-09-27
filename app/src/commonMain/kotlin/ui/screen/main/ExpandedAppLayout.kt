@@ -19,6 +19,8 @@ import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Alignment
 import ui.icons.*
+import ui.components.OrbitButton
+import ui.components.OrbitButtonTone
 import ui.theme.*
 
 @Composable
@@ -64,6 +66,7 @@ fun ExpandedLayout(
             onWhatsAppTabClick = { selectedWhatsAppTab = it },
             unreadByServer = unreadByServer
         )
+        VerticalRule()
 
         if (selectedServer != null) {
             ChannelDrawer(
@@ -83,14 +86,11 @@ fun ExpandedLayout(
                 onOpenRolesClick = onOpenRoles,
                 selectedWhatsAppTab = selectedWhatsAppTab
             )
-
+            VerticalRule()
             val selectedChannel = channels.find { it.id == selectedChannelId }
             when {
                 isLoadingChannels ->
-                    Box(
-                        modifier = Modifier.weight(1f).fillMaxHeight().background(tokens.Bg),
-                        contentAlignment = Alignment.Center
-                    ) { CircularProgressIndicator(color = tokens.Accent) }
+                    RoomLoadingPlaceholder()
 
                 selectedChannel == null ->
                     ChatEmptyState(
@@ -105,16 +105,45 @@ fun ExpandedLayout(
                         channel = selectedChannel,
                         showMemberList = !isLiteMode && !selectedServer.isDM,
                         isDirectMessage = selectedServer.isDM
-                    )            }
+                    )
+            }
         } else {
             Box(
                 modifier = Modifier.weight(1f).fillMaxHeight().background(tokens.Bg),
                 contentAlignment = Alignment.Center
             ) {
-                Text("No Server Selected", color = Color.White.copy(alpha = 0.6f),
-                    style = MaterialTheme.typography.bodyLarge)
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        "No space selected",
+                        color = tokens.Text_Muted,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(Modifier.height(OrbitSpace.md))
+                    OrbitButton(
+                        text = "Add a server",
+                        onClick = onAddServer,
+                        tone = OrbitButtonTone.Neutral
+                    )
+                }
             }
         }
     }
+}
+
+/**
+ * A single hairline between two panes.
+ *
+ * Without it the rail, the drawer and the chat all sat on adjacent values of
+ * the same neutral ramp and the three columns blurred into one surface; the
+ * eye had nothing to latch the layout onto.
+ */
+@Composable
+private fun VerticalRule() {
+    Box(
+        modifier = Modifier
+            .width(1.dp)
+            .fillMaxHeight()
+            .background(rememberCosmicTokens().Separator)
+    )
 }
 

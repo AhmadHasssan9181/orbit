@@ -139,7 +139,7 @@ internal fun PttKeybindCaptureDialog(
         ) {
             Column(
                 modifier = Modifier
-                    .background(Color(0xFF1A1B1E), RoundedCornerShape(14.dp))
+                    .background(Color(0xFF1F242C), RoundedCornerShape(14.dp))
                     .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
                     .padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -165,7 +165,7 @@ internal fun PttKeybindCaptureDialog(
                 ) {
                     Text(
                         hint ?: "",
-                        color = Color(0xFF23A55A),
+                        color = Color(0xFF49AE81),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium
                     )

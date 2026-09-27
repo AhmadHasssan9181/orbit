@@ -287,7 +287,7 @@ private fun SharePagerArrows(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .padding(top = 10.dp)
-                .background(Color(0xFF111214).copy(alpha = 0.75f), RoundedCornerShape(50))
+                .background(Color(0xFF0B0D11).copy(alpha = 0.75f), RoundedCornerShape(50))
                 .padding(horizontal = 10.dp, vertical = 4.dp)
         ) {
             Text(
@@ -314,7 +314,7 @@ private fun PagerArrowButton(
         modifier = modifier
             .hoverable(interaction)
             .size(36.dp)
-            .background(Color(0xFF111214).copy(alpha = if (isHovered) 0.85f else 0.55f), CircleShape)
+            .background(Color(0xFF0B0D11).copy(alpha = if (isHovered) 0.85f else 0.55f), CircleShape)
             .border(1.dp, Color.White.copy(alpha = 0.08f), CircleShape)
     ) {
         Icon(
