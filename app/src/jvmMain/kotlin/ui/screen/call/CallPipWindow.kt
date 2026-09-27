@@ -186,10 +186,10 @@ private fun PipWindowContent(
                 .padding(8.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            if (!isAudioEnabled) PipBadge(container = Color(0xFFF23F42)) {
+            if (!isAudioEnabled) PipBadge(container = Color(0xFFD65A54)) {
                 Icon(Icons.Default.MicOff, "Muted", tint = Color.White, modifier = Modifier.size(13.dp))
             }
-            if (isDeafened) PipBadge(container = Color(0xFFF23F42)) {
+            if (isDeafened) PipBadge(container = Color(0xFFD65A54)) {
                 Icon(Icons.Default.HeadsetOff, "Deafened", tint = Color.White, modifier = Modifier.size(13.dp))
             }
         }
@@ -220,7 +220,7 @@ private fun PipWindowContent(
                 .padding(8.dp)
                 .size(34.dp)
                 .clip(CircleShape)
-                .background(Color(0xFFF23F42))
+                .background(Color(0xFFD65A54))
                 .clickable(onClick = onEndCall),
             contentAlignment = Alignment.Center
         ) {

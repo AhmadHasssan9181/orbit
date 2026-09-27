@@ -8,6 +8,8 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.unit.dp
 
 import ui.screen.auth.*
 import ui.screen.settings.*
@@ -118,114 +120,47 @@ val LocalRoomMembers = compositionLocalOf<List<ui.model.OrbitUser>> { emptyList(
 val LocalRoomUnreadMarkers = compositionLocalOf<Map<String, String>> { emptyMap() }
 
 /**
- * Discord/Revolt-style semantic color tokens derived from MaterialTheme.
- * Every screen should use these tokens instead of hard-coding colors.
- */
-@Composable
-fun rememberCosmicTokens(): CosmicTokens {
-    val isLite = LocalIsLiteMode.current
-    val cs = MaterialTheme.colorScheme
-
-    return if (isLite) {
-        // Lite mode now uses the active theme colors for a modern messenger look.
-        // Light theme → bright clean messenger. Dark themes → dark messenger.
-        val isDark = isThemeDark(LocalActiveTheme.current)
-        if (isDark) {
-            // Dark messenger — uses surface hierarchy with slightly elevated backgrounds
-            CosmicTokens(
-                Bg = cs.surfaceContainerLow,
-                CardBg = cs.surfaceContainerHigh,
-                CardBgHover = cs.surfaceContainerHighest,
-                Accent = cs.primary,
-                AccentLight = cs.secondary,
-                AccentGhost = cs.primary.copy(alpha = 0.12f),
-                Text_White = cs.onSurface,
-                Text_Secondary = cs.onSurfaceVariant,
-                Text_Muted = cs.outline,
-                Separator = cs.outlineVariant.copy(alpha = 0.4f),
-                Header_Bg = cs.surfaceContainer,
-                Input_Bg = cs.surfaceContainerHigh,
-                Members_Bg = cs.surfaceContainerLow,
-                Rail_Bg = cs.surfaceContainerLowest,
-                Rail_Active = cs.primary.copy(alpha = 0.18f),
-                Pill_Color = cs.onSurface,
-                Drawer_Bg = cs.surfaceContainer,
-                UserBar_Bg = cs.surfaceContainerLowest,
-                ChannelSelected_Bg = cs.primary.copy(alpha = 0.15f),
-                ChannelHover_Bg = cs.surfaceVariant.copy(alpha = 0.12f),
-                MentionHighlight = cs.primary.copy(alpha = 0.08f),
-                MessageHover_Bg = Color(0x06FFFFFF),
-            )
-        } else {
-            // Light messenger — clean, modern, bright
-            CosmicTokens(
-                Bg = cs.surface,
-                CardBg = cs.surfaceContainerLowest,
-                CardBgHover = cs.surfaceContainerLow,
-                Accent = cs.primary,
-                AccentLight = cs.secondary,
-                AccentGhost = cs.primary.copy(alpha = 0.08f),
-                Text_White = cs.onSurface,
-                Text_Secondary = cs.onSurfaceVariant,
-                Text_Muted = cs.outline,
-                Separator = cs.outlineVariant.copy(alpha = 0.5f),
-                Header_Bg = cs.surfaceContainerLow,
-                Input_Bg = cs.surfaceContainerLowest,
-                Members_Bg = cs.surface,
-                Rail_Bg = cs.surfaceContainerLow,
-                Rail_Active = cs.primary.copy(alpha = 0.12f),
-                Pill_Color = cs.onSurface,
-                Drawer_Bg = cs.surface,
-                UserBar_Bg = cs.surfaceContainerLow,
-                ChannelSelected_Bg = cs.primary.copy(alpha = 0.10f),
-                ChannelHover_Bg = cs.surfaceContainerHigh.copy(alpha = 0.5f),
-                MentionHighlight = cs.primary.copy(alpha = 0.06f),
-                MessageHover_Bg = Color(0x08000000),
-            )
-        }
-    } else {
-        CosmicTokens(
-            Bg = cs.surfaceContainerLow,             // main chat bg  (#161B27)
-            CardBg = cs.surfaceContainerHigh,         // cards, embeds (#252A36)
-            CardBgHover = cs.surfaceContainerHighest, // hover state   (#303541)
-            Accent = cs.primary,
-            AccentLight = cs.secondary,
-            AccentGhost = cs.primary.copy(alpha = 0.10f),
-            Text_White = cs.onSurface,                // bright text   (#DEE2F2)
-            Text_Secondary = cs.onSurfaceVariant,     // dimmer text   (#C0C6D9)
-            Text_Muted = cs.outline,                  // muted text    (#8A90A2)
-            Separator = cs.outlineVariant.copy(alpha = 0.72f),
-            Header_Bg = cs.surfaceContainer.copy(alpha = 0.98f),
-            Input_Bg = cs.surfaceContainer,            // input field   (#1A202B)
-            Members_Bg = cs.surfaceContainer,          // member panel
-            Rail_Bg = cs.surfaceContainerLowest,       // server rail   (#090E19)
-            Rail_Active = cs.primary.copy(alpha = 0.18f),
-            Pill_Color = cs.onSurface,
-            Drawer_Bg = cs.surfaceContainer,           // channel drawer (#1A202B)
-            UserBar_Bg = cs.surfaceContainerLowest,    // user bar      (#090E19)
-            // Discord-style extras
-            ChannelSelected_Bg = cs.surfaceVariant.copy(alpha = 0.72f),
-            ChannelHover_Bg = cs.surfaceVariant.copy(alpha = 0.42f),
-            MentionHighlight = cs.primary.copy(alpha = 0.07f),
-            MessageHover_Bg = Color(0x0BFFFFFF),
-        )
-    }
-}
-
-/**
- * Thin data class holding every derived color token the UI layer consumes.
+ * Every derived colour the UI layer is allowed to use.
+ *
+ * Screens must not hard-code colours — that is exactly how the app ended up
+ * with forty files disagreeing about what "muted" means. Anything new goes
+ * here first, and the per-package `internal val` aliases (ScreenTokens.kt,
+ * ChatTokens.kt, …) keep the old call sites compiling unchanged.
  */
 data class CosmicTokens(
+    // ── Structural surfaces ──────────────────────────────────────
+    /** The canvas: chat background, page background. */
     val Bg: Color,
+    /** Cards, embeds, inputs. One step up from Bg. */
     val CardBg: Color,
+    /** Card hover. One step up from CardBg. */
     val CardBgHover: Color,
+    /** Menus, popovers, tooltips — floats above everything. */
+    val Elevated: Color,
+    /** Secondary floating surface (nested menus). */
+    val ElevatedAlt: Color,
+    /** Recessed surface: wells, code blocks, track backgrounds. */
+    val Sunken: Color,
+
+    // ── Accent ───────────────────────────────────────────────────
     val Accent: Color,
     val AccentLight: Color,
     val AccentGhost: Color,
+    val AccentGhostStrong: Color,
+    val OnAccent: Color,
+    val AccentBorder: Color,
+
+    // ── Type ─────────────────────────────────────────────────────
     val Text_White: Color,
     val Text_Secondary: Color,
     val Text_Muted: Color,
+    val Text_Subtle: Color,
+
+    // ── Lines ────────────────────────────────────────────────────
     val Separator: Color,
+    val SeparatorStrong: Color,
+
+    // ── Regions ──────────────────────────────────────────────────
     val Header_Bg: Color,
     val Input_Bg: Color,
     val Members_Bg: Color,
@@ -234,77 +169,345 @@ data class CosmicTokens(
     val Pill_Color: Color,
     val Drawer_Bg: Color,
     val UserBar_Bg: Color,
-    // Discord/Revolt-style extra tokens
+
+    // ── Interaction ──────────────────────────────────────────────
+    val Hover: Color,
+    val Pressed: Color,
+    val Selected_Bg: Color,
     val ChannelSelected_Bg: Color,
     val ChannelHover_Bg: Color,
-    val MentionHighlight: Color,
     val MessageHover_Bg: Color,
+    val MentionHighlight: Color,
+
+    // ── Semantics ────────────────────────────────────────────────
+    val Success: Color,
+    val SuccessGhost: Color,
+    val Warning: Color,
+    val WarningGhost: Color,
+    val Danger: Color,
+    val DangerGhost: Color,
+    val Info: Color,
+    val InfoGhost: Color,
+    /** Voice/video rooms with an active session. */
+    val Live: Color,
+
+    // ── Presence ─────────────────────────────────────────────────
+    val PresenceOnline: Color,
+    val PresenceIdle: Color,
+    val PresenceDnd: Color,
+    val PresenceOffline: Color,
+
+    // ── Content ──────────────────────────────────────────────────
+    val CodeBg: Color,
+    val QuoteBar: Color,
+    val BubbleOwn: Color,
+    val BubbleOther: Color,
+    val Link: Color,
+    val AvatarRing: Color,
+
+    // ── Chrome ───────────────────────────────────────────────────
+    val Scrim: Color,
+    val FocusRing: Color,
+    val ScrollbarTrack: Color,
+    val ScrollbarThumb: Color,
+    val ScrollbarThumbHover: Color,
+) {
+    /** Elevation levels as (blurRadius, spread-ish) pairs for Modifier.shadow. */
+    val shadowSmall get() = 1.dp to 2.dp
+    val shadowMedium get() = 6.dp to 4.dp
+    val shadowLarge get() = 18.dp to 8.dp
+}
+
+private fun darkTokens(cs: androidx.compose.material3.ColorScheme) = CosmicTokens(
+    Bg = Ink800,
+    CardBg = Ink700,
+    CardBgHover = Ink650,
+    Elevated = Ink650,
+    ElevatedAlt = Ink600,
+    Sunken = Ink900,
+
+    Accent = cs.primary,
+    AccentLight = Iris400,
+    AccentGhost = cs.primary.copy(alpha = 0.14f),
+    AccentGhostStrong = cs.primary.copy(alpha = 0.24f),
+    OnAccent = Color(0xFFFFFFFF),
+    AccentBorder = cs.primary.copy(alpha = 0.38f),
+
+    Text_White = DarkFgStrong,
+    Text_Secondary = DarkFgDefault,
+    Text_Muted = DarkFgMuted,
+    Text_Subtle = DarkFgSubtle,
+
+    Separator = Color(0xFF21262F),
+    SeparatorStrong = Color(0xFF2E3542),
+
+    Header_Bg = Ink780,
+    Input_Bg = Ink700,
+    Members_Bg = Ink800,
+    Rail_Bg = Ink950,
+    Rail_Active = cs.primary.copy(alpha = 0.16f),
+    Pill_Color = DarkFgStrong,
+    Drawer_Bg = Ink850,
+    UserBar_Bg = Ink950,
+
+    Hover = Color(0x0AFFFFFF),
+    Pressed = Color(0x14FFFFFF),
+    Selected_Bg = cs.primary.copy(alpha = 0.14f),
+    ChannelSelected_Bg = cs.primary.copy(alpha = 0.14f),
+    ChannelHover_Bg = Color(0x0AFFFFFF),
+    MessageHover_Bg = Color(0x08FFFFFF),
+    MentionHighlight = cs.primary.copy(alpha = 0.10f),
+
+    Success = Sage500,
+    SuccessGhost = Sage500.copy(alpha = 0.16f),
+    Warning = Amber500,
+    WarningGhost = Amber500.copy(alpha = 0.16f),
+    Danger = Rust500,
+    DangerGhost = Rust500.copy(alpha = 0.16f),
+    Info = Steel500,
+    InfoGhost = Steel500.copy(alpha = 0.16f),
+    Live = Sage500,
+
+    PresenceOnline = PresenceOnline,
+    PresenceIdle = PresenceIdle,
+    PresenceDnd = PresenceDnd,
+    PresenceOffline = PresenceOffline,
+
+    CodeBg = Ink900,
+    QuoteBar = Iris500,
+    BubbleOwn = Iris800,
+    BubbleOther = Ink700,
+    Link = Iris400,
+    AvatarRing = Color(0x14FFFFFF),
+
+    Scrim = Color(0xCC05070A),
+    FocusRing = Iris400.copy(alpha = 0.55f),
+    ScrollbarTrack = Color.Transparent,
+    ScrollbarThumb = Color(0x24FFFFFF),
+    ScrollbarThumbHover = Color(0x42FFFFFF),
 )
 
+private fun lightTokens(cs: androidx.compose.material3.ColorScheme) = CosmicTokens(
+    Bg = Paper0,
+    CardBg = Paper100,
+    CardBgHover = Paper150,
+    Elevated = Paper0,
+    ElevatedAlt = Paper50,
+    Sunken = Paper100,
+
+    Accent = cs.primary,
+    AccentLight = Iris500,
+    AccentGhost = cs.primary.copy(alpha = 0.10f),
+    AccentGhostStrong = cs.primary.copy(alpha = 0.16f),
+    OnAccent = Color(0xFFFFFFFF),
+    AccentBorder = cs.primary.copy(alpha = 0.30f),
+
+    Text_White = LightFgStrong,
+    Text_Secondary = LightFgDefault,
+    Text_Muted = LightFgMuted,
+    Text_Subtle = LightFgSubtle,
+
+    Separator = Paper200,
+    SeparatorStrong = Paper300,
+
+    Header_Bg = Paper50,
+    Input_Bg = Paper100,
+    Members_Bg = Paper0,
+    Rail_Bg = Paper100,
+    Rail_Active = cs.primary.copy(alpha = 0.12f),
+    Pill_Color = LightFgStrong,
+    Drawer_Bg = Paper50,
+    UserBar_Bg = Paper0,
+
+    Hover = Color(0x06000000),
+    Pressed = Color(0x0D000000),
+    Selected_Bg = cs.primary.copy(alpha = 0.10f),
+    ChannelSelected_Bg = cs.primary.copy(alpha = 0.10f),
+    ChannelHover_Bg = Color(0x07000000),
+    MessageHover_Bg = Color(0x08000000),
+    MentionHighlight = cs.primary.copy(alpha = 0.08f),
+
+    Success = Sage600,
+    SuccessGhost = Sage600.copy(alpha = 0.12f),
+    Warning = Amber600,
+    WarningGhost = Amber600.copy(alpha = 0.14f),
+    Danger = Rust600,
+    DangerGhost = Rust600.copy(alpha = 0.12f),
+    Info = Steel500,
+    InfoGhost = Steel500.copy(alpha = 0.12f),
+    Live = Sage600,
+
+    PresenceOnline = Sage600,
+    PresenceIdle = Amber600,
+    PresenceDnd = Rust600,
+    PresenceOffline = LightFgSubtle,
+
+    CodeBg = Paper100,
+    QuoteBar = Iris600,
+    BubbleOwn = Iris050,
+    BubbleOther = Paper100,
+    Link = Iris600,
+    AvatarRing = Color(0x14000000),
+
+    Scrim = Color(0x59000000),
+    FocusRing = cs.primary.copy(alpha = 0.55f),
+    ScrollbarTrack = Color.Transparent,
+    ScrollbarThumb = Color(0x1F000000),
+    ScrollbarThumbHover = Color(0x33000000),
+)
+
+@Composable
+fun rememberCosmicTokens(): CosmicTokens {
+    val cs = MaterialTheme.colorScheme
+    // Derive light/dark from the scheme's own luminance rather than the theme
+    // enum, so user colour overrides and dynamic schemes stay coherent.
+    return if (cs.background.luminance() < 0.5f) darkTokens(cs) else lightTokens(cs)
+}
+
+/**
+ * Theme variants.
+ *
+ * These used to be pure-hue swaps of one saturated blue, which made every
+ * single one of them neon. Each now keeps the neutral ramp intact and only
+ * shifts the accent plus a whisper of tint into the surfaces, so the variants
+ * read as distinct moods rather than as different apps.
+ */
+
+/** True black, for OLED panels. Only the canvas steps all the way down. */
 val AmoledColorScheme = DefaultColorScheme.copy(
-    background = Color(0xff000000),
-    onBackground = Color(0xffffffff),
-    surfaceVariant = Color(0xff131313),
-    onSurfaceVariant = Color(0xffffffff),
-    surface = Color(0xff000000),
-    onSurface = Color(0xffffffff),
-    surfaceContainerLowest = Color(0xff000000),
-    surfaceContainerLow = Color(0xff000000),
-    surfaceContainer = Color(0xff000000),
-    surfaceContainerHigh = Color(0xff000000),
-    surfaceContainerHighest = Color(0xff000000),
+    background = Color(0xFF000000),
+    onBackground = Color(0xFFFFFFFF),
+    surface = Color(0xFF000000),
+    onSurface = Color(0xFFFFFFFF),
+    surfaceVariant = Color(0xFF15171C),
+    onSurfaceVariant = DarkFgDefault,
+    surfaceContainerLowest = Color(0xFF000000),
+    surfaceContainerLow = Color(0xFF0A0B0E),
+    surfaceContainer = Color(0xFF101216),
+    surfaceContainerHigh = Color(0xFF181A20),
+    surfaceContainerHighest = Color(0xFF20232A),
+    outline = DarkFgMuted,
+    outlineVariant = Color(0xFF23262D),
 )
 
+/** Cold slate blues. */
 val OceanColorScheme = DefaultColorScheme.copy(
-    primary = Color(0xFF3B82F6),
-    secondary = Color(0xFF60A5FA),
-    background = Color(0xFF0F172A),
-    surfaceVariant = Color(0xFF1E293B),
-    surface = Color(0xFF0F172A),
-    surfaceContainerLowest = Color(0xFF0A0F1E),
-    surfaceContainerLow = Color(0xFF0F172A),
-    surfaceContainer = Color(0xFF131C30),
-    surfaceContainerHigh = Color(0xFF1A2540),
-    surfaceContainerHighest = Color(0xFF1E293B),
+    primary = Color(0xFF5A8BC7),
+    secondary = Color(0xFF7FA8D4),
+    primaryContainer = Color(0xFF1B3149),
+    onPrimaryContainer = Color(0xFFCFE2F6),
+    secondaryContainer = Color(0xFF17293B),
+    background = Color(0xFF101519),
+    surface = Color(0xFF101519),
+    surfaceVariant = Color(0xFF1A2228),
+    onSurfaceVariant = Color(0xFFBFCBD4),
+    surfaceContainerLowest = Color(0xFF0A0E12),
+    surfaceContainerLow = Color(0xFF101519),
+    surfaceContainer = Color(0xFF141A20),
+    surfaceContainerHigh = Color(0xFF1A2128),
+    surfaceContainerHighest = Color(0xFF212931),
+    outline = Color(0xFF8595A2),
+    outlineVariant = Color(0xFF232B32),
 )
 
+/** Deep evergreen. */
 val ForestColorScheme = DefaultColorScheme.copy(
-    primary = Color(0xFF10B981),
-    secondary = Color(0xFF34D399),
-    background = Color(0xFF022C22),
-    surfaceVariant = Color(0xFF064E3B),
-    surface = Color(0xFF022C22),
-    surfaceContainerLowest = Color(0xFF011F18),
-    surfaceContainerLow = Color(0xFF022C22),
-    surfaceContainer = Color(0xFF033428),
-    surfaceContainerHigh = Color(0xFF044030),
-    surfaceContainerHighest = Color(0xFF064E3B),
+    primary = Color(0xFF4E9E7C),
+    secondary = Color(0xFF74B497),
+    primaryContainer = Color(0xFF16332A),
+    onPrimaryContainer = Color(0xFFCBE9DB),
+    secondaryContainer = Color(0xFF132A23),
+    background = Color(0xFF0F1512),
+    surface = Color(0xFF0F1512),
+    surfaceVariant = Color(0xFF19211C),
+    onSurfaceVariant = Color(0xFFBFCBC3),
+    surfaceContainerLowest = Color(0xFF090D0B),
+    surfaceContainerLow = Color(0xFF0F1512),
+    surfaceContainer = Color(0xFF141A17),
+    surfaceContainerHigh = Color(0xFF1A211D),
+    surfaceContainerHighest = Color(0xFF212925),
+    outline = Color(0xFF85968D),
+    outlineVariant = Color(0xFF222A25),
 )
 
+/** Warm clay and ember — the evening theme. */
 val SunsetColorScheme = DefaultColorScheme.copy(
-    primary = Color(0xFFF97316),
-    secondary = Color(0xFFFBBF24),
-    background = Color(0xFF450A0A),
-    surfaceVariant = Color(0xFF7F1D1D),
-    surface = Color(0xFF450A0A),
-    surfaceContainerLowest = Color(0xFF360808),
-    surfaceContainerLow = Color(0xFF450A0A),
-    surfaceContainer = Color(0xFF4F0D0D),
-    surfaceContainerHigh = Color(0xFF5E1111),
-    surfaceContainerHighest = Color(0xFF7F1D1D),
+    primary = Color(0xFFCE7A4A),
+    secondary = Color(0xFFDD9A6B),
+    primaryContainer = Color(0xFF3A2317),
+    onPrimaryContainer = Color(0xFFF6DCC9),
+    secondaryContainer = Color(0xFF33211A),
+    background = Color(0xFF17120F),
+    surface = Color(0xFF17120F),
+    surfaceVariant = Color(0xFF241C18),
+    onSurfaceVariant = Color(0xFFD9C7BC),
+    surfaceContainerLowest = Color(0xFF0E0B09),
+    surfaceContainerLow = Color(0xFF17120F),
+    surfaceContainer = Color(0xFF1C1613),
+    surfaceContainerHigh = Color(0xFF241D19),
+    surfaceContainerHighest = Color(0xFF2C231E),
+    outline = Color(0xFFA08D81),
+    outlineVariant = Color(0xFF2E2520),
 )
 
+/** Muted magenta on graphite — after hours, not neon. */
 val CyberpunkColorScheme = DefaultColorScheme.copy(
-    primary = Color(0xFFEC4899),
-    secondary = Color(0xFF06B6D4),
-    background = Color(0xFF09090B),
-    surfaceVariant = Color(0xFF18181B),
-    surface = Color(0xFF09090B),
-    surfaceContainerLowest = Color(0xFF050506),
-    surfaceContainerLow = Color(0xFF09090B),
-    surfaceContainer = Color(0xFF0E0E11),
-    surfaceContainerHigh = Color(0xFF141418),
-    surfaceContainerHighest = Color(0xFF18181B),
+    primary = Color(0xFFB565A0),
+    secondary = Color(0xFF9B6FB8),
+    primaryContainer = Color(0xFF351F30),
+    onPrimaryContainer = Color(0xFFF0D2E6),
+    secondaryContainer = Color(0xFF2A1F3A),
+    background = Color(0xFF121015),
+    surface = Color(0xFF121015),
+    surfaceVariant = Color(0xFF1E1A20),
+    onSurfaceVariant = Color(0xFFC9BFC9),
+    surfaceContainerLowest = Color(0xFF0B090C),
+    surfaceContainerLow = Color(0xFF121015),
+    surfaceContainer = Color(0xFF17141A),
+    surfaceContainerHigh = Color(0xFF1E1A21),
+    surfaceContainerHighest = Color(0xFF26222A),
+    outline = Color(0xFF948C96),
+    outlineVariant = Color(0xFF272229),
+)
+
+/** Warm charcoal — the most "designed object" of the set. */
+val GraphiteColorScheme = DefaultColorScheme.copy(
+    primary = Color(0xFFB08A62),
+    secondary = Color(0xFFC4A585),
+    primaryContainer = Color(0xFF3A2E20),
+    onPrimaryContainer = Color(0xFFF2E2CD),
+    secondaryContainer = Color(0xFF332A20),
+    background = Color(0xFF15140F),
+    surface = Color(0xFF15140F),
+    surfaceVariant = Color(0xFF211F19),
+    onSurfaceVariant = Color(0xFFCDC7B8),
+    surfaceContainerLowest = Color(0xFF0C0B08),
+    surfaceContainerLow = Color(0xFF15140F),
+    surfaceContainer = Color(0xFF1A1913),
+    surfaceContainerHigh = Color(0xFF222019),
+    surfaceContainerHighest = Color(0xFF2A271F),
+    outline = Color(0xFF9C968A),
+    outlineVariant = Color(0xFF2B2822),
+)
+
+/** Cool near-monochrome; the accent is reserved almost entirely for selection. */
+val SlateColorScheme = DefaultColorScheme.copy(
+    primary = Color(0xFF8FA3BF),
+    secondary = Color(0xFFA7B8D0),
+    primaryContainer = Color(0xFF25303D),
+    onPrimaryContainer = Color(0xFFD5E2F1),
+    secondaryContainer = Color(0xFF212B36),
+    background = Color(0xFF131417),
+    surface = Color(0xFF131417),
+    surfaceVariant = Color(0xFF1D1F23),
+    onSurfaceVariant = Color(0xFFC0C4CB),
+    surfaceContainerLowest = Color(0xFF0C0D0F),
+    surfaceContainerLow = Color(0xFF131417),
+    surfaceContainer = Color(0xFF181A1E),
+    surfaceContainerHigh = Color(0xFF1F2126),
+    surfaceContainerHighest = Color(0xFF272A30),
+    outline = Color(0xFF8B9099),
+    outlineVariant = Color(0xFF26282E),
 )
 
 enum class Theme {
@@ -316,7 +519,9 @@ enum class Theme {
     Ocean,
     Forest,
     Sunset,
-    Cyberpunk
+    Cyberpunk,
+    Graphite,
+    Slate
 }
 
 @Composable
@@ -325,7 +530,6 @@ fun getColorScheme(
     colourOverrides: OverridableColourScheme? = null
 ): ColorScheme {
     val systemInDarkTheme = isSystemInDarkTheme()
-    val m3Supported = systemSupportsDynamicColors()
 
     val colorScheme = when {
         requestedTheme == Theme.Default -> DefaultColorScheme
@@ -335,6 +539,8 @@ fun getColorScheme(
         requestedTheme == Theme.Forest -> ForestColorScheme
         requestedTheme == Theme.Sunset -> SunsetColorScheme
         requestedTheme == Theme.Cyberpunk -> CyberpunkColorScheme
+        requestedTheme == Theme.Graphite -> GraphiteColorScheme
+        requestedTheme == Theme.Slate -> SlateColorScheme
         requestedTheme == Theme.None && systemInDarkTheme -> DefaultColorScheme
         requestedTheme == Theme.None && !systemInDarkTheme -> LightColorScheme
         else -> DefaultColorScheme
@@ -377,7 +583,8 @@ fun getDefaultTheme(): Theme {
 
 fun isThemeDark(theme: Theme, systemIsDark: Boolean): Boolean {
     return when (theme) {
-        Theme.Default, Theme.Amoled, Theme.Ocean, Theme.Forest, Theme.Sunset, Theme.Cyberpunk -> true
+        Theme.Default, Theme.Amoled, Theme.Ocean, Theme.Forest, Theme.Sunset,
+        Theme.Cyberpunk, Theme.Graphite, Theme.Slate -> true
         Theme.Light -> false
         Theme.M3Dynamic, Theme.None -> systemIsDark
     }

@@ -3,6 +3,7 @@ package ui.screen.chat
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import kotlinx.datetime.Clock
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.Instant
@@ -12,14 +13,18 @@ import kotlinx.datetime.minus
 import kotlinx.datetime.toLocalDateTime
 import ui.model.OrbitMessage
 import ui.model.UserStatus
+import ui.theme.rememberCosmicTokens
 
-import ui.screen.auth.*
-import ui.screen.settings.*
-import ui.screen.drawer.*
-import ui.screen.server.*
-import ui.screen.call.*
-import ui.screen.media.*
-import ui.screen.main.*
+/** Time-of-day, honouring the user's 12/24h preference. */
+@Composable
+internal fun clockTime(dt: kotlinx.datetime.LocalDateTime, use24Hour: Boolean): String =
+    if (use24Hour) {
+        "${dt.hour.toString().padStart(2, '0')}:${dt.minute.toString().padStart(2, '0')}"
+    } else {
+        val amPm = if (dt.hour >= 12) "PM" else "AM"
+        val h12 = if (dt.hour % 12 == 0) 12 else dt.hour % 12
+        "$h12:${dt.minute.toString().padStart(2, '0')} $amPm"
+    }
 
 @Composable
 internal fun formatTimestamp(ts: Instant): String {
@@ -27,25 +32,42 @@ internal fun formatTimestamp(ts: Instant): String {
     val dateFormat = ui.theme.LocalDateFormat.current
     val tz = TimeZone.currentSystemDefault()
     val dt = ts.toLocalDateTime(tz)
-    val today = kotlinx.datetime.Instant
+    val today = Instant
         .fromEpochMilliseconds(System.currentTimeMillis())
         .toLocalDateTime(tz)
         .date
 
-    val timeStr = if (use24Hour) {
-        val h24 = dt.hour.toString().padStart(2, '0')
-        val min = dt.minute.toString().padStart(2, '0')
-        "$h24:$min"
-    } else {
-        val amPm  = if (dt.hour >= 12) "PM" else "AM"
-        val h12   = if (dt.hour % 12 == 0) 12 else dt.hour % 12
-        val min   = dt.minute.toString().padStart(2, '0')
-        "$h12:$min $amPm"
-    }
+    val timeStr = clockTime(dt, use24Hour)
 
     return when {
         dt.date == today -> "Today at $timeStr"
         dt.date == today.minus(1, DateTimeUnit.DAY) -> "Yesterday at $timeStr"
+        else -> "${formatDate(dt.date, dateFormat)} $timeStr"
+    }
+}
+
+/**
+ * Compact form for the message identity line.
+ *
+ * The full form spells out "Today at 5:20 PM" next to every single message,
+ * which is a lot of repeated words doing no work — the date separator above
+ * the group already says which day it is.
+ */
+@Composable
+internal fun formatTimestampCompact(ts: Instant): String {
+    val use24Hour = ui.theme.LocalUse24HourClock.current
+    val dateFormat = ui.theme.LocalDateFormat.current
+    val tz = TimeZone.currentSystemDefault()
+    val dt = ts.toLocalDateTime(tz)
+    val today = Instant
+        .fromEpochMilliseconds(System.currentTimeMillis())
+        .toLocalDateTime(tz)
+        .date
+
+    val timeStr = clockTime(dt, use24Hour)
+    return when {
+        dt.date == today -> timeStr
+        dt.date == today.minus(1, DateTimeUnit.DAY) -> "Yesterday $timeStr"
         else -> "${formatDate(dt.date, dateFormat)} $timeStr"
     }
 }
@@ -62,42 +84,41 @@ private fun formatDate(date: LocalDate, pattern: String): String {
     }
 }
 
+/**
+ * Name colours.
+ *
+ * This used to be `hslToColor(hash)`, i.e. fully saturated HSL at 70% — every
+ * name in a busy room landed on a different neon, which turned a text column
+ * into a paint chart. It now draws from a small curated set of desaturated
+ * hues: still individually recognisable, never louder than the accent.
+ */
 @Composable
 internal fun resolveUsernameColor(message: OrbitMessage): Color {
     val showRoleColors = ui.theme.LocalShowRoleColors.current
-    val fallbackColor = Text_White
-    return remember(message.userId, showRoleColors) { 
-        if (showRoleColors) hslToColor(kotlin.math.abs(message.userId.hashCode()).toFloat() % 360f) 
-        else fallbackColor
+    val t = rememberCosmicTokens()
+    if (!showRoleColors) return t.Text_White
+    return remember(message.userId, t.Text_White) {
+        ui.theme.avatarSeedColor(message.userId)
     }
-}
-
-internal fun hslToColor(hue: Float): Color {
-    val s = 0.70f; val l = 0.68f
-    val q = if (l < 0.5f) l * (1 + s) else l + s - l * s
-    val p = 2 * l - q
-    val r = hueToRgb(p, q, hue / 360f + 1f / 3f).coerceIn(0f, 1f)
-    val g = hueToRgb(p, q, hue / 360f).coerceIn(0f, 1f)
-    val b = hueToRgb(p, q, hue / 360f - 1f / 3f).coerceIn(0f, 1f)
-    return Color(r, g, b)
 }
 
 internal fun hueToRgb(p: Float, q: Float, t: Float): Float {
     var x = t
-    if (x < 0) x += 1f; if (x > 1) x -= 1f
+    if (x < 0) x += 1f
+    if (x > 1) x -= 1f
     return when {
         x < 1f / 6f -> p + (q - p) * 6f * x
-        x < 0.5f    -> q
+        x < 0.5f -> q
         x < 2f / 3f -> p + (q - p) * (2f / 3f - x) * 6f
-        else        -> p
+        else -> p
     }
 }
 
 internal fun memberStatusColor(status: UserStatus) = when (status) {
-    UserStatus.ONLINE         -> Color(0xFF34D399)
-    UserStatus.IDLE           -> Color(0xFFFBBF24)
-    UserStatus.DO_NOT_DISTURB -> Color(0xFFF87171)
-    UserStatus.OFFLINE        -> Color(0xFF3D4160)
+    UserStatus.ONLINE -> ui.theme.PresenceOnline
+    UserStatus.IDLE -> ui.theme.PresenceIdle
+    UserStatus.DO_NOT_DISTURB -> ui.theme.PresenceDnd
+    UserStatus.OFFLINE -> ui.theme.PresenceOffline
 }
 
 internal fun statusText(status: UserStatus) = when (status) {

@@ -1,35 +1,38 @@
 package ui.screen.drawer
 
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.hoverable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsHoveredAsState
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Groups
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import ui.assets.OrbitEmptyIllustration
-import ui.assets.OrbitEmptyScene
+import ui.components.OrbitButton
+import ui.components.OrbitButtonTone
+import ui.components.OrbitCallout
+import ui.components.OrbitDialog
+import ui.components.OrbitListRow
+import ui.components.OrbitRowLeading
 import ui.model.OrbitServer
+import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
 
-import ui.screen.auth.*
-import ui.screen.settings.*
-import ui.screen.drawer.*
-import ui.screen.server.*
-import ui.screen.call.*
-import ui.screen.media.*
-import ui.screen.main.*
-
+/**
+ * A prominent action inside the channel drawer ("Invite People", "Roles").
+ *
+ * These used to be full-width buttons with a permanently coloured icon, which
+ * put four equally-loud rows directly under the server name and flattened the
+ * hierarchy of the whole drawer.
+ */
 @Composable
 internal fun DrawerActionButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
@@ -37,111 +40,57 @@ internal fun DrawerActionButton(
     accent: Boolean,
     onClick: () -> Unit
 ) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val isHovered by interactionSource.collectIsHoveredAsState()
-
-    val bgColor by animateColorAsState(
-        targetValue = if (isHovered) ChannelHover_Bg else Color.Transparent,
-        label = "drawerActionBg"
+    val t = rememberCosmicTokens()
+    OrbitListRow(
+        title = text,
+        onClick = onClick,
+        height = 32.dp,
+        horizontalPadding = OrbitSpace.sm,
+        accentColor = if (accent) t.Accent else null,
+        selected = false,
+        showSelectionBar = false,
+        leading = OrbitRowLeading(icon = icon)
     )
-    val contentColor by animateColorAsState(
-        targetValue = when {
-            accent -> AccentLight
-            isHovered -> Text_White
-            else -> Text_Muted
-        },
-        label = "drawerActionColor"
-    )
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 2.dp)
-            .clip(RoundedCornerShape(4.dp))
-            .background(bgColor)
-            .hoverable(interactionSource)
-            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 5.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = text,
-            tint = contentColor,
-            modifier = Modifier.size(17.dp)
-        )
-        Spacer(Modifier.width(9.dp))
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodySmall.copy(
-                color = contentColor,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 13.sp
-            )
-        )
-    }
 }
 
 @Composable
 internal fun InviteDialog(server: OrbitServer, onDismiss: () -> Unit) {
-    val tokens = rememberCosmicTokens()
-    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val t = rememberCosmicTokens()
+    val clipboard = LocalClipboardManager.current
 
-    AlertDialog(
+    OrbitDialog(
+        title = "Invite to ${server.name}",
+        subtitle = "Share this server's ID so friends can find it.",
+        icon = Icons.Default.Groups,
         onDismissRequest = onDismiss,
-        containerColor = tokens.CardBg,
-        title = {
-            Text(
-                "Invite friends to ${server.name}",
-                style = MaterialTheme.typography.titleMedium.copy(color = Text_White, fontWeight = FontWeight.Bold)
+        confirmLabel = "Copy server ID",
+        onConfirm = {
+            clipboard.setText(AnnotatedString(server.id))
+            onDismiss()
+        },
+        dismissLabel = "Close"
+    ) {
+        Column {
+            OrbitCallout(
+                text = "Orbit doesn't mint invite links yet. Anyone with the server ID can request to join.",
+                tone = OrbitButtonTone.Neutral
             )
-        },
-        text = {
-            Column {
-                OrbitEmptyIllustration(
-                    scene = OrbitEmptyScene.Invite,
-                    modifier = Modifier.fillMaxWidth().height(126.dp)
-                )
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "Invite links aren't supported yet. Share this server ID so others can find it manually.",
-                    style = MaterialTheme.typography.bodySmall.copy(color = Text_Muted, fontSize = 13.sp),
-                    modifier = Modifier.padding(bottom = 16.dp)
-                )
-                OutlinedTextField(
-                    value = server.id,
-                    onValueChange = {},
-                    readOnly = true,
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = tokens.Bg,
-                        unfocusedContainerColor = tokens.Bg,
-                        focusedTextColor = Text_White,
-                        unfocusedTextColor = Text_White,
-                        focusedBorderColor = Accent
+            Spacer(Modifier.height(OrbitSpace.md))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(40.dp),
+                verticalArrangement = Arrangement.Center
+            ) {
+                androidx.compose.material3.Text(
+                    text = server.id,
+                    style = androidx.compose.material3.MaterialTheme.typography.bodyMedium.copy(
+                        color = t.Text_White,
+                        fontSize = 13.sp
                     ),
-                    modifier = Modifier.fillMaxWidth()
+                    maxLines = 1
                 )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    clipboard.setText(androidx.compose.ui.text.AnnotatedString(server.id))
-                    onDismiss()
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = Accent)
-            ) {
-                Text("Copy ID", color = Color.White)
-            }
-        },
-        dismissButton = {
-            Button(
-                onClick = onDismiss,
-                colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent)
-            ) {
-                Text("Close", color = Text_Muted)
             }
         }
-    )
+    }
 }

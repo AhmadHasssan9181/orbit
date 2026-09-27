@@ -1,20 +1,38 @@
 package ui.screen.chat
 
-import androidx.compose.animation.*
-import androidx.compose.animation.core.*
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.border
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Reply
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -25,26 +43,42 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ui.assets.OrbitDefaultAvatar
 import ui.assets.OrbitVerifiedBadge
 import ui.assets.isOrbitVerifiedUser
+import ui.components.OrbitButton
+import ui.components.OrbitButtonTone
+import ui.components.OrbitDialog
+import ui.components.OrbitIconButton
+import ui.components.OrbitMenu
+import ui.components.OrbitMenuItem
+import ui.components.OrbitTextField
 import ui.icons.OrbitIcons
 import ui.model.OrbitMessage
 import ui.model.OrbitUser
+import ui.theme.LocalShowTimestamps
+import ui.theme.OrbitMotion
+import ui.theme.OrbitRadius
+import ui.theme.OrbitSpace
+import ui.theme.rememberCosmicTokens
 
-import ui.screen.auth.*
-import ui.screen.settings.*
-import ui.screen.drawer.*
-import ui.screen.server.*
-import ui.screen.call.*
-import ui.screen.media.*
-import ui.screen.main.*
-
+/**
+ * A message.
+ *
+ * The single biggest readability problem on desktop was unbounded measure: a
+ * one-line message stretched the full width of a 2560px window, and the name,
+ * timestamp and body all sat on one 12sp-baseline row. Now the reading column
+ * is capped, the identity line has real hierarchy, hover reveals a floating
+ * toolbar built from the shared icon button, and the reaction/more menus use
+ * the token set instead of a hard-coded `#1E1F22` that stayed Discord-grey in
+ * every theme.
+ */
 @Composable
 internal fun MessageBubbleFull(
     message: OrbitMessage,
@@ -62,6 +96,7 @@ internal fun MessageBubbleFull(
         return
     }
 
+    val t = rememberCosmicTokens()
     val isOwn = currentUser != null && message.userId == currentUser.id
     val canEdit = isOwn && onEditMessage != null && message.content is ui.model.MessageContent.Text
     val canDelete = isOwn && onDeleteMessage != null
@@ -71,181 +106,201 @@ internal fun MessageBubbleFull(
     var showEditDialog by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
 
-    val interactionSource = remember { MutableInteractionSource() }
-    val isHovered by interactionSource.collectIsHoveredAsState()
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+
     val rowBg by animateColorAsState(
-        targetValue = if (isHovered) MessageHover_Bg else Color.Transparent,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        targetValue = if (hovered) t.MessageHover_Bg else Color.Transparent,
+        animationSpec = OrbitMotion.SnappyColor,
         label = "messageRowBg"
     )
-    val rowOffset by animateDpAsState(
-        targetValue = if (isHovered) 2.dp else 0.dp,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+    // A whisper of horizontal travel on hover is the whole trick that makes a
+    // dense list feel like it has depth.
+    val rowOffset by animateFloatAsState(
+        targetValue = if (hovered) 3f else 0f,
+        animationSpec = OrbitMotion.Snappy,
         label = "messageRowOffset"
     )
 
     Box(
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 1.dp, bottom = 1.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .offset(x = rowOffset)
-                .hoverable(interactionSource)
+                .offsetX(rowOffset)
+                .hoverable(interaction)
                 .background(rowBg)
-                .padding(horizontal = 14.dp, vertical = 1.dp)
+                .padding(horizontal = OrbitSpace.lg, vertical = 3.dp)
                 .padding(top = 3.dp),
             verticalAlignment = Alignment.Top
         ) {
-            // Avatar — 40dp circle like Discord/Revolt
             MessageAvatar(message)
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(OrbitSpace.md))
 
-            Column(modifier = Modifier.weight(1f)) {
-                // Username + timestamp row — Discord style
-                Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .widthIn(max = ui.theme.OrbitMetrics.maxMessageMeasure)
+            ) {
+                // ── Identity line ─────────────────────────────────
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(OrbitSpace.xs)
+                ) {
                     Text(
                         text = message.username,
                         style = MaterialTheme.typography.bodyMedium.copy(
                             fontWeight = FontWeight.SemiBold,
                             color = resolveUsernameColor(message),
-                            fontSize = 14.sp
-                        )
+                            fontSize = 14.sp,
+                            lineHeight = 18.sp
+                        ),
+                        maxLines = 1
                     )
 
                     if (isOrbitVerifiedUser(message.username, message.userId)) {
-                        Spacer(Modifier.width(4.dp))
-                        OrbitVerifiedBadge(modifier = Modifier.size(14.dp))
+                        OrbitVerifiedBadge(modifier = Modifier.size(13.dp))
                     }
 
-                    // Bot badge — like Discord/Revolt verified badge
-                    if (message.username.contains("bot", ignoreCase = true) ||
-                        message.username.contains("Bot", ignoreCase = true)) {
-                        Spacer(Modifier.width(4.dp))
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(3.dp))
-                                .background(Accent)
-                                .padding(horizontal = 4.dp, vertical = 1.dp)
-                        ) {
-                            Text(
-                                text = "BOT",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    color = Color.White,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 8.sp,
-                                    letterSpacing = 0.5.sp
-                                )
-                            )
-                        }
+                    if (message.username.contains("bot", ignoreCase = true)) {
+                        BotBadge()
                     }
 
                     if (ui.theme.LocalShowTimestamps.current) {
-                        Spacer(Modifier.width(8.dp))
+                        Spacer(Modifier.width(OrbitSpace.xs))
                         Text(
-                            text = formatTimestamp(message.timestamp),
+                            text = formatTimestampCompact(message.timestamp),
                             style = MaterialTheme.typography.labelSmall.copy(
-                                color = Text_Muted,
-                                fontSize = 10.sp
+                                color = t.Text_Subtle,
+                                fontSize = 10.sp,
+                                lineHeight = 13.sp
                             )
                         )
                     }
                 }
 
-                Spacer(Modifier.height(2.dp))
+                Spacer(Modifier.height(1.dp))
 
-                // Rich message content renderer
-                MessageContentView(
-                    content = message.content,
-                    isCompact = false
-                )
+                MessageContentView(content = message.content, isCompact = false)
 
-                // Edited indicator
                 if (message.isEdited) {
+                    Spacer(Modifier.height(1.dp))
                     Text(
-                        text = "(edited)",
+                        text = "edited",
                         style = MaterialTheme.typography.labelSmall.copy(
-                            color = Text_Muted, fontSize = 9.sp
+                            color = t.Text_Subtle,
+                            fontSize = 10.sp
                         )
                     )
                 }
 
-                // Reaction chips
                 if (message.reactions.isNotEmpty()) {
+                    Spacer(Modifier.height(4.dp))
                     ReactionChips(reactions = message.reactions)
                 }
             }
         }
 
-        // Floating action toolbar on hover — Discord style
+        // ── Floating hover toolbar ──────────────────────────────
         AnimatedVisibility(
-            visible = isHovered,
+            visible = hovered,
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .offset(y = (-7).dp, x = (-14).dp),
-            enter = fadeIn() + scaleIn(initialScale = 0.94f),
-            exit = fadeOut() + scaleOut(targetScale = 0.94f)
+                .offset(y = (-6).dp, x = (-14).dp),
+            enter = fadeIn(OrbitMotion.tweenFast()) + scaleIn(
+                animationSpec = OrbitMotion.tweenFast(),
+                initialScale = 0.94f
+            ),
+            exit = fadeOut(OrbitMotion.tweenFast()) + scaleOut(
+                animationSpec = OrbitMotion.tweenFast(),
+                targetScale = 0.96f
+            )
         ) {
             Row(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-                    .border(
-                        1.dp,
-                        Separator.copy(alpha = 0.3f),
-                        RoundedCornerShape(6.dp)
-                    )
-                    .padding(horizontal = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(0.dp)
+                    .clip(OrbitRadius.mdShape)
+                    .background(t.Elevated)
+                    .border(1.dp, t.SeparatorStrong, OrbitRadius.mdShape)
+                    .padding(2.dp),
+                horizontalArrangement = Arrangement.spacedBy(1.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 if (onReply != null) {
-                    MessageActionBtn(Icons.Default.Reply, "Reply") { onReply(message.id) }
+                    OrbitIconButton(
+                        icon = OrbitIcons.Reply,
+                        contentDescription = "Reply",
+                        onClick = { onReply(message.id) },
+                        size = 28.dp,
+                        iconSize = 15.dp,
+                        shape = OrbitRadius.xsShape
+                    )
                 }
                 if (onReact != null) {
-                    Box {
-                        MessageActionBtn(OrbitIcons.Emoji, "React") { showReactionMenu = true }
-                        ReactionPickerMenu(
-                            expanded = showReactionMenu,
-                            alreadyAdded = { emoji -> currentUser?.id != null && message.reactions[emoji]?.contains(currentUser.id) == true },
-                            onPick = { emoji ->
-                                showReactionMenu = false
-                                if (currentUser == null || message.reactions[emoji]?.contains(currentUser.id) != true) {
-                                    onReact(message.id, emoji)
-                                }
-                            },
-                            onDismiss = { showReactionMenu = false }
-                        )
-                    }
+                    OrbitIconButton(
+                        icon = OrbitIcons.Emoji,
+                        contentDescription = "Add reaction",
+                        onClick = { showReactionMenu = true },
+                        size = 28.dp,
+                        iconSize = 15.dp,
+                        shape = OrbitRadius.xsShape
+                    )
+                    ReactionPickerMenu(
+                        expanded = showReactionMenu,
+                        alreadyAdded = { emoji ->
+                            currentUser?.id != null && message.reactions[emoji]?.contains(currentUser.id) == true
+                        },
+                        onPick = { emoji ->
+                            showReactionMenu = false
+                            if (currentUser == null || message.reactions[emoji]?.contains(currentUser.id) != true) {
+                                onReact(message.id, emoji)
+                            }
+                        },
+                        onDismiss = { showReactionMenu = false }
+                    )
                 }
                 if (canEdit) {
-                    MessageActionBtn(Icons.Default.Edit, "Edit") { showEditDialog = true }
+                    OrbitIconButton(
+                        icon = Icons.Default.Edit,
+                        contentDescription = "Edit",
+                        onClick = { showEditDialog = true },
+                        size = 28.dp,
+                        iconSize = 15.dp,
+                        shape = OrbitRadius.xsShape
+                    )
                 }
                 if (canDelete || !isOwn) {
-                    Box {
-                        MessageActionBtn(Icons.Default.MoreHoriz, "More") { showMoreMenu = true }
-                        MessageMoreMenu(
-                            expanded = showMoreMenu,
-                            canDelete = canDelete,
-                            messageBody = message.body,
-                            isPinned = message.isPinned,
-                            pinEnabled = onTogglePin != null,
-                            onTogglePin = {
-                                showMoreMenu = false
-                                onTogglePin?.invoke(message.id)
-                            },
-                            onDelete = {
-                                showMoreMenu = false
-                                showDeleteConfirm = true
-                            },
-                            onCopyText = { showMoreMenu = false },
-                            onDismiss = { showMoreMenu = false }
-                        )
-                    }
+                    OrbitIconButton(
+                        icon = Icons.Default.MoreHoriz,
+                        contentDescription = "More",
+                        onClick = { showMoreMenu = true },
+                        size = 28.dp,
+                        iconSize = 15.dp,
+                        shape = OrbitRadius.xsShape
+                    )
+                    MessageMoreMenu(
+                        expanded = showMoreMenu,
+                        canDelete = canDelete,
+                        messageBody = message.body,
+                        isPinned = message.isPinned,
+                        pinEnabled = onTogglePin != null,
+                        onTogglePin = {
+                            showMoreMenu = false
+                            onTogglePin?.invoke(message.id)
+                        },
+                        onDelete = {
+                            showMoreMenu = false
+                            showDeleteConfirm = true
+                        },
+                        onCopyText = { showMoreMenu = false },
+                        onDismiss = { showMoreMenu = false }
+                    )
                 }
             }
         }
 
-        // Edit dialog (own text messages)
         if (showEditDialog) {
             MessageEditDialog(
                 initialBody = message.body,
@@ -257,28 +312,49 @@ internal fun MessageBubbleFull(
             )
         }
 
-        // Delete confirmation (own messages)
         if (showDeleteConfirm) {
-            androidx.compose.material3.AlertDialog(
+            ui.components.OrbitDialog(
+                title = "Delete this message?",
+                subtitle = "It will be removed for everyone in the room. This cannot be undone.",
+                icon = Icons.Default.Delete,
                 onDismissRequest = { showDeleteConfirm = false },
-                title = { Text("Delete message") },
-                text = { Text("This will permanently remove the message for everyone.") },
-                confirmButton = {
-                    androidx.compose.material3.TextButton(onClick = {
-                        showDeleteConfirm = false
-                        onDeleteMessage?.invoke(message.id)
-                    }) { Text("Delete", color = Color(0xFFF23F42)) }
+                confirmLabel = "Delete",
+                confirmTone = OrbitButtonTone.Danger,
+                onConfirm = {
+                    showDeleteConfirm = false
+                    onDeleteMessage?.invoke(message.id)
                 },
-                dismissButton = {
-                    androidx.compose.material3.TextButton(onClick = { showDeleteConfirm = false }) {
-                        Text("Cancel")
-                    }
-                },
-                containerColor = Color(0xFF1E1F22),
-                titleContentColor = Color.White,
-                textContentColor = Text_Muted
-            )
+                width = 400.dp
+            ) { }
         }
+    }
+}
+
+@Composable
+private fun Modifier.offsetX(px: Float): Modifier {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    return this.offset(x = with(density) { px.toDp() })
+}
+
+@Composable
+private fun BotBadge() {
+    val t = rememberCosmicTokens()
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(3.dp))
+            .background(t.Accent)
+            .padding(horizontal = 4.dp, vertical = 1.dp)
+    ) {
+        Text(
+            text = "BOT",
+            style = MaterialTheme.typography.labelSmall.copy(
+                color = t.OnAccent,
+                fontWeight = FontWeight.Bold,
+                fontSize = 8.5.sp,
+                letterSpacing = 0.5.sp,
+                lineHeight = 11.sp
+            )
+        )
     }
 }
 
@@ -291,25 +367,49 @@ private fun ReactionPickerMenu(
     onPick: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
-    androidx.compose.material3.DropdownMenu(
-        expanded = expanded,
-        onDismissRequest = onDismiss,
-        containerColor = Color(0xFF1E1F22)
-    ) {
-        Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)) {
+    val t = rememberCosmicTokens()
+    OrbitMenu(expanded = expanded, onDismissRequest = onDismiss, width = 184.dp) {
+        Row(modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)) {
             QuickReactionEmojis.take(4).forEach { emoji ->
-                androidx.compose.material3.IconButton(onClick = { onPick(emoji) }, modifier = Modifier.size(36.dp)) {
-                    Text(emoji, fontSize = 18.sp)
-                }
+                EmojiChoice(emoji, highlighted = alreadyAdded(emoji)) { onPick(emoji) }
             }
         }
-        Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)) {
+        Row(modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)) {
             QuickReactionEmojis.drop(4).forEach { emoji ->
-                androidx.compose.material3.IconButton(onClick = { onPick(emoji) }, modifier = Modifier.size(36.dp)) {
-                    Text(emoji, fontSize = 18.sp)
-                }
+                EmojiChoice(emoji, highlighted = alreadyAdded(emoji)) { onPick(emoji) }
             }
         }
+    }
+}
+
+@Composable
+private fun EmojiChoice(emoji: String, highlighted: Boolean, onClick: () -> Unit) {
+    val t = rememberCosmicTokens()
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+    val bg by animateColorAsState(
+        targetValue = if (hovered) t.AccentGhost else Color.Transparent,
+        animationSpec = OrbitMotion.SnappyColor,
+        label = "emojiBg"
+    )
+    Box(
+        modifier = Modifier
+            .size(36.dp)
+            .clip(OrbitRadius.xsShape)
+            .background(bg)
+            .hoverable(interaction)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = emoji,
+            fontSize = 18.sp,
+            modifier = if (highlighted) Modifier.background(t.AccentGhost, RoundedCornerShape(4.dp)) else Modifier
+        )
     }
 }
 
@@ -325,41 +425,27 @@ private fun MessageMoreMenu(
     onCopyText: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
-    androidx.compose.material3.DropdownMenu(
-        expanded = expanded,
-        onDismissRequest = onDismiss,
-        containerColor = Color(0xFF1E1F22)
-    ) {
-        androidx.compose.material3.DropdownMenuItem(
-            text = { Text("Copy Text", color = Color.White, fontSize = 13.sp) },
+    val clipboard = LocalClipboardManager.current
+    OrbitMenu(expanded = expanded, onDismissRequest = onDismiss, width = 196.dp) {
+        OrbitMenuItem(
+            label = "Copy text",
             onClick = {
-                clipboard.setText(androidx.compose.ui.text.AnnotatedString(messageBody))
+                clipboard.setText(AnnotatedString(messageBody))
                 onCopyText()
             }
         )
         if (pinEnabled) {
-            androidx.compose.material3.DropdownMenuItem(
-                text = {
-                    Text(
-                        if (isPinned) "Unpin Message" else "Pin Message",
-                        color = Color.White, fontSize = 13.sp
-                    )
-                },
-                leadingIcon = {
-                    Icon(
-                        ui.icons.OrbitIcons.Pin,
-                        contentDescription = null,
-                        tint = if (isPinned) Accent else Text_Muted,
-                        modifier = Modifier.size(16.dp)
-                    )
-                },
+            OrbitMenuItem(
+                label = if (isPinned) "Unpin message" else "Pin message",
+                icon = ui.icons.OrbitIcons.Pin,
                 onClick = onTogglePin
             )
         }
         if (canDelete) {
-            androidx.compose.material3.DropdownMenuItem(
-                text = { Text("Delete Message", color = Color(0xFFF23F42), fontSize = 13.sp) },
+            OrbitMenuItem(
+                label = "Delete message",
+                icon = Icons.Default.Delete,
+                danger = true,
                 onClick = onDelete
             )
         }
@@ -373,30 +459,25 @@ private fun MessageEditDialog(
     onDismiss: () -> Unit
 ) {
     var editBody by remember { mutableStateOf(initialBody) }
-    androidx.compose.material3.AlertDialog(
+    OrbitDialog(
+        title = "Edit message",
+        icon = Icons.Default.Edit,
         onDismissRequest = onDismiss,
-        title = { Text("Edit message") },
-        text = {
-            androidx.compose.material3.OutlinedTextField(
-                value = editBody,
-                onValueChange = { editBody = it },
-                modifier = Modifier.fillMaxWidth(),
-                minLines = 2,
-                maxLines = 6
-            )
-        },
-        confirmButton = {
-            androidx.compose.material3.TextButton(onClick = { onConfirm(editBody.trim()) }) {
-                Text("Save")
-            }
-        },
-        dismissButton = {
-            androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancel") }
-        },
-        containerColor = Color(0xFF1E1F22),
-        titleContentColor = Color.White,
-        textContentColor = Text_Muted
-    )
+        confirmLabel = "Save",
+        onConfirm = { onConfirm(editBody.trim()) },
+        confirmEnabled = editBody.isNotBlank(),
+        width = 480.dp
+    ) {
+        OrbitTextField(
+            value = editBody,
+            onValueChange = { editBody = it },
+            placeholder = "Message",
+            singleLine = false,
+            minLines = 3,
+            maxLines = 8,
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
 }
 
 @Composable
@@ -405,39 +486,14 @@ internal fun MessageActionBtn(
     desc: String,
     onClick: () -> Unit = {}
 ) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val isHovered by interactionSource.collectIsHoveredAsState()
-    val tint by animateColorAsState(
-        targetValue = if (isHovered) Text_White else Text_Muted,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "messageActionTint"
-    )
-    val bgColor by animateColorAsState(
-        targetValue = if (isHovered) AccentGhost.copy(alpha = 0.45f) else Color.Transparent,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "messageActionBg"
-    )
-    val iconScale by animateFloatAsState(
-        targetValue = if (isHovered) 1.08f else 1f,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "messageActionScale"
-    )
-    IconButton(
+    OrbitIconButton(
+        icon = icon,
+        contentDescription = desc,
         onClick = onClick,
-        modifier = Modifier
-            .size(28.dp)
-            .clip(RoundedCornerShape(5.dp))
-            .background(bgColor)
-            .hoverable(interactionSource),
-        interactionSource = interactionSource
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = desc,
-            tint = tint,
-            modifier = Modifier.size(16.dp).scale(iconScale)
-        )
-    }
+        size = 28.dp,
+        iconSize = 15.dp,
+        shape = OrbitRadius.xsShape
+    )
 }
 
 @Composable
@@ -450,7 +506,9 @@ private fun MessageAvatar(message: OrbitMessage) {
             model = member.avatarUrl,
             contentDescription = member.displayName,
             contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-            modifier = Modifier.size(36.dp).clip(androidx.compose.foundation.shape.CircleShape)
+            modifier = Modifier
+                .size(36.dp)
+                .clip(androidx.compose.foundation.shape.CircleShape)
         )
     } else {
         OrbitDefaultAvatar(
@@ -465,41 +523,43 @@ private fun MessageAvatar(message: OrbitMessage) {
 @Composable
 fun WhatsAppMessageBubble(message: ui.model.OrbitMessage, isCurrentUser: Boolean) {
     val tokens = ui.theme.rememberCosmicTokens()
-    val bubbleColor = if (isCurrentUser) tokens.Accent.copy(alpha = 0.15f) else tokens.CardBg
-    val alignment = if (isCurrentUser) androidx.compose.ui.Alignment.End else androidx.compose.ui.Alignment.Start
+    val bubbleColor = if (isCurrentUser) tokens.BubbleOwn else tokens.BubbleOther
+    val alignment = if (isCurrentUser) Alignment.End else Alignment.Start
 
-    androidx.compose.foundation.layout.Column(
-        modifier = androidx.compose.ui.Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = OrbitSpace.sm, vertical = 2.dp),
         horizontalAlignment = alignment
     ) {
-        androidx.compose.foundation.layout.Box(
-            modifier = androidx.compose.ui.Modifier
-                .clip(androidx.compose.foundation.shape.RoundedCornerShape(
-                    topStart = 8.dp,
-                    topEnd = 8.dp,
-                    bottomStart = if (isCurrentUser) 8.dp else 0.dp,
-                    bottomEnd = if (isCurrentUser) 0.dp else 8.dp
-                ))
+        Box(
+            modifier = Modifier
+                .clip(
+                    RoundedCornerShape(
+                        topStart = OrbitRadius.md,
+                        topEnd = OrbitRadius.md,
+                        bottomStart = if (isCurrentUser) OrbitRadius.md else OrbitRadius.xs,
+                        bottomEnd = if (isCurrentUser) OrbitRadius.xs else OrbitRadius.md
+                    )
+                )
                 .background(bubbleColor)
-                .padding(horizontal = 12.dp, vertical = 6.dp)
+                .padding(horizontal = OrbitSpace.md, vertical = OrbitSpace.sm)
         ) {
-            androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.Bottom) {
-                androidx.compose.material3.Text(
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text(
                     text = message.body,
-                    style = androidx.compose.material3.MaterialTheme.typography.bodyMedium.copy(
+                    style = MaterialTheme.typography.bodyMedium.copy(
                         color = tokens.Text_White,
-                        fontSize = 15.sp,
+                        fontSize = 14.5.sp,
                         lineHeight = 20.sp
                     ),
-                    modifier = androidx.compose.ui.Modifier.padding(end = 8.dp)
+                    modifier = Modifier.padding(end = OrbitSpace.sm)
                 )
-                androidx.compose.material3.Text(
-                    text = ui.screen.chat.formatTimestamp(message.timestamp).replace("Today at ", ""),
-                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall.copy(
-                        color = tokens.Text_Muted,
+                Text(
+                    text = formatTimestamp(message.timestamp).replace("Today at ", ""),
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        color = tokens.Text_Subtle,
                         fontSize = 10.sp
                     ),
-                    modifier = androidx.compose.ui.Modifier.padding(bottom = 2.dp)
+                    modifier = Modifier.padding(bottom = 2.dp)
                 )
             }
         }

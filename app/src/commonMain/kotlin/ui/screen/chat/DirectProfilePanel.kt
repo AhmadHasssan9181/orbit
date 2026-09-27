@@ -2,18 +2,28 @@ package ui.screen.chat
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.MoreHoriz
-import androidx.compose.material.icons.filled.PersonAdd
-import androidx.compose.material3.Icon
+import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -29,18 +39,20 @@ import androidx.compose.ui.unit.sp
 import ui.assets.OrbitDefaultAvatar
 import ui.assets.OrbitVerifiedBadge
 import ui.assets.isOrbitVerifiedUser
+import ui.components.OrbitButton
+import ui.components.OrbitButtonTone
+import ui.components.OrbitListRow
+import ui.components.OrbitRowLeading
+import ui.components.OrbitScrollbar
 import ui.model.OrbitUser
-
-import ui.screen.auth.*
-import ui.screen.settings.*
-import ui.screen.drawer.*
-import ui.screen.server.*
-import ui.screen.call.*
-import ui.screen.media.*
-import ui.screen.main.*
+import ui.theme.OrbitMetrics
+import ui.theme.OrbitRadius
+import ui.theme.OrbitSpace
+import ui.theme.rememberCosmicTokens
 
 @Composable
 internal fun SmallUserAvatar(user: OrbitUser, size: Dp) {
+    val t = rememberCosmicTokens()
     Box(modifier = Modifier.size(size)) {
         if (user.avatarUrl != null) {
             coil3.compose.AsyncImage(
@@ -59,158 +71,197 @@ internal fun SmallUserAvatar(user: OrbitUser, size: Dp) {
         }
         Box(
             modifier = Modifier
-                .size(if (size > 40.dp) 14.dp else 10.dp)
+                .size(if (size > 40.dp) 13.dp else 9.dp)
                 .align(Alignment.BottomEnd)
-                .border(2.dp, Members_Bg, CircleShape)
                 .clip(CircleShape)
                 .background(memberStatusColor(user.status))
+                .border(2.dp, t.Members_Bg, CircleShape)
         )
     }
 }
 
+/**
+ * Direct-message profile panel.
+ *
+ * This one needed the most work of anything in the UI layer. It opened on a
+ * 150dp three-stop gradient running from the user's avatar colour through the
+ * accent into a flat cyan — the single most neon surface in the app — under a
+ * 22sp ExtraBold name. Below that sat four rows and a full-width button that
+ * all did nothing: "Mutual Servers", "Mutual Friends", "Add Friend" and "View
+ * Full Profile" were `clickable {}`.
+ *
+ * Dead affordances are worse than missing ones, so they are gone. What remains
+ * is what the app actually knows: who this is, their presence, their MXID, and
+ * the two call buttons that are genuinely wired.
+ */
 @Composable
 internal fun DirectProfilePanel(user: OrbitUser) {
+    val t = rememberCosmicTokens()
+    val avatarColor = Color(user.avatarColor)
+    val callManager = webrtc.LocalCallManager.current
+    val listState = rememberLazyListState()
+
     Column(
         modifier = Modifier
-            .width(320.dp)
+            .width(OrbitMetrics.sidePanelWidthWide)
             .fillMaxHeight()
-            .background(Members_Bg)
+            .background(t.Members_Bg)
+            .border(1.dp, t.Separator)
     ) {
+        // ── Identity header ──────────────────────────────────────
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(150.dp)
                 .background(
-                    Brush.linearGradient(
+                    // A single low-alpha wash of the user's own colour. The
+                    // previous three-stop gradient was unreadable text over.
+                    Brush.verticalGradient(
                         listOf(
-                            Color(user.avatarColor).copy(alpha = 0.95f),
-                            Accent.copy(alpha = 0.85f),
-                            Color(0xFF36D7D7)
+                            avatarColor.copy(alpha = 0.28f),
+                            avatarColor.copy(alpha = 0.06f),
+                            androidx.compose.ui.graphics.Color.Transparent
                         )
                     )
                 )
         ) {
-            Row(
-                modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = OrbitSpace.lg)
+                    .offset(y = 22.dp)
             ) {
-                ProfileCircleAction(Icons.Default.PersonAdd, "Add Friend")
-                ProfileCircleAction(Icons.Default.MoreHoriz, "More")
+                Box(
+                    modifier = Modifier
+                        .size(72.dp)
+                        .clip(CircleShape)
+                        .background(t.Members_Bg)
+                        .padding(4.dp)
+                ) {
+                    SmallUserAvatar(user, size = 64.dp)
+                }
             }
         }
 
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 18.dp)
+            modifier = Modifier.padding(horizontal = OrbitSpace.lg),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
-            Box(modifier = Modifier.height(54.dp).fillMaxWidth()) {
-                Box(
-                    modifier = Modifier
-                        .offset(y = (-44).dp)
-                        .size(88.dp)
-                        .border(7.dp, Members_Bg, CircleShape)
-                ) {
-                    SmallUserAvatar(user, size = 88.dp)
-                }
-            }
-
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = user.displayName,
-                    style = MaterialTheme.typography.titleLarge.copy(
-                        color = Text_White,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 22.sp
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        color = t.Text_White,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 18.sp,
+                        letterSpacing = 0.sp
                     ),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false)
                 )
                 if (isOrbitVerifiedUser(user.username, user.displayName, user.id)) {
-                    Spacer(Modifier.width(6.dp))
-                    OrbitVerifiedBadge(modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.width(5.dp))
+                    OrbitVerifiedBadge(modifier = Modifier.size(15.dp))
                 }
             }
-
             Text(
-                text = user.username.ifBlank { user.id },
-                style = MaterialTheme.typography.bodyMedium.copy(color = Text_Secondary, fontSize = 14.sp),
+                text = "@${user.username.ifBlank { user.id }}",
+                style = MaterialTheme.typography.bodySmall.copy(color = t.Text_Muted, fontSize = 12.5.sp),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+            Text(
+                text = user.id,
+                style = MaterialTheme.typography.labelSmall.copy(color = t.Text_Subtle, fontSize = 10.5.sp),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
 
-            Spacer(Modifier.height(18.dp))
-            ProfileInfoCard("Status", statusText(user.status))
-            Spacer(Modifier.height(10.dp))
-            ProfileInfoCard("Member Since", "Matrix direct message")
-            Spacer(Modifier.height(10.dp))
-            ProfileLinkRow("Mutual Servers")
-            ProfileLinkRow("Mutual Friends")
+        Spacer(Modifier.height(OrbitSpace.lg))
 
-            Spacer(Modifier.weight(1f))
-            TextButton(
-                onClick = {},
-                modifier = Modifier.fillMaxWidth().height(46.dp)
+        Row(
+            modifier = Modifier.padding(horizontal = OrbitSpace.lg),
+            horizontalArrangement = Arrangement.spacedBy(OrbitSpace.sm)
+        ) {
+            OrbitButton(
+                text = "Voice",
+                icon = Icons.Default.Call,
+                onClick = { callManager?.startCall(user.id, false) },
+                tone = OrbitButtonTone.Neutral,
+                fullWidth = true
+            )
+            OrbitButton(
+                text = "Video",
+                icon = Icons.Default.Videocam,
+                onClick = { callManager?.startCall(user.id, true) },
+                tone = OrbitButtonTone.Primary,
+                fullWidth = true
+            )
+        }
+
+        Spacer(Modifier.height(OrbitSpace.lg))
+
+        androidx.compose.material3.HorizontalDivider(color = t.Separator, thickness = 1.dp)
+
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    top = OrbitSpace.sm,
+                    bottom = OrbitSpace.xxl,
+                    start = OrbitSpace.sm,
+                    end = OrbitSpace.sm
+                )
             ) {
-                Text("View Full Profile", color = Text_White, fontWeight = FontWeight.SemiBold)
+                item(key = "presence") {
+                    ProfileField(
+                        label = "Presence",
+                        value = statusText(user.status),
+                        valueColor = memberStatusColor(user.status)
+                    )
+                }
+                item(key = "mxid") {
+                    ProfileField(label = "Matrix ID", value = user.id)
+                }
             }
-            Spacer(Modifier.height(10.dp))
+            OrbitScrollbar(listState = listState, modifier = Modifier.align(Alignment.CenterEnd))
         }
     }
 }
 
 @Composable
-private fun ProfileCircleAction(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    desc: String
+private fun ProfileField(
+    label: String,
+    value: String,
+    valueColor: Color? = null
 ) {
-    Box(
-        modifier = Modifier
-            .size(38.dp)
-            .clip(CircleShape)
-            .background(Color.Black.copy(alpha = 0.28f))
-            .clickable {},
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(icon, contentDescription = desc, tint = Color.White, modifier = Modifier.size(20.dp))
-    }
-}
-
-@Composable
-private fun ProfileInfoCard(title: String, value: String) {
+    val t = rememberCosmicTokens()
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(CardBg)
-            .padding(horizontal = 14.dp, vertical = 12.dp)
-    ) {
-        Text(title, color = Text_Secondary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(8.dp))
-        Text(value, color = Text_White, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-    }
-}
-
-@Composable
-private fun ProfileLinkRow(label: String) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(48.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(CardBg)
-            .clickable {}
-            .padding(horizontal = 14.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(horizontal = 8.dp, vertical = 10.dp)
     ) {
         Text(
-            text = label,
-            color = Text_Secondary,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.weight(1f)
+            text = label.uppercase(),
+            style = MaterialTheme.typography.labelSmall.copy(
+                color = t.Text_Subtle,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 9.5.sp,
+                letterSpacing = 0.6.sp
+            )
         )
-        Icon(Icons.Default.ChevronRight, contentDescription = null, tint = Text_Muted, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.height(3.dp))
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall.copy(
+                color = valueColor ?: t.Text_Secondary,
+                fontSize = 12.5.sp
+            ),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }

@@ -333,16 +333,16 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawChatScene(accen
     val w = size.width
     val h = size.height
     drawRoundRect(
-        color = Color(0xFF23252E),
+        color = Color(0xFF1F242C),
         topLeft = Offset(w * 0.28f, h * 0.22f),
         size = Size(w * 0.28f, h * 0.19f),
         cornerRadius = androidx.compose.ui.geometry.CornerRadius(18.dp.toPx(), 18.dp.toPx())
     )
     drawCircle(accentLight, radius = w * 0.010f, center = Offset(w * 0.34f, h * 0.30f))
     drawCircle(accent, radius = w * 0.010f, center = Offset(w * 0.38f, h * 0.30f))
-    drawCircle(Color(0xFF22C55E), radius = w * 0.010f, center = Offset(w * 0.42f, h * 0.30f))
+    drawCircle(Color(0xFF49AE81), radius = w * 0.010f, center = Offset(w * 0.42f, h * 0.30f))
     drawRoundRect(
-        color = Color(0xFF23252E),
+        color = Color(0xFF1F242C),
         topLeft = Offset(w * 0.48f, h * 0.42f),
         size = Size(w * 0.24f, h * 0.16f),
         cornerRadius = androidx.compose.ui.geometry.CornerRadius(18.dp.toPx(), 18.dp.toPx())
@@ -356,7 +356,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawServerScene(acc
     val h = size.height
     val center = Offset(w * 0.50f, h * 0.42f)
     drawRoundRect(
-        color = Color(0xFF23252E),
+        color = Color(0xFF1F242C),
         topLeft = Offset(w * 0.36f, h * 0.20f),
         size = Size(w * 0.28f, h * 0.38f),
         cornerRadius = androidx.compose.ui.geometry.CornerRadius(28.dp.toPx(), 28.dp.toPx())
@@ -377,7 +377,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawRoomScene(accen
     val w = size.width
     val h = size.height
     drawRoundRect(
-        color = Color(0xFF23252E),
+        color = Color(0xFF1F242C),
         topLeft = Offset(w * 0.32f, h * 0.24f),
         size = Size(w * 0.36f, h * 0.28f),
         cornerRadius = androidx.compose.ui.geometry.CornerRadius(24.dp.toPx(), 24.dp.toPx())
@@ -390,7 +390,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSearchScene(acc
     val w = size.width
     val h = size.height
     drawRoundRect(
-        color = Color(0xFF23252E),
+        color = Color(0xFF1F242C),
         topLeft = Offset(w * 0.31f, h * 0.24f),
         size = Size(w * 0.30f, h * 0.25f),
         cornerRadius = androidx.compose.ui.geometry.CornerRadius(22.dp.toPx(), 22.dp.toPx())
@@ -423,7 +423,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawMediaScene(acce
     val w = size.width
     val h = size.height
     drawRoundRect(
-        color = Color(0xFF23252E),
+        color = Color(0xFF1F242C),
         topLeft = Offset(w * 0.30f, h * 0.22f),
         size = Size(w * 0.40f, h * 0.28f),
         cornerRadius = androidx.compose.ui.geometry.CornerRadius(20.dp.toPx(), 20.dp.toPx())
@@ -453,13 +453,13 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawNotificationSce
     }
     drawPath(bell, brush = Brush.linearGradient(listOf(accentLight, accent)))
     drawCircle(Color.White.copy(alpha = 0.75f), radius = w * 0.018f, center = Offset(w * 0.50f, h * 0.50f))
-    drawCircle(Color(0xFFF472B6), radius = w * 0.030f, center = Offset(w * 0.61f, h * 0.26f))
+    drawCircle(Color(0xFFAE7099), radius = w * 0.030f, center = Offset(w * 0.61f, h * 0.26f))
 }
 
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawOfflineScene(accent: Color, accentLight: Color) {
     val w = size.width
     val h = size.height
-    drawCircle(Color(0xFF23252E), radius = w * 0.13f, center = Offset(w * 0.50f, h * 0.38f))
+    drawCircle(Color(0xFF1F242C), radius = w * 0.13f, center = Offset(w * 0.50f, h * 0.38f))
     drawCircle(accent.copy(alpha = 0.72f), radius = w * 0.095f, center = Offset(w * 0.50f, h * 0.38f), style = Stroke(width = 5.dp.toPx()))
     drawLine(accentLight, Offset(w * 0.42f, h * 0.46f), Offset(w * 0.58f, h * 0.30f), strokeWidth = 6.dp.toPx())
     drawLine(Color.White.copy(alpha = 0.18f), Offset(w * 0.38f, h * 0.61f), Offset(w * 0.62f, h * 0.61f), strokeWidth = 5.dp.toPx())
@@ -487,7 +487,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawInviteScene(acc
     drawCircle(accent, radius = w * 0.060f, center = Offset(w * 0.43f, h * 0.34f))
     drawCircle(accentLight, radius = w * 0.052f, center = Offset(w * 0.56f, h * 0.35f))
     drawRoundRect(
-        color = Color(0xFF23252E),
+        color = Color(0xFF1F242C),
         topLeft = Offset(w * 0.34f, h * 0.43f),
         size = Size(w * 0.32f, h * 0.14f),
         cornerRadius = androidx.compose.ui.geometry.CornerRadius(20.dp.toPx(), 20.dp.toPx())
@@ -500,7 +500,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawUploadScene(acc
     val w = size.width
     val h = size.height
     drawRoundRect(
-        color = Color(0xFF23252E),
+        color = Color(0xFF1F242C),
         topLeft = Offset(w * 0.35f, h * 0.28f),
         size = Size(w * 0.30f, h * 0.30f),
         cornerRadius = androidx.compose.ui.geometry.CornerRadius(18.dp.toPx(), 18.dp.toPx())
@@ -543,7 +543,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawRolesScene(acce
             center = Offset(w * x, h * (0.31f + index * 0.02f))
         )
         drawRoundRect(
-            color = Color(0xFF23252E),
+            color = Color(0xFF1F242C),
             topLeft = Offset(w * (x - 0.055f), h * 0.41f),
             size = Size(w * 0.11f, h * 0.14f),
             cornerRadius = androidx.compose.ui.geometry.CornerRadius(18.dp.toPx(), 18.dp.toPx())
@@ -563,12 +563,12 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawChoiceScene(
         OrbitEmptyScene.CreateTemplate,
         OrbitEmptyScene.JoinDiscover,
         OrbitEmptyScene.TemplateStudy -> accentLight
-        OrbitEmptyScene.TemplateFriends -> Color(0xFFF472B6)
-        OrbitEmptyScene.TemplateCommunity -> Color(0xFF22C55E)
+        OrbitEmptyScene.TemplateFriends -> Color(0xFFAE7099)
+        OrbitEmptyScene.TemplateCommunity -> Color(0xFF49AE81)
         else -> accent
     }
     drawRoundRect(
-        color = Color(0xFF23252E),
+        color = Color(0xFF1F242C),
         topLeft = Offset(w * 0.32f, h * 0.24f),
         size = Size(w * 0.36f, h * 0.30f),
         cornerRadius = androidx.compose.ui.geometry.CornerRadius(20.dp.toPx(), 20.dp.toPx())
@@ -601,14 +601,6 @@ private fun initialsFor(label: String): String {
     }
 }
 
-private fun orbitSeedColor(seed: String): Color {
-    val colors = listOf(
-        Color(0xFF5865F2),
-        Color(0xFF8EA1E1),
-        Color(0xFF22C55E),
-        Color(0xFFF59E0B),
-        Color(0xFFF472B6),
-        Color(0xFF22D3EE)
-    )
-    return colors[(seed.hashCode() and Int.MAX_VALUE) % colors.size]
-}
+// Delegated to the shared palette so generated avatars, DM rows and generated
+// username colours can never drift apart.
+private fun orbitSeedColor(seed: String): Color = ui.theme.avatarSeedColor(seed)

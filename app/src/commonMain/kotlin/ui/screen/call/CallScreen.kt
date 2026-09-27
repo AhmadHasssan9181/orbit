@@ -174,7 +174,7 @@ fun CallScreen(
                     .size(320.dp, 200.dp)
                     .shadow(24.dp, RoundedCornerShape(16.dp))
                     .clip(RoundedCornerShape(16.dp))
-                    .background(Color(0xFF111214))
+                    .background(Color(0xFF0B0D11))
                     .border(1.dp, tokens.Accent.copy(alpha = 0.15f), RoundedCornerShape(16.dp))
                     .pointerInput(Unit) {
                         detectDragGestures { change, dragAmount ->
@@ -279,7 +279,7 @@ fun CallScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color(0xFF111214))
+            .background(Color(0xFF0B0D11))
     ) {
         val remoteRenderer = callManager.webRtcClient.getRemoteVideoRenderer()
         val localRenderer = callManager.webRtcClient.getLocalVideoRenderer()
@@ -301,7 +301,7 @@ fun CallScreen(
             }
 
             if (remoteRenderer != null && hasRemoteStream) {
-                nodes.add(RenderNode("remote", callerName, remoteRenderer, isScreenShare = false, avatarColor = 0xFFF23F42.toInt()))
+                nodes.add(RenderNode("remote", callerName, remoteRenderer, isScreenShare = false, avatarColor = 0xFFD65A54.toInt()))
             }
             if (isVideoEnabled && !isScreenSharing) {
                 nodes.add(RenderNode("local", "You", localRenderer, isScreenShare = false, isMuted = isMuted, isDeafened = isDeafened, isHandRaised = isMyHandRaised))
@@ -332,7 +332,7 @@ fun CallScreen(
                         Brush.radialGradient(
                             colors = listOf(
                                 tokens.Accent.copy(alpha = 0.08f),
-                                Color(0xFF111214)
+                                Color(0xFF0B0D11)
                             ),
                             radius = 600f
                         )
@@ -370,7 +370,7 @@ fun CallScreen(
                                     Brush.linearGradient(
                                         listOf(
                                             tokens.Accent.copy(alpha = 0.8f),
-                                            Color(0xFFF23F42).copy(alpha = 0.6f)
+                                            Color(0xFFD65A54).copy(alpha = 0.6f)
                                         )
                                     )
                                 )
@@ -451,7 +451,7 @@ fun CallScreen(
                     .fillMaxWidth()
                     .background(
                         Brush.verticalGradient(
-                            listOf(Color(0xFF111214), Color(0xFF111214).copy(alpha = 0.85f), Color.Transparent)
+                            listOf(Color(0xFF0B0D11), Color(0xFF0B0D11).copy(alpha = 0.85f), Color.Transparent)
                         )
                     )
                     .padding(horizontal = 16.dp, vertical = 12.dp)
@@ -512,7 +512,7 @@ fun CallScreen(
                     if (isScreenSharing) {
                         Box(
                             modifier = Modifier
-                                .background(Color(0xFFF23F42), RoundedCornerShape(4.dp))
+                                .background(Color(0xFFD65A54), RoundedCornerShape(4.dp))
                                 .padding(horizontal = 8.dp, vertical = 4.dp)
                         ) {
                             Row(
@@ -567,7 +567,7 @@ fun CallScreen(
                                 .clip(CircleShape)
                                 .background(
                                     Brush.linearGradient(
-                                        listOf(tokens.Accent, Color(0xFFF23F42))
+                                        listOf(tokens.Accent, Color(0xFFD65A54))
                                     )
                                 ),
                             contentAlignment = Alignment.Center
@@ -600,13 +600,13 @@ fun CallScreen(
                                 onClick = { callManager.endCall() },
                                 modifier = Modifier
                                     .size(64.dp)
-                                    .background(Color(0xFFF23F42), CircleShape)
+                                    .background(Color(0xFFD65A54), CircleShape)
                                     .shadow(8.dp, CircleShape)
                             ) {
                                 Icon(OrbitIcons.CallEnd, contentDescription = "Decline", tint = Color.White, modifier = Modifier.size(28.dp))
                             }
                             Spacer(Modifier.height(12.dp))
-                            Text("Decline", color = Color(0xFFF23F42), fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                            Text("Decline", color = Color(0xFFD65A54), fontWeight = FontWeight.Medium, fontSize = 13.sp)
                         }
 
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -629,13 +629,13 @@ fun CallScreen(
                                     onClick = { callManager.answerCall(isVideo = true) },
                                     modifier = Modifier
                                         .size(64.dp)
-                                        .background(Color(0xFF5865F2), CircleShape)
+                                        .background(Color(0xFF7B74E8), CircleShape)
                                         .shadow(8.dp, CircleShape)
                                 ) {
                                     Icon(OrbitIcons.Video, contentDescription = "Video", tint = Color.White, modifier = Modifier.size(28.dp))
                                 }
                                 Spacer(Modifier.height(12.dp))
-                                Text("Video", color = Color(0xFF5865F2), fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                                Text("Video", color = Color(0xFF7B74E8), fontWeight = FontWeight.Medium, fontSize = 13.sp)
                             }
                         }
                     }
@@ -731,7 +731,7 @@ fun SoundboardPanel(
 
     Surface(
         shape = RoundedCornerShape(16.dp),
-        color = Color(0xFF1E1F22).copy(alpha = 0.95f),
+        color = Color(0xFF262C36).copy(alpha = 0.95f),
         shadowElevation = 16.dp,
         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
         modifier = modifier.width(360.dp)
@@ -774,7 +774,7 @@ fun SoundboardPanel(
 
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
-                                color = if (isHovered) Color(0xFF2B2D31) else Color(0xFF232428),
+                                color = if (isHovered) Color(0xFF1F242C) else Color(0xFF262C36),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .aspectRatio(1f)
@@ -844,7 +844,7 @@ fun SoundboardPanel(
                         else -> {
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
-                                color = Color(0xFF232428),
+                                color = Color(0xFF262C36),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .aspectRatio(1f)
@@ -875,7 +875,7 @@ fun SoundboardPanel(
                 Spacer(Modifier.height(6.dp))
                 Text(
                     uploadError ?: "",
-                    color = Color(0xFFF23F42),
+                    color = Color(0xFFD65A54),
                     fontSize = 11.sp
                 )
             } else {
@@ -946,7 +946,7 @@ private fun ShareOptionRow(
             val isSelected = option.equals(selected, ignoreCase = true)
             Surface(
                 shape = RoundedCornerShape(8.dp),
-                color = if (isSelected) tokens.Accent.copy(alpha = 0.25f) else Color(0xFF2B2D31),
+                color = if (isSelected) tokens.Accent.copy(alpha = 0.25f) else Color(0xFF1F242C),
                 border = BorderStroke(
                     1.dp,
                     if (isSelected) tokens.Accent else Color.White.copy(alpha = 0.08f)
@@ -1000,7 +1000,7 @@ fun ScreenShareDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF1E1F22),
+        containerColor = Color(0xFF262C36),
         shape = RoundedCornerShape(16.dp),
         title = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1048,7 +1048,7 @@ fun ScreenShareDialog(
                                         onSourceSelected(source)
                                     },
                                 colors = CardDefaults.cardColors(
-                                    containerColor = if (isHovered) Color(0xFF323438) else Color(0xFF2B2D31)
+                                    containerColor = if (isHovered) Color(0xFF2E3542) else Color(0xFF1F242C)
                                 ),
                                 border = BorderStroke(
                                     1.dp,
@@ -1101,7 +1101,7 @@ fun ScreenShareDialog(
 
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = Color(0xFF2B2D31),
+                        color = Color(0xFF1F242C),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
@@ -1157,7 +1157,7 @@ data class RenderNode(
     // Participant's hand is currently raised (io.orbit.raise_hand events).
     val isHandRaised: Boolean = false,
     val avatarUrl: String? = null,
-    val avatarColor: Int = 0xFF5865F2.toInt()
+    val avatarColor: Int = 0xFF7B74E8.toInt()
 )
 
 /**
@@ -1188,9 +1188,9 @@ internal fun identityHasRaisedHand(identity: String?, raisedUserIds: Set<String>
 @Composable
 internal fun ConnectionQualityBars(bars: Int, modifier: Modifier = Modifier) {
     val litColor = when {
-        bars >= 3 -> Color(0xFF23A55A)
-        bars == 2 -> Color(0xFFFAA81A)
-        else -> Color(0xFFF23F42)
+        bars >= 3 -> Color(0xFF49AE81)
+        bars == 2 -> Color(0xFFD2A03C)
+        else -> Color(0xFFD65A54)
     }
     Row(
         modifier = modifier,
@@ -1223,16 +1223,16 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
     )
     val borderColor = animateColorAsState(
         if (node.isScreenShare) {
-            Color(0xFFF23F42)
+            Color(0xFFD65A54)
         } else {
-            lerp(Color(0xFF1E1F22), tokens.Accent, speakGlow)
+            lerp(Color(0xFF262C36), tokens.Accent, speakGlow)
         },
         label = "borderColor"
     )
     val borderWidth = if (node.isScreenShare) 2.dp else 1.dp + 1.dp * speakGlow
     // Discord convention: the speaker's name goes green while they talk.
     val nameColor by animateColorAsState(
-        if (isSpeaking) Color(0xFF23A55A) else Color.White,
+        if (isSpeaking) Color(0xFF49AE81) else Color.White,
         animationSpec = tween(durationMillis = 240),
         label = "speakerNameColor"
     )
@@ -1248,7 +1248,7 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                 spotColor = tokens.Accent
             )
             .clip(RoundedCornerShape(8.dp))
-            .background(Color(0xFF18191C))
+            .background(Color(0xFF14171D))
             .border(borderWidth, borderColor.value, RoundedCornerShape(8.dp))
             .pointerInput(node.participantIdentity) {
                 if (node.participantIdentity == null) return@pointerInput
@@ -1311,13 +1311,13 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(8.dp)
-                    .background(Color(0xFFFAA81A).copy(alpha = 0.92f), RoundedCornerShape(6.dp))
+                    .background(Color(0xFFD2A03C).copy(alpha = 0.92f), RoundedCornerShape(6.dp))
                     .padding(horizontal = 7.dp, vertical = 5.dp)
             ) {
                 Icon(
                     Icons.Default.PanTool,
                     contentDescription = "Hand raised",
-                    tint = Color(0xFF111214),
+                    tint = Color(0xFF0B0D11),
                     modifier = Modifier.size(14.dp)
                 )
             }
@@ -1328,7 +1328,7 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .padding(8.dp)
-                .background(Color(0xFF111214).copy(alpha = 0.8f), RoundedCornerShape(6.dp))
+                .background(Color(0xFF0B0D11).copy(alpha = 0.8f), RoundedCornerShape(6.dp))
                 .padding(horizontal = 8.dp, vertical = 4.dp)
         ) {
             Row(
@@ -1336,10 +1336,10 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 if (node.isMuted || node.isMicMuted) {
-                    Icon(OrbitIcons.MicOff, null, tint = Color(0xFFF23F42), modifier = Modifier.size(14.dp))
+                    Icon(OrbitIcons.MicOff, null, tint = Color(0xFFD65A54), modifier = Modifier.size(14.dp))
                 }
                 if (node.isDeafened) {
-                    Icon(Icons.Default.HeadsetOff, null, tint = Color(0xFFF23F42), modifier = Modifier.size(14.dp))
+                    Icon(Icons.Default.HeadsetOff, null, tint = Color(0xFFD65A54), modifier = Modifier.size(14.dp))
                 }
                 Text(
                     node.name,
@@ -1358,7 +1358,7 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(8.dp)
-                    .background(Color(0xFFF23F42), RoundedCornerShape(4.dp))
+                    .background(Color(0xFFD65A54), RoundedCornerShape(4.dp))
                     .padding(horizontal = 8.dp, vertical = 3.dp)
             ) {
                 Row(
@@ -1380,7 +1380,7 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(8.dp)
-                    .background(Color(0xFF111214).copy(alpha = 0.7f), RoundedCornerShape(4.dp))
+                    .background(Color(0xFF0B0D11).copy(alpha = 0.7f), RoundedCornerShape(4.dp))
                     .padding(horizontal = 5.dp, vertical = 4.dp)
             )
         }
@@ -1398,7 +1398,7 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(8.dp)
-                    .background(Color(0xFF111214).copy(alpha = 0.8f), RoundedCornerShape(6.dp))
+                    .background(Color(0xFF0B0D11).copy(alpha = 0.8f), RoundedCornerShape(6.dp))
                     .padding(horizontal = 6.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(2.dp)
@@ -1410,7 +1410,7 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                     Icon(
                         if (volume == 0f) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp,
                         contentDescription = if (volume == 0f) "Unmute participant locally" else "Mute participant locally",
-                        tint = if (volume == 0f) Color(0xFFF23F42) else Color.White.copy(alpha = 0.85f),
+                        tint = if (volume == 0f) Color(0xFFD65A54) else Color.White.copy(alpha = 0.85f),
                         modifier = Modifier.size(14.dp)
                     )
                 }
@@ -1577,7 +1577,7 @@ fun AudioDeviceMenu(
     DropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismiss,
-        modifier = Modifier.background(Color(0xFF1E1F22)).width(260.dp)
+        modifier = Modifier.background(Color(0xFF262C36)).width(260.dp)
     ) {
         // ── INPUT DEVICE ──
         Text(

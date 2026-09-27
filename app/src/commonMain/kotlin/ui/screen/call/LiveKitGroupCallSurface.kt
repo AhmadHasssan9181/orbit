@@ -70,7 +70,7 @@ import webrtc.GroupCallConnection
 import webrtc.GroupCallStage
 
 private val tileAvatarPalette = listOf(
-    0xFF5865F2, 0xFF23A559, 0xFFEB459E, 0xFFFAA61A, 0xFF00A8FC, 0xFFF23F42
+    0xFF7B74E8, 0xFF23A559, 0xFFEB459E, 0xFFFAA61A, 0xFF00A8FC, 0xFFD65A54
 ).map { it.toInt() }
 
 private fun identityDisplayName(identity: String?): String = when {
@@ -190,7 +190,7 @@ fun LiveKitGroupCallSurface(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color(0xFF111214))
+            .background(Color(0xFF0B0D11))
     ) {
         if (renderingGrid) {
             val localRenderer = if (isVideoEnabled && localFrame != null) {
@@ -227,7 +227,7 @@ fun LiveKitGroupCallSurface(
                         isMuted = isMuted,
                         isDeafened = isDeafened,
                         isHandRaised = myHandRaised,
-                        avatarColor = 0xFF5865F2.toInt()
+                        avatarColor = 0xFF7B74E8.toInt()
                     )
                 )
                 if (isScreenSharing) {
@@ -394,7 +394,7 @@ private fun GroupCallJoinStatus(
         if (connection.stage == GroupCallStage.Failed) {
             Text(
                 text = connection.message ?: joinStageLabel(GroupCallStage.Failed, videoRequested, connection.attempt),
-                color = Color(0xFFF23F42)
+                color = Color(0xFFD65A54)
             )
             Button(onClick = onLeave) {
                 Text("Back")
@@ -500,9 +500,9 @@ private fun GroupCallMiniView(
                         .background(
                             Brush.horizontalGradient(
                                 listOf(
-                                    Color(0xFF1A1B1E).copy(alpha = 0.97f),
-                                    Color(0xFF1E1F22).copy(alpha = 0.97f),
-                                    Color(0xFF1A1B1E).copy(alpha = 0.97f)
+                                    Color(0xFF1F242C).copy(alpha = 0.97f),
+                                    Color(0xFF262C36).copy(alpha = 0.97f),
+                                    Color(0xFF1F242C).copy(alpha = 0.97f)
                                 )
                             )
                         )
@@ -552,13 +552,13 @@ private fun GroupCallMiniView(
                     MiniPillButton(
                         icon = if (isMuted) OrbitIcons.MicOff else OrbitIcons.Mic,
                         contentDescription = if (isMuted) "Unmute" else "Mute",
-                        container = if (isMuted) Color(0xFFF23F42) else Color(0xFF313338),
+                        container = if (isMuted) Color(0xFFD65A54) else Color(0xFF1F242C),
                         onClick = onToggleMute
                     )
                     MiniPillButton(
                         icon = OrbitIcons.CallEnd,
                         contentDescription = "Leave call",
-                        container = Color(0xFFF23F42),
+                        container = Color(0xFFD65A54),
                         onClick = onLeave
                     )
                 }

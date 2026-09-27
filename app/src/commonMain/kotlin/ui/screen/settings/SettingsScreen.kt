@@ -10,6 +10,7 @@ import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -25,12 +26,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import ui.components.OrbitListRow
+import ui.components.OrbitRowLeading
 import ui.icons.OrbitIcons
 import ui.model.OrbitUser
 import repository.SettingsManager
 import repository.OrbitRepository
 import ui.theme.LocalIsLiteMode
 import ui.theme.LocalOnLiteModeChange
+import ui.theme.OrbitRadius
+import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
 
 import ui.screen.auth.*
@@ -41,13 +46,13 @@ import ui.screen.call.*
 import ui.screen.media.*
 import ui.screen.main.*
 
-// ─── Cosmic Design Tokens ───────────────────────────────────────
+// - Cosmic Design Tokens
 
 enum class SettingsCategory(val title: String, val group: String) {
     // User Settings
     // (Fabricated panes removed: perks, family centre, connections, authorised apps,
     // keybinds, language, activity/games, notifications and advanced were pure
-    // mock-ups with no backing engine — hidden until they actually work.)
+    // mock-ups with no backing engine - hidden until they actually work.)
     MyAccount("My Account", "USER SETTINGS"),
     Profiles("Profiles", "USER SETTINGS"),
 
@@ -63,6 +68,17 @@ enum class SettingsCategory(val title: String, val group: String) {
 }
 
 @Composable
+/**
+ * Settings shell.
+ *
+ * The old layout was a 280dp sidebar of clickable text next to a content
+ * column padded `start=40, top=60, end=100, bottom=40`, with the close button
+ * floating in the top-right corner on a circle outline. On a 2560px monitor
+ * that put the settings column at roughly 40% of the window with a third of it
+ * empty; the content is now width-capped and centred, the sidebar is a real
+ * navigation list, and closing is a labelled control in the header where you
+ * expect it.
+ */
 fun SettingsScreen(
     repository: OrbitRepository,
     settingsManager: SettingsManager,
@@ -71,121 +87,164 @@ fun SettingsScreen(
     modifier: Modifier = Modifier
 ) {
     var selectedCategory by remember { mutableStateOf(SettingsCategory.MyAccount) }
-    
-    Row(modifier = modifier.fillMaxSize().background(Bg)) {
-        // --- Left Sidebar (Categories) ---
-        LazyColumn(
+    val t = rememberCosmicTokens()
+    val listState = rememberLazyListState()
+
+    Row(modifier = modifier.fillMaxSize().background(t.Bg)) {
+        // - Sidebar
+        Column(
             modifier = Modifier
-                .width(280.dp)
+                .width(232.dp)
                 .fillMaxHeight()
-                .background(CardBg)
-                .padding(horizontal = 12.dp),
-            contentPadding = PaddingValues(vertical = 40.dp)
+                .background(t.Drawer_Bg)
         ) {
-            val categoriesByGroup = SettingsCategory.entries.groupBy { it.group }
-            
-            categoriesByGroup.forEach { (group, cats) ->
-                if (group.isNotEmpty()) {
-                    item {
-                        Text(
-                            text = group, 
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = FontWeight.ExtraBold, 
-                                color = Text_Muted, 
-                                letterSpacing = 0.8.sp,
-                                fontSize = 10.sp
-                            ), 
-                            modifier = Modifier.padding(start = 12.dp, top = if (group == "USER SETTINGS") 0.dp else 16.dp, bottom = 8.dp)
-                        )
-                    }
-                }
-                
-                items(cats) { cat ->
-                    if (cat == SettingsCategory.Logout) {
-                        Spacer(Modifier.height(16.dp))
-                        HorizontalDivider(color = Separator, modifier = Modifier.padding(horizontal = 12.dp))
-                        Spacer(Modifier.height(16.dp))
-                    }
-                    
-                    CategoryItem(cat, selectedCategory) { 
-                        if (it == SettingsCategory.Logout) {
-                            onLogout()
-                        } else {
-                            selectedCategory = it 
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+                    .padding(horizontal = OrbitSpace.lg),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Settings",
+                    style = MaterialTheme.typography.titleSmall.copy(
+                        color = t.Text_White,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 14.sp,
+                        letterSpacing = 0.sp
+                    )
+                )
+            }
+            androidx.compose.material3.HorizontalDivider(color = t.Separator, thickness = 1.dp)
+
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                androidx.compose.foundation.lazy.LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(
+                        top = OrbitSpace.md,
+                        bottom = OrbitSpace.xxl,
+                        start = OrbitSpace.sm,
+                        end = OrbitSpace.sm
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(1.dp)
+                ) {
+                        val categoriesByGroup = SettingsCategory.entries.groupBy { it.group }
+                    categoriesByGroup.forEach { (group, cats) ->
+                        if (group.isNotEmpty()) {
+                            item(key = "group_$group") {
+                                Text(
+                                    text = group,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = t.Text_Subtle,
+                                        letterSpacing = 0.8.sp,
+                                        fontSize = 9.5.sp
+                                    ),
+                                    modifier = Modifier.padding(
+                                        start = 10.dp,
+                                        top = if (group == "USER SETTINGS") 0.dp else OrbitSpace.lg,
+                                        bottom = OrbitSpace.xs
+                                    )
+                                )
+                            }
+                        }
+                        items(cats, key = { it.name }) { cat ->
+                            if (cat == SettingsCategory.Logout) {
+                                androidx.compose.material3.HorizontalDivider(
+                                    color = t.Separator,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = OrbitSpace.sm)
+                                )
+                            }
+                            OrbitListRow(
+                                title = cat.title,
+                                onClick = {
+                                    if (cat == SettingsCategory.Logout) onLogout() else selectedCategory = cat
+                                },
+                                selected = cat == selectedCategory,
+                                height = 32.dp,
+                                showSelectionBar = false,
+                                leading = OrbitRowLeading(icon = settingsIconFor(cat)),
+                                titleStyle = if (cat == SettingsCategory.Logout) {
+                                    MaterialTheme.typography.bodyMedium.copy(color = t.Danger, fontSize = 13.sp)
+                                } else {
+                                    null
+                                }
+                            )
                         }
                     }
                 }
-                
-                if (group.isNotEmpty() && group != "ACTIVITY") {
-                    item {
-                        Spacer(Modifier.height(8.dp))
-                        HorizontalDivider(color = Separator, modifier = Modifier.padding(horizontal = 12.dp))
-                    }
-                }
+                ui.components.OrbitScrollbar(listState = listState, modifier = Modifier.align(Alignment.CenterEnd))
             }
         }
-        
-        // --- Right Content Pane ---
-        Box(modifier = Modifier.weight(1f).fillMaxHeight().background(Bg)) {
-            // A close button in the top right corner
-            Box(
+
+        // - Content
+        Column(modifier = Modifier.weight(1f).fillMaxHeight().background(t.Bg)) {
+            Row(
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(40.dp)
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .border(2.dp, Text_Muted.copy(alpha = 0.5f), CircleShape)
-                    .clickable { onBack() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Default.Close, contentDescription = "Close", tint = Text_Muted, modifier = Modifier.size(20.dp))
-            }
-            
-            // Content
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(start = 40.dp, top = 60.dp, end = 100.dp, bottom = 40.dp)
+                    .fillMaxWidth()
+                    .height(52.dp)
+                    .background(t.Header_Bg)
+                    .padding(horizontal = OrbitSpace.lg),
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     text = selectedCategory.title,
-                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold, color = Text_White),
-                    modifier = Modifier.padding(bottom = 24.dp)
+                    style = MaterialTheme.typography.titleSmall.copy(
+                        color = t.Text_White,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 14.sp,
+                        letterSpacing = 0.sp
+                    ),
+                    modifier = Modifier.weight(1f)
                 )
-                
-                LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.fillMaxWidth()
+                ui.components.OrbitButton(
+                    text = "Done",
+                    onClick = onBack,
+                    tone = ui.components.OrbitButtonTone.Neutral,
+                    size = 30.dp
+                )
+            }
+            androidx.compose.material3.HorizontalDivider(color = t.Separator, thickness = 1.dp)
+
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.TopCenter
+            ) {
+                // Cap the measure: settings text at 2560px wide is unreadable.
+                Column(
+                    modifier = Modifier
+                        .widthIn(max = 720.dp)
+                        .fillMaxSize()
+                        .padding(horizontal = OrbitSpace.xxxl, vertical = OrbitSpace.xxl)
                 ) {
                     when (selectedCategory) {
-                        SettingsCategory.MyAccount -> item { MyAccountPane(repository) }
-                        SettingsCategory.Profiles -> item { ProfilesPane(repository) }
+                        SettingsCategory.MyAccount -> settingsItem { MyAccountPane(repository) }
+                        SettingsCategory.Profiles -> settingsItem { ProfilesPane(repository) }
 
                         SettingsCategory.Appearance -> {
-                            item { ThemeSelectorCard() }
-                            item { LiteModeCard() }
-                            item { FontSizeCard(settingsManager) }
-                            item { AppearanceExtrasPane(settingsManager) }
+                            settingsItem { ThemeSelectorCard() }
+                            settingsItem { LiteModeCard() }
+                            settingsItem { FontSizeCard(settingsManager) }
+                            settingsItem { AppearanceExtrasPane(settingsManager) }
                         }
                         SettingsCategory.Accessibility -> {
-                            item { ReduceMotionCard(settingsManager) }
-                            item { AccessibilityExtrasPane(settingsManager) }
+                            settingsItem { ReduceMotionCard(settingsManager) }
+                            settingsItem { AccessibilityExtrasPane(settingsManager) }
                         }
                         SettingsCategory.Chat -> {
-                            item { MessageDensityCard(settingsManager) }
-                            item { ChatSettingsPane(settingsManager) }
+                            settingsItem { MessageDensityCard(settingsManager) }
+                            settingsItem { ChatSettingsPane(settingsManager) }
                         }
                         SettingsCategory.VoiceVideo -> {
-                            item { VoiceVideoFullPane(settingsManager) }
+                            settingsItem { VoiceVideoFullPane(settingsManager) }
                         }
-                        SettingsCategory.Windows -> item { WindowsSettingsPane(settingsManager) }
+                        SettingsCategory.Windows -> settingsItem { WindowsSettingsPane(settingsManager) }
 
                         SettingsCategory.Logout -> {}
-                        else -> {
-                            item {
-                                PlaceholderPane(selectedCategory.title)
-                            }
-                        }
+                        else -> settingsItem { PlaceholderPane(selectedCategory.title) }
                     }
                 }
             }
@@ -194,40 +253,21 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun CategoryItem(
-    category: SettingsCategory,
-    selected: SettingsCategory,
-    onClick: (SettingsCategory) -> Unit
-) {
-    val isSelected = category == selected
-    val bgColor by animateColorAsState(
-        targetValue = if (isSelected) AccentGhost else Color.Transparent,
-        label = "categoryBg"
-    )
-    
-    val baseTextColor = if (category == SettingsCategory.Logout) Color(0xFFEF4444) else Text_Secondary
-    val textColor = if (isSelected) Text_White else baseTextColor
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            .background(bgColor)
-            .clickable { onClick(category) }
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = category.title,
-            style = MaterialTheme.typography.bodyMedium.copy(
-                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                color = textColor
-            )
-        )
-    }
+private fun ColumnScope.settingsItem(content: @Composable () -> Unit) {
+    Box(modifier = Modifier.padding(bottom = OrbitSpace.md)) { content() }
 }
 
-// ─── Placeholder Pane ─────────────────────────────────────────────
+private fun settingsIconFor(cat: SettingsCategory): androidx.compose.ui.graphics.vector.ImageVector = when (cat) {
+    SettingsCategory.MyAccount -> Icons.Default.Person
+    SettingsCategory.Profiles -> Icons.Default.Face
+    SettingsCategory.Appearance -> Icons.Default.Palette
+    SettingsCategory.Accessibility -> Icons.Default.Accessibility
+    SettingsCategory.VoiceVideo -> Icons.Default.Videocam
+    SettingsCategory.Chat -> Icons.Default.Chat
+    SettingsCategory.Windows -> Icons.Default.DesktopWindows
+    SettingsCategory.Logout -> Icons.Default.Logout
+}
+// - Placeholder Pane
 
 @Composable
 private fun PlaceholderPane(title: String) {
@@ -259,7 +299,7 @@ private fun PlaceholderPane(title: String) {
     }
 }
 
-// ─── My Account Pane ──────────────────────────────────────────────
+// - My Account Pane
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
