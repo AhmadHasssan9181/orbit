@@ -376,24 +376,38 @@ internal fun ChannelItem(
     // afterwards. Gating on the type therefore hid the roster from exactly the
     // rooms people were in.
     //
-    // What gates it now is the thing that actually matters: does this room have
-    // call state, or a call running in it.
+    // A roster may only render once the LiveKit room has told us who is in it.
+    // `isConnectedInChannel` rather than `isActiveCallInChannel`: the roster is
+    // empty while connecting, so rendering the container then would be an empty
+    // indented box.
     //
-    // `isConnectedInChannel` rather than `isActiveCallInChannel`: a roster may
-    // only render once the LiveKit room has told us who is in it. The roster
-    // below is empty while connecting, so rendering the container then would
-    // just be an empty indented box.
-    val showRoster = isConnectedInChannel || (isLive && !isActiveCallInChannel)
+    // Note this is now the ONLY gate. A call running in a room we are not in
+    // gets the live dot and no member list -- see `mayHaveParticipants` for why
+    // that list could never have been trustworthy anyway.
+    val showRoster = isConnectedInChannel
 
-    // observeCallMembers() starts a 3-second HTTP poll, so subscribing for every
-    // room turned a 100-room server into ~33 req/s forever. Subscribing only for
-    // rooms that actually carry call state bounds the poller count by the number
-    // of rooms that have had a call, not by the total room count.
+    // observeCallMembers() starts a 3-second HTTP poll of the FULL room state --
+    // hundreds of KB every 3s. Subscribing for every room that merely *had* a
+    // call bounded the poller count by "rooms that have ever had a call", which
+    // on a real account is most of them, and each one never stopped.
     //
-    // The predicate is keyed on the channel so it cannot flap between
-    // recompositions.
-    val mayHaveParticipants = remember(channel.id, isLive, isActiveCallInChannel, channel.activeCallUrl) {
-        isLive || isActiveCallInChannel || channel.activeCallUrl != null
+    // A run log caught the result: clicking a room during a call started a
+    // poller for a room whose call had begun 121 days earlier, and it ran every
+    // three seconds for the rest of the session. Clicking a room is not a
+    // reason to start polling it.
+    //
+    // So: subscribe only for the room we are actually IN a call in, which is the
+    // only place the roster is both affordable and trustworthy. For a call
+    // running in some other room we show the live dot and nothing else -- the
+    // only available source there is the same 12-hour-expiry membership record
+    // that used to render six ghosts under a two-person call, and there is no
+    // LiveKit room for us to be authoritative about. Element shows a join
+    // indicator for other rooms' calls rather than a member count, for the same
+    // reason.
+    //
+    // Keyed on the channel so it cannot flap between recompositions.
+    val mayHaveParticipants = remember(channel.id, isActiveCallInChannel) {
+        isActiveCallInChannel
     }
     var members by remember(channel.id) { mutableStateOf<List<ui.model.OrbitUser>>(emptyList()) }
     LaunchedEffect(repository, roomId, mayHaveParticipants) {
@@ -453,12 +467,12 @@ internal fun ChannelItem(
         // names under a two-person call. Show nobody until we are actually
         // connected.
         isActiveCallInChannel -> emptyList()
-        // A call running in a room we are NOT in. There is no LiveKit room for us
-        // to be authoritative about and the remote-participant set is global to
-        // the single active session, so the Matrix roster is all there is. It is
-        // untrustworthy -- that is the whole problem -- but the alternative is a
-        // live dot with nobody under it, which reads as a rendering fault.
-        else -> members
+        // A call running in a room we are NOT in. `members` is empty by design
+        // here: we do not subscribe for such rooms at all, because the poller
+        // behind it costs a full room-state download every 3 seconds to produce
+        // the stale list that used to render as ghosts. See
+        // `mayHaveParticipants`.
+        else -> emptyList()
     }
 
     Column {

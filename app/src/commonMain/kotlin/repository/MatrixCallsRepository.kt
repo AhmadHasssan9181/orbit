@@ -662,9 +662,34 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
             (event.type == "m.call" || event.type == "org.matrix.msc3401.call") &&
                 !livekit.MatrixRtcCalls.isDefinitionTerminated(event.content)
         } ?: return null
+        val originServerTs = jsonLong(definition.raw, "origin_server_ts")
+        // Aged out past its own `lifetime` is the same as terminated, and the
+        // poller needs to hear about it.
+        //
+        // Without this the poller's only "stop" condition was "no definition at
+        // all", so a room whose definition outlived its call kept a 3-second
+        // `/rooms/{id}/state` poller alive forever. A run log caught it: `roster
+        // tick ... current call began 10534060322ms ago` -- 121 days -- repeating
+        // every three seconds for the rest of the session.
+        //
+        // The check is `CallStateResolver`'s, not a second implementation of it,
+        // so the UI's "is this room live" and the poller's "should I keep
+        // running" cannot disagree. Definitions Orbit published before
+        // `DEFINITION_LIFETIME_MS` existed carry no `lifetime`, cannot be proven
+        // expired, and are deliberately left alone -- "cannot prove" must not be
+        // read as "expired".
+        if (CallStateResolver.definitionAgedOut(definition.content, originServerTs, getTimeMillis())) {
+            if (util.OrbitLog.debugEnabled) {
+                util.OrbitLog.d(
+                    "MatrixCallsRepository",
+                    "roster tick $roomId: call definition is past its lifetime; treating the call as over",
+                )
+            }
+            return null
+        }
         val start = MatrixRtcMembership.callStartFromDefinition(
             definition.content,
-            jsonLong(definition.raw, "origin_server_ts"),
+            originServerTs,
         )
         if (start != null) {
             if (util.OrbitLog.debugEnabled) {
@@ -1117,6 +1142,11 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                     contentType(ContentType.Application.Json)
                     setBody(buildJsonObject {
                         put("m.intent", "m.room")
+                        // Without this the definition is immortal: nothing ages
+                        // it out and no client can tell a 4-month-old leftover
+                        // from a live call. See
+                        // MatrixRtcMembershipContent.DEFINITION_LIFETIME_MS.
+                        put("lifetime", livekit.MatrixRtcMembershipContent.DEFINITION_LIFETIME_MS)
                         put("m.foci_preferred", buildJsonArray {
                             add(buildJsonObject {
                                 put("livekit_service_url", context.effectiveLiveKitServiceUrl())

@@ -2128,7 +2128,20 @@ void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track, const
                                                         ? static_cast<long long>(inbound->inbound.jitter_buffer_delay * 1000.0 /
                                                             static_cast<double>(inbound->inbound.jitter_buffer_emitted_count))
                                                         : -1LL)
-                                                  << " jbMinMs=" << static_cast<long long>(inbound->inbound.jitter_buffer_minimum_delay * 1000.0)
+                                                  // `jitter_buffer_minimum_delay` is a CUMULATIVE sum over
+                                                  // every emitted frame, exactly like
+                                                  // `jitter_buffer_target_delay` two lines up -- and the
+                                                  // run logs prove it: `jbMinMs` was byte-identical to
+                                                  // `jbTargetSumMs` on every sample and grew by
+                                                  // 4,569,600 each time, reading 38,438,400 ms
+                                                  // (10.7 hours) for a call with `jbTargetMs=20`.
+                                                  // The jitter-buffer watchdog keys off `jbTargetMs`, so
+                                                  // this was never costing audio; it was a number in
+                                                  // the log that would mislead whoever read it next.
+                                                  << " jbMinMs=" << (inbound->inbound.jitter_buffer_emitted_count > 0
+                                                        ? static_cast<long long>(inbound->inbound.jitter_buffer_minimum_delay * 1000.0 /
+                                                            static_cast<double>(inbound->inbound.jitter_buffer_emitted_count))
+                                                        : -1LL)
                                                   << " jbTargetSumMs=" << jbTargetSumMs
                                                   << " concealedSamples=" << inbound->inbound.concealed_samples
                                                   << " silentConcealed=" << inbound->inbound.silent_concealed_samples
