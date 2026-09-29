@@ -9,6 +9,8 @@ import kotlinx.serialization.json.*
 import ui.screen.chat.*
 import ui.icons.*
 import ui.theme.*
+import ui.components.OrbitNotices
+import ui.components.OrbitNotices.onFailureOrNotify
 import ui.screen.main.redactedIceUrl
 
 @Composable
@@ -61,6 +63,16 @@ fun WebRtcEffects(
             CallShortcuts.onReturnToCall = null
             CallShortcuts.onPushToTalk = null
             CallShortcuts.onAppQuitRequested = null
+            // Release the native media stack on unmount. This effect runs when
+            // WebRtcEffects leaves composition, which is exactly what happens on
+            // logout -- and the client has no other release path, so without
+            // this the OS recording indicator stayed on and audio kept flowing
+            // to the peer after signing out. The next person at the machine
+            // inherited a live call with no UI.
+            if (callManager.callState.value != CallState.IDLE) {
+                callManager.endCall(notifyRemote = false)
+            }
+            callManager.release()
         }
     }
     
@@ -223,10 +235,10 @@ fun WebRtcEffects(
             repository.getTurnServers()
                 .onSuccess { servers ->
                     val urls = servers.flatMap { it.uris }
-                    println("DEBUG: [WebRTC] Matrix ICE discovery returned ${urls.size} urls: ${urls.joinToString { it.redactedIceUrl() }}")
+                    util.OrbitLog.d("WebRtcEffects", "Matrix ICE discovery returned ${urls.size} urls: ${urls.joinToString { it.redactedIceUrl() }}")
                 }
                 .onFailure { error ->
-                    println("DEBUG: [WebRTC] Matrix ICE discovery failed: ${error.message}")
+                    util.OrbitLog.d("WebRtcEffects", "Matrix ICE discovery failed: ${error.message}")
                 }
                 .getOrElse { emptyList() }
         }
@@ -234,22 +246,41 @@ fun WebRtcEffects(
         // Group-call roster: MatrixRTC membership flow feeds the call surface tiles
         callManager.groupMembersProvider = { roomId -> repository.observeCallMembers(roomId) }
 
+        // Call tiles are keyed by LiveKit identity, not by OrbitUser, so they need
+        // their own identity -> profile path. getUserProfile runs through
+        // MatrixContext.fetchUserProfile, which applies convertMxcUrl — without
+        // that, Coil receives an `mxc://` string and silently fails, leaving the
+        // tile with a letter avatar.
+        callManager.groupProfileResolver = { userId -> repository.getUserProfile(userId) }
+
         // matrixRTC E2EE media keys: room encryption probe + olm key exchange control
         callManager.roomIsEncryptedChecker = { roomId -> repository.isRoomEncrypted(roomId) }
         callManager.mediaKeysStart = { roomId, livekitIdentity ->
-            repository.startCallMediaKeyExchange(roomId, livekitIdentity)
+            // Starting the key exchange is what makes the call encrypted. If it
+            // fails, the Result was discarded and the call proceeded with media
+            // keys that were never agreed — the worst possible outcome, because
+            // it looks like a working encrypted call.
+            OrbitNotices.notifying("Call encryption setup", "CallEncryption") {
+                repository.startCallMediaKeyExchange(roomId, livekitIdentity)
+            }
         }
         callManager.mediaKeysStop = { repository.stopCallMediaKeyExchange() }
+        // Without this the 3 s room-state poller keeps running after a hangup on
+        // the paths that bypass endGroupCall/leaveGroupCall.
+        callManager.onGroupCallObserversStop = { roomId -> repository.stopCallRosterPolling(roomId) }
 
         // Warm the TURN/STUN config early, and CallManager refreshes it again before each call.
-        scope.launch {
+        launch {
             callManager.iceServers = callManager.refreshIceServers?.invoke().orEmpty()
         }
 
-        // Listen for signaling events
-        scope.launch {
+        // Listen for signaling events. `scope` is an INJECTED outer scope, so a
+        // child launched into it survived this LaunchedEffect being cancelled:
+        // on any repository change the old collector kept running, ringing twice
+        // for every invite and writing ICE candidates to a stale repository.
+        launch {
             repository.observeCallEvents().collect { event ->
-                println("DEBUG: [WebRTC] observeCallEvents received: ${event::class.simpleName} (callId=${event.callId})")
+                util.OrbitLog.d("WebRtcEffects", "observeCallEvents received: ${event::class.simpleName} (callId=${event.callId})")
                 // H4: drop own-device echoes + other-devices-of-ours (multi-device noise guard).
                 if (webrtc.CallEventGate.shouldIgnore(
                         senderId = event.senderId,
@@ -265,7 +296,7 @@ fun WebRtcEffects(
                     is repository.CallEvent.Invite -> {
                         // Resolve the caller's display name for system notifications;
                         // the ring-state effect reads it once RINGING actually starts.
-                        scope.launch {
+                        launch {
                             val displayName = runCatching {
                                 repository.getRoomMembers(event.roomId)
                                     .firstOrNull { it.id == event.senderId || event.senderId.startsWith(it.id) }
@@ -293,9 +324,9 @@ fun WebRtcEffects(
                     )
                     is repository.CallEvent.Hangup -> {
                         if (callManager.callId == event.callId) {
-                            println(
-                                "WARN [WebRtcEffects] m.call.hangup matching active call " +
-                                    "callId=${event.callId} sender=${event.senderId} — ending call"
+                            util.OrbitLog.w(
+                                "WebRtcEffects",
+                                "m.call.hangup matching active call callId=${event.callId} sender=${event.senderId} — ending call"
                             )
                             callManager.endCall(notifyRemote = false)
                         }
@@ -322,7 +353,16 @@ fun WebRtcEffects(
 
                 put("lifetime", 30000)
             }).onFailure { error ->
-                println("DEBUG: [WebRTC] Failed to send call invite: ${error.message}")
+                util.OrbitLog.d("WebRtcEffects", "Failed to send call invite: ${error.message}")
+                // An invite that never reaches the homeserver means the callee
+                // never rings, and Orbit sits there looking connected. Debug-level
+                // logging is off by default, so this failure was invisible.
+                OrbitNotices.error(
+                    "Call invite not delivered: ${error.message ?: "unknown error"}",
+                    "CallSignalling",
+                    "Retry",
+                    { scope.launch { callManager.sendInvite?.invoke(roomId, callId, sdp) } }
+                )
             }
         }
 
@@ -336,7 +376,15 @@ fun WebRtcEffects(
                 put("version", "1")
 
             }).onFailure { error ->
-                println("DEBUG: [WebRTC] Failed to send call answer: ${error.message}")
+                util.OrbitLog.d("WebRtcEffects", "Failed to send call answer: ${error.message}")
+                // No answer means the caller waits forever on a call that is
+                // locally "connecting".
+                OrbitNotices.error(
+                    "Could not answer the call: ${error.message ?: "unknown error"}",
+                    "CallSignalling",
+                    "Retry",
+                    { scope.launch { callManager.sendAnswer?.invoke(roomId, callId, sdp) } }
+                )
             }
         }
 
@@ -351,7 +399,7 @@ fun WebRtcEffects(
 
                 put("lifetime", 30000)
             }).onFailure { error ->
-                println("DEBUG: [WebRTC] Failed to send call negotiate: ${error.message}")
+                util.OrbitLog.d("WebRtcEffects", "Failed to send call negotiate: ${error.message}")
             }
         }
 
@@ -361,7 +409,14 @@ fun WebRtcEffects(
                 put("version", "1")
 
             }).onFailure { error ->
-                println("DEBUG: [WebRTC] Failed to send call hangup: ${error.message}")
+                util.OrbitLog.d("WebRtcEffects", "Failed to send call hangup: ${error.message}")
+                // A hangup that does not land leaves the OTHER side ringing at a
+                // call nobody is in, and our membership in the roster until the
+                // window expires.
+                OrbitNotices.error(
+                    "Hangup not delivered — others may still see you in the call",
+                    "CallSignalling"
+                )
             }
         }
 
@@ -371,17 +426,64 @@ fun WebRtcEffects(
                 put("raised", raised)
                 put("version", "1")
             }).onFailure { error ->
-                println("DEBUG: [WebRTC] Failed to send raise-hand event: ${error.message}")
+                util.OrbitLog.d("WebRtcEffects", "Failed to send raise-hand event: ${error.message}")
             }
         }
 
         callManager.onLeaveGroupCall = { roomId, callId ->
-            repository.endGroupCall(roomId, callId)
-            repository.leaveGroupCall(roomId, callId)
+            // Leaving a call publishes TWO state events. The second is what
+            // actually removes this device from the roster; if only the first
+            // lands, every other participant keeps showing this device as
+            // present until the membership window expires — hours.
+            //
+            // Both failures used to vanish, so a failed leave looked exactly
+            // like a successful one and produced a ghost participant with no
+            // way to diagnose it. Neither gets a Retry button: the user has
+            // already left locally, and re-running the write is safe but not
+            // something they asked for.
+            //
+            // These return Unit and throw, so `notifying` wraps them directly.
+            //
+            // They MUST NOT be wrapped in plain `runCatching`: CallManager
+            // deliberately cancels the leave job after 1500 ms, and
+            // runCatching would catch that CancellationException and tell the
+            // user their hangup failed — which it had not, since the same write
+            // had already logged status=200.
+            OrbitNotices.notifying("Call end", "CallMembership") {
+                repository.endGroupCall(roomId, callId)
+            }
+            OrbitNotices.notifying("Call leave", "CallMembership") {
+                repository.leaveGroupCall(roomId, callId)
+            }
         }
 
         callManager.onUpdateGroupCallMembershipCapabilities = { roomId, callId, audio, video, identity ->
-            repository.updateGroupCallMembershipCapabilities(roomId, callId, audio, video, identity)
+            // Publishes on every mute/unmute, so a failure means the roster
+            // advertises the wrong device state for hours.
+            //
+            // This one returns a bare Boolean, NOT a Result: `true` means the
+            // state event published, `false` means it did not. Wrapping it and
+            // only inspecting the throwing path would let every `false` — the
+            // ordinary offline case — pass as success. Both routes report.
+            //
+            // The callback must return the Boolean (the manager's contract), so
+            // the failure is reported here and the value passed through.
+            val published = runCatching {
+                repository.updateGroupCallMembershipCapabilities(roomId, callId, audio, video, identity)
+            }.getOrElse { error ->
+                OrbitNotices.error(
+                    "Call state update failed: ${error.message ?: "unknown error"}",
+                    "CallMembership"
+                )
+                false
+            }
+            if (!published) {
+                OrbitNotices.error(
+                    "Call state did not reach the server — others may see you incorrectly",
+                    "CallMembership"
+                )
+            }
+            published
         }
 
         // --- ICE Candidate Batching Logic ---
@@ -392,14 +494,17 @@ fun WebRtcEffects(
             candidateBatch.add(candidate)
 
             if (batchJob?.isActive != true) {
-                batchJob = scope.launch {
+                // Effect scope, not the injected one: the debounce job must die
+                // with the effect, or a repository swap leaves batches in flight
+                // that write to the old repository.
+                batchJob = launch {
                     kotlinx.coroutines.delay(500) // Debounce window to catch burst
 
                     val toSend = candidateBatch.toList()
                     candidateBatch.clear()
 
                     if (toSend.isNotEmpty()) {
-                        println("DEBUG: [WebRTC] Sending ${toSend.size} local ICE candidates")
+                        util.OrbitLog.d("WebRtcEffects", "Sending ${toSend.size} local ICE candidates")
                         repository.sendCallEvent(roomId, "m.call.candidates", buildJsonObject {
                             put("call_id", callId)
                             put("version", "1")
@@ -414,7 +519,14 @@ fun WebRtcEffects(
                                 }
                             })
                         }).onFailure { error ->
-                            println("DEBUG: [WebRTC] Failed to send ICE candidates: ${error.message}")
+                            util.OrbitLog.d("WebRtcEffects", "Failed to send ICE candidates: ${error.message}")
+                // ICE candidates are the addressing information. Without them the
+                // media path may never connect, so this is a "call connected but
+                // no audio" failure, not a cosmetic one.
+                OrbitNotices.error(
+                    "Network candidates not sent — audio may not connect",
+                    "CallSignalling"
+                )
                         }
                     }
                 }

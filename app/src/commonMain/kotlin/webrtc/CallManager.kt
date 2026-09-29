@@ -5,7 +5,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -53,6 +55,15 @@ class CallManager(
     private val groupConnectionTracker = GroupCallConnectionTracker(nowMs = System::currentTimeMillis)
     val groupConnection: StateFlow<GroupCallConnection> get() = groupConnectionTracker.connection
     private var groupWatchdogJob: Job? = null
+
+    // Bumped whenever a new call begins (1:1 or group). endCall() captures the
+    // value and its deferred teardown re-checks it, so a hangup followed by a
+    // quick new call cannot have the old teardown close the new call's media.
+    private val callGeneration = java.util.concurrent.atomic.AtomicInteger(0)
+
+    private fun beginCall() {
+        callGeneration.incrementAndGet()
+    }
 
     private val _isScreenSharing = MutableStateFlow(false)
     val isScreenSharing: StateFlow<Boolean> = _isScreenSharing
@@ -138,9 +149,74 @@ class CallManager(
 
     // Group-call participant roster from MatrixRTC membership (covers voice-only members
     // that produce no video track). Wired via groupMembersProvider in WebRtcEffects.
+    // Raw membership record: may list people who left hours ago. Use
+    // [displayCallMembers] for anything the user sees.
     var groupMembersProvider: ((String) -> kotlinx.coroutines.flow.Flow<List<ui.model.OrbitUser>>)? = null
     private val _groupCallMembers = MutableStateFlow<List<ui.model.OrbitUser>>(emptyList())
     val groupCallMembers: StateFlow<List<ui.model.OrbitUser>> = _groupCallMembers
+
+    // The roster a human should see: [groupCallMembers] intersected with the
+    // LiveKit participants actually in the room, and emptied when no call is
+    // live. Populated by the reconciliation collector in `init`.
+    private val _displayCallMembers = MutableStateFlow<List<ui.model.OrbitUser>>(emptyList())
+    val displayCallMembers: StateFlow<List<ui.model.OrbitUser>> = _displayCallMembers
+
+    // ── Identity → profile resolution (call tiles) ────────────────────────────
+    //
+    // A call tile is keyed by a LiveKit PARTICIPANT IDENTITY (`@user:host:DEV`),
+    // not by an OrbitUser, so the tile cannot get a display name or an avatar
+    // on its own. The Matrix membership roster is the usual lookup, but it is a
+    // membership RECORD: a peer who joined from a client we never saw publish a
+    // member event is simply absent, and the roster's own fallback entry carries
+    // `avatarUrl = null`. Either way the tile fell back to a coloured circle with
+    // one letter in it.
+    //
+    // So resolve the identity to a Matrix userId (CallMediaKeysCore already
+    // defines the inverse of `participantIdentity`) and ask the repository for
+    // the profile, which applies MatrixContext.convertMxcUrl and therefore hands
+    // Coil a real http(s) URL. Without that conversion Coil is handed an
+    // `mxc://` string and fails silently -- which is also consistent with the
+    // letter-only tiles.
+    //
+    // Wired from WebRtcEffects, like groupMembersProvider.
+    var groupProfileResolver: ((suspend (String) -> ui.model.OrbitUser?)?) = null
+    private val _participantProfiles = MutableStateFlow<Map<String, ui.model.OrbitUser>>(emptyMap())
+    val participantProfiles: StateFlow<Map<String, ui.model.OrbitUser>> = _participantProfiles
+
+    /** Cached profile for a LiveKit identity, or null while it is unresolved. */
+    fun profileForIdentity(identity: String?): ui.model.OrbitUser? {
+        if (identity.isNullOrBlank()) return null
+        _participantProfiles.value[identity]?.let { return it }
+        // Same user on two devices: the avatar is per-USER, so accept a profile
+        // fetched for any of this user's identities rather than re-fetching.
+        val userId = livekit.CallRosterReconciliation.userIdOf(identity) ?: return null
+        return _participantProfiles.value.entries
+            .firstOrNull { (id, _) -> livekit.CallRosterReconciliation.userIdOf(id) == userId }
+            ?.value
+    }
+
+    /**
+     * Kicks off a profile fetch for [identities] that are not cached yet. Safe
+     * to call on every recomposition: in-flight and already-resolved identities
+     * are skipped, so a per-frame call site cannot spam /profile.
+     */
+    fun requestProfilesFor(identities: Collection<String>) {
+        val resolver = groupProfileResolver ?: return
+        val missing = identities
+            .filter { it.isNotBlank() }
+            .filter { profileForIdentity(it) == null }
+            .distinct()
+        if (missing.isEmpty()) return
+        scope.launch {
+            for (identity in missing) {
+                val userId = livekit.CallRosterReconciliation.userIdOf(identity) ?: continue
+                val user = runCatching { resolver(userId) }.getOrNull() ?: continue
+                // A null avatarUrl is a legitimate answer ("this user set no
+                // picture"), so the user IS cached — only a failed fetch skips.
+                _participantProfiles.update { it + (identity to user) }
+            }
+        }
+    }
 
     val duckingStrength = MutableStateFlow(0.8f)
     val noiseSuppression = MutableStateFlow(true)
@@ -164,9 +240,44 @@ class CallManager(
     var mediaKeysStart: ((roomId: String, livekitIdentity: String) -> Unit)? = null
     var mediaKeysStop: (() -> Unit)? = null
 
+    // Stops the per-room call-roster pollers (participant list + per-device key
+    // roster). They poll /rooms/{id}/state every 3s, so anything that ends or
+    // aborts a call must stop them; leaveGroupCall alone does not cover the
+    // hangup-without-notify or failed-join paths.
+    var onGroupCallObserversStop: ((roomId: String) -> Unit)? = null
+
     // LiveKit identity of the current group-call join; reused for membership
     // re-affirmation when the camera is toggled mid-call.
     private var groupCallLivekitIdentity: String? = null
+
+    // Whether the room timeline is currently pushed aside to give the live call
+    // the main column.
+    //
+    // Reading the room you are calling FROM is a real need, and the way it was
+    // being satisfied was wrong twice. The first version made the drawer's
+    // `Voice` row a toggle, so pressing it while already in the call hung up --
+    // a run log shows `endCall ... <- ChannelDrawer.kt:250 <- ChannelList.kt:527`,
+    // i.e. pressing "show me the call" disconnected you from it. The second
+    // problem was that reading the room was impossible at all while the call
+    // occupied the main column.
+    //
+    // So the call and the room are independent views of one live session, and
+    // this flag is which one the main column is showing. It is reset to `false`
+    // (call showing) by [joinGroupCall] and [endCall], so it can never be left
+    // stranded across calls -- a flag that survives a hangup is how you end up
+    // joining a call and seeing no call.
+    private val _callSurfaceCollapsed = MutableStateFlow(false)
+    val callSurfaceCollapsed: StateFlow<Boolean> = _callSurfaceCollapsed
+
+    /** True to show the room timeline full-screen while a call stays live. */
+    fun collapseCallSurface() {
+        _callSurfaceCollapsed.value = true
+    }
+
+    /** True to give the main column back to the live call. */
+    fun expandCallSurface() {
+        _callSurfaceCollapsed.value = false
+    }
 
     // Raise hand: Matrix userIds whose hand is currently up in the active call.
     // Fed from io.orbit.raise_hand room events; cleared when the call ends.
@@ -192,11 +303,60 @@ class CallManager(
         }
     }
 
+    /**
+     * ICE candidates that arrived before the descriptions they belong to.
+     *
+     * These MUST be guarded. Writers come from two different threads:
+     * `handleIceCandidate` is driven by the `LaunchedEffect` collector in
+     * `WebRtcEffects`, so it lands on the Compose/EDT dispatcher, while
+     * `flushRemoteCandidates` is invoked from `setRemoteDescription`'s
+     * `onSuccess` observer, which webrtc-java calls on its own SIGNALING thread.
+     * `endCall`/`startCall` clear from the EDT, and `endCall` is also reachable
+     * from a WebRTC `onError` observer on a non-EDT thread.
+     *
+     * A bare `ArrayList` under those conditions can lose entries, hand back a
+     * truncated `toList()`, or -- with a concurrent structural modification --
+     * spin forever inside `get()` on Java 8+ cyclic-bin chains. `remoteDescriptionSet`
+     * was a plain `Boolean` with no happens-before edge between the two threads.
+     * The observable symptom is a call that does not connect on the first
+     * attempt, which is indistinguishable from a bad network.
+     *
+     * One lock for the flag and both lists, so the "set the flag AND drain the
+     * list" step is atomic -- otherwise a candidate arriving between the two
+     * would be stranded in a buffer nobody reads again.
+     */
+    private val candidateLock = Any()
     private val pendingLocalCandidates = mutableListOf<IceCandidateModel>()
     // Remote ICE candidates can arrive before our setRemoteDescription completes
     // (peerConnection is null then and would silently drop them) — buffer until it's set.
     private val pendingRemoteCandidates = mutableListOf<IceCandidateModel>()
     private var remoteDescriptionSet = false
+
+    /**
+     * Empties both candidate buffers and re-arms buffering.
+     *
+     * Every call-start and every hangup has to do exactly this, and there were six
+     * copies of the three-line sequence doing it unguarded -- so one was going to
+     * be missed eventually, and a missed reset means the next call starts with
+     * the previous call's candidates already flushed as "remote description set".
+     */
+    private fun resetCandidateBuffers() {
+        synchronized(candidateLock) {
+            pendingLocalCandidates.clear()
+            pendingRemoteCandidates.clear()
+            remoteDescriptionSet = false
+        }
+    }
+
+    /**
+     * Takes the buffered LOCAL candidates, leaving the buffer empty.
+     *
+     * Drains under the lock and copies out, so the caller can hand the list to
+     * `addIceCandidate` without holding the lock across a WebRTC call.
+     */
+    private fun drainLocalCandidates(): List<IceCandidateModel> = synchronized(candidateLock) {
+        pendingLocalCandidates.toList().also { pendingLocalCandidates.clear() }
+    }
     private var candidatesAllowedForCallId: String? = null
     private var pendingInviteSdp: String? = null  // Stores the offer SDP until the user answers
     private var ringTimeoutJob: Job? = null
@@ -216,7 +376,7 @@ class CallManager(
                 if (candidatesAllowedForCallId == cId) {
                     sendCandidate?.invoke(room, cId, candidate)
                 } else {
-                    pendingLocalCandidates.add(candidate)
+                    synchronized(candidateLock) { pendingLocalCandidates.add(candidate) }
                     println("DEBUG: [WebRTC] Queued local ICE candidate until signaling is ready")
                 }
             }
@@ -232,6 +392,57 @@ class CallManager(
             }
         }
         var membersJob: Job? = null
+        // WHO IS IN THE CALL, for DISPLAY.
+        //
+        // `provider` is the raw matrixRTC MEMBERSHIP roster (m.call.member room
+        // state), which is a record with a multi-hour expiry window, not a
+        // presence signal: it keeps listing everybody who ever joined the room,
+        // which is why the call surface and the drawer rendered 4-8 people for a
+        // call with 2. While we are actually connected the LiveKit room is the
+        // authoritative view, and the E2EE media-key exchange has been
+        // reconciling against it all along (CallMediaKeyExchange.nudgeMissingPeers).
+        // The SAME intersection is applied here — to the participant roster only.
+        //
+        // `_groupCallMembers` stays the raw Matrix roster on purpose: the join
+        // watchdog's "did we expect remote media" heuristic keys off its size,
+        // and the tile-name/avatar lookups want every profile the room knows,
+        // not just the connected ones. Reconciliation is a DISPLAY concern.
+        scope.launch {
+            kotlinx.coroutines.flow.combine(
+                _groupCallMembers,
+                livekit.LiveKitRemoteVideoFrameStore.remoteParticipants,
+                _callState
+            ) { matrixRoster, liveKitIds, state ->
+                // CONNECTED, not merely "not idle".
+                //
+                // During CONNECTING/RINGING the LiveKit participant set is empty,
+                // and `visibleUserIds` treats an empty LiveKit view as "we have no
+                // better information" and returns the Matrix roster VERBATIM. That
+                // is the correct choice for a guard against a native-wiring
+                // regression, and it is exactly wrong for a call that has not
+                // finished joining: the roster it falls back to is a 12-hour-expiry
+                // membership list, so a two-person call announced six participants
+                // from the moment you pressed Join until the moment you connected.
+                //
+                // So the two cases are separated here rather than inside
+                // `visibleUserIds`, which stays a pure function of its inputs:
+                // only reconcile once CONNECTED, and report nobody until then.
+                if (state != CallState.CONNECTED) {
+                    emptyList()
+                } else {
+                    val visible = livekit.CallRosterReconciliation.visibleUserIds(
+                        matrixUserIds = matrixRoster.map { it.id },
+                        livekitIdentities = liveKitIds,
+                        ownUserId = CredentialManager.userId
+                    )
+                    if (visible.size == matrixRoster.size) {
+                        matrixRoster
+                    } else {
+                        matrixRoster.filter { visible.contains(it.id) }
+                    }
+                }
+            }.collect { reconciled -> _displayCallMembers.value = reconciled }
+        }
         scope.launch {
             activeRoomIdFlow.collect { roomId ->
                 membersJob?.cancel()
@@ -278,21 +489,39 @@ class CallManager(
             println("DEBUG [CallManager] Join already in progress for $callId, ignoring redundant request")
             return
         }
+        if (callState.value != CallState.IDLE) {
+            // A DIFFERENT call is already live. The old code only guarded "same
+            // callId" and "a join is in flight", so a group join from a chat
+            // banner fell straight through and took over every field: the P2P
+            // PeerConnection was never closed, the DM peer kept receiving our
+            // audio, no m.call.invite was ever sent for the old call, and that
+            // room kept showing us as in a call. Two media sessions, one live
+            // mic. Both join buttons stay enabled while CONNECTED, so this was
+            // one click away.
+            println(
+                "WARN [CallManager] group join for $callId supersedes live call " +
+                    "${this.callId} in room $activeRoomId; ending it first"
+            )
+            endCall(notifyRemote = true)
+        }
 
         isJoiningGroupCall = true
+        // A new call always shows the call. Reset here rather than trusting the
+        // previous call's state, so joining after a peeked call does not land
+        // you in a room with no call surface and no way to know why.
+        _callSurfaceCollapsed.value = false
         activeRoomId = roomId
         this.callId = callId
         isIncomingCall.value = false
         isVideoCall.value = isVideo
         isGroupCall.value = true
         webRtcClient.isGroupCall = true
+        beginCall()
         isLocalVideoEnabled.value = isVideo
         isLocalAudioEnabled.value = true
         nativeMediaReadiness.value = null
         candidatesAllowedForCallId = null
-        pendingLocalCandidates.clear()
-        pendingRemoteCandidates.clear()
-        remoteDescriptionSet = false
+        resetCandidateBuffers()
         _callState.value = CallState.CONNECTING
         groupConnectionTracker.begin()
 
@@ -373,6 +602,12 @@ class CallManager(
         groupWatchdogJob = null
         livekit.setLiveKitReconnectedListener(null)
         _callState.value = CallState.IDLE
+
+        // The room and call id are captured BEFORE they are nulled, because
+        // teardown needs both.
+        val failedRoom = activeRoomId
+        val failedCallId = callId
+        failedRoom?.let { room -> onGroupCallObserversStop?.invoke(room) }
         activeRoomId = null
         callId = null
         isGroupCall.value = false
@@ -381,9 +616,23 @@ class CallManager(
         isLocalVideoEnabled.value = false
         nativeMediaReadiness.value = null
         candidatesAllowedForCallId = null
-        pendingLocalCandidates.clear()
-        pendingRemoteCandidates.clear()
-        remoteDescriptionSet = false
+        resetCandidateBuffers()
+
+        // This path used to stop here. The ordinary failure mode is "SFU
+        // connected, audio never reached MediaReady", and after the retry budget
+        // runs out the user was dropped back to the lobby while the native
+        // engine stayed connected and publishing, the media-key exchange stayed
+        // running and distributing olm keys, and our m.call.member event stayed
+        // in room state until TTL, so peers kept counting us as a participant.
+        // The watchdog and mid-call paths already routed through endCall() for
+        // exactly this reason.
+        if (failedRoom != null && failedCallId != null) {
+            scope.launch {
+                runCatching { onLeaveGroupCall?.invoke(failedRoom, failedCallId) }
+                    .onFailure { println("WARN [CallManager] membership leave after failed join failed: ${it.message}") }
+            }
+        }
+        teardownNativeMedia()
     }
 
     private fun ensureNativeMediaSessionStarted(
@@ -630,18 +879,21 @@ class CallManager(
 
     fun startCall(roomId: String, isVideo: Boolean) {
         val newCallId = "call_${System.currentTimeMillis()}"
+        beginCall()
         activeRoomId = roomId
         callId = newCallId
         isIncomingCall.value = false
         isVideoCall.value = isVideo
         isGroupCall.value = false
+        // Must mirror the flag above: the WebRtcClient is session-scoped, so a
+        // leftover `true` from a previous group call would make
+        // startLocalMedia() below attach no P2P audio/video track.
+        webRtcClient.isGroupCall = false
         isLocalVideoEnabled.value = isVideo
         isLocalAudioEnabled.value = true
         nativeMediaReadiness.value = null
         candidatesAllowedForCallId = null
-        pendingLocalCandidates.clear()
-        pendingRemoteCandidates.clear()
-        remoteDescriptionSet = false
+        resetCandidateBuffers()
         _callState.value = CallState.CONNECTING
 
         scope.launch {
@@ -684,13 +936,15 @@ class CallManager(
         isIncomingCall.value = true
         isVideoCall.value = sdpHasVideo(sdp)
         isGroupCall.value = false
+        // The client instance outlives the call; a stale `true` makes
+        // startLocalMedia() take the LiveKit branch and produce no P2P track.
+        webRtcClient.isGroupCall = false
+        beginCall()
         isLocalVideoEnabled.value = false
         isLocalAudioEnabled.value = true
         nativeMediaReadiness.value = null
         candidatesAllowedForCallId = null
-        pendingLocalCandidates.clear()
-        pendingRemoteCandidates.clear()
-        remoteDescriptionSet = false
+        resetCandidateBuffers()
         pendingInviteSdp = sdp  // Store SDP; actual init happens when user answers
         _callState.value = CallState.RINGING
         println("DEBUG: [CallMgr] Incoming invite from $roomId callId=$incomingCallId, isVideo=${sdpHasVideo(sdp)}")
@@ -725,6 +979,7 @@ class CallManager(
         
         isVideoCall.value = isVideo
         isGroupCall.value = false
+        webRtcClient.isGroupCall = false
         isLocalVideoEnabled.value = isVideo
         isLocalAudioEnabled.value = true
         _callState.value = CallState.CONNECTING
@@ -790,10 +1045,12 @@ class CallManager(
     fun answerCallInvite(roomId: String, incomingCallId: String, sdp: String, isVideo: Boolean = sdpHasVideo(sdp)) {
         if (_callState.value != CallState.IDLE && callId != incomingCallId) return
 
+        beginCall()
         activeRoomId = roomId
         callId = incomingCallId
         isIncomingCall.value = true
         isGroupCall.value = false
+        webRtcClient.isGroupCall = false
         answerCall(isVideo = isVideo, sdp = sdp)
     }
 
@@ -855,8 +1112,19 @@ class CallManager(
     }
 
     fun handleIceCandidate(candidate: IceCandidateModel) {
-        if (!remoteDescriptionSet) {
-            pendingRemoteCandidates.add(candidate)
+        // Hand off inside the lock rather than returning a "should I buffer?"
+        // decision and doing the add outside it -- otherwise a candidate could
+        // be queued and then drained into a peerConnection that a concurrent
+        // endCall had already torn down.
+        val queued = synchronized(candidateLock) {
+            if (!remoteDescriptionSet) {
+                pendingRemoteCandidates.add(candidate)
+                true
+            } else {
+                false
+            }
+        }
+        if (queued) {
             println("DEBUG: [WebRTC] Queued remote ICE candidate until remote description is set")
         } else {
             webRtcClient.addIceCandidate(candidate)
@@ -864,9 +1132,12 @@ class CallManager(
     }
 
     private fun flushRemoteCandidates() {
-        remoteDescriptionSet = true
-        val queued = pendingRemoteCandidates.toList()
-        pendingRemoteCandidates.clear()
+        val queued = synchronized(candidateLock) {
+            remoteDescriptionSet = true
+            // toList() under the lock, so the copy cannot observe a concurrent
+            // structural modification of the backing array.
+            pendingRemoteCandidates.toList().also { pendingRemoteCandidates.clear() }
+        }
         if (queued.isNotEmpty()) {
             println("DEBUG: [WebRTC] Flushing ${queued.size} queued remote ICE candidates")
             queued.forEach { webRtcClient.addIceCandidate(it) }
@@ -907,6 +1178,13 @@ class CallManager(
         val currentRoom = activeRoomId
         val currentCall = callId
         val wasGroupCall = isGroupCall.value
+        // Clear the view flag with the call, so the next one starts on the call
+        // surface rather than inheriting a "show me the room instead" left over
+        // from the previous session.
+        _callSurfaceCollapsed.value = false
+        // Snapshot the generation so the deferred group teardown below can tell
+        // "still tearing down call N" from "the user already started call N+1".
+        val teardownGeneration = callGeneration.get()
 
         // Random-close attribution: endCall has many invocation sites (buttons,
         // watchdog, hangup events) and none logged who called, which left a
@@ -939,22 +1217,55 @@ class CallManager(
             // immediately) → membership leave (bounded wait) → close engine →
             // release devices/peer connection.
             webRtcClient.stopLocalMedia()
+            currentRoom?.let { room -> onGroupCallObserversStop?.invoke(room) }
             if (notifyRemote && currentRoom != null && currentCall != null) {
                 val room = currentRoom
                 val call = currentCall
                 scope.launch {
+                    // Bound BOTH the wait and the work.
+                    //
+                    // `withTimeoutOrNull { leave.join() }` bounded only the WAIT: it
+                    // did not cancel the child, so a hung Matrix PUT left `leave`
+                    // running as a child of this coroutine. Since the coroutine
+                    // never completed, the job and its HTTP connection stayed alive
+                    // until process exit -- one leaked request per hangup where the
+                    // homeserver accepted the connection and went quiet.
+                    //
+                    // `leave.cancelAndJoin()` inside the timeout is the pair that
+                    // actually ends it. If the PUT is genuinely wedged rather than
+                    // slow, the timeout returns and the last line logs it, so the
+                    // leak is bounded and visible instead of silent.
                     val leave = launch { onLeaveGroupCall?.invoke(room, call) }
-                    withTimeoutOrNull(MEMBERSHIP_LEAVE_TIMEOUT_MS) { leave.join() }
-                    livekit.disconnectFromLiveKit(userInitiated = true)
-                    webRtcClient.endCall()
+                    val settled = withTimeoutOrNull(MEMBERSHIP_LEAVE_TIMEOUT_MS) {
+                        leave.join()
+                        true
+                    } ?: false
+                    if (!settled) {
+                        leave.cancelAndJoin()
+                        println(
+                            "WARN [CallManager] membership leave for $room did not settle within " +
+                                "${MEMBERSHIP_LEAVE_TIMEOUT_MS}ms; cancelled"
+                        )
+                    }
+                    // The membership-leave hop can burn the full 1.5s budget. If a
+                    // newer call started meanwhile it already built its own
+                    // PeerConnection/session, and closing here would tear THAT
+                    // down and null it out from under the new call.
+                    if (callGeneration.get() != teardownGeneration) {
+                        println(
+                            "WARN [CallManager] endCall teardown superseded by a newer call " +
+                                "(generation $teardownGeneration -> ${callGeneration.get()}); skipping peer teardown"
+                        )
+                        return@launch
+                    }
+                    teardownNativeMedia()
                 }
             } else {
-                livekit.disconnectFromLiveKit(userInitiated = true)
-                webRtcClient.endCall()
+                teardownNativeMedia()
             }
         } else {
             webRtcClient.stopLocalMedia()
-            webRtcClient.endCall()
+            scope.launch { webRtcClient.endCall() }
             if (notifyRemote && currentRoom != null && currentCall != null) {
                 scope.launch { sendHangup?.invoke(currentRoom, currentCall) }
             }
@@ -965,6 +1276,10 @@ class CallManager(
         callId = null
         isIncomingCall.value = false
         isGroupCall.value = false
+        // The WebRtcClient is session-scoped, so its copy of the flag has to be
+        // cleared here too; otherwise every later 1:1 call silently runs with
+        // no local media.
+        webRtcClient.isGroupCall = false
         if (isDeafened.value) {
             webRtcClient.setPlaybackMuted(false)
             livekit.setLiveKitPlaybackMuted(false)
@@ -975,6 +1290,10 @@ class CallManager(
         }
         _participantGains.value = emptyMap()
         _activeSpeakers.value = emptySet()
+        // Per-call identity→profile cache. Identities are per-session, so
+        // keeping them would hand the NEXT call's tiles a stranger's avatar
+        // whenever the new peer reused a device id.
+        _participantProfiles.value = emptyMap()
         _selfNudgeRecovery.value = false
         _raisedHands.value = emptySet()
         isMyHandRaised.value = false
@@ -985,14 +1304,68 @@ class CallManager(
         isLocalVideoEnabled.value = false
         isLocalAudioEnabled.value = true
         candidatesAllowedForCallId = null
-        pendingLocalCandidates.clear()
-        pendingRemoteCandidates.clear()
-        remoteDescriptionSet = false
+        resetCandidateBuffers()
         pendingInviteSdp = null
         hasRemoteStream.value = false
         nativeMediaReadiness.value = null
         groupCallLivekitIdentity = null
     }
+
+    /**
+     * Tears down the native media session off the caller's thread.
+     *
+     * `endCall` runs on `rememberCoroutineScope()`, which is the Compose/EDT
+     * dispatcher, and both of these block: disconnectFromLiveKit drives the
+     * native teardown (player job join, device line close, factory dispose --
+     * six-plus JNI calls, the last tearing down WebRTC worker threads), and
+     * webRtcClient.endCall() does the same for the P2P engine. Leaving that
+     * synchronous meant every hangup and every failed join froze the window,
+     * on the same thread the H12 "Joining… hangs" and H13 zombie-JVM write-ups
+     * both care about.
+     *
+     * The `Dispatchers.IO` is load-bearing and was previously missing. `launch`
+     * with no dispatcher INHERITS its context, and this `scope` is
+     * `rememberCoroutineScope()` -- whose dispatcher on Compose Desktop is the
+     * AWT event thread. So the comment above described the opposite of what the
+     * code did. Worse, the teardown holds `g_sessionMutex` while it joins the
+     * mixer thread, which is itself contending for that same mutex ~200x/sec
+     * (see orbit_livekit_audio.cpp:1231), so the freeze could last as long as
+     * the hold rather than being momentary.
+     *
+     * `scope` is still the right parent: the work is cancelled with the
+     * composition, which is what we want. Only the thread is wrong.
+     */
+    private fun teardownNativeMedia() {
+        scope.launch(Dispatchers.IO) {
+            runCatching { livekit.disconnectFromLiveKit(userInitiated = true) }
+                .onFailure { println("WARN [CallManager] native disconnect during teardown failed: ${it.message}") }
+            runCatching { webRtcClient.endCall() }
+                .onFailure { println("WARN [CallManager] P2P endCall during teardown failed: ${it.message}") }
+        }
+    }
+
+    /**
+     * Releases the native media stack for good: the process-global LiveKit
+     * session object as well as the P2P engine.
+     *
+     * Called when this manager is unmounted (logout, or the account changing).
+     * `endCall()` alone was not enough -- it tears down the current call, but
+     * the underlying native resources were only reclaimed by `endCall`, which
+     * nothing invoked on the logout path, so the OS recording indicator stayed
+     * on and audio kept reaching the peer.
+     */
+    fun release() {
+        if (released) return
+        released = true
+        scope.launch {
+            runCatching { livekit.releaseNativeLiveKitSession() }
+                .onFailure { println("WARN [CallManager] native session release failed: ${it.message}") }
+            runCatching { webRtcClient.endCall() }
+                .onFailure { println("WARN [CallManager] P2P endCall during release failed: ${it.message}") }
+        }
+    }
+
+    private var released = false
 
     fun toggleMute(isMuted: Boolean) {
         isLocalAudioEnabled.value = !isMuted
@@ -1025,7 +1398,12 @@ class CallManager(
         if (isGroupCall.value && _callState.value == CallState.CONNECTED) {
             // Group calls have no P2P sender; publish/unpublish through the native
             // LiveKit session instead (joins are audio-only, camera is lazy).
-            scope.launch {
+            //
+            // Dispatchers.IO: enableLiveKitCamera() enumerates capture devices,
+            // builds a PeerConnectionFactory and starts the source, and this
+            // scope is the Compose/EDT dispatcher. That is several hundred ms of
+            // UI freeze on every camera toggle.
+            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 if (isVideoEnabled) {
                     val result = livekit.enableLiveKitCamera()
                     if (result.ok) {
@@ -1205,8 +1583,7 @@ class CallManager(
 
     private suspend fun allowLocalCandidatesAndFlush(roomId: String, cId: String) {
         candidatesAllowedForCallId = cId
-        val queuedCandidates = pendingLocalCandidates.toList()
-        pendingLocalCandidates.clear()
+        val queuedCandidates = drainLocalCandidates()
 
         if (queuedCandidates.isNotEmpty()) {
             println("DEBUG: [WebRTC] Flushing ${queuedCandidates.size} queued local ICE candidates")

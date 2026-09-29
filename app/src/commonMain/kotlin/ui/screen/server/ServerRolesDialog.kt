@@ -29,7 +29,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -54,6 +53,7 @@ import repository.OrbitRepository
 import ui.assets.OrbitEmptyIllustration
 import ui.assets.OrbitEmptyScene
 import ui.assets.OrbitRoleBadgeAsset
+import ui.components.OrbitButton
 import ui.model.OrbitPermission
 import ui.model.OrbitPermissionCategory
 import ui.model.OrbitRole
@@ -86,23 +86,48 @@ fun ServerRolesDialog(
         .collectAsState(null)
 
     var roles by remember(server.id) { mutableStateOf(defaultState.roles) }
-    var selectedRoleId by remember(server.id) { mutableStateOf(defaultState.roles.first().id) }
+    // firstOrNull with a safe fallback: `first()` throws NoSuchElementException
+    // on an empty role list, and that exception inside a Dialog kills the window.
+    var selectedRoleId by remember(server.id) {
+        mutableStateOf(defaultState.roles.firstOrNull()?.id.orEmpty())
+    }
     var statusText by remember(server.id) { mutableStateOf("Server role presets loaded") }
     var isSaving by remember(server.id) { mutableStateOf(false) }
+    // An account-data push used to overwrite the local roles outright, silently
+    // discarding unsaved edits with no hint in the status line.
+    var hasUnsavedEdits by remember(server.id) { mutableStateOf(false) }
 
     LaunchedEffect(storedState, server.id) {
         val nextState = storedState?.takeIf { it.serverId == server.id && it.roles.isNotEmpty() } ?: defaultState
-        roles = nextState.roles.sortedByDescending { it.rank }
+        val incoming = nextState.roles.sortedByDescending { it.rank }
+        if (hasUnsavedEdits) {
+            statusText = "Server roles changed elsewhere — Save overwrites your edits, Discard reloads"
+            return@LaunchedEffect
+        }
+        roles = incoming
         if (roles.none { it.id == selectedRoleId }) {
-            selectedRoleId = roles.first().id
+            selectedRoleId = roles.firstOrNull()?.id.orEmpty()
         }
     }
 
-    val selectedRole = roles.firstOrNull { it.id == selectedRoleId } ?: roles.first()
+    val selectedRole = roles.firstOrNull { it.id == selectedRoleId } ?: roles.firstOrNull()
+    if (selectedRole == null) {
+        // Nothing to edit; render an explanation rather than crashing.
+        Column(modifier = Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
+            Text(
+                text = "This server has no roles yet. Create a role to start assigning permissions.",
+                style = MaterialTheme.typography.bodyMedium.copy(color = tokens.Text_Muted)
+            )
+            Spacer(Modifier.height(16.dp))
+            OrbitButton(text = "Close", onClick = onDismiss, tone = ui.components.OrbitButtonTone.Neutral)
+        }
+        return
+    }
 
     fun updateRole(updatedRole: OrbitRole) {
         roles = roles.map { role -> if (role.id == updatedRole.id) updatedRole else role }
             .sortedByDescending { it.rank }
+        hasUnsavedEdits = true
         statusText = "Unsaved role changes"
     }
 
@@ -179,15 +204,19 @@ fun ServerRolesDialog(
                         modifier = Modifier.weight(1f).padding(end = 12.dp)
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(
+                        // Quiet secondary: the accent-filled "Save" next to it is
+                        // the action, and Material's OutlinedButton was drawing a
+                        // hard 1dp ring around a 40dp pill to say "also a button".
+                        OrbitButton(
+                            text = "Reset",
                             onClick = {
                                 roles = OrbitRoleDefaults.defaultRoles().sortedByDescending { it.rank }
-                                selectedRoleId = roles.first().id
-                                statusText = "Defaults restored locally"
-                            }
-                        ) {
-                            Text("Reset")
-                        }
+                                selectedRoleId = roles.firstOrNull()?.id.orEmpty()
+                                hasUnsavedEdits = true
+                                statusText = "Defaults restored locally — not saved yet"
+                            },
+                            tone = ui.components.OrbitButtonTone.Neutral
+                        )
                         Button(
                             enabled = !isSaving,
                             onClick = {
@@ -196,14 +225,17 @@ fun ServerRolesDialog(
                                     val state = OrbitServerRolesState(serverId = server.id, roles = roles)
                                     repository
                                         .setAccountData(eventType, state, OrbitServerRolesState.serializer())
-                                        .onSuccess { statusText = "Saved role presets" }
+                                        .onSuccess {
+                                            hasUnsavedEdits = false
+                                            statusText = "Saved role presets"
+                                        }
                                         .onFailure { statusText = "Save failed: ${it.message ?: "unknown error"}" }
                                     isSaving = false
                                 }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = tokens.Accent)
                         ) {
-                            Text(if (isSaving) "Saving..." else "Save", color = Color.White)
+                            Text(if (isSaving) "Saving..." else "Save", color = tokens.OnAccent)
                         }
                     }
                 }

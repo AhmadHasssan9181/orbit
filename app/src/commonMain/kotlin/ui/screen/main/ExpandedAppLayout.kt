@@ -44,8 +44,6 @@ fun ExpandedLayout(
     modifier: Modifier = Modifier
 ) {
     val tokens = rememberCosmicTokens()
-    val isLiteMode = LocalIsLiteMode.current
-    var selectedWhatsAppTab by remember { mutableStateOf("Chats") }
     val selectedServer = servers.find { it.id == selectedServerId }
 
     val categories = remember(channels) {
@@ -62,8 +60,6 @@ fun ExpandedLayout(
             selectedServerId = selectedServerId,
             onServerClick = onServerClick,
             onAddServerClick = onAddServer,
-            selectedWhatsAppTab = selectedWhatsAppTab,
-            onWhatsAppTabClick = { selectedWhatsAppTab = it },
             unreadByServer = unreadByServer
         )
         VerticalRule()
@@ -83,8 +79,7 @@ fun ExpandedLayout(
                 onChannelClick = onChannelClick,
                 onOpenSettings = onOpenSettings,
                 onCreateRoomClick = onCreateRoom,
-                onOpenRolesClick = onOpenRoles,
-                selectedWhatsAppTab = selectedWhatsAppTab
+                onOpenRolesClick = onOpenRoles
             )
             VerticalRule()
             val selectedChannel = channels.find { it.id == selectedChannelId }
@@ -103,7 +98,7 @@ fun ExpandedLayout(
                     ChatScreenWithRepo(
                         repository = repository,
                         channel = selectedChannel,
-                        showMemberList = !isLiteMode && !selectedServer.isDM,
+                        showMemberList = !selectedServer.isDM,
                         isDirectMessage = selectedServer.isDM
                     )
             }

@@ -8,13 +8,6 @@ import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.graphics.vector.group
 import androidx.compose.ui.unit.dp
 
-import ui.screen.auth.*
-import ui.screen.settings.*
-import ui.screen.drawer.*
-import ui.screen.server.*
-import ui.screen.call.*
-import ui.screen.media.*
-import ui.screen.main.*
 
 object OrbitIcons {
     private var _textChannel: ImageVector? = null
@@ -210,17 +203,14 @@ object OrbitIcons {
             )
         ).also { _send = it }
 
-    private var _file: ImageVector? = null
-    val File: ImageVector
-        get() = _file ?: collectionIcon(
-            name = "File",
-            originX = 80f,
-            originY = 2022f,
-            paths = listOf(
-                CollectionPath("""M136.636 2022H92.9999C88.9999 2022 85.7272 2025.28 85.7272 2029.28V2080.19H92.9999V2029.28H136.636V2022Z"""),
-                CollectionPath("""M133 2036.55H107.546C103.546 2036.55 100.309 2039.82 100.309 2043.82L100.273 2094.73C100.273 2098.73 103.509 2102 107.509 2102H147.546C151.546 2102 154.818 2098.73 154.818 2094.73V2058.37L133 2036.55ZM107.546 2094.73V2043.82H129.364V2062H147.546V2094.73H107.546Z"""),
-            )
-        ).also { _file = it }
+    // `File` and `Notifications` used to sit here. Both were removed: they were
+    // the only two of this icon set with zero call sites in app/src. The
+    // notification *scene* in `OrbitAssetArt` is separate artwork and is still
+    // live; what had no consumer was these two vector definitions.
+    //
+    // Every icon below is extracted lazily and cached, so an unused one costs
+    // nothing at runtime -- but it still costs a reader's time, and a set of
+    // "available" icons reads as an inventory of features that exist.
 
     private var _pin: ImageVector? = null
     val Pin: ImageVector
@@ -232,21 +222,6 @@ object OrbitIcons {
                 CollectionPath("""M275 1400.48L233.521 1359L227.592 1364.92L233.521 1370.85L212.779 1391.59V1391.6L206.85 1385.67L200.925 1391.6L218.704 1409.37L195 1433.07L200.925 1439L224.629 1415.3L242.408 1433.07L248.333 1427.15L242.408 1421.22L263.146 1400.48H263.15L269.075 1406.4L275 1400.48Z"""),
             )
         ).also { _pin = it }
-
-    private var _notifications: ImageVector? = null
-    val Notifications: ImageVector
-        get() = _notifications ?: collectionIcon(
-            name = "Notifications",
-            originX = 310f,
-            originY = 1629f,
-            paths = listOf(
-                CollectionPath(
-                    data = """M374 1667.84C362.434 1664.4 354 1653.68 354 1641C354 1639.77 354.079 1638.56 354.233 1637.37C352.859 1637.13 351.444 1637 350 1637C336.744 1637 326 1647.74 326 1661V1681C326 1687.63 320.624 1693 314 1693V1697H386V1693C379.376 1693 374 1687.63 374 1681V1667.84ZM336.22 1701C338.992 1705.76 344.096 1709 350 1709C355.904 1709 361.008 1705.76 363.78 1701H336.22Z""",
-                    fillType = PathFillType.EvenOdd
-                ),
-                CollectionPath("""M375.05 1646.01L386 1634V1628H366.14V1633.99H375.904L366 1646.44V1652H386V1646.01H375.05Z"""),
-            )
-        ).also { _notifications = it }
 
     private var _members: ImageVector? = null
     val Members: ImageVector

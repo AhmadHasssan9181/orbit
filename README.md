@@ -189,7 +189,7 @@ one place.
 |   |   |   |   |   |-- layout          Window size and adaptive layout helpers
 |   |   |   |   |   |-- model           OrbitServer, OrbitChannel, OrbitMessage, OrbitUser
 |   |   |   |   |   |-- screen          Login, app shell, chat, calls, settings, drawers
-|   |   |   |   |   |-- theme           Color, typography, theme tokens
+|   |   |   |   |   |-- theme           Palette, typography, shapes, motion
 |   |   |   |   |-- util              Shared expect declarations
 |   |   |   |   |-- webrtc            Shared call manager and WebRTC contract
 |   |   |-- androidMain
@@ -200,10 +200,10 @@ one place.
 |   |   |   |   |-- webrtc            Android WebRTC actual implementation
 |   |   |-- jvmMain
 |   |   |   |-- kotlin
-|   |   |   |   |-- ui/screen         Desktop window, splash, title bar, video renderer
+|   |   |   |   |-- ui/screen         Title bar, video renderer, call surfaces
 |   |   |   |   |-- util              Desktop database, media, browser, audio actuals
 |   |   |   |   |-- webrtc            Desktop WebRTC actual implementation
-|   |   |   |-- resources          Logo, splash assets, native WebRTC DLLs
+|   |   |   |-- resources          Logo, wallpaper art, selfie-segmentation model, native WebRTC DLLs
 |-- webrtc-java-lib             Local JVM WebRTC library wrapper
 |-- webrtc-java-fork            Custom fork/reference source for desktop WebRTC work
 |-- trixnity-src                Local reference copy of Trixnity sources
@@ -237,14 +237,14 @@ flowchart TD
 
     Desktop --> DesktopActuals["Desktop actual implementations"]
     Desktop --> DesktopRtc["Desktop WebRTC"]
-    Desktop --> DesktopWindow["Compose Desktop window + splash"]
+    Desktop --> DesktopWindow["Compose Desktop window"]
 ```
 
 | Source Set | Responsibility |
 | --- | --- |
 | `commonMain` | Shared UI, shared models, repository API, Matrix repository, call state machine |
 | `androidMain` | Android activity, permissions, media picker, SSO handler, Android WebRTC |
-| `jvmMain` | Desktop entry point, custom title bar, splash screen, desktop WebRTC, native loading |
+| `jvmMain` | Desktop entry point, custom title bar, desktop WebRTC, native loading |
 
 ## Domain Model
 
@@ -593,7 +593,8 @@ Important desktop files:
 | `app/src/jvmMain/kotlin/webrtc/WebRtcClientImpl.jvm.kt` | Desktop peer connection, tracks, devices, screen share |
 | `app/src/jvmMain/kotlin/webrtc/WebrtcNativeDepsLoader.kt` | Native dependency loading helper |
 | `app/src/jvmMain/kotlin/ui/screen/VideoRenderer.kt` | Desktop Compose video renderer |
-| `app/src/jvmMain/kotlin/ui/screen/SplashScreen.kt` | Desktop splash UI |
+| `app/src/jvmMain/kotlin/util/MediaFetch.kt` | Authenticated media fetch (shared by open-externally and voice playback) |
+| `app/src/commonMain/kotlin/ui/screen/server/SelfHostingScreen.kt` | "Host your own server" guide, linked from login |
 | `app/src/jvmMain/kotlin/ui/screen/CustomTitleBar.kt` | Desktop title bar |
 | `app/src/jvmMain/resources/webrtc-deps` | Bundled native WebRTC runtime dependencies |
 | `webrtc-java-lib` | Local WebRTC wrapper module |
@@ -652,7 +653,7 @@ flowchart TD
 | `OrbitApp.kt` | App shell, repository wiring, auth routing, adaptive layout, call wiring |
 | `LoginScreen.kt` | Login, registration, homeserver selection, SSO entry |
 | `ServerRail.kt` | Server/space/DM bucket navigation |
-| `ChannelDrawer.kt` | Channel list, DM list, profile bar, lite-mode panels |
+| `ChannelDrawer.kt` | Channel list, DM list, profile bar, invite dialog |
 | `ChatScreen.kt` | Timeline, message bubbles, attachments, reactions, input, members |
 | `CallScreen.kt` | Incoming/active call UI, controls, local/remote video |
 | `JoinServerScreen.kt` | Join/create server and channel flows |
@@ -679,9 +680,9 @@ Orbit uses a lavender-first identity with optional theme variants.
 
 | Token | Value | Usage |
 | --- | --- | --- |
-| Orbit Lavender | `#7C6AF0` | Brand accent, selected states, primary actions |
-| Sky Blue | `#3B82F6` | Secondary emphasis and ocean theme |
-| Emerald | `#10B981` | Success states and forest theme |
+| Blurple | `#5865F2` | Brand accent (Discord blurple), selected states, primary actions |
+| Steel | `#5B8FC7` | Secondary emphasis and ocean theme |
+| Sage | `#49AE81` | Success states and forest theme |
 | Red Orange | `#F97316` | Sunset theme and warm emphasis |
 | Neon Pink | `#EC4899` | Cyberpunk accent and call/media emphasis |
 
@@ -691,8 +692,8 @@ Icon assets currently include:
 | --- | --- |
 | `Create_a_memorable_modern_app_202605260126.jpeg` | README and logo concept art |
 | `app/src/jvmMain/resources/logo.jpeg` | Desktop runtime logo resource |
-| `app/src/jvmMain/resources/splash_center.png` | Splash center asset |
-| `app/src/jvmMain/resources/splash_rings.png` | Splash ring asset |
+| `app/src/jvmMain/resources/selfie_segmentation.onnx` | Blur/virtual-background segmentation model |
+| `app/src/jvmMain/resources/logo.jpeg` | Window and tray icon |
 | `Collection.svg` | Source icon collection |
 | `ui/icons/OrbitIcons.kt` | Compose ImageVector icon definitions extracted from the collection |
 

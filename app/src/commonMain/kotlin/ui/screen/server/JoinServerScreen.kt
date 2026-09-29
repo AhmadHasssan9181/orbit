@@ -14,12 +14,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.launch
 import repository.OrbitRepository
 import ui.assets.OrbitEmptyIllustration
 import ui.assets.OrbitEmptyScene
+import ui.components.OrbitTextField
 import ui.model.ChannelType
 import ui.model.OrbitServer
+import ui.screen.orbitGlobalShortcuts
 import ui.theme.rememberCosmicTokens
 
 import ui.screen.auth.*
@@ -37,13 +41,17 @@ private enum class ServerDialogMode {
 
 private val DiscordRoomNameRegex = Regex("^[a-z]+(?:-[a-z]+)*$")
 
+/** Hoisted: both were recompiled on every keystroke in the room-name field. */
+private val WhitespaceRunRegex = Regex("\\s+")
+private val RepeatedHyphenRegex = Regex("-{2,}")
+
 private fun normalizeRoomNameInput(value: String): String {
-    val lowered = value.lowercase().replace(Regex("\\s+"), "-")
+    val lowered = value.lowercase().replace(WhitespaceRunRegex, "-")
     return buildString {
         lowered.forEach { ch ->
             if (ch in 'a'..'z' || ch == '-') append(ch)
         }
-    }.replace(Regex("-{2,}"), "-")
+    }.replace(RepeatedHyphenRegex, "-")
 }
 
 private fun validateRoomName(value: String): String? {
@@ -95,17 +103,23 @@ fun JoinServerScreen(
     val scope = rememberCoroutineScope()
     val isCreateMode = mode == ServerDialogMode.Create
 
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.6f)),
-        contentAlignment = Alignment.Center
+    // A real Dialog window, not a Box with a scrim: the overlay version took no
+    // keyboard focus (keystrokes reached the composer behind it), ignored Esc and
+    // ignored clicks outside, and so could not be dismissed at all.
+    Dialog(
+        onDismissRequest = onClose,
+        properties = DialogProperties(
+            dismissOnBackPress = true,
+            dismissOnClickOutside = true,
+            usePlatformDefaultWidth = false
+        )
     ) {
         Column(
-            modifier = Modifier
+            modifier = modifier
                 .width(430.dp)
                 .clip(RoundedCornerShape(16.dp))
                 .background(tokens.Bg)
+                .orbitGlobalShortcuts()
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -151,27 +165,16 @@ fun JoinServerScreen(
                 )
             }
 
-            ServerFlowChoiceStrip(isCreateMode = isCreateMode)
-            Spacer(Modifier.height(16.dp))
+            // The "Custom / Template" and "Invite / Discover" cards had no
+            // clickable modifier at all and no action behind them, so they were
+            // removed rather than wired to a lie. The single text field above is
+            // the only real flow.
 
-            OutlinedTextField(
+            OrbitTextField(
                 value = input,
                 onValueChange = { input = it; errorMsg = null },
-                label = { Text(if (isCreateMode) "Server name" else "Room ID or alias") },
-                placeholder = {
-                    Text(
-                        if (isCreateMode) "My Server" else "#room:server.com",
-                        color = tokens.Text_Muted
-                    )
-                },
+                placeholder = if (isCreateMode) "My Server" else "#room:server.com",
                 singleLine = true,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = tokens.Accent,
-                    unfocusedBorderColor = tokens.Separator,
-                    focusedTextColor = tokens.Text_White,
-                    unfocusedTextColor = tokens.Text_White,
-                    cursorColor = tokens.Accent
-                ),
                 modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
             )
 
@@ -250,61 +253,6 @@ fun JoinServerScreen(
 }
 
 @Composable
-private fun ServerFlowChoiceStrip(isCreateMode: Boolean) {
-    val items = if (isCreateMode) {
-        listOf(
-            OrbitEmptyScene.CreateCustom to "Custom",
-            OrbitEmptyScene.CreateTemplate to "Template"
-        )
-    } else {
-        listOf(
-            OrbitEmptyScene.JoinInvite to "Invite",
-            OrbitEmptyScene.JoinDiscover to "Discover"
-        )
-    }
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        items.forEach { (scene, label) ->
-            ServerFlowChoiceCard(
-                scene = scene,
-                label = label,
-                modifier = Modifier.weight(1f)
-            )
-        }
-    }
-}
-
-@Composable
-private fun ServerFlowChoiceCard(
-    scene: OrbitEmptyScene,
-    label: String,
-    modifier: Modifier = Modifier
-) {
-    val tokens = rememberCosmicTokens()
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(tokens.CardBg.copy(alpha = 0.78f))
-            .border(1.dp, tokens.Separator.copy(alpha = 0.28f), RoundedCornerShape(12.dp))
-            .padding(horizontal = 8.dp, vertical = 7.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        OrbitEmptyIllustration(
-            scene = scene,
-            modifier = Modifier.width(116.dp).height(72.dp)
-        )
-        Text(
-            text = label,
-            color = tokens.Text_Secondary,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold
-        )
-    }
-}
-
-@Composable
 fun CreateRoomDialog(
     repository: OrbitRepository,
     server: OrbitServer,
@@ -322,17 +270,22 @@ fun CreateRoomDialog(
         if (input.isBlank()) null else validateRoomName(input)
     }
 
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.6f)),
-        contentAlignment = Alignment.Center
+    // Real Dialog window, matching JoinServerScreen: focus capture, Esc and
+    // scrim dismissal, instead of an inert Box overlay.
+    Dialog(
+        onDismissRequest = onClose,
+        properties = DialogProperties(
+            dismissOnBackPress = true,
+            dismissOnClickOutside = true,
+            usePlatformDefaultWidth = false
+        )
     ) {
         Column(
-            modifier = Modifier
+            modifier = modifier
                 .width(400.dp)
                 .clip(RoundedCornerShape(16.dp))
                 .background(tokens.Bg)
+                .orbitGlobalShortcuts()
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -382,26 +335,14 @@ fun CreateRoomDialog(
 
             Spacer(Modifier.height(14.dp))
 
-            OutlinedTextField(
+            OrbitTextField(
                 value = input,
                 onValueChange = {
                     input = normalizeRoomNameInput(it)
                     errorMsg = null
                 },
-                label = { Text("Room name") },
-                placeholder = {
-                    Text(if (channelType == ChannelType.VOICE) "general" else "general-chat", color = tokens.Text_Muted)
-                },
+                placeholder = if (channelType == ChannelType.VOICE) "general" else "general-chat",
                 singleLine = true,
-                isError = validationMsg != null || errorMsg != null,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = tokens.Accent,
-                    unfocusedBorderColor = tokens.Separator,
-                    errorBorderColor = Color(0xFFF87171),
-                    focusedTextColor = tokens.Text_White,
-                    unfocusedTextColor = tokens.Text_White,
-                    cursorColor = tokens.Accent
-                ),
                 modifier = Modifier.fillMaxWidth()
             )
 

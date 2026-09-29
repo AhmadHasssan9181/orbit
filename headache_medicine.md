@@ -7,12 +7,12 @@ The monolithic UI files have been broken down and organized by feature into the 
 
 *   **`auth/`**: Authentication screens (`LoginScreen.kt`, `SessionErrorScreen.kt`).
 *   **`settings/`**: Settings and preferences (`SettingsScreen.kt`, `SettingsExtraPanes.kt`, `SettingsUserPanes.kt`).
-*   **`drawer/`**: Sidebar navigation and channel lists (`ChannelDrawer.kt`, `ServerRail.kt`, `WhatsAppDrawer.kt`).
-*   **`server/`**: Server management (`JoinServerScreen.kt`, `CreateRoomDialog.kt`, `ServerRolesDialog.kt`).
+*   **`drawer/`**: Sidebar navigation and channel lists (`ChannelDrawer.kt`, `ChannelList.kt`, `DirectMessageList.kt`, `UserProfileBar.kt`); `ServerRail.kt` lives in `server/`.
+*   **`server/`**: Server management (`JoinServerScreen.kt`, `ServerRolesDialog.kt`, `ServerHeader.kt`, `SelfHostingScreen.kt`).
 *   **`call/`**: WebRTC and voice/video calling UI (`CallScreen.kt`, `CallGrid.kt`, `VoiceChannelScreen.kt`).
-*   **`media/`**: Media pickers and viewers (`GifPicker.kt`, `VideoPlayer.kt`).
+*   **`media/`**: Media pickers and viewers (`GifPicker.kt`, `NativeVideoPlayer.jvm.kt`).
 *   **`main/`**: The core application orchestrators and layouts.
-*   **`chat/`**: Reusable chat components (`ChatScreen.kt`, `MessageBubble.kt`, `MessageInputBar.kt`).
+*   **`chat/`**: Reusable chat components (`ChatScreen.kt`, `MessageBubbleFull.kt`, `MessageInputBar.kt`, `MemberListPanel.kt`).
 
 ## 2. The Core Orchestrator: `OrbitApp.kt`
 `OrbitApp.kt` is the root composable. It handles:

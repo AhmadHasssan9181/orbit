@@ -37,10 +37,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -79,33 +81,46 @@ import util.rememberFilePickerLauncher
  */
 @Composable
 internal fun MessageInputBar(
+    // ChatScreen is not recreated on a channel switch, so an unkeyed
+    // `remember { "" }` carried a half-typed draft from #general into #random.
+    channelId: String,
     placeholder: String,
     onSend: (String) -> Unit,
     onSendAttachment: ((ByteArray, String, String) -> Unit)? = null,
     onTyping: (Boolean) -> Unit = {},
     onCancelReply: (() -> Unit)? = null,
-    replyPreview: ReplyPreview? = null
+    replyPreview: ReplyPreview? = null,
+    /**
+     * Text to put back into the field, set by the parent after a send failed.
+     *
+     * The field clears itself the instant `onSend` fires, because `onSend`
+     * launches a coroutine and cannot report back synchronously. Before this
+     * parameter existed, a failed send meant the typed message was gone with no
+     * copy anywhere on the machine.
+     *
+     * This is a value the parent *pushes*, not state the child owns, so the
+     * composer never has to know whether a send is in flight. Restoring is
+     * one-shot: the parent must clear it via [onDraftRestored], otherwise the
+     * `LaunchedEffect` would re-run and clobber whatever the user has typed
+     * since.
+     */
+    draftToRestore: String? = null,
+    onDraftRestored: () -> Unit = {}
 ) {
-    val isLiteMode = ui.theme.LocalIsLiteMode.current
-    if (isLiteMode) {
-        WhatsAppInputBar(placeholder, onSend, onSendAttachment, onTyping)
-        return
-    }
-
     val t = rememberCosmicTokens()
-    var text by remember { mutableStateOf("") }
-    var showEmojiPicker by remember { mutableStateOf(false) }
-    var showGifPicker by remember { mutableStateOf(false) }
+    var text by remember(channelId) { mutableStateOf("") }
+    var showEmojiPicker by remember(channelId) { mutableStateOf(false) }
+    var showGifPicker by remember(channelId) { mutableStateOf(false) }
 
-    LaunchedEffect(text) {
-        if (text.isNotBlank()) {
-            onTyping(true)
-            kotlinx.coroutines.delay(5000)
-            onTyping(false)
-        } else {
-            onTyping(false)
+    LaunchedEffect(draftToRestore) {
+        val restored = draftToRestore
+        if (!restored.isNullOrEmpty()) {
+            text = restored
+            onDraftRestored()
         }
     }
+
+    TypingNotifier(text = text, onTyping = onTyping)
 
     val launchPicker = rememberFilePickerLauncher { bytes, name, mime ->
         onSendAttachment?.invoke(bytes, name, mime)
@@ -202,12 +217,40 @@ internal fun MessageInputBar(
                 showGifPicker = !showGifPicker
                 showEmojiPicker = false
             },
+            emojiPickerOpen = showEmojiPicker,
             canSend = text.isNotBlank()
         )
     }
 }
 
-/** The bordered container the text field and its controls sit inside. */
+/**
+ * m.typing is rate-limited by every homeserver, and the previous
+ * `LaunchedEffect(text) { onTyping(true); delay(5000) ... }` fired one event per
+ * keystroke — a 40-character message sent ~40. Now the first event waits for a
+ * short pause in typing, the 5 s expiry is unchanged, and leaving the composer
+ * (or the room) always clears the indicator.
+ */
+@Composable
+private fun TypingNotifier(text: String, onTyping: (Boolean) -> Unit) {
+    val currentOnTyping by rememberUpdatedState(onTyping)
+
+    DisposableEffect(Unit) {
+        onDispose { currentOnTyping(false) }
+    }
+
+    LaunchedEffect(text) {
+        if (text.isBlank()) {
+            currentOnTyping(false)
+            return@LaunchedEffect
+        }
+        kotlinx.coroutines.delay(400)
+        currentOnTyping(true)
+        kotlinx.coroutines.delay(5000)
+        currentOnTyping(false)
+    }
+}
+
+/** The container the text field and its controls sit inside. */
 @Composable
 private fun ComposerFrame(
     text: String,
@@ -217,6 +260,7 @@ private fun ComposerFrame(
     onAttach: () -> Unit,
     onToggleEmoji: () -> Unit,
     onToggleGif: () -> Unit,
+    emojiPickerOpen: Boolean,
     canSend: Boolean
 ) {
     val t = rememberCosmicTokens()
@@ -224,8 +268,12 @@ private fun ComposerFrame(
     val focused by focusSource.collectIsFocusedAsState()
     val enterSend = ui.theme.LocalEnterSend.current
 
+    // Focus-only ring, same rule as `OrbitTextField`. The composer is the most
+    // prominent input in the app and it used to hold a permanent 1dp outline
+    // across the bottom of every single channel; the fill alone already says
+    // "this is the thing you type in".
     val borderColor by animateDpAsState(
-        targetValue = if (focused) 1.5.dp else 1.dp,
+        targetValue = if (focused) 1.5.dp else 0.dp,
         animationSpec = OrbitMotion.SnappyDp,
         label = "composerFrame"
     )
@@ -235,7 +283,7 @@ private fun ComposerFrame(
             .fillMaxWidth()
             .clip(OrbitRadius.mdShape)
             .background(t.Input_Bg)
-            .border(borderColor, if (focused) t.Accent else t.Separator, OrbitRadius.mdShape)
+            .border(borderColor, t.Accent, OrbitRadius.mdShape)
             .padding(start = OrbitSpace.xs, end = OrbitSpace.xs, top = 4.dp, bottom = 4.dp),
         verticalAlignment = Alignment.Bottom
     ) {
@@ -298,7 +346,7 @@ private fun ComposerFrame(
             size = 32.dp,
             iconSize = 18.dp,
             shape = OrbitRadius.smShape,
-            active = showEmojiActive()
+            active = emojiPickerOpen
         )
         OrbitIconButton(
             icon = OrbitIcons.Gif,
@@ -329,138 +377,8 @@ private fun ComposerFrame(
     }
 }
 
-@Composable
-private fun showEmojiActive(): Boolean = false
-
 /** What the composer shows above itself when replying. */
 data class ReplyPreview(val author: String, val body: String)
-
-@Composable
-private fun WhatsAppInputBar(
-    placeholder: String,
-    onSend: (String) -> Unit,
-    onSendAttachment: ((ByteArray, String, String) -> Unit)? = null,
-    onTyping: (Boolean) -> Unit = {}
-) {
-    val t = rememberCosmicTokens()
-    var text by remember { mutableStateOf("") }
-    var showEmojiPicker by remember { mutableStateOf(false) }
-    var showGifPicker by remember { mutableStateOf(false) }
-
-    val launchPicker = rememberFilePickerLauncher { bytes, name, mime ->
-        onSendAttachment?.invoke(bytes, name, mime)
-    }
-
-    LaunchedEffect(text) {
-        if (text.isNotBlank()) {
-            onTyping(true)
-            kotlinx.coroutines.delay(5000)
-            onTyping(false)
-        } else {
-            onTyping(false)
-        }
-    }
-
-    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = OrbitSpace.sm, vertical = OrbitSpace.sm)) {
-        if (showEmojiPicker) {
-            EmojiPicker(onEmojiSelected = { text += it })
-            Spacer(Modifier.height(OrbitSpace.sm))
-        }
-        if (showGifPicker) {
-            GifPicker(commonHttpClient = commonHttpClient, onGifSelected = { bytes ->
-                showGifPicker = false
-                onSendAttachment?.invoke(bytes, "gif.gif", "image/gif")
-            })
-            Spacer(Modifier.height(OrbitSpace.sm))
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.Bottom
-        ) {
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(OrbitRadius.pillShape)
-                    .background(t.CardBg)
-                    .padding(horizontal = OrbitSpace.sm, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OrbitIconButton(
-                    icon = OrbitIcons.Emoji,
-                    contentDescription = "Emoji",
-                    onClick = {
-                        showEmojiPicker = !showEmojiPicker
-                        showGifPicker = false
-                    },
-                    size = 30.dp,
-                    iconSize = 17.dp,
-                    shape = CircleShape
-                )
-                Spacer(Modifier.width(OrbitSpace.xs))
-                BasicTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    modifier = Modifier
-                        .weight(1f)
-                        .heightIn(min = 30.dp)
-                        .onKeyEvent { event ->
-                            if (event.key == Key.Enter && event.type == KeyEventType.KeyDown && !event.isShiftPressed) {
-                                if (text.isNotBlank()) { onSend(text); text = "" }
-                                true
-                            } else {
-                                false
-                            }
-                        },
-                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = t.Text_White, fontSize = 14.sp),
-                    cursorBrush = SolidColor(t.Accent),
-                    singleLine = false,
-                    maxLines = 6,
-                    decorationBox = { inner ->
-                        Box {
-                            if (text.isBlank()) {
-                                Text(
-                                    text = placeholder,
-                                    style = MaterialTheme.typography.bodyMedium.copy(color = t.Text_Subtle, fontSize = 14.sp)
-                                )
-                            }
-                            inner()
-                        }
-                    }
-                )
-                Spacer(Modifier.width(OrbitSpace.xs))
-                OrbitIconButton(
-                    icon = OrbitIcons.Add,
-                    contentDescription = "Attach a file",
-                    onClick = { launchPicker() },
-                    size = 30.dp,
-                    iconSize = 17.dp,
-                    shape = CircleShape
-                )
-            }
-            Spacer(Modifier.width(OrbitSpace.sm))
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(if (text.isBlank()) t.CardBgHover else t.Accent)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) {
-                        if (text.isNotBlank()) { onSend(text); text = "" }
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                androidx.compose.material3.Icon(
-                    imageVector = if (text.isBlank()) OrbitIcons.Mic else OrbitIcons.Send,
-                    contentDescription = null,
-                    tint = if (text.isBlank()) t.Text_Secondary else ui.components.onColorFor(t.Accent),
-                    modifier = Modifier.size(21.dp)
-                )
-            }
-        }
-    }
-}
 
 private val commonHttpClient = HttpClient()
 
@@ -488,7 +406,7 @@ internal fun EmojiPicker(onEmojiSelected: (String) -> Unit) {
             columns = GridCells.Adaptive(38.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
-            items(emojis.size) { index ->
+            items(emojis.size, key = { emojis[it] }, contentType = { "emoji" }) { index ->
                 val emoji = emojis[index]
                 EmojiGridCell(emoji) { onEmojiSelected(emoji) }
             }

@@ -6,15 +6,11 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.coroutineContext
 
-enum class ShutdownReason {
-    UserLeave,
-    WindowClosed,
-    TokenExpired,
-    NetworkDrop,
-    ServerDisconnect,
-    NativeFailure,
-    Unknown
-}
+// `ShutdownReason` used to live here -- seven enum cases for why a native call
+// unwound. Nothing constructed or read it: `awaitNativeResult` reports success or
+// failure plus a message, and no caller ever inspected a reason code. An enum
+// with no producer is worse than no enum, because the next person reading a
+// teardown path will assume the reason was captured somewhere.
 
 suspend fun <T> awaitNativeResult(
     timeoutMs: Long,

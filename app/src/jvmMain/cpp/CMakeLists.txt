@@ -20,13 +20,26 @@ target_link_libraries(orbit_livekit_video
     ${JNI_LIBRARIES}
 )
 
-set(LIVEKIT_CPP_SDK_VERSION "0.4.1" CACHE STRING "LiveKit C++ SDK version")
+set(LIVEKIT_CPP_SDK_VERSION "0.4.1" CACHE STRING "LiveKit CPP SDK version")
+
+# SHA-256 of livekit-sdk-windows-x64-0.4.1.zip. Override with
+# -DLIVEKIT_CPP_SDK_SHA256=... when bumping the version.
+#
+# FORCE matters: a plain `set(... CACHE ...)` is a no-op once the entry exists,
+# and build/jni is no longer wiped between builds, so without FORCE a version or
+# digest bump in this file would be silently ignored and the build would keep
+# relinking the previously-cached SDK -- making the digest check itself inert.
+set(LIVEKIT_CPP_SDK_SHA256 "adfe65917efd58492489d1ad08d47e4783bf556e8aa74a272ea3442fe5154651"
+    CACHE STRING "LiveKit C++ SDK archive SHA-256" FORCE)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(LiveKitSDK)
 orbit_livekit_sdk_setup(
     VERSION "${LIVEKIT_CPP_SDK_VERSION}"
     SDK_DIR "${CMAKE_BINARY_DIR}/_deps/livekit-sdk"
+    # Digest of the release archive for LIVEKIT_CPP_SDK_VERSION. The SDK is linked
+    # into the shipped app, so the download is verified before it is used.
+    SHA256 "${LIVEKIT_CPP_SDK_SHA256}"
 )
 
 find_package(LiveKit CONFIG REQUIRED)

@@ -96,30 +96,22 @@ private fun formatDate(date: LocalDate, pattern: String): String {
 internal fun resolveUsernameColor(message: OrbitMessage): Color {
     val showRoleColors = ui.theme.LocalShowRoleColors.current
     val t = rememberCosmicTokens()
-    if (!showRoleColors) return t.Text_White
-    return remember(message.userId, t.Text_White) {
-        ui.theme.avatarSeedColor(message.userId)
-    }
+    // The remember has to run before the early return: returning above it meant
+    // toggling "Show role colors" changed the number of remembered slots.
+    val seedColor = remember(message.userId) { ui.theme.avatarSeedColor(message.userId) }
+    return if (showRoleColors) seedColor else t.Text_White
 }
 
-internal fun hueToRgb(p: Float, q: Float, t: Float): Float {
-    var x = t
-    if (x < 0) x += 1f
-    if (x > 1) x -= 1f
-    return when {
-        x < 1f / 6f -> p + (q - p) * 6f * x
-        x < 0.5f -> q
-        x < 2f / 3f -> p + (q - p) * (2f / 3f - x) * 6f
-        else -> p
-    }
-}
-
-internal fun memberStatusColor(status: UserStatus) = when (status) {
-    UserStatus.ONLINE -> ui.theme.PresenceOnline
-    UserStatus.IDLE -> ui.theme.PresenceIdle
-    UserStatus.DO_NOT_DISTURB -> ui.theme.PresenceDnd
-    UserStatus.OFFLINE -> ui.theme.PresenceOffline
-}
+/**
+ * Token-sourced presence colour. The previous copies of this used the raw
+ * `ui.theme.Presence*` palette constants, which bypass the theme token set: in
+ * the light theme that is a different green from the DM list's, so the same
+ * person showed two different online colours depending on which surface you
+ * looked at. See `ui.screen.drawer.presenceColor`, the single source of truth.
+ */
+@Composable
+internal fun memberStatusColor(status: UserStatus): Color =
+    ui.screen.drawer.presenceColor(rememberCosmicTokens(), status)
 
 internal fun statusText(status: UserStatus) = when (status) {
     UserStatus.ONLINE -> "Online"

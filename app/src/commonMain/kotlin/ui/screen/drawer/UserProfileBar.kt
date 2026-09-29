@@ -40,6 +40,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,6 +54,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.withContext
 import ui.assets.OrbitDefaultAvatar
 import ui.assets.OrbitVerifiedBadge
 import ui.assets.isOrbitVerifiedUser
@@ -83,7 +87,6 @@ import ui.theme.rememberCosmicTokens
 @Composable
 internal fun UserProfileBar(
     user: OrbitUser,
-    onMicToggle: () -> Unit,
     onSettingsClick: () -> Unit,
     onStatusSelected: ((UserStatus) -> Unit)? = null
 ) {
@@ -92,10 +95,16 @@ internal fun UserProfileBar(
     var showVoicePopover by remember { mutableStateOf(false) }
 
     val callManager = webrtc.LocalCallManager.current
-    val isAudioEnabled by (callManager?.isLocalAudioEnabled?.collectAsState(initial = true)
-        ?: remember { mutableStateOf(true) })
-    val isDeafened by (callManager?.isDeafened?.collectAsState(initial = false)
-        ?: remember { mutableStateOf(false) })
+    // Hoisted so the number of remembered slots does not change when callManager
+    // flips between null and non-null.
+    val audioEnabledFlow = remember(callManager) {
+        callManager?.isLocalAudioEnabled ?: flowOf(true)
+    }
+    val deafenedFlow = remember(callManager) {
+        callManager?.isDeafened ?: flowOf(false)
+    }
+    val isAudioEnabled by audioEnabledFlow.collectAsState(initial = true)
+    val isDeafened by deafenedFlow.collectAsState(initial = false)
 
     val interaction = rememberOrbitInteraction()
     val hovered by interaction.hoverSource.collectIsHoveredAsState()
@@ -120,72 +129,104 @@ internal fun UserProfileBar(
         verticalAlignment = Alignment.CenterVertically
     ) {
         // ── Identity + presence picker ───────────────────────────
-        Row(
-            modifier = Modifier
-                .weight(1f)
-                .height(36.dp)
-                .clip(OrbitRadius.smShape)
-                .background(profileBg)
-                .border(1.dp, profileBorder, OrbitRadius.smShape)
-                .hoverable(interaction.hoverSource)
-                .orbitClickable(interaction, onClick = { showProfilePopover = true })
-                .padding(horizontal = OrbitSpace.xs),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            UserAvatar(user.displayName, user.avatarColor, user.status, user.avatarUrl, size = 26.dp)
-            Spacer(Modifier.width(OrbitSpace.sm))
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = user.displayName,
-                        style = MaterialTheme.typography.labelLarge.copy(
-                            fontWeight = FontWeight.SemiBold,
-                            color = t.Text_White,
-                            fontSize = 12.5.sp
-                        ),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
-                    if (isOrbitVerifiedUser(user.username, user.displayName)) {
-                        Spacer(Modifier.width(3.dp))
-                        OrbitVerifiedBadge(modifier = Modifier.size(11.dp))
+        // The menu must be a child of the node that triggered it: OrbitMenu wraps
+        // Material's DropdownMenu, which anchors to its parent layout node. As a
+        // sibling of the whole bar it opened near the bottom of the drawer, over
+        // the room list.
+        Box(modifier = Modifier.weight(1f)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(36.dp)
+                    .clip(OrbitRadius.smShape)
+                    .background(profileBg)
+                    .border(1.dp, profileBorder, OrbitRadius.smShape)
+                    .hoverable(interaction.hoverSource)
+                    .orbitClickable(interaction, onClick = { showProfilePopover = true })
+                    .padding(horizontal = OrbitSpace.xs),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                UserAvatar(user.displayName, user.avatarColor, user.status, user.avatarUrl, size = 26.dp)
+                Spacer(Modifier.width(OrbitSpace.sm))
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = user.displayName,
+                            style = MaterialTheme.typography.labelLarge.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                color = t.Text_White,
+                                fontSize = 12.5.sp
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        if (isOrbitVerifiedUser(user.username, user.displayName)) {
+                            Spacer(Modifier.width(3.dp))
+                            OrbitVerifiedBadge(modifier = Modifier.size(11.dp))
+                        }
                     }
+                    Text(
+                        text = statusLabel(user.status),
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            color = presenceColor(t, user.status),
+                            fontSize = 10.sp,
+                            lineHeight = 12.sp
+                        ),
+                        maxLines = 1
+                    )
                 }
-                Text(
-                    text = statusLabel(user.status),
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        color = presenceColor(t, user.status),
-                        fontSize = 10.sp,
-                        lineHeight = 12.sp
-                    ),
-                    maxLines = 1
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Default.KeyboardArrowUp,
+                    contentDescription = null,
+                    tint = t.Text_Subtle,
+                    modifier = Modifier.size(14.dp)
                 )
             }
-            androidx.compose.material3.Icon(
-                imageVector = androidx.compose.material.icons.Icons.Default.KeyboardArrowUp,
-                contentDescription = null,
-                tint = t.Text_Subtle,
-                modifier = Modifier.size(14.dp)
-            )
+
+            OrbitMenu(
+                expanded = showProfilePopover,
+                onDismissRequest = { showProfilePopover = false },
+                width = 240.dp
+            ) {
+                ProfilePopoverContent(
+                    user = user,
+                    onSettingsClick = {
+                        showProfilePopover = false
+                        onSettingsClick()
+                    },
+                    onStatusSelected = onStatusSelected
+                )
+            }
         }
 
         // ── Audio state ─────────────────────────────────────────
-        OrbitIconButton(
-            icon = Icons.Default.SettingsInputComponent,
-            contentDescription = "Audio devices",
-            onClick = { showVoicePopover = !showVoicePopover },
-            size = 30.dp,
-            iconSize = 15.dp,
-            shape = CircleShape,
-            active = showVoicePopover
-        )
+        Box {
+            OrbitIconButton(
+                icon = Icons.Default.SettingsInputComponent,
+                contentDescription = "Audio devices",
+                onClick = { showVoicePopover = !showVoicePopover },
+                size = 30.dp,
+                iconSize = 15.dp,
+                shape = CircleShape,
+                active = showVoicePopover
+            )
+            OrbitMenu(
+                expanded = showVoicePopover,
+                onDismissRequest = { showVoicePopover = false },
+                width = 268.dp
+            ) {
+                VoiceControlPopover(onSettingsClick = {
+                    showVoicePopover = false
+                    onSettingsClick()
+                })
+            }
+        }
         OrbitIconButton(
             icon = if (isAudioEnabled) OrbitIcons.Mic else OrbitIcons.MicOff,
             contentDescription = if (isAudioEnabled) "Mute microphone" else "Unmute microphone",
             onClick = {
                 callManager?.toggleMute(isAudioEnabled)
-                onMicToggle()
             },
             size = 30.dp,
             iconSize = 16.dp,
@@ -203,35 +244,6 @@ internal fun UserProfileBar(
             active = isDeafened,
             danger = isDeafened
         )
-
-        // ── Voice devices ───────────────────────────────────────
-        OrbitMenu(
-            expanded = showVoicePopover,
-            onDismissRequest = { showVoicePopover = false },
-            width = 268.dp,
-            modifier = Modifier
-        ) {
-            VoiceControlPopover(onSettingsClick = {
-                showVoicePopover = false
-                onSettingsClick()
-            })
-        }
-    }
-
-    // Presence popover is anchored by the identity row above.
-    OrbitMenu(
-        expanded = showProfilePopover,
-        onDismissRequest = { showProfilePopover = false },
-        width = 240.dp
-    ) {
-        ProfilePopoverContent(
-            user = user,
-            onSettingsClick = {
-                showProfilePopover = false
-                onSettingsClick()
-            },
-            onStatusSelected = onStatusSelected
-        )
     }
 }
 
@@ -243,20 +255,34 @@ internal fun UserProfileBar(
 internal fun VoiceControlPopover(onSettingsClick: () -> Unit) {
     val t = rememberCosmicTokens()
     val callManager = webrtc.LocalCallManager.current
-    var inputVolume by remember { mutableStateOf(1f) }
+    val settingsManager = ui.theme.LocalSettingsManager.current
     var showInputDevices by remember { mutableStateOf(false) }
-    var inputDevices by remember(callManager) { mutableStateOf(emptyList<String>()) }
-    var inputDeviceName by remember(callManager) { mutableStateOf("System default") }
+    var inputDevices by remember { mutableStateOf(emptyList<String>()) }
+    var inputDeviceName by remember { mutableStateOf("System default") }
 
-    fun refreshInputDevices() {
-        inputDevices = runCatching { callManager?.webRtcClient?.getAudioInputDevices().orEmpty() }
-            .getOrDefault(emptyList())
-        if (inputDeviceName == "System default" || inputDeviceName !in inputDevices) {
-            inputDeviceName = inputDevices.firstOrNull() ?: "System default"
+    // The old `remember(callManager) { refreshInputDevices() }` ran native WebRTC
+    // device enumeration and wrote two states *during composition*, on the
+    // Compose main thread. An effect on IO does the same work off the UI thread.
+    LaunchedEffect(callManager) {
+        val devices = withContext(Dispatchers.IO) {
+            runCatching { callManager?.webRtcClient?.getAudioInputDevices().orEmpty() }
+                .getOrDefault(emptyList())
+        }
+        inputDevices = devices
+        if (inputDeviceName == "System default" || inputDeviceName !in devices) {
+            inputDeviceName = devices.firstOrNull() ?: "System default"
         }
     }
 
-    remember(callManager) { refreshInputDevices() }
+    // Previously a local `var inputVolume by remember { mutableStateOf(1f) }` that
+    // nothing read: the slider moved and the microphone gain never changed. It
+    // now reads the app-wide setting (0..100, the same value Voice & Video
+    // settings writes) and pushes it into the call manager, which takes 0..1.
+    val inputVolumeFlow = remember(settingsManager) {
+        settingsManager?.inputVolume ?: flowOf(100f)
+    }
+    val inputVolumePercent by inputVolumeFlow.collectAsState(initial = 100f)
+    val inputVolume = (inputVolumePercent / 100f).coerceIn(0f, 1f)
 
     Column(modifier = Modifier.padding(OrbitSpace.sm)) {
         OrbitMenuItem(
@@ -299,12 +325,23 @@ internal fun VoiceControlPopover(onSettingsClick: () -> Unit) {
         ) {
             Text(
                 text = "Input volume",
-                style = MaterialTheme.typography.bodySmall.copy(color = t.Text_Secondary, fontSize = 12.5.sp),
-                modifier = Modifier.weight(1f)
+                style = MaterialTheme.typography.bodySmall.copy(color = t.Text_Secondary, fontSize = 12.5.sp)
+            )
+            Text(
+                text = "${inputVolumePercent.toInt()}%",
+                style = MaterialTheme.typography.labelMedium.copy(
+                    color = t.Accent,
+                    fontWeight = FontWeight.Bold
+                ),
+                maxLines = 1
             )
             Slider(
                 value = inputVolume,
-                onValueChange = { inputVolume = it },
+                onValueChange = { fraction ->
+                    val percent = (fraction * 100f).coerceIn(0f, 100f)
+                    callManager?.setMicVolume(fraction)
+                    settingsManager?.setInputVolume(percent)
+                },
                 modifier = Modifier.width(110.dp),
                 colors = SliderDefaults.colors(
                     thumbColor = t.Accent,
@@ -463,13 +500,6 @@ fun presenceColor(t: ui.theme.CosmicTokens, status: UserStatus): Color = when (s
     UserStatus.IDLE -> t.PresenceIdle
     UserStatus.DO_NOT_DISTURB -> t.PresenceDnd
     UserStatus.OFFLINE -> t.PresenceOffline
-}
-
-internal fun statusColor(status: UserStatus) = when (status) {
-    UserStatus.ONLINE -> ui.theme.PresenceOnline
-    UserStatus.IDLE -> ui.theme.PresenceIdle
-    UserStatus.DO_NOT_DISTURB -> ui.theme.PresenceDnd
-    UserStatus.OFFLINE -> ui.theme.PresenceOffline
 }
 
 internal fun statusLabel(status: UserStatus) = when (status) {

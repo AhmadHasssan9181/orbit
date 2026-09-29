@@ -208,7 +208,30 @@ object SoundboardMixer {
         return samples
     }
 
+    // A blocking SourceDataLine.write of the whole effect froze the caller — and
+    // the caller is the Compose/EDT thread, so "applause" (~1.6 s) or "drumroll"
+    // (~1.2 s) froze the window for over a second. Playback runs on this
+    // single-thread executor instead.
+    private val monitorExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "orbit-soundboard-monitor").apply { isDaemon = true }
+    }
+
     private fun playLocally(samples: FloatArray) {
+        val bytes = ByteArray(samples.size * 2)
+        for (i in samples.indices) {
+            val clamped = samples[i].coerceIn(-1f, 1f)
+            val value = (clamped * 32767f).toInt()
+            bytes[i * 2] = (value and 0xFF).toByte()
+            bytes[i * 2 + 1] = ((value shr 8) and 0xFF).toByte()
+        }
+        runCatching {
+            monitorExecutor.execute { writeMonitorChunked(bytes) }
+        }.onFailure { error ->
+            println("WARN [SoundboardMixer] local monitor playback failed: ${error.message}")
+        }
+    }
+
+    private fun writeMonitorChunked(bytes: ByteArray) {
         try {
             val format = AudioFormat(SAMPLE_RATE.toFloat(), 16, 1, true, false)
             val line = monitorLine?.takeIf { it.isOpen } ?: AudioSystem.getSourceDataLine(format).also {
@@ -216,14 +239,14 @@ object SoundboardMixer {
                 it.start()
                 monitorLine = it
             }
-            val bytes = ByteArray(samples.size * 2)
-            for (i in samples.indices) {
-                val clamped = samples[i].coerceIn(-1f, 1f)
-                val value = (clamped * 32767f).toInt()
-                bytes[i * 2] = (value and 0xFF).toByte()
-                bytes[i * 2 + 1] = ((value shr 8) and 0xFF).toByte()
+            synchronized(line) {
+                var offset = 0
+                while (offset < bytes.size) {
+                    val chunk = minOf(line.bufferSize, bytes.size - offset)
+                    line.write(bytes, offset, chunk)
+                    offset += chunk
+                }
             }
-            synchronized(line) { line.write(bytes, 0, bytes.size) }
         } catch (error: Throwable) {
             println("WARN [SoundboardMixer] local monitor playback failed: ${error.message}")
         }

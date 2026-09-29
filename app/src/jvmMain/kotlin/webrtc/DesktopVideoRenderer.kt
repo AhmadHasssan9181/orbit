@@ -19,10 +19,11 @@ class DesktopVideoRenderer(
 
     override fun onVideoFrame(frame: VideoFrame) {
         frameCount++
-        if (frameCount % 60 == 0) {
-            println("DEBUG: [WebRTC] DesktopVideoRenderer (isScreen=$isScreenShare) received frame: ${frame.buffer.width}x${frame.buffer.height}, format=${frame.buffer.javaClass.simpleName}")
-        }
-        
+        // Per-frame-adjacent logging, so it is gated on the debug flag rather
+        // than merely every 60th frame. At 30 fps per tile this was ~2 lines per
+        // second per tile regardless of any debug setting.
+        val verbose = util.OrbitLog.debugEnabled
+
         val now = System.nanoTime()
         if (now - lastFrameNanos < 66_000_000L) {
             frame.release()
@@ -30,15 +31,19 @@ class DesktopVideoRenderer(
         }
         lastFrameNanos = now
 
+        if (verbose) {
+            println("DEBUG: [WebRTC] DesktopVideoRenderer (isScreen=$isScreenShare) received frame: ${frame.buffer.width}x${frame.buffer.height}, format=${frame.buffer.javaClass.simpleName}")
+        }
+
         var i420: I420Buffer? = null
         try {
             i420 = frame.buffer.toI420()
-            if (frameCount % 60 == 0 && i420 != null) {
+            if (verbose && i420 != null) {
                 println("DEBUG: [WebRTC] DesktopVideoRenderer I420Buffer size: ${i420.width}x${i420.height}, Y-stride: ${i420.strideY}")
             }
             _frameImage.value = i420.toBufferedImage()
         } catch (error: Throwable) {
-            println("DEBUG: [WebRTC] Desktop frame render failed: ${error.message}")
+            println("ERROR: [WebRTC] Desktop frame render failed: ${error.message}")
             error.printStackTrace()
         } finally {
             if (i420 != null && i420 !== frame.buffer) {
@@ -76,7 +81,7 @@ class DesktopVideoRenderer(
             }
         }
 
-        if (frameCount % 60 == 0) {
+        if (util.OrbitLog.debugEnabled && frameCount % 60 == 0) {
             val centerPixel = image.getRGB(frameWidth / 2 + 5, frameHeight / 2 + 5)
             val r = (centerPixel shr 16) and 0xFF
             val g = (centerPixel shr 8) and 0xFF

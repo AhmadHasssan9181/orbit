@@ -14,7 +14,10 @@ function(orbit_detect_livekit_host out_triple out_ext)
         message(FATAL_ERROR "Unsupported LiveKit C++ SDK host OS")
     endif()
 
-    string(TOLOWER "${CMAKE_HOST_SYSTEM_PROCESSOR}" _proc)
+    # CMAKE_SYSTEM_PROCESSOR, not CMAKE_HOST_SYSTEM_PROCESSOR: the former is the
+    # machine we are building FOR. Using the host value silently fetches the
+    # wrong architecture on any cross-compile.
+    string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" _proc)
     if(_proc MATCHES "^(x86_64|amd64)$")
         set(_arch "x64")
     elseif(_proc MATCHES "^(arm64|aarch64)$")
@@ -28,7 +31,7 @@ function(orbit_detect_livekit_host out_triple out_ext)
 endfunction()
 
 function(orbit_livekit_sdk_setup)
-    set(oneValueArgs VERSION SDK_DIR DOWNLOAD_DIR)
+    set(oneValueArgs VERSION SDK_DIR DOWNLOAD_DIR SHA256)
     cmake_parse_arguments(LK "" "${oneValueArgs}" "" ${ARGN})
 
     if(NOT LK_VERSION)
@@ -52,12 +55,22 @@ function(orbit_livekit_sdk_setup)
 
     if(NOT EXISTS "${_root}/lib/cmake/LiveKit")
         message(STATUS "Downloading LiveKit C++ SDK ${LK_VERSION} from ${_url}")
-        file(DOWNLOAD "${_url}" "${_archive_path}" SHOW_PROGRESS TLS_VERIFY ON STATUS _status LOG _log)
+        # The SDK is linked into the shipped app, so an unverified download is a
+        # remote-code-execution path into every install. Pin the digest.
+        if(NOT LK_SHA256)
+            message(FATAL_ERROR
+                "orbit_livekit_sdk_setup requires SHA256 for ${_archive}. "
+                "Look the value up from the official release page and pass it as -DSHA256=<hex>.")
+        endif()
+        file(DOWNLOAD "${_url}" "${_archive_path}"
+             SHOW_PROGRESS TLS_VERIFY ON
+             EXPECTED_HASH "SHA256=${LK_SHA256}"
+             STATUS _status LOG _log)
         list(GET _status 0 _code)
         list(GET _status 1 _message)
         if(NOT _code EQUAL 0)
             message(STATUS "LiveKit C++ SDK download log:\n${_log}")
-            message(FATAL_ERROR "LiveKit C++ SDK download failed: ${_message}")
+            message(FATAL_ERROR "LiveKit C++ SDK download failed (or the SHA256 did not match): ${_message}")
         endif()
 
         file(REMOVE_RECURSE "${_root}")

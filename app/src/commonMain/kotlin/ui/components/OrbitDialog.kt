@@ -1,8 +1,5 @@
 package ui.components
 
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -18,11 +15,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -33,7 +28,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.rememberDialogState
-import ui.theme.LocalReduceMotion
+import ui.screen.orbitGlobalShortcuts
 import ui.theme.OrbitRadius
 import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
@@ -66,7 +61,6 @@ fun OrbitDialog(
     content: @Composable () -> Unit
 ) {
     val t = rememberCosmicTokens()
-    val reduce = LocalReduceMotion.current
 
     Dialog(
         onDismissRequest = onDismissRequest,
@@ -76,18 +70,12 @@ fun OrbitDialog(
             usePlatformDefaultWidth = false
         )
     ) {
-        val scale by animateFloatAsState(
-            targetValue = 1f,
-            animationSpec = spring(
-                dampingRatio = Spring.DampingRatioNoBouncy,
-                stiffness = 420f
-            ),
-            label = "dialogScale"
-        )
         Column(
             modifier = modifier
+                // A Dialog is its own native window, so app-wide shortcuts never
+                // reach it unless the same dispatch is installed here.
+                .orbitGlobalShortcuts()
                 .widthIn(max = width)
-                .scale(if (reduce) 1f else scale)
                 .clip(OrbitRadius.lgShape)
                 .background(t.Elevated)
                 .border(1.dp, t.SeparatorStrong, OrbitRadius.lgShape)

@@ -3,6 +3,7 @@ package ui.screen.chat
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.LinkInteractionListener
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.font.FontFamily
@@ -32,6 +33,14 @@ internal data class RichTextPalette(
     val muted: Color,
     val accent: Color,
     val codeBg: Color,
+    /**
+     * Foreground for a mention highlighted in [accent]. Derived from the
+     * accent's luminance by the caller: a hard-coded white made the one mention
+     * you most need to read almost invisible in the light theme.
+     */
+    val onAccent: Color = Color.White,
+    /** Opens a mentioned member's profile. */
+    val onMention: (String) -> Unit = {}
 )
 
 internal fun buildRichMessageText(
@@ -118,35 +127,68 @@ internal fun parseMatrixHtml(html: String, p: RichTextPalette): AnnotatedString 
                 }
             }
         } else {
-            val lt = html.indexOf('<', i).let { if (it == -1) n else it }
+            // Search from i + 1, never i. This branch is taken when html[i] == '<'
+            // but the next char is not a letter, '/' or '!' — i.e. "<3", "a < b",
+            // "<>", "< ". Searching from i would find that same '<' again, so
+            // lt == i, substring(i, i) appends nothing, and i never advances:
+            // an INFINITE LOOP on the Compose main thread. Any room member can
+            // trigger it with ordinary text, because clients generate
+            // formatted_body for plain markdown. The `if (lt <= i)` guard makes
+            // progress unconditional.
+            val lt = html.indexOf('<', i + 1).let { if (it == -1) n else it }
             if (suppress == 0) appendHtmlEscaped(b, html.substring(i, lt))
-            i = lt
+            i = if (lt > i) lt else i + 1
         }
     }
     return b.toAnnotatedString()
 }
 
+/**
+ * A mention link. The styles ride on the annotation rather than on a separate
+ * pushStyle, so the surrounding HTML style stack still pops exactly once per
+ * anchor, and the click target travels with the annotation.
+ */
+private fun mentionLink(userId: String, style: SpanStyle, p: RichTextPalette): LinkAnnotation.Clickable =
+    LinkAnnotation.Clickable(
+        tag = userId,
+        styles = TextLinkStyles(style),
+        linkInteractionListener = object : LinkInteractionListener {
+            override fun onClick(link: LinkAnnotation) {
+                p.onMention(userId)
+            }
+        }
+    )
+
 private fun pushAnchor(b: AnnotatedString.Builder, stack: ArrayList<OpenTag>, attrs: String, p: RichTextPalette) {
     val href = attrValue(attrs, "href")
-    if (href != null && href.startsWith("https://matrix.to/#/@")) {
-        // Mention pill — styled, not clickable (click-to-profile comes later)
-        b.pushStyle(
-            SpanStyle(
-                color = p.accent,
-                background = p.accent.copy(alpha = 0.16f),
-                fontWeight = FontWeight.SemiBold
+    if (href != null && href.startsWith(MATRIX_TO_USER_PREFIX)) {
+        // Mention pill — styled and clickable, so clicking it opens the profile.
+        b.pushLink(
+            mentionLink(
+                userId = href.removePrefix(MATRIX_TO_USER_PREFIX),
+                style = SpanStyle(
+                    color = p.accent,
+                    background = p.accent.copy(alpha = 0.16f),
+                    fontWeight = FontWeight.SemiBold
+                ),
+                p = p
             )
         )
         stack.add(OpenTag("a"))
-    } else if (href != null) {
+    } else if (safeExternalUrl(href) != null) {
         b.pushLink(
             LinkAnnotation.Url(
-                href,
+                safeExternalUrl(href)!!,
                 TextLinkStyles(
                     SpanStyle(color = p.accent, textDecoration = TextDecoration.Underline)
                 )
             )
         )
+        stack.add(OpenTag("a"))
+    } else if (href != null) {
+        // Unsupported scheme: keep the text and its accent colour, but make it
+        // plain. Linking it would hand the sender's chosen scheme to the OS.
+        b.pushStyle(SpanStyle(color = p.accent, textDecoration = TextDecoration.None))
         stack.add(OpenTag("a"))
     } else {
         b.pushStyle(SpanStyle(color = p.accent))
@@ -225,6 +267,26 @@ private fun decodeEntity(ent: String): String? {
 
 private val AttrRegex = Regex("""([a-zA-Z_:][-\w:.]*)\s*=\s*("([^"]*)"|'([^']*)'|[^\s"'>]+)""")
 
+/** Schemes a message is allowed to hand to the operating system. */
+private val ExternalUrlSchemes = setOf("http", "https", "mailto")
+
+/**
+ * Returns [raw] if it is a link we are willing to hand to the OS, else null.
+ *
+ * `href` comes from the SENDER's `formatted_body`, and Compose Desktop's
+ * UriHandler forwards to `java.awt.Desktop.browse`, which on Windows honours
+ * `file:`, UNC (`\\host\share`) and `mailto:`. Without this allowlist a single
+ * message containing `<a href="file:///...">` or `<a href="//evil/share">` is
+ * a one-click Explorer launch or an SMB auth prompt. The plain-body autolinker
+ * was already safe (https only); this closes the HTML path.
+ */
+internal fun safeExternalUrl(raw: String?): String? {
+    if (raw.isNullOrBlank()) return null
+    val uri = runCatching { java.net.URI(raw.trim()) }.getOrNull() ?: return null
+    val scheme = uri.scheme?.lowercase() ?: return null
+    return if (scheme in ExternalUrlSchemes) raw.trim() else null
+}
+
 private fun attrValue(attrs: String, name: String): String? =
     AttrRegex.findAll(attrs).firstOrNull { it.groupValues[1].equals(name, ignoreCase = true) }?.let { m ->
         val dq = m.groupValues[3]
@@ -237,6 +299,12 @@ private fun attrValue(attrs: String, name: String): String? =
     }
 
 // ─── Plain-body path: markdown-lite + autolink + @mentions ──────
+
+/** Prefix of a `matrix.to` permalink that identifies a single user. */
+internal const val MATRIX_TO_USER_PREFIX = "https://matrix.to/#/"
+
+/** Resolved mention token → the member it names. */
+private class MentionTarget(val userId: String, val targetsMe: Boolean)
 
 private val PlainRichRegex = Regex(
     "(https?://[^\\s<>]+" +
@@ -256,18 +324,26 @@ internal fun buildPlainTextRich(
     p: RichTextPalette
 ): AnnotatedString {
     val myLocalpart = currentUserId?.removePrefix("@")?.substringBefore(':')
-    val mentionTokens = HashMap<String, Boolean>() // lowercase token -> targets me
-    mentionTokens["room"] = false
+    val mentionTokens = HashMap<String, MentionTarget>() // lowercase token -> member
+    mentionTokens["room"] = MentionTarget("@room", targetsMe = false)
     for ((display, id) in members) {
         val lp = id.removePrefix("@").substringBefore(':').lowercase()
         val isMe = myLocalpart != null && lp == myLocalpart
         val dn = display.trim()
         if (dn.isNotEmpty() && !dn.contains(' ')) {
             val key = dn.lowercase()
-            mentionTokens[key] = (mentionTokens[key] ?: false) || isMe
+            val existing = mentionTokens[key]
+            mentionTokens[key] = MentionTarget(
+                userId = id,
+                targetsMe = (existing?.targetsMe ?: false) || isMe
+            )
         }
         if (lp.isNotBlank()) {
-            mentionTokens[lp] = (mentionTokens[lp] ?: false) || isMe
+            val existing = mentionTokens[lp]
+            mentionTokens[lp] = MentionTarget(
+                userId = id,
+                targetsMe = (existing?.targetsMe ?: false) || isMe
+            )
         }
     }
 
@@ -309,7 +385,10 @@ private fun styled(b: AnnotatedString.Builder, text: String, style: SpanStyle, p
 
 private fun mentionStyle(targetsMe: Boolean, p: RichTextPalette) = if (targetsMe) {
     SpanStyle(
-        color = Color.White,
+        // Was a hard-coded Color.White on a 45%-alpha accent — near-invisible
+        // on the near-white light-theme background, on the one mention that
+        // matters most.
+        color = p.onAccent,
         background = p.accent.copy(alpha = 0.45f),
         fontWeight = FontWeight.SemiBold
     )
@@ -324,7 +403,7 @@ private fun mentionStyle(targetsMe: Boolean, p: RichTextPalette) = if (targetsMe
 private fun appendPlainWithMentions(
     b: AnnotatedString.Builder,
     text: String,
-    tokens: Map<String, Boolean>,
+    tokens: Map<String, MentionTarget>,
     p: RichTextPalette
 ) {
     var i = 0
@@ -335,12 +414,20 @@ private fun appendPlainWithMentions(
             var j = i + 1
             while (j < len && (text[j].isLetterOrDigit() || text[j] == '_' || text[j] == '-' || text[j] == '.')) j++
             val tok = text.substring(i + 1, j).lowercase()
-            val targetsMe = tokens[tok]
-            if (tok.isNotEmpty() && targetsMe != null) {
+            val target = tokens[tok]
+            if (tok.isNotEmpty() && target != null) {
                 if (runStart < i) b.append(text.substring(runStart, i))
-                b.pushStyle(mentionStyle(targetsMe, p))
-                b.append(text.substring(i, j))
-                b.pop()
+                val style = mentionStyle(target.targetsMe, p)
+                if (target.userId == "@room") {
+                    // @room has no profile to open; style only.
+                    b.pushStyle(style)
+                    b.append(text.substring(i, j))
+                    b.pop()
+                } else {
+                    b.pushLink(mentionLink(target.userId, style, p))
+                    b.append(text.substring(i, j))
+                    b.pop()
+                }
                 i = j
                 runStart = i
                 continue

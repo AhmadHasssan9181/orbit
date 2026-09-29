@@ -81,18 +81,26 @@ object ShareAudioAec {
         private const val MISS_UNLOCK_FRAMES = 30       // 300 ms of bad fit
         private const val REFINE_EVERY_FRAMES = 200L
         private const val DIAG_EVERY_FRAMES = 125L
-        private const val FULL_SWEEP_EVERY_MS = 250L
+        // The coarse sweep used to run 4x/second over up to 4500 candidate delays;
+        // it now correlates against a local ring copy, so a slower rate costs
+        // almost nothing and leaves the playback thread more room.
+        private const val FULL_SWEEP_EVERY_MS = 1_000L
         private const val MIN_RENDER_RMS = 60.0
 
         private val lock = Any()
         private val ring = ShortArray(RING_FRAMES * CHANNELS) // interleaved 48k stereo
         private var totalRenderedFrames = 0L
 
+        // Capture-side canceller state. reset() runs on the EDT (via
+        // unpublishScreenShareAudio) while onCapture() runs on the native WASAPI
+        // loopback thread, so this state is NOT thread-confined and lives under
+        // its own lock. Lock order is always captureLock -> lock.
+        private val captureLock = Any()
+
         // Render-side activity for gating (written on player thread).
         private val renderFramesSeen = AtomicLong(0)
         @Volatile private var renderRmsAvg = 0.0
 
-        // Capture-side canceller state (confined to loopback thread).
         @Volatile private var excludedByProcessLoopback = false
         private var exclusionChecked = false
         private var arrivalProbe = 0L
@@ -106,26 +114,38 @@ object ShareAudioAec {
         private var lockLogged = false
         private var unlockLogged = true
 
+        // Coarse-sweep scratch, preallocated. The old sweep allocated a fresh
+        // ShortArray(960) + DoubleArray(240) per candidate delay (~4500 delays =
+        // ~19 MB of garbage per sweep) AND took the ring lock for each one, which
+        // is the same lock the Thread.MAX_PRIORITY playback thread needs once per
+        // 10 ms in pushRendered().
+        private val sweepRing = ShortArray(RING_FRAMES * CHANNELS)
+        private val sweepWindow = ShortArray(FRAME_SAMPLES * CHANNELS)
+        private val sweepCapDs = DoubleArray(FRAME_SAMPLES * CHANNELS / (COARSE_STEP / 4))
+        private val sweepRefDs = DoubleArray(FRAME_SAMPLES * CHANNELS / (COARSE_STEP / 4))
+
         fun reset() {
-            println("AEC-PROBE [ShareAudioAec] canceller reset (arrivalProbe=$arrivalProbe)")
-            synchronized(lock) {
-                totalRenderedFrames = 0
-                java.util.Arrays.fill(ring, 0.toShort())
+            synchronized(captureLock) {
+                synchronized(lock) {
+                    totalRenderedFrames = 0
+                    java.util.Arrays.fill(ring, 0.toShort())
+                }
+                renderFramesSeen.set(0)
+                renderRmsAvg = 0.0
+                excludedByProcessLoopback = false
+                exclusionChecked = false
+                arrivalProbe = 0
+                locked = false
+                delayFrames = 0
+                gain = 1.0
+                missRun = 0
+                framesSinceRefine = 0
+                lastFullSweepMs = 0
+                diagCount = 0
+                lockLogged = false
+                unlockLogged = true
+                println("AEC-PROBE [ShareAudioAec] canceller reset (arrivalProbe=$arrivalProbe)")
             }
-            renderFramesSeen.set(0)
-            renderRmsAvg = 0.0
-            excludedByProcessLoopback = false
-            exclusionChecked = false
-            arrivalProbe = 0
-            locked = false
-            delayFrames = 0
-            gain = 1.0
-            missRun = 0
-            framesSinceRefine = 0
-            lastFullSweepMs = 0
-            diagCount = 0
-            lockLogged = false
-            unlockLogged = true
         }
 
         /** Player thread: append what actually hits the speakers to the ring. */
@@ -151,7 +171,7 @@ object ShareAudioAec {
         }
 
         /** Loopback thread: cancel our playout from one raw 10 ms capture frame. */
-        fun onCapture(bytes: ByteArray) {
+        fun onCapture(bytes: ByteArray) = synchronized(captureLock) {
             arrivalProbe += 1
             if (arrivalProbe <= 5 || arrivalProbe % 500L == 0L) {
                 println(
@@ -165,12 +185,12 @@ object ShareAudioAec {
             }
             if (excludedByProcessLoopback) {
                 shipRaw(bytes)
-                return
+                return@synchronized
             }
             // Nothing of ours is audible: nothing to cancel, never distort.
             if (renderRmsAvg < MIN_RENDER_RMS) {
                 shipRaw(bytes)
-                return
+                return@synchronized
             }
 
             val cap = ShortArray(FRAME_SAMPLES * CHANNELS)
@@ -181,7 +201,7 @@ object ShareAudioAec {
                 if (!locked) {
                     shipRaw(bytes)
                     reportDiag(cap, cap, 0.0, 0.0)
-                    return
+                    return@synchronized
                 }
             }
 
@@ -200,7 +220,7 @@ object ShareAudioAec {
                 }
                 shipRaw(bytes)
                 reportDiag(cap, cap, stats.gain, stats.correlation)
-                return
+                return@synchronized
             }
             missRun = 0
             gain = stats.gain
@@ -246,14 +266,24 @@ object ShareAudioAec {
             if (now - lastFullSweepMs < FULL_SWEEP_EVERY_MS) return
             lastFullSweepMs = now
 
-            val capDs = downsample(cap, COARSE_STEP / 4)
+            val history = availableHistory()
+            if (history < MIN_DELAY_FRAMES) return
+            // One consistent copy of the render ring, taken once per sweep. Every
+            // correlation below then runs against that local copy with the
+            // playback lock RELEASED, so pushRendered() never waits on the sweep.
+            val total = synchronized(lock) {
+                System.arraycopy(ring, 0, sweepRing, 0, ring.size)
+                totalRenderedFrames
+            }
+
+            downsampleInto(cap, COARSE_STEP / 4, sweepCapDs)
             var bestDelay = -1
             var bestCorr = 0.0
             var d = MIN_DELAY_FRAMES
-            while (d <= availableHistory()) {
-                val ref = snapshotWindow(d)
-                val refDs = downsample(ref, COARSE_STEP / 4)
-                val c = normalizedCorrelation(capDs, refDs)
+            while (d <= history) {
+                windowFromRing(total, d, sweepWindow)
+                downsampleInto(sweepWindow, COARSE_STEP / 4, sweepRefDs)
+                val c = normalizedCorrelation(sweepCapDs, sweepRefDs)
                 if (c > bestCorr) {
                     bestCorr = c
                     bestDelay = d
@@ -268,8 +298,8 @@ object ShareAudioAec {
             val lo = (bestDelay - COARSE_STEP).coerceAtLeast(MIN_DELAY_FRAMES)
             val hi = (bestDelay + COARSE_STEP).coerceAtMost(MAX_DELAY_FRAMES)
             for (cand in lo..hi) {
-                val ref = snapshotWindow(cand)
-                val s = fitStats(cap, ref)
+                windowFromRing(total, cand, sweepWindow)
+                val s = fitStats(cap, sweepWindow)
                 if (s.correlation > fineCorr) {
                     fineCorr = s.correlation
                     fineBest = cand
@@ -301,9 +331,36 @@ object ShareAudioAec {
             }
         }
 
-        private fun availableHistory(): Int =
+        private fun availableHistory(): Int = synchronized(lock) {
             ((totalRenderedFrames.coerceAtMost(RING_FRAMES.toLong())) - FRAME_SAMPLES).toInt()
                 .coerceAtMost(MAX_DELAY_FRAMES)
+        }
+
+        /** Lock-free window read from the sweep's local ring copy. */
+        private fun windowFromRing(totalFrames: Long, delay: Int, out: ShortArray) {
+            val endAbs = totalFrames - delay          // exclusive, in frames
+            val startAbs = endAbs - FRAME_SAMPLES
+            if (startAbs < 0) {
+                java.util.Arrays.fill(out, 0.toShort())
+                return
+            }
+            var abs = startAbs
+            var i = 0
+            while (abs < endAbs) {
+                val ringIdx = ((abs % RING_FRAMES).toInt()) * CHANNELS
+                out[i++] = sweepRing[ringIdx]
+                out[i++] = sweepRing[ringIdx + 1]
+                abs++
+            }
+        }
+
+        private fun downsampleInto(data: ShortArray, factor: Int, out: DoubleArray) {
+            if (factor <= 1) {
+                for (i in out.indices) out[i] = data[i].toDouble()
+                return
+            }
+            for (i in out.indices) out[i] = data[i * factor].toDouble()
+        }
 
         private fun pushRendered(chunk: ShortArray) {
             synchronized(lock) {
@@ -384,13 +441,6 @@ object ShareAudioAec {
         }
 
         private fun delayMs(): Int = delayFrames / (SAMPLE_RATE / 1000)
-
-        private fun downsample(data: ShortArray, factor: Int): DoubleArray {
-            if (factor <= 1) return DoubleArray(data.size) { data[it].toDouble() }
-            val out = DoubleArray(data.size / factor)
-            for (i in out.indices) out[i] = data[i * factor].toDouble()
-            return out
-        }
 
         private fun normalizedCorrelation(a: DoubleArray, b: DoubleArray): Double {
             var ae = 0.0
@@ -490,6 +540,11 @@ object ShareAudioAec {
         @Volatile private var currentDelayMs = 120
 
         private val stateLock = Any()
+        // Serializes every native call on `apm`: processStream (loopback
+        // thread), processReverseStream (playback thread) and dispose (EDT).
+        // One AudioProcessing is not reentrant, so concurrent calls corrupt the
+        // AEC3 internal state. Order is always processLock -> stateLock.
+        private val processLock = Any()
         private val streamConfig = AudioProcessingStreamConfig(SAMPLE_RATE, CHANNELS)
         private var renderChunk: ByteArray = ByteArray(0)
         private var firstProcessedLogged = false
@@ -506,6 +561,11 @@ object ShareAudioAec {
         private val calibResults = mutableListOf<Pair<Int, Double>>()
 
         fun reset() {
+            // processLock first, then stateLock -- the same order onCapture /
+            // onRender take, so the pair cannot invert. Disposing under only
+            // stateLock let the loopback or playback thread call into a freed
+            // native object.
+            synchronized(processLock) {
             synchronized(stateLock) {
                 runCatching { apm?.dispose() }
                 apm = null
@@ -520,6 +580,7 @@ object ShareAudioAec {
                 calibRatioSum = 0.0
                 calibRatioCount = 0
                 calibResults.clear()
+            }
             }
             renderFramesSeen.set(0)
             renderRmsAvg = 0.0
@@ -536,9 +597,19 @@ object ShareAudioAec {
             val rmsBefore = if (wantDiag || calibrating) int16Rms(bytes) else -1L
 
             if (processor != null) {
-                val result = runCatching {
-                    processor.processStream(bytes, streamConfig, streamConfig, bytes)
-                }.getOrDefault(-1)
+                // processLock, same as OrbitApm: onCapture is the WASAPI loopback
+                // thread and onRender is the MAX_PRIORITY playback thread, and one
+                // AudioProcessing is NOT reentrant. Without this, both run native
+                // AEC3 on the same object at once, and reset() (from the EDT) can
+                // dispose it under either. Only reachable with
+                // -Dorbit.shareAec.mode=apm, but it is the same corruption the
+                // OrbitApm fix exists to prevent.
+                val result = synchronized(processLock) {
+                    val p = apm ?: return@synchronized -1
+                    runCatching {
+                        p.processStream(bytes, streamConfig, streamConfig, bytes)
+                    }.getOrDefault(-1)
+                }
                 if (result != 0 && diagFramesSeen <= 5) {
                     println("WARN [ShareAudioAec] legacy processStream returned $result")
                 } else if (result == 0 && !firstProcessedLogged) {
@@ -559,7 +630,7 @@ object ShareAudioAec {
         }
 
         fun onRender(pcm: ByteArray, sampleRate: Int, channels: Int) {
-            val processor = apm ?: return
+            if (apm == null) return
             val frameSamples = sampleRate / 100
             val srcFrameBytes = frameSamples * channels * 2
             if (srcFrameBytes <= 0 || pcm.size < srcFrameBytes) return
@@ -589,11 +660,14 @@ object ShareAudioAec {
                 renderFramesSeen.incrementAndGet()
                 renderRmsAvg = 0.9 * renderRmsAvg + 0.1 * int16Rms(renderChunk)
 
-                val ok = runCatching {
-                    processor.processReverseStream(renderChunk, refConfig, refConfig, renderChunk) == 0
-                }.getOrElse { error ->
-                    println("WARN [ShareAudioAec] reverse-stream failure: ${error.message}")
-                    return
+                val ok = synchronized(processLock) {
+                    val p = apm ?: return
+                    runCatching {
+                        p.processReverseStream(renderChunk, refConfig, refConfig, renderChunk) == 0
+                    }.getOrElse { error ->
+                        println("WARN [ShareAudioAec] reverse-stream failure: ${error.message}")
+                        return
+                    }
                 }
                 if (!ok) return
                 offset += srcFrameBytes

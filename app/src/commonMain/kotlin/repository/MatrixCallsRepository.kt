@@ -24,7 +24,6 @@ import de.connect2x.trixnity.client.verification
 import de.connect2x.trixnity.clientserverapi.model.media.Media
 import de.connect2x.trixnity.clientserverapi.model.room.CreateRoom
 import de.connect2x.trixnity.clientserverapi.model.room.GetEvents.Direction
-import de.connect2x.trixnity.clientserverapi.model.user.ProfileField
 import de.connect2x.trixnity.clientserverapi.model.user.avatarUrl
 import de.connect2x.trixnity.clientserverapi.model.user.displayName
 import de.connect2x.trixnity.core.model.EventId
@@ -79,10 +78,13 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import io.ktor.util.date.getTimeMillis
@@ -103,26 +105,20 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
-import ui.model.ChannelType
-import ui.model.MessageContent
-import ui.model.OrbitChannel
-import ui.model.OrbitMessage
-import ui.model.OrbitServer
-import ui.model.OrbitUser
-import ui.model.UserStatus
+import util.OrbitLog
 import ui.model.displayText
+import ui.model.UserStatus
+import ui.model.OrbitUser
+import ui.model.OrbitServer
+import ui.model.OrbitMessage
+import ui.model.OrbitChannel
+import ui.model.MessageContent
+import ui.model.ChannelType
 import util.getMediaStorePath
 import util.getRoomDatabaseBuilder
 import util.performSsoLogin
 import kotlin.time.Duration.Companion.seconds
 
-import ui.screen.auth.*
-import ui.screen.settings.*
-import ui.screen.drawer.*
-import ui.screen.server.*
-import ui.screen.call.*
-import ui.screen.media.*
-import ui.screen.main.*
 
 
 
@@ -136,7 +132,8 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
         "org.matrix.msc3401.call",
         "org.matrix.msc4143.rtc_foci"
     )
-    private val matrixRtcMembershipShapes = mutableMapOf<String, MatrixRtcMembershipShape>()
+    private val matrixRtcMembershipShapes = java.util.concurrent.ConcurrentHashMap<String, MatrixRtcMembershipShape>()
+
 
     private enum class MatrixRtcPublishMode(val label: String, val eventTypes: List<String>) {
         ModernOnly("modern-only", listOf("m.call.member")),
@@ -184,8 +181,19 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                 val servers = data.uris.map { TurnServer(listOf(it), data.username, data.password) }
                 Result.success(servers)
             } else {
-                Result.success(emptyList())
+                // Reporting an auth error as "no TURN configured" hid an expired
+                // session behind a successful-looking empty list.
+                val status = response.status.value
+                response.drain()
+                if (status == 401 || status == 403) {
+                    println("WARN [MatrixCallsRepository] turnServer request rejected status=$status")
+                    Result.failure(IllegalStateException("TURN server request rejected (HTTP $status)"))
+                } else {
+                    Result.success(emptyList())
+                }
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -268,7 +276,7 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
 
     override fun observeCallEvents(): Flow<CallEvent> = context.callEventsFlow.asSharedFlow()
 
-    private val activeCallResolvers = mutableMapOf<String, Job>()
+    private val activeCallResolvers = java.util.concurrent.ConcurrentHashMap<String, Job>()
 
     override fun observeActiveCall(channelId: String): Flow<CallEvent.Invite?> {
         val flow = synchronized(context.activeCalls) {
@@ -279,7 +287,7 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
         // call events. Launching per invocation would stack un-cancelled collectors
         // in repositoryScope every time a screen re-subscribes.
         synchronized(activeCallResolvers) {
-            activeCallResolvers.getOrPut(channelId) {
+            activeCallResolvers.computeIfAbsent(channelId) {
                 context.repositoryScope.launch {
                     val trixnity = context.trixnityClient ?: return@launch
                     val hungupCallIds = mutableSetOf<String>()
@@ -289,39 +297,52 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                         val lastEventId = trixnity.room.getById(RoomId(channelId)).first()?.lastEventId
                         if (lastEventId != null) {
                             val events = trixnity.room.getTimelineEvents(RoomId(channelId), startFrom = lastEventId, direction = de.connect2x.trixnity.clientserverapi.model.room.GetEvents.Direction.BACKWARDS)
-                            events.take(50).collect { flowEvent ->
-                                val timelineEvent = flowEvent.first()
-                                val content = timelineEvent.content?.getOrNull() ?: return@collect
-                                val sender = timelineEvent.sender.full
-
-                                when (content) {
-                                    is CallEventContent.Hangup -> if (content.callId.isNotBlank()) hungupCallIds.add(content.callId)
-                                    is CallEventContent.Invite -> {
-                                        if (content.callId.isNotBlank() && !hungupCallIds.contains(content.callId)) {
-                                            latestInvite = CallEvent.Invite(channelId, content.callId, content.offer.sdp, sender, content.partyId)
-                                            throw Exception("Break")
+                            // takeWhile/firstOrNull replaces a `throw Exception("Break")`
+                            // used as loop control: that also swallowed
+                            // CancellationException and every real failure alike.
+                            events.take(50)
+                                .map { flowEvent -> flowEvent.first() }
+                                .takeWhile { event ->
+                                    if (latestInvite != null) return@takeWhile false
+                                    val content = event.content?.getOrNull() ?: return@takeWhile true
+                                    val sender = event.sender.full
+                                    when (content) {
+                                        is CallEventContent.Hangup -> {
+                                            if (content.callId.isNotBlank()) hungupCallIds.add(content.callId)
+                                            true
                                         }
-                                    }
-                                    is UnknownEventContent -> {
-                                        val typeStr = content.eventType
-                                        val realContent = unwrapUnknownEventContent(content)
-                                        val callId = realContent["call_id"]?.jsonPrimitive?.content ?: ""
-                                        if (callId.isNotBlank()) {
-                                            if (typeStr == "m.call.hangup") hungupCallIds.add(callId)
-                                            else if (typeStr == "m.call.invite" && !hungupCallIds.contains(callId)) {
-                                                val sdp = realContent["offer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: ""
-                                                if (sdp.isNotBlank()) {
-                                                    latestInvite = CallEvent.Invite(channelId, callId, sdp, sender, partyIdFrom(realContent))
-                                                    throw Exception("Break")
-                                                }
-                                            }
+                                        is CallEventContent.Invite -> {
+                                            if (content.callId.isNotBlank() && !hungupCallIds.contains(content.callId)) {
+                                                latestInvite = CallEvent.Invite(channelId, content.callId, content.offer.sdp, sender, content.partyId)
+                                                false
+                                            } else true
                                         }
+                                        is UnknownEventContent -> {
+                                            val typeStr = content.eventType
+                                            val realContent = unwrapUnknownEventContent(content)
+                                            val callId = realContent["call_id"]?.jsonPrimitive?.content ?: ""
+                                            if (callId.isNotBlank()) {
+                                                if (typeStr == "m.call.hangup") {
+                                                    hungupCallIds.add(callId)
+                                                    true
+                                                } else if (typeStr == "m.call.invite" && !hungupCallIds.contains(callId)) {
+                                                    val sdp = realContent["offer"]?.jsonObject?.get("sdp")?.jsonPrimitive?.content ?: ""
+                                                    if (sdp.isNotBlank()) {
+                                                        latestInvite = CallEvent.Invite(channelId, callId, sdp, sender, partyIdFrom(realContent))
+                                                        false
+                                                    } else true
+                                                } else true
+                                            } else true
+                                        }
+                                        else -> true
                                     }
-                                    else -> {}
                                 }
-                            }
+                                .firstOrNull()
                         }
-                    } catch (e: Exception) { /* Ignore break */ }
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        println("WARN [MatrixCallsRepository] active-call history scan failed for $channelId: ${e.message}")
+                    }
 
                     flow.value = latestInvite
 
@@ -340,13 +361,15 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
         return flow.asStateFlow()
     }
 
-    private val activeGroupCallResolvers = mutableMapOf<String, Job>()
+    private val activeGroupCallResolvers = java.util.concurrent.ConcurrentHashMap<String, Job>()
 
     override fun observeActiveGroupCall(channelId: String): Flow<String?> {
-        val flow = context.activeGroupCalls.getOrPut(channelId) { MutableStateFlow(null) }
+        val flow = synchronized(context.activeGroupCalls) {
+            context.activeGroupCalls.getOrPut(channelId) { MutableStateFlow(null) }
+        }
         // One resolver per room for the session: resolves immediately, then re-resolves
         // whenever sync signals that call state changed. Subscribers only read the flow.
-        activeGroupCallResolvers.getOrPut(channelId) {
+        activeGroupCallResolvers.computeIfAbsent(channelId) {
             context.repositoryScope.launch {
                 applyGroupCallResolution(channelId, flow)
                 context.groupCallStateChanges.collect { roomId ->
@@ -369,43 +392,134 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
             flow.value = url
         }
 
-        val global = context.globalActiveCalls.value
-        val updated = if (url == null) global - channelId else global + (channelId to url)
-        if (updated != global) context.globalActiveCalls.value = updated
+        // One resolver coroutine per room, so a read-modify-write here can lose
+        // another room's entry when two rooms resolve at the same instant.
+        context.globalActiveCalls.update { global ->
+            if (url == null) global - channelId else global + (channelId to url)
+        }
     }
 
-    private val activeCallMembersJobs = mutableMapOf<String, Job>()
-    private val activeCallDevicesJobs = mutableMapOf<String, Job>()
+    // Both rosters are produced by ONE poller (see ensureRosterPoller), so one
+    // map covers both flows.
+    private val activeCallRosterJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
 
-    override fun observeCallMembers(channelId: String): Flow<List<OrbitUser>> {
-        val flow = context.activeCallMembers.getOrPut(channelId) { MutableStateFlow(emptyList()) }
-        
-        val existingJob = activeCallMembersJobs[channelId]
-        if (existingJob == null || !existingJob.isActive) {
-            activeCallMembersJobs[channelId] = context.repositoryScope.launch {
+    /** Stops the roster poller for a room; called on hangup and failed join. */
+    override fun stopCallRosterPolling(roomId: String) {
+        activeCallRosterJobs.remove(roomId)?.cancel()
+        // Cancel the job is NOT the same as forgetting who was in the call. The
+        // roster lives in a StateFlow the sidebar is still subscribed to, and
+        // nothing else ever emptied it -- so after every call ended, every room
+        // that had ever hosted one kept showing its final participant list for the
+        // rest of the session. That was the "members who are not there" ghost
+        // list. Clear both flows: the participant roster and the device roster
+        // feeding the E2EE media-key exchange.
+        //
+        // Set the value but keep the flow OBJECT. Subscribers (the sidebar row,
+        // the key-exchange path) captured this exact instance from
+        // observeCallMembers(); dropping it from the map would make the next
+        // ensureRosterPoller mint a replacement that nobody is watching, so the
+        // second call in that room would render nobody.
+        context.activeCallMembers[roomId]?.value = emptyList()
+        context.activeCallDevices[roomId]?.value = emptySet()
+        context.activeCallStartedAt.remove(roomId)
+    }
+
+    /**
+     * Single 3s poller per room. It feeds BOTH the participant roster and the
+     * per-device key roster from one /rooms/{id}/state fetch; two pollers meant
+     * two full-state downloads (hundreds of KB) every 3s per call.
+     */
+    private fun ensureRosterPoller(channelId: String) {
+        val membersFlow = synchronized(context.activeCallMembers) {
+            context.activeCallMembers.getOrPut(channelId) { MutableStateFlow(emptyList()) }
+        }
+        val devicesFlow = synchronized(context.activeCallDevices) {
+            context.activeCallDevices.getOrPut(channelId) { MutableStateFlow(emptySet()) }
+        }
+        synchronized(this) {
+            val existing = activeCallRosterJobs[channelId]
+            if (existing != null && existing.isActive) return
+            activeCallRosterJobs[channelId] = context.repositoryScope.launch {
                 while (isActive) {
                     try {
+                        // null == fetch failed. Publishing an empty roster on a
+                        // transient 429/500 blanks the participant list AND the
+                        // device roster that feeds the E2EE media-key exchange,
+                        // so a failed tick must leave both flows untouched.
                         val events = fetchMatrixRtcVisibilityEvents(channelId)
-                        val currentMembers = mutableListOf<OrbitUser>()
-                        for (event in events) {
-                            if (!isActiveMatrixRtcMember(event)) continue
-                            if (!isUnexpiredMatrixRtcMember(event)) continue
-                            val sender = event.sender
-                            if (sender.isNotBlank() && currentMembers.none { it.id == sender }) {
-                                val user = context.fetchUserProfile(sender) ?: OrbitUser(
-                                    id = sender,
-                                    username = sender.split(":").first().removePrefix("@"),
-                                    displayName = sender,
-                                    avatarColor = context.hashToColor(sender),
-                                    status = UserStatus.ONLINE,
-                                    isBot = false,
-                                    avatarUrl = null
-                                )
-                                currentMembers.add(user)
+                        if (events == null) {
+                            println("WARN [MatrixCallsRepository] roster tick failed for $channelId; keeping previous roster")
+                        } else {
+                            // When did the current call start? Taken from the same
+                            // /state payload we already downloaded.
+                            val callStartedAt = callStartFromState(events, channelId)
+                            val currentMembers = mutableListOf<OrbitUser>()
+                            val devices = linkedSetOf<livekit.CallDevice>()
+                            for (event in events) {
+                                if (!isActiveMatrixRtcMember(event, callStartedAt)) continue
+                                if (!isUnexpiredMatrixRtcMember(event, callStartedAt)) continue
+                                val sender = event.sender
+                                if (sender.isNotBlank() && currentMembers.none { it.id == sender }) {
+                                    val user = context.fetchUserProfile(sender) ?: OrbitUser(
+                                        id = sender,
+                                        username = sender.split(":").first().removePrefix("@"),
+                                        displayName = sender,
+                                        avatarColor = context.hashToColor(sender),
+                                        status = UserStatus.ONLINE,
+                                        isBot = false,
+                                        avatarUrl = null
+                                    )
+                                    currentMembers.add(user)
+                                }
+                                val deviceId = jsonString(event.content, "device_id")
+                                    ?: stateKeyDeviceId(event.stateKey)
+                                if (sender.isNotBlank() && deviceId != null) {
+                                    devices.add(livekit.CallDevice(sender, deviceId))
+                                }
                             }
-                        }
-                        if (flow.value != currentMembers) {
-                            flow.value = currentMembers
+                            if (membersFlow.value != currentMembers) {
+                                membersFlow.value = currentMembers
+                            }
+                            if (devicesFlow.value != devices) {
+                                devicesFlow.value = devices
+                            }
+                            if (callStartedAt == null) {
+                                context.activeCallStartedAt.remove(channelId)
+                            } else {
+                                context.activeCallStartedAt[channelId] = callStartedAt
+                            }
+
+                            // ── Self-terminating poller ────────────────────
+                            //
+                            // This loop ran `while (isActive)` and relied
+                            // entirely on every caller remembering to invoke
+                            // `stopCallRosterPolling`. Anything that subscribed
+                            // without a matching teardown left a job running a
+                            // full `/rooms/{id}/state` download (hundreds of KB)
+                            // every 3 seconds for the rest of the session.
+                            //
+                            // A live run caught it: after hanging up, the log
+                            // kept emitting
+                            //   roster tick !cXZD…: current call began
+                            //   10525444943ms ago
+                            // every three seconds — 10,525,444 seconds is
+                            // **12 days**. A call that ended twelve days ago was
+                            // still being polled because nothing had stopped the
+                            // job, and heap climbed 41 MB → 89 MB while it did.
+                            //
+                            // If there is no live call left in this room, there
+                            // is nothing to poll for. Stop. That covers leaving a
+                            // call on the server, joining the wrong room, and a
+                            // caller that simply never cleaned up — none of which
+                            // can now leak a job.
+                            if (callStartedAt == null && currentMembers.isEmpty()) {
+                                util.OrbitLog.d(
+                                    "MatrixCallsRepository",
+                                    "roster poller stopping: no live call remains in $channelId"
+                                )
+                                stopCallRosterPolling(channelId)
+                                return@launch
+                            }
                         }
                     } catch (e: Exception) {
                         if (e is kotlinx.coroutines.CancellationException) throw e
@@ -415,8 +529,32 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                 }
             }
         }
+    }
 
+    override fun observeCallMembers(channelId: String): Flow<List<OrbitUser>> {
+        val flow = synchronized(context.activeCallMembers) {
+            context.activeCallMembers.getOrPut(channelId) { MutableStateFlow(emptyList()) }
+        }
+        ensureRosterPoller(channelId)
         return flow.asStateFlow()
+    }
+
+    /**
+     * Best-effort device extraction from `_<userId>_<deviceId>[_<callId>]` state
+     * keys. The mxid is split on the LAST underscore, not the first colon:
+     * splitting on the colon lands inside the localpart/domain separator and
+     * yields a device id that is a truncated mxid.
+     */
+    private fun stateKeyDeviceId(stateKey: String): String? {
+        if (!stateKey.startsWith("_")) return null
+        val body = stateKey.removePrefix("_")
+        val separator = body.indexOf('_')
+        if (separator < 0) return null
+        val device = body.substring(separator + 1)
+        if (device.isBlank()) return null
+        val callSuffix = device.indexOf("_m.call")
+        val cleaned = if (callSuffix > 0) device.substring(0, callSuffix) else device
+        return cleaned.ifBlank { null }
     }
 
     /**
@@ -424,51 +562,12 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
      * [observeCallMembers] but keeps every (sender, device_id) pair distinct —
      * Element distributes keys per DEVICE, not per user.
      */
-    /** Best-effort device extraction from `_<userId>_<deviceId>[_<callId>]` state keys. */
-    private fun stateKeyDeviceId(stateKey: String): String? {
-        if (!stateKey.startsWith("_")) return null
-        val body = stateKey.drop(1)
-        val colon = body.indexOf(':')
-        if (colon < 0) return null
-        val rest = body.substring(colon + 1)
-        val underscore = rest.indexOf('_')
-        if (underscore < 0) return null
-        val device = rest.substring(underscore + 1)
-        val callSuffix = device.indexOf("_m.call")
-        val cleaned = if (callSuffix > 0) device.substring(0, callSuffix) else device
-        return cleaned.ifBlank { null }
-    }
-
     override fun observeCallDevices(channelId: String): Flow<Set<livekit.CallDevice>> {
-        val flow = context.activeCallDevices.getOrPut(channelId) { MutableStateFlow(emptySet()) }
-
-        val existingJob = activeCallDevicesJobs[channelId]
-        if (existingJob == null || !existingJob.isActive) {
-            activeCallDevicesJobs[channelId] = context.repositoryScope.launch {
-                while (isActive) {
-                    try {
-                        val events = fetchMatrixRtcVisibilityEvents(channelId)
-                        val devices = linkedSetOf<livekit.CallDevice>()
-                        for (event in events) {
-                            if (!isActiveMatrixRtcMember(event)) continue
-                            if (!isUnexpiredMatrixRtcMember(event)) continue
-                            val deviceId = jsonString(event.content, "device_id")
-                                ?: stateKeyDeviceId(event.stateKey)
-                                ?: continue
-                            devices.add(livekit.CallDevice(event.sender, deviceId))
-                        }
-                        if (flow.value != devices) {
-                            flow.value = devices
-                        }
-                    } catch (e: Exception) {
-                        if (e is kotlinx.coroutines.CancellationException) throw e
-                        println("WARN [MatrixCallsRepository] call-device roster error for $channelId: ${e.message}")
-                    }
-                    delay(3000)
-                }
-            }
+        val flow = synchronized(context.activeCallDevices) {
+            context.activeCallDevices.getOrPut(channelId) { MutableStateFlow(emptySet()) }
         }
-
+        // Same poller as observeCallMembers: one /state fetch feeds both rosters.
+        ensureRosterPoller(channelId)
         return flow.asStateFlow()
     }
 
@@ -483,7 +582,10 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
         if (!encrypted) {
             println("DEBUG [MatrixCallsRepository] encryption probe $roomId -> HTTP ${response.status.value}")
         }
+        response.drain()
         encrypted
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
     } catch (e: Exception) {
         println("WARN [MatrixCallsRepository] encryption probe threw for $roomId: ${e.message}")
         false
@@ -532,48 +634,47 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
     private fun membershipId(content: JsonObject): String? =
         jsonString(content, "membershipID") ?: jsonString(content, "membership_id")
 
-    private fun getActiveUnexpiredMemberships(content: JsonObject): List<JsonObject> {
-        val list = mutableListOf<JsonObject>()
-        val membershipsArray = content["memberships"] as? JsonArray
-        val now = getTimeMillis()
-        if (membershipsArray != null) {
-            for (elem in membershipsArray) {
-                val obj = elem as? JsonObject ?: continue
-                val membership = jsonString(obj, "membership")
-                if (membership == "leave") continue
-                val createdTs = jsonLong(obj, "created_ts")
-                val expires = jsonLong(obj, "expires")
-                if (createdTs != null && expires != null && createdTs + expires <= now) {
-                    continue // Expired!
-                }
-                if (obj.containsKey("membershipID") || obj.containsKey("membership_id") ||
-                    obj.containsKey("device_id") || obj.containsKey("application") ||
-                    obj.containsKey("focus_active") || obj.containsKey("foci_active") ||
-                    obj.containsKey("scope")) {
-                    list.add(obj)
-                }
-            }
-        } else {
-            val membership = jsonString(content, "membership")
-            if (membership != "leave") {
-                val createdTs = jsonLong(content, "created_ts")
-                val expires = jsonLong(content, "expires")
-                if (createdTs == null || expires == null || createdTs + expires > now) {
-                    if (content.containsKey("membershipID") || content.containsKey("membership_id") ||
-                        content.containsKey("device_id") || content.containsKey("application") ||
-                        content.containsKey("focus_active") || content.containsKey("foci_active") ||
-                        content.containsKey("scope")) {
-                        list.add(content)
-                    }
-                }
-            }
-        }
-        return list
+    // Delegated to the shared helper so the roster poller and the sync collector
+    // cannot drift apart again. They previously had separate copies of this
+    // logic, and the sync copy omitted the expiry check -- which let a lapsed
+    // membership repopulate a roster the poller had just pruned.
+    private fun getActiveUnexpiredMemberships(content: JsonObject, callStartedAt: Long? = null): List<JsonObject> =
+        MatrixRtcMembership.activeUnexpiredMemberships(content, callStartedAt)
+
+
+    private fun isActiveMatrixRtcMember(event: MatrixRtcVisibilityEvent, callStartedAt: Long? = null): Boolean {
+        if (event.type !in matrixRtcMemberEventTypes) return false
+        return getActiveUnexpiredMemberships(event.content, callStartedAt).isNotEmpty()
     }
 
-    private fun isActiveMatrixRtcMember(event: MatrixRtcVisibilityEvent): Boolean {
-        if (event.type !in matrixRtcMemberEventTypes) return false
-        return getActiveUnexpiredMemberships(event.content).isNotEmpty()
+    /**
+     * `origin_server_ts` of the room's live `m.call` definition event, published to
+     * [MatrixContext.activeCallStartedAt] so the sync collector can apply the same
+     * "belongs to the current call" rule the poller does.
+     *
+     * Null when the room has no un-terminated definition event, which means the
+     * call is over and every membership record in the room is historical. The
+     * caller then falls back to the expiry-only rule rather than blanking a
+     * roster it cannot date.
+     */
+    private fun callStartFromState(events: List<MatrixRtcVisibilityEvent>, roomId: String): Long? {
+        val definition = events.firstOrNull { event ->
+            (event.type == "m.call" || event.type == "org.matrix.msc3401.call") &&
+                !livekit.MatrixRtcCalls.isDefinitionTerminated(event.content)
+        } ?: return null
+        val start = MatrixRtcMembership.callStartFromDefinition(
+            definition.content,
+            jsonLong(definition.raw, "origin_server_ts"),
+        )
+        if (start != null) {
+            if (util.OrbitLog.debugEnabled) {
+                util.OrbitLog.d(
+                    "MatrixCallsRepository",
+                    "roster tick $roomId: current call began ${getTimeMillis() - start}ms ago",
+                )
+            }
+        }
+        return start
     }
 
     private fun expiresRemainingMs(event: MatrixRtcVisibilityEvent): Long? {
@@ -587,8 +688,8 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
         }.maxOrNull() ?: 3600000L
     }
 
-    private fun isUnexpiredMatrixRtcMember(event: MatrixRtcVisibilityEvent): Boolean =
-        getActiveUnexpiredMemberships(event.content).isNotEmpty()
+    private fun isUnexpiredMatrixRtcMember(event: MatrixRtcVisibilityEvent, callStartedAt: Long? = null): Boolean =
+        getActiveUnexpiredMemberships(event.content, callStartedAt).isNotEmpty()
 
     private fun hasNonNullContentField(content: JsonObject, key: String): Boolean {
         val value = content[key] ?: return false
@@ -600,14 +701,21 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
         return value.toString().takeUnless { it == "null" }
     }
 
-    private suspend fun fetchMatrixRtcVisibilityEvents(roomId: String): List<MatrixRtcVisibilityEvent> {
+    /**
+     * `null` means the fetch FAILED; an empty list means the room genuinely has no
+     * MatrixRTC events. Callers must not conflate the two: a transient 429/500
+     * used to publish an empty roster and blank the participant list plus the
+     * device roster the E2EE media-key exchange depends on.
+     */
+    private suspend fun fetchMatrixRtcVisibilityEvents(roomId: String): List<MatrixRtcVisibilityEvent>? {
         return try {
             val response = context.httpClient.get(context.fullUrl("/rooms/$roomId/state")) {
                 header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
             }
             if (response.status.value !in 200..299) {
+                response.drain()
                 println("WARN [MatrixRTCVisibilityAudit] all-state fetch failed status=${response.status.value}")
-                return emptyList()
+                return null
             }
 
             Json.parseToJsonElement(response.bodyAsText()).jsonArray.mapNotNull { element ->
@@ -623,13 +731,25 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                     raw = raw
                 )
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             println("WARN [MatrixRTCVisibilityAudit] all-state fetch exception=${e.message}")
-            emptyList()
+            null
         }
     }
 
     private fun logMatrixRtcVisibilityEvents(label: String, events: List<MatrixRtcVisibilityEvent>) {
+        // One summary line always; the per-event dump only under the debug flag.
+        // This was ~20 lines per member event, several times per call attempt.
+        if (!OrbitLog.debugEnabled) {
+            val memberEvents = events.count { it.type == "org.matrix.msc3401.call.member" }
+            println(
+                "DEBUG [MatrixRTCVisibilityAudit] $label total=${events.size} memberEvents=$memberEvents " +
+                    "(set -Dorbit.debug=true for the per-event dump)"
+            )
+            return
+        }
         println("DEBUG [MatrixRTCVisibilityAudit] $label event_count=${events.size}")
         events.forEach { event ->
             val createdTs = jsonLong(event.content, "created_ts")
@@ -649,6 +769,11 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
     }
 
     private fun logElementReferenceDump(label: String, events: List<MatrixRtcVisibilityEvent>, ownUserId: String) {
+        // Behind the debug flag. This printed one line PER member event in the
+        // room, with the full foci/capabilities payload, on every publish and
+        // every visibility audit. On a busy room that was hundreds of lines per
+        // call attempt and made the log unreadable.
+        if (!OrbitLog.debugEnabled) return
         events
             .filter { it.type == "org.matrix.msc3401.call.member" }
             .filter { it.sender != ownUserId }
@@ -815,6 +940,27 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
             return
         }
 
+        // Behind the debug flag. This fired for EVERY m.call.member event in the
+        // room -- a dozen-plus lines each, on every visibility audit -- which
+        // was the bulk of the log and buried the lines that mattered.
+        if (!OrbitLog.debugEnabled) {
+            val mismatches = listOf(
+                "event_type" to (reference.type to orbit.type),
+                "state_key" to (reference.stateKey to orbit.stateKey),
+                "membershipID" to (membershipId(reference.content) to membershipId(orbit.content)),
+                "device_id" to (jsonString(reference.content, "device_id") to jsonString(orbit.content, "device_id")),
+                "application" to (jsonString(reference.content, "application") to jsonString(orbit.content, "application")),
+                "intent" to (jsonString(reference.content, "m.call.intent") to jsonString(orbit.content, "m.call.intent")),
+                "scope" to (jsonString(reference.content, "scope") to jsonString(orbit.content, "scope"))
+            ).filter { it.second.first != it.second.second }
+
+            println(
+                "DEBUG [MatrixRTCVisibilityAudit] compared state_key=${orbit.stateKey} " +
+                    "mismatches=${if (mismatches.isEmpty()) "none" else mismatches.joinToString { it.first }}"
+            )
+            return
+        }
+
         fun compare(field: String, referenceValue: String?, orbitValue: String?) {
             println(
                 "DEBUG [MatrixRTCVisibilityAudit] comparison field=$field element_value=$referenceValue orbit_value=$orbitValue match=${referenceValue == orbitValue}"
@@ -835,84 +981,88 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
         compare("capabilities", nullableContentFieldString(reference.content, "capabilities"), nullableContentFieldString(orbit.content, "capabilities"))
     }
 
-    private suspend fun clearMatrixRtcMemberEvent(roomId: String, eventType: String, stateKey: String) {
-        context.httpClient.put(context.fullUrl("/rooms/$roomId/state/$eventType/${stateKey.encodeStateKey()}")) {
+    private suspend fun clearMatrixRtcMemberEvent(roomId: String, eventType: String, stateKey: String): Int {
+        val response = context.httpClient.put(context.fullUrl("/rooms/$roomId/state/$eventType/${stateKey.encodeStateKey()}")) {
             header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
             contentType(ContentType.Application.Json)
             setBody(buildJsonObject { put("membership", "leave") })
         }
+        response.drain()
+        return response.status.value
     }
 
     override suspend fun resolveGroupCallJoinTarget(roomId: String): ResolvedGroupCall {
-        // 1. Canonical definition keys first (cheap direct fetch)
+        // The all-state scan is AUTHORITATIVE and runs first.
+        //
+        // It is the only source here that carries `origin_server_ts`, and without
+        // that a definition's `lifetime` cannot be evaluated -- so this is the
+        // only place that can tell a live call from one that quietly expired
+        // because whoever started it never terminated it.
+        //
+        // `GET /rooms/{id}/state/{type}/{key}` returns the event CONTENT only, no
+        // timestamp, so when that fetch was consulted first it reported rooms as
+        // having a live call for as long as the definition sat there. In practice
+        // that made every room that had ever had a call show a "join the call"
+        // banner, run a 3-second roster poller, and list its old participants.
+        val scanVerdict = try {
+            val response = context.httpClient.get(context.fullUrl("/rooms/$roomId/state")) {
+                header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
+            }
+            if (response.status.value != 200) {
+                response.drain()
+                null
+            } else {
+                CallStateResolver.resolve(
+                    entries = CallStateResolver.parseStateArray(response.bodyAsText()),
+                    liveKitFocusOf = { livekit.RtcFocusParser.firstLiveKit(it)?.serviceUrl }
+                )
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            println("DEBUG [JoinFocus] all-state scan failed: ${e.message}")
+            null
+        }
+
+        if (scanVerdict != null) {
+            if (util.OrbitLog.debugEnabled) {
+                util.OrbitLog.d(
+                    "JoinFocus",
+                    "room $roomId -> exists=${scanVerdict.exists} source=${scanVerdict.source ?: "-"} " +
+                        "sfu=${scanVerdict.serviceUrl ?: "-"} reason=${scanVerdict.reason ?: "-"}"
+                )
+            }
+            return scanVerdict.toResolved()
+        }
+
+        // Fallback only, for when the scan itself failed. This path cannot judge
+        // freshness, so it answers a strictly weaker question: "is there a call
+        // definition, and does it point at a LiveKit SFU?" Preferring it over a
+        // working scan would reintroduce the stale-call bug above.
         try {
             for (ns in listOf("m.call", "org.matrix.msc3401.call")) {
                 val url = context.fullUrl("/rooms/$roomId/state/$ns/m.call")
                 val response = context.httpClient.get(url) {
                     header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
                 }
+                if (response.status.value != 200) response.drain()
                 if (response.status.value == 200) {
                     val body = response.body<JsonObject>()
                     if (!livekit.MatrixRtcCalls.isDefinitionTerminated(body)) {
                         val focus = livekit.RtcFocusParser.firstLiveKit(body)
                         if (focus != null) {
-                            println("DEBUG [JoinFocus] resolved via definition ns=$ns key=m.call sfu=${focus.serviceUrl}")
+                            println("DEBUG [JoinFocus] (scan unavailable) resolved via definition ns=$ns sfu=${focus.serviceUrl}")
                             return ResolvedGroupCall(true, "m.call", focus.serviceUrl, "definition:$ns")
                         }
-                        println("DEBUG [JoinFocus] definition ns=$ns active but has no livekit focus")
+                        println("DEBUG [JoinFocus] (scan unavailable) definition ns=$ns active but has no livekit focus")
                         return ResolvedGroupCall(true, "m.call", null, "definition-no-focus:$ns")
                     }
                 }
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             println("DEBUG [JoinFocus] definition fetch failed: ${e.message}")
-        }
-
-        // 2. All-state scan: definitions under any state_key + member events (foci_preferred / foci_active)
-        try {
-            val response = context.httpClient.get(context.fullUrl("/rooms/$roomId/state")) {
-                header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
-            }
-            if (response.status.value == 200) {
-                val events = response.body<JsonArray>()
-                var memberFallback: ResolvedGroupCall? = null
-                for (event in events) {
-                    val obj = event.jsonObject
-                    val type = obj["type"]?.jsonPrimitive?.content ?: continue
-                    val stateKey = obj["state_key"]?.jsonPrimitive?.content ?: ""
-                    val content = obj["content"]?.jsonObject ?: continue
-
-                    if (type == "m.call" || type == "org.matrix.msc3401.call") {
-                        if (!livekit.MatrixRtcCalls.isDefinitionTerminated(content)) {
-                            val callId = stateKey.ifBlank { "m.call" }
-                            val focus = livekit.RtcFocusParser.firstLiveKit(content)
-                            if (focus != null) {
-                                println("DEBUG [JoinFocus] resolved via all-state definition key=$callId sfu=${focus.serviceUrl}")
-                                return ResolvedGroupCall(true, callId, focus.serviceUrl, "all-state-definition")
-                            }
-                            if (memberFallback == null) {
-                                memberFallback = ResolvedGroupCall(true, callId, null, "all-state-definition-no-focus")
-                            }
-                        }
-                    } else if ((type == "org.matrix.msc3401.call.member" || type == "m.call.member") &&
-                        content["membership"]?.jsonPrimitive?.content != "leave"
-                    ) {
-                        val focus = livekit.RtcFocusParser.firstLiveKit(content)
-                        val callId = content["call_id"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-                            ?: stateKey.substringAfterLast("_").takeIf { it.isNotBlank() && it != stateKey }
-                            ?: "m.call"
-                        if (focus != null && memberFallback == null) {
-                            memberFallback = ResolvedGroupCall(true, callId, focus.serviceUrl, "member-event")
-                        }
-                    }
-                }
-                memberFallback?.let {
-                    println("DEBUG [JoinFocus] resolved via ${it.source} callId=${it.callId} sfu=${it.serviceUrl ?: "<none>"}")
-                    return it
-                }
-            }
-        } catch (e: Exception) {
-            println("DEBUG [JoinFocus] all-state scan failed: ${e.message}")
         }
 
         println("DEBUG [JoinFocus] no active group call found in room state for $roomId")
@@ -947,18 +1097,22 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                 deviceId
             )
             for (key in keysToClear) {
-                for (ns in listOf("m.call.member", "org.matrix.msc3401.call.member")) {
+                for (ns in matrixRtcMemberEventTypes) {
                     clearMatrixRtcMemberEvent(roomId, ns, key)
                 }
             }
-        } catch (e: Exception) {}
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            println("WARN [MatrixCallsRepository] ghost membership cleanup failed for $roomId: ${e.message}")
+        }
 
         // 2. Publish Call Definition (The Blueprint) to 'm.call' state key for "seamless" support
         try {
             // Also publish to standard m.call
             for (ns in listOf("m.call", "org.matrix.msc3401.call")) {
                 val callUrl = context.fullUrl("/rooms/$roomId/state/$ns/m.call")
-                context.httpClient.put(callUrl) {
+                val response = context.httpClient.put(callUrl) {
                     header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
                     contentType(ContentType.Application.Json)
                     setBody(buildJsonObject {
@@ -972,8 +1126,12 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                         })
                     })
                 }
+                println("DEBUG [MatrixCallsRepository] Published call definition ns=$ns status=${response.status.value}")
+                response.drain()
             }
             println("DEBUG [MatrixCallsRepository] Published seamless m.call definition with focus")
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             println("ERROR [MatrixCallsRepository] Failed to publish m.call: ${e.message}")
         }
@@ -987,20 +1145,32 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
         // Only tear down the call definition when no one else is still in the call —
         // otherwise any leaver would kill the call for everyone still connected.
         val ownUserId = context.userId
+        var stateFetchFailed = false
         val otherActiveMembers = if (ownUserId != null) {
-            fetchMatrixRtcVisibilityEvents(roomId)
-                .filter { it.type == "org.matrix.msc3401.call.member" }
-                .filter { it.sender != ownUserId }
-                .filter(::isActiveMatrixRtcMember)
+            // Both member event types count as "still in the call": filtering on
+            // the legacy type only meant a modern-only publish mode looked empty
+            // and hanging up terminated the call for everyone still connected.
+            // A failed fetch is NOT an empty roster, so it must not terminate.
+            val events = fetchMatrixRtcVisibilityEvents(roomId)
+            if (events == null) {
+                println("WARN [MatrixCallsRepository] endGroupCall: state fetch failed; NOT terminating the call definition")
+                stateFetchFailed = true
+                emptyList()
+            } else {
+                events
+                    .filter { it.type in matrixRtcMemberEventTypes }
+                    .filter { it.sender != ownUserId }
+                    .filter(::isActiveMatrixRtcMember)
+            }
         } else {
             emptyList()
         }
 
-        if (otherActiveMembers.isEmpty()) {
+        if (otherActiveMembers.isEmpty() && !stateFetchFailed) {
             try {
                 for (ns in listOf("m.call", "org.matrix.msc3401.call")) {
                     val callUrl = context.fullUrl("/rooms/$roomId/state/$ns/m.call")
-                    context.httpClient.put(callUrl) {
+                    val response = context.httpClient.put(callUrl) {
                         header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
                         contentType(ContentType.Application.Json)
                         setBody(buildJsonObject {
@@ -1008,14 +1178,21 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                             put("m.terminated", "m.user_hangup")
                         })
                     }
+                    println("DEBUG [MatrixCallsRepository] endGroupCall terminated ns=$ns status=${response.status.value}")
+                    response.drain()
                 }
-            } catch (e: Exception) {}
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                println("WARN [MatrixCallsRepository] endGroupCall failed to terminate $roomId: ${e.message}")
+            }
         } else {
             println(
                 "DEBUG [MatrixCallsRepository] endGroupCall: ${otherActiveMembers.size} other active member(s) remain in $roomId, leaving call definition intact"
             )
         }
 
+        stopCallRosterPolling(roomId)
         leaveGroupCall(roomId, callId)
     }
 
@@ -1062,7 +1239,14 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
         val deviceId = context.deviceId ?: "ORBIT_DESKTOP"
         try {
             val membershipId = livekitIdentity ?: "$userId:$deviceId"
+            // A failed state fetch leaves beforeEvents empty, which would make
+            // findReferenceMemberEvent pick nothing and publish a shape that
+            // matches no peer. Refuse the publish instead.
             val beforeEvents = fetchMatrixRtcVisibilityEvents(roomId)
+            if (beforeEvents == null) {
+                println("WARN [MatrixRTCVisibilityAudit] before_publish state fetch failed; not publishing membership")
+                return false
+            }
             logMatrixRtcVisibilityEvents("before_publish", beforeEvents)
             logElementReferenceDump("before_publish", beforeEvents, userId)
             val reference = findReferenceMemberEvent(beforeEvents, userId, deviceId, membershipId)
@@ -1104,6 +1288,8 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                         clearMatrixRtcMemberEvent(roomId, ns, key)
                     }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 println("WARN [MatrixRTCVisibilityAudit] stale membership cleanup failed=${e.message}")
             }
@@ -1161,9 +1347,10 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                 println(
                     "DEBUG [MatrixRTCMapping] $eventType publish status=${response.status.value} state_key=$stateKey membershipID=$membershipId"
                 )
+                response.drain()
             }
 
-            val afterEvents = runCatching { fetchMatrixRtcVisibilityEvents(roomId) }.getOrNull().orEmpty()
+            val afterEvents = fetchMatrixRtcVisibilityEvents(roomId).orEmpty()
             logMatrixRtcVisibilityEvents("after_publish", afterEvents)
             logElementReferenceDump("after_publish", afterEvents, userId)
             val orbitMember = findOwnMemberEvent(afterEvents, deviceId, membershipId, stateKey)
@@ -1172,6 +1359,8 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
             )
             logMembershipComparison(reference, orbitMember)
             return allPublished || orbitMember != null
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             println("ERROR [MatrixCallsRepository] Failed to publish member join: ${e.message}")
             return false
@@ -1180,29 +1369,47 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
 
     override suspend fun leaveGroupCall(roomId: String, callId: String) {
         println("DEBUG [MatrixCallsRepository] LEAVING MSC3401 Call for $roomId")
-        activeCallMembersJobs.remove(roomId)?.cancel()
-        activeCallDevicesJobs.remove(roomId)?.cancel()
+        stopCallRosterPolling(roomId)
         val userId = context.userId ?: return
         val deviceId = context.deviceId ?: "ORBIT_DESKTOP"
         val shape = matrixRtcMembershipShapes.remove(membershipShapeMapKey(roomId, callId))
         val stateKey = shape?.stateKey ?: "_${userId}_${deviceId}_$callId"
         val eventTypes = shape?.publishMode?.eventTypes ?: matrixRtcMemberEventTypes
 
-        try {
-            for (ns in eventTypes) {
-                clearMatrixRtcMemberEvent(roomId, ns, stateKey)
-                println("DEBUG [MatrixRTCVisibilityAudit] leave published type=$ns state_key=$stateKey")
-                println("DEBUG [VideoPublish] membership cleared type=$ns state_key=$stateKey")
+        // Every leave is counted. A silent catch here left our m.call.member in
+        // room state until its TTL expired, so peers kept showing us in the call
+        // and endGroupCall saw a phantom member.
+        val targets = eventTypes.map { it to stateKey } + matrixRtcMemberEventTypes.map { it to deviceId }
+        var succeeded = 0
+        for (attempt in 1..2) {
+            succeeded = targets.count { (ns, key) ->
+                val ok = try {
+                    clearMatrixRtcMemberEvent(roomId, ns, key) in 200..299
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    println("WARN [MatrixRTCVisibilityAudit] leave PUT threw type=$ns state_key=$key: ${e.message}")
+                    false
+                }
+                if (ok) {
+                    println("DEBUG [MatrixRTCVisibilityAudit] leave published type=$ns state_key=$key")
+                    println("DEBUG [VideoPublish] membership cleared type=$ns state_key=$key")
+                }
+                ok
             }
-            
-            // Also cleanup the old device-only key if it exists
-            for (ns in matrixRtcMemberEventTypes) {
-                clearMatrixRtcMemberEvent(roomId, ns, deviceId)
-            }
-        } catch (e: Exception) {}
+            if (succeeded == targets.size) break
+            if (attempt == 1) println("WARN [MatrixRTCVisibilityAudit] ${targets.size - succeeded} leave PUT(s) failed; retrying once")
+        }
 
-        // Optimistically update local state
-        context.activeGroupCalls[roomId]?.value = null
+        if (succeeded == targets.size) {
+            context.activeGroupCalls[roomId]?.value = null
+        } else {
+            println(
+                "ERROR [MatrixCallsRepository] leaveGroupCall could NOT clear membership for " +
+                    "$roomId (${targets.size - succeeded}/${targets.size} failed); our m.call.member " +
+                    "remains in room state until its TTL expires"
+            )
+        }
     }
 
     override suspend fun fetchLiveKitToken(roomId: String, callId: String, livekitServiceUrl: String): livekit.LiveKitAuthResponse {

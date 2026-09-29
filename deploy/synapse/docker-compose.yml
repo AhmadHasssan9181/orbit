@@ -1,0 +1,68 @@
+services:
+  synapse:
+    image: matrixdotorg/synapse:latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      # 8008 is the client-facing HTTP port. Put a reverse proxy in front of
+      # it, or use `tailscale serve --https=443 tcp://localhost:8008`.
+      - "127.0.0.1:8008:8008"
+      # Federation listener. Omit this block AND set
+      # `federation_domain_whitelist: []` in homeserver.yaml if you want a
+      # purely private server that nobody outside can reach or invite.
+      - "127.0.0.1:8448:8448"
+    volumes:
+      - ./data:/data
+    environment:
+      SYNAPSE_SERVER_NAME: "${SERVER_NAME}"
+      SYNAPSE_REPORT_STATS: "no"
+      SYNAPSE_CONFIG_PATH: "/data/homeserver.yaml"
+      # Only used on first run to generate the config; safe to leave set.
+      SYNAPSE_GENERATE_CONFIG: "yes"
+      SYNAPSE_REGISTRATION_SHARED_SECRET: "${REGISTRATION_SHARED_SECRET}"
+      # Required for MatrixRTC: the lk-jwt-service validates the user's OpenID
+      # token against this listener. Without it, calls cannot get an SFU token.
+      SYNAPSE_LISTENERS: >-
+        - port: 8008
+          tls: false
+          bind_addresses: ['0.0.0.0']
+          type: http
+          x_forwarded: true
+          resources:
+            - names: [client]
+        - port: 8448
+          tls: false
+          bind_addresses: ['0.0.0.0']
+          type: http
+          x_forwarded: true
+          resources:
+            - names: [federation]
+            - names: [openid]
+              overrides:
+                federation_domain_whitelist: []
+      POSTGRES_HOST: "postgres"
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_DATABASE: "synapse"
+    command: >-
+      sh -c "if [ ! -f /data/homeserver.yaml ]; then
+               echo 'Generating Synapse config from the container defaults...';
+             fi;
+             exec python -m synapse.app.homeserver"
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_DB: "synapse"
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d synapse"]
+      interval: 5s
+      timeout: 5s
+      retries: 20

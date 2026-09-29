@@ -87,15 +87,9 @@ internal fun MessageBubbleFull(
     onEditMessage: ((String, String) -> Unit)? = null,
     onDeleteMessage: ((String) -> Unit)? = null,
     onTogglePin: ((String) -> Unit)? = null,
-    onReply: ((String) -> Unit)? = null
+    onReply: ((String) -> Unit)? = null,
+    onMentionUser: ((String) -> Unit)? = null
 ) {
-    val isLiteMode = ui.theme.LocalIsLiteMode.current
-    if (isLiteMode) {
-        val isCurrentUser = currentUser != null && message.userId == currentUser.id
-        WhatsAppMessageBubble(message, isCurrentUser)
-        return
-    }
-
     val t = rememberCosmicTokens()
     val isOwn = currentUser != null && message.userId == currentUser.id
     val canEdit = isOwn && onEditMessage != null && message.content is ui.model.MessageContent.Text
@@ -184,7 +178,11 @@ internal fun MessageBubbleFull(
 
                 Spacer(Modifier.height(1.dp))
 
-                MessageContentView(content = message.content, isCompact = false)
+                MessageContentView(
+                    content = message.content,
+                    isCompact = false,
+                    onMentionUser = onMentionUser
+                )
 
                 if (message.isEdited) {
                     Spacer(Modifier.height(1.dp))
@@ -361,7 +359,7 @@ private fun BotBadge() {
 private val QuickReactionEmojis = listOf("👍", "❤️", "😂", "🔥", "🎉", "😮", "😢", "👀")
 
 @Composable
-private fun ReactionPickerMenu(
+internal fun ReactionPickerMenu(
     expanded: Boolean,
     alreadyAdded: (String) -> Boolean,
     onPick: (String) -> Unit,
@@ -414,7 +412,7 @@ private fun EmojiChoice(emoji: String, highlighted: Boolean, onClick: () -> Unit
 }
 
 @Composable
-private fun MessageMoreMenu(
+internal fun MessageMoreMenu(
     expanded: Boolean,
     canDelete: Boolean,
     messageBody: String,
@@ -484,7 +482,9 @@ private fun MessageEditDialog(
 internal fun MessageActionBtn(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     desc: String,
-    onClick: () -> Unit = {}
+    // No default: a toolbar button with a defaulted handler is exactly how the
+    // grouped-message toolbar ended up shipping three controls that did nothing.
+    onClick: () -> Unit
 ) {
     OrbitIconButton(
         icon = icon,
@@ -517,51 +517,5 @@ private fun MessageAvatar(message: OrbitMessage) {
             color = member?.avatarColor?.let { Color(it) },
             modifier = Modifier.size(36.dp)
         )
-    }
-}
-
-@Composable
-fun WhatsAppMessageBubble(message: ui.model.OrbitMessage, isCurrentUser: Boolean) {
-    val tokens = ui.theme.rememberCosmicTokens()
-    val bubbleColor = if (isCurrentUser) tokens.BubbleOwn else tokens.BubbleOther
-    val alignment = if (isCurrentUser) Alignment.End else Alignment.Start
-
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = OrbitSpace.sm, vertical = 2.dp),
-        horizontalAlignment = alignment
-    ) {
-        Box(
-            modifier = Modifier
-                .clip(
-                    RoundedCornerShape(
-                        topStart = OrbitRadius.md,
-                        topEnd = OrbitRadius.md,
-                        bottomStart = if (isCurrentUser) OrbitRadius.md else OrbitRadius.xs,
-                        bottomEnd = if (isCurrentUser) OrbitRadius.xs else OrbitRadius.md
-                    )
-                )
-                .background(bubbleColor)
-                .padding(horizontal = OrbitSpace.md, vertical = OrbitSpace.sm)
-        ) {
-            Row(verticalAlignment = Alignment.Bottom) {
-                Text(
-                    text = message.body,
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        color = tokens.Text_White,
-                        fontSize = 14.5.sp,
-                        lineHeight = 20.sp
-                    ),
-                    modifier = Modifier.padding(end = OrbitSpace.sm)
-                )
-                Text(
-                    text = formatTimestamp(message.timestamp).replace("Today at ", ""),
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        color = tokens.Text_Subtle,
-                        fontSize = 10.sp
-                    ),
-                    modifier = Modifier.padding(bottom = 2.dp)
-                )
-            }
-        }
     }
 }

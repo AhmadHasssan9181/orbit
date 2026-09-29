@@ -26,7 +26,6 @@ import de.connect2x.trixnity.client.verification
 import de.connect2x.trixnity.clientserverapi.model.media.Media
 import de.connect2x.trixnity.clientserverapi.model.room.CreateRoom
 import de.connect2x.trixnity.clientserverapi.model.room.GetEvents.Direction
-import de.connect2x.trixnity.clientserverapi.model.user.ProfileField
 import de.connect2x.trixnity.clientserverapi.model.user.avatarUrl
 import de.connect2x.trixnity.clientserverapi.model.user.displayName
 import de.connect2x.trixnity.core.model.EventId
@@ -35,9 +34,6 @@ import de.connect2x.trixnity.core.model.UserId
 import de.connect2x.trixnity.core.model.events.EventType
 import de.connect2x.trixnity.core.model.events.ClientEvent.RoomEvent
 import de.connect2x.trixnity.core.model.events.UnknownEventContent
-import de.connect2x.trixnity.core.model.events.m.call.CallEventContent
-import de.connect2x.trixnity.core.model.events.m.call.Purpose
-import de.connect2x.trixnity.core.model.events.m.call.StreamMetadata
 import de.connect2x.trixnity.core.model.events.m.ReactionEventContent
 import de.connect2x.trixnity.core.model.events.m.ReceiptType
 import de.connect2x.trixnity.core.model.events.m.RelatesTo
@@ -80,14 +76,18 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlinx.serialization.Serializable
@@ -120,13 +120,6 @@ import util.getRoomDatabaseBuilder
 import util.performSsoLogin
 import kotlin.time.Duration.Companion.seconds
 
-import ui.screen.auth.*
-import ui.screen.settings.*
-import ui.screen.drawer.*
-import ui.screen.server.*
-import ui.screen.call.*
-import ui.screen.media.*
-import ui.screen.main.*
 
 
 
@@ -144,16 +137,68 @@ class MatrixMessagesRepository(val context: MatrixContext) : OrbitMessagesReposi
                 startFrom = lastEventId,
                 direction = de.connect2x.trixnity.clientserverapi.model.room.GetEvents.Direction.BACKWARDS
             )
-            
-            flow.take(limit).collect { flowEvent ->
-                val timelineEvent = flowEvent.first()
-                timelineEventToOrbitMessage(timelineEvent)?.let { events.add(it) }
+
+            // fromToken IS the cursor event, so it arrives first; drop it to
+            // avoid showing the boundary message twice.
+            val source = if (fromToken != null) flow.drop(1) else flow
+            // Overall bound, not just the per-event one: DECRYPTION_WAIT is
+            // per event, so 50 events that never decrypt would hold the chat's
+            // loading state for 500s with no spinner timeout. Show whatever has
+            // been collected so far rather than appearing to hang.
+            withTimeoutOrNull(HISTORY_LOAD_TIMEOUT_MS) {
+                source.take(limit).collect { flowEvent ->
+                    awaitDecryptedEvent(flowEvent)?.let { timelineEvent ->
+                        timelineEventToOrbitMessage(timelineEvent)?.let { events.add(it) }
+                    }
+                }
             }
-            val pinnedIds = fetchPinnedEventIds(channelId).toHashSet()
-            events.reversed().map { it.copy(isPinned = it.id in pinnedIds) }
+            if (events.isEmpty() && fromToken == null) {
+                // Nothing came back within the bound. Return an empty list rather
+                // than pretending, so the UI shows its empty state.
+                return emptyList()
+            }
+            val pinnedIds = awaitPinnedEventIds(channelId)
+            // Edits and replies supersede their targets; the aggregation pass then
+            // folds reactions into whatever message actually renders.
+            val resolved = applyEdits(events.reversed())
+            aggregateReactions(resolved).map { it.copy(isPinned = it.id in pinnedIds) }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             emptyList()
         }
+    }
+
+    /**
+     * Trixnity emits each timeline event once undecrypted and then again with the
+     * decrypted content. Taking `.first()` latched the pre-decryption snapshot, so
+     * every E2EE message rendered as the "Waiting for keys" placeholder forever.
+     * Collect until the content has actually decrypted, bounded so an event we
+     * can never decrypt (no session, withheld key) does not hang history.
+     */
+    private suspend fun awaitDecryptedEvent(flowEvent: Flow<TimelineEvent>): TimelineEvent? {
+        var latest: TimelineEvent? = null
+        val decrypted = withTimeoutOrNull(DECRYPTION_WAIT_TIMEOUT_MS) {
+            // isSuccess, NOT `isFailure != true`: TimelineEvent.content is null
+            // while an encrypted event is still waiting for its megolm session,
+            // and `null?.isFailure != true` is true -- so the wait returned
+            // immediately with the undecrypted event and the message was dropped
+            // outright further down.
+            flowEvent.firstOrNull { event ->
+                latest = event
+                event.content?.isSuccess == true
+            }
+        }
+        // Timed out or the flow completed while still undecrypted: fall back to
+        // the last snapshot so the placeholder still renders instead of the
+        // message disappearing.
+        return decrypted ?: latest
+    }
+
+    private companion object {
+        const val DECRYPTION_WAIT_TIMEOUT_MS = 10_000L
+        const val HISTORY_LOAD_TIMEOUT_MS = 20_000L
+        const val PINNED_EVENTS_TTL_MS = 30_000L
     }
 
     override suspend fun sendMessage(channelId: String, body: String): Result<String> {
@@ -200,41 +245,124 @@ class MatrixMessagesRepository(val context: MatrixContext) : OrbitMessagesReposi
     override suspend fun pinMessage(roomId: String, eventId: String, pinned: Boolean): Result<Unit> {
         return try {
             val trixnity = context.trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
-            val current = fetchPinnedEventIds(roomId).toMutableSet()
-            if (pinned) current.add(eventId) else current.remove(eventId)
-            trixnity.api.room.sendStateEvent(
-                RoomId(roomId),
-                PinnedEventsEventContent(pinned = current.map { EventId(it) }),
-                ""
-            ).getOrThrow()
-            Result.success(Unit)
+            // Read-modify-write against shared room state: two concurrent
+            // pin/unpin calls each used to start from a fresh server read and the
+            // second PUT silently dropped the first change. The per-room mutex
+            // serialises the whole read-modify-write, not just the read.
+            return pinnedMutationMutex.withLock {
+                val pinnedFlow = pinnedEntry(roomId).ids
+                val current = awaitPinnedEventIds(roomId).toMutableSet()
+                if (pinned) current.add(eventId) else current.remove(eventId)
+                trixnity.api.room.sendStateEvent(
+                    RoomId(roomId),
+                    PinnedEventsEventContent(pinned = current.map { EventId(it) }),
+                    ""
+                ).getOrThrow()
+                pinnedFlow.value = current
+                Result.success(Unit)
+            }
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
     override suspend fun getPinnedMessageIds(roomId: String): Result<List<String>> {
-        return Result.success(fetchPinnedEventIds(roomId))
+        return Result.success(awaitPinnedEventIds(roomId).toList())
     }
 
-    private suspend fun fetchPinnedEventIds(roomId: String): List<String> {
+    /**
+     * Pinned event ids per room, fetched once per room instead of inside every
+     * history load. `isPinned` used to be computed only during
+     * getMessagesForChannel, so a message that arrived live could never be pinned.
+     */
+    private data class PinnedEventsEntry(
+        val ids: MutableStateFlow<Set<String>>,
+        var inFlight: kotlinx.coroutines.Job?,
+        var lastFetchedAtMs: Long
+    )
+
+    private val pinnedEventsCache = java.util.concurrent.ConcurrentHashMap<String, PinnedEventsEntry>()
+
+    private fun pinnedEntry(roomId: String): PinnedEventsEntry =
+        pinnedEventsCache.computeIfAbsent(roomId) {
+            PinnedEventsEntry(MutableStateFlow(emptySet()), null, 0L)
+        }
+
+    /** Refreshes the cached pinned set for a room; concurrent callers share one request. */
+    private fun refreshPinnedEvents(roomId: String) {
+        val entry = pinnedEntry(roomId)
+        synchronized(entry) {
+            if (entry.inFlight?.isActive == true) return
+            entry.inFlight = context.repositoryScope.launch {
+                val ids = fetchPinnedEventIds(roomId)
+                entry.ids.value = ids
+                synchronized(entry) {
+                    entry.lastFetchedAtMs = System.currentTimeMillis()
+                    // Clear the handle, or it stays a COMPLETED job forever and
+                    // every later await() joins it instantly and returns the
+                    // cached set -- pins made elsewhere would never be seen and
+                    // one transient failure would blank every pin for the session.
+                    entry.inFlight = null
+                }
+            }
+        }
+    }
+
+    /**
+     * Suspending read of the pinned set: joins an in-flight refresh so the first
+     * history load of a room is not rendered with every message unpinned, and
+     * re-fetches once the cached set has aged out so pins from another client
+     * eventually show up.
+     */
+    private suspend fun awaitPinnedEventIds(roomId: String): Set<String> {
+        val entry = pinnedEntry(roomId)
+        val stale = System.currentTimeMillis() - entry.lastFetchedAtMs > PINNED_EVENTS_TTL_MS
+        if (entry.inFlight?.isActive != true && (entry.lastFetchedAtMs == 0L || stale)) {
+            refreshPinnedEvents(roomId)
+        }
+        synchronized(entry) { entry.inFlight }?.join()
+        return entry.ids.value
+    }
+
+    /**
+     * The pinned set already cached for [roomId], without fetching.
+     *
+     * The live sync path needs this and must NOT block the sync collector on an
+     * HTTP request per arriving message. An empty result just means the room has
+     * not been opened yet; the next history load fills the cache in.
+     */
+    fun pinnedIdsCached(roomId: String): Set<String> =
+        pinnedEventsCache[roomId]?.ids?.value ?: emptySet()
+
+    private val pinnedMutationMutex = kotlinx.coroutines.sync.Mutex()
+
+    private suspend fun fetchPinnedEventIds(roomId: String): Set<String> {
         return try {
             val response = context.httpClient.get(context.fullUrl("/rooms/$roomId/state/m.room.pinned_events")) {
                 header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
             }
-            if (response.status.value !in 200..299) return emptyList()
+            if (response.status.value !in 200..299) {
+                response.drain()
+                return emptySet()
+            }
             val obj = Json.parseToJsonElement(response.bodyAsText()).jsonObject
-            (obj["pinned"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.content } ?: emptyList()
+            (obj["pinned"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.content }?.toSet() ?: emptySet()
         } catch (e: Exception) {
-            emptyList()
+            emptySet()
         }
     }
+
 
     override suspend fun sendReaction(channelId: String, eventId: String, key: String): Result<String> {
         return try {
             val trixnity = context.trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
+            val ownUserId = context.userId ?: trixnity.userId.full
+            // Per the spec an annotation with an EMPTY key removes the reaction.
+            // There was no un-annotate path, so a tap could only ever add.
+            val alreadyReacted = hasReacted(channelId, eventId, key, ownUserId)
+            val annotationKey = if (alreadyReacted) "" else key
             val txnId = trixnity.room.sendMessage(RoomId(channelId)) {
-                content(ReactionEventContent(RelatesTo.Annotation(EventId(eventId), key)))
+                content(ReactionEventContent(RelatesTo.Annotation(EventId(eventId), annotationKey)))
             }
             Result.success(txnId)
         } catch (e: Exception) {
@@ -363,19 +491,28 @@ class MatrixMessagesRepository(val context: MatrixContext) : OrbitMessagesReposi
                 put("format", "event_id_only")
             })
         }
-        context.httpClient.post(context.fullUrl("/pushers/set")) {
+        val response = context.httpClient.post(context.fullUrl("/pushers/set")) {
             header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
             contentType(ContentType.Application.Json)
             setBody(body)
         }
+        response.drain()
+        if (response.status.value !in 200..299) {
+            println("WARN [MatrixMessagesRepository] registerPusher failed status=${response.status.value}")
+        }
     }
 
     override fun observeMessages(channelId: String): Flow<List<OrbitMessage>> {
-        return synchronized(context.liveMessageStates) {
+        val flow = synchronized(context.liveMessageStates) {
             context.liveMessageStates.getOrPut(channelId) {
-                LiveMessageState(kotlinx.coroutines.flow.MutableSharedFlow(replay = 1, extraBufferCapacity = 64, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST))
-            }.flow.asSharedFlow()
+                kotlinx.coroutines.flow.MutableSharedFlow(
+                    replay = 1,
+                    extraBufferCapacity = 64,
+                    onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
+                )
+            }
         }
+        return flow.asSharedFlow()
     }
 
     override fun observeIncomingMessages(): Flow<Pair<String, OrbitMessage>> {
@@ -391,17 +528,49 @@ class MatrixMessagesRepository(val context: MatrixContext) : OrbitMessagesReposi
         val txnId = (event as? RoomEvent.MessageEvent<*>)?.unsigned?.transactionId
         val ts = Instant.fromEpochMilliseconds(event.originTimestamp)
 
-        if (contentResult?.isFailure == true) {
+        // null content means the event is encrypted and has not been decrypted
+        // yet; isFailure means we tried and could not. Both render as an
+        // explicit placeholder -- returning null here silently dropped the
+        // message, leaving holes in E2EE history -- but they are NOT the same
+        // situation and must not claim to be:
+        //
+        //   pending  -> the megolm session may still arrive, so more messages
+        //               could decrypt. "Waiting" is a promise worth making.
+        //   failed   -> for a message from before this device joined the room,
+        //               nothing is ever coming. Saying "waiting" there is a
+        //               promise nobody keeps, which is what the old placeholder
+        //               did to every historical message in a DM.
+        if (contentResult == null || contentResult.isFailure) {
+            val pending = contentResult == null
+            val placeholder = if (pending) {
+                "🔒 Encrypted — waiting for keys"
+            } else {
+                "🔒 This message couldn't be decrypted"
+            }
             return OrbitMessage(
                 id = eventId, userId = sender, username = sender,
-                body = "🔒 Waiting for keys to decrypt this message...",
+                body = placeholder,
                 timestamp = ts, channelId = roomId,
-                content = MessageContent.Text("🔒 Waiting for keys to decrypt this message..."),
+                content = MessageContent.Undecryptable(pending = pending),
                 transactionId = txnId
             )
         }
 
-        val content = contentResult?.getOrNull() ?: return null
+        val content = contentResult.getOrNull() ?: return null
+
+        // Trixnity rewrites a redacted event to RedactedEventContent, which is a
+        // RoomEventContent but NOT a RoomMessageEventContent, so the branch below
+        // never matched and deleted messages simply vanished from the timeline.
+        if (content is de.connect2x.trixnity.core.model.events.RedactedEventContent) {
+            return OrbitMessage(
+                id = eventId, userId = sender, username = sender,
+                body = "Message deleted",
+                timestamp = ts, channelId = roomId,
+                content = MessageContent.Redacted(),
+                transactionId = txnId
+            )
+        }
+
         if (content is RoomMessageEventContent) {
             val body = (content as? TextBased)?.body ?: ""
             val relatesTo = content.relatesTo
@@ -430,15 +599,115 @@ class MatrixMessagesRepository(val context: MatrixContext) : OrbitMessagesReposi
                 else -> parseTrixnityMessageContent(content)
             }
 
-            return OrbitMessage(id = eventId, userId = sender, username = sender, body = body, timestamp = ts, channelId = roomId, content = orbitContent, transactionId = txnId)
+            return OrbitMessage(
+                id = eventId, userId = sender, username = sender, body = body,
+                timestamp = ts, channelId = roomId, content = orbitContent,
+                replyToEventId = (orbitContent as? MessageContent.Reply)?.inReplyToEventId,
+                transactionId = txnId
+            )
         }
 
         if (content is ReactionEventContent) {
             val key = content.relatesTo?.key ?: ""
             val eventIdRel = content.relatesTo?.eventId?.full ?: ""
+            recordObservedReaction(roomId, eventIdRel, key, sender)
             return OrbitMessage(id = eventId, userId = sender, username = sender, body = key, timestamp = ts, channelId = roomId, content = MessageContent.Reaction(reactsToEventId = eventIdRel, key = key), transactionId = txnId)
         }
         return null
+    }
+
+    /**
+     * Folds every reaction event in [messages] into its parent message's
+     * `reactions` map and drops the reaction pseudo-messages from the list.
+     * Without this, reactions were standalone bubbles and `OrbitMessage.reactions`
+     * stayed empty, so the reaction chips in the UI could never render.
+     */
+    suspend fun aggregateReactions(messages: List<OrbitMessage>): List<OrbitMessage> {
+        val reactionByParent = mutableMapOf<String, MutableMap<String, MutableSet<String>>>()
+        val kept = mutableListOf<OrbitMessage>()
+        for (message in messages) {
+            val reaction = message.content as? MessageContent.Reaction
+            if (reaction == null) {
+                kept.add(message)
+                continue
+            }
+            if (reaction.reactsToEventId.isEmpty()) continue
+            val perEmoji = reactionByParent.getOrPut(reaction.reactsToEventId) { mutableMapOf() }
+            if (reaction.key.isEmpty()) {
+                // An empty key is the spec's un-annotate marker: it has to
+                // REMOVE the sender, not be skipped. Skipping it left the chip
+                // showing a reaction the user had already taken back, and the
+                // UI's already-reacted check then blocked re-adding it.
+                perEmoji.values.forEach { it.remove(message.userId) }
+                perEmoji.entries.removeAll { it.value.isEmpty() }
+            } else {
+                perEmoji.getOrPut(reaction.key) { mutableSetOf() }.add(message.userId)
+            }
+        }
+        if (reactionByParent.isEmpty()) return messages
+        return kept.map { message ->
+            val chips = reactionByParent[message.id] ?: return@map message
+            message.copy(reactions = chips.mapValues { (_, senders) -> senders.toList() })
+        }
+    }
+
+    /**
+     * Whether [userId] already reacted [key] on [eventId], per what this client
+     * last observed. Server truth would need the state event; the observed index
+     * is enough to make repeated taps toggle instead of only ever adding.
+     */
+    private fun hasReacted(roomId: String, eventId: String, key: String, userId: String): Boolean =
+        observedReactions[roomId]?.get(eventId)?.get(key)?.contains(userId) == true
+
+    /** roomId -> (parentEventId -> emoji -> senderIds), updated as events are converted. */
+    private val observedReactions =
+        java.util.concurrent.ConcurrentHashMap<String, MutableMap<String, MutableMap<String, MutableSet<String>>>>()
+
+    private fun recordObservedReaction(roomId: String, parentEventId: String, key: String, sender: String) {
+        if (parentEventId.isEmpty()) return
+        if (key.isEmpty()) {
+            // An empty key is the spec's un-annotate marker: it carries no emoji,
+            // so it clears this sender's reactions on the parent entirely.
+            forgetObservedReactions(roomId, parentEventId, sender)
+            return
+        }
+        val perParent = observedReactions.getOrPut(roomId) { java.util.concurrent.ConcurrentHashMap() }
+        val perEmoji = perParent.getOrPut(parentEventId) { java.util.concurrent.ConcurrentHashMap() }
+        val senders = perEmoji.getOrPut(key) { java.util.Collections.synchronizedSet(mutableSetOf()) }
+        synchronized(senders) { senders.add(sender) }
+    }
+
+    private fun forgetObservedReactions(roomId: String, parentEventId: String, sender: String) {
+        val perEmoji = observedReactions[roomId]?.get(parentEventId) ?: return
+        synchronized(perEmoji) {
+            perEmoji.values.forEach { senders ->
+                synchronized(senders) { senders.remove(sender) }
+            }
+        }
+    }
+
+    /**
+     * Applies m.replace edits in place: the target message takes the edit's
+     * content, and standalone edit events are dropped.
+     */
+    private fun applyEdits(messages: List<OrbitMessage>): List<OrbitMessage> {
+        val editsByTarget = messages
+            .mapNotNull { message ->
+                val edit = message.content as? MessageContent.Edit ?: return@mapNotNull null
+                edit.replacesEventId to edit.newContent
+            }
+            .toMap()
+        if (editsByTarget.isEmpty()) return messages
+        return messages
+            .filterNot { it.content is MessageContent.Edit }
+            .map { message ->
+                val replacement = editsByTarget[message.id] ?: return@map message
+                message.copy(
+                    body = replacement.displayText,
+                    content = replacement,
+                    isEdited = true
+                )
+            }
     }
 
     private fun parseTrixnityMessageContent(content: RoomMessageEventContent): MessageContent {
@@ -476,5 +745,4 @@ class MatrixMessagesRepository(val context: MatrixContext) : OrbitMessagesReposi
         }
     }
 }
-
 

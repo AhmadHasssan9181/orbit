@@ -26,6 +26,28 @@ object OrbitLog {
     @Volatile
     var mutedSubsystems: Set<String> = emptySet()
 
+    /**
+     * Whether the deep protocol-shape dumps run. **Off unless `ORBIT_AUDIT=1`.**
+     *
+     * A level above DEBUG, because DEBUG is not coarse enough. Turning debug on
+     * produced 2,080 lines in a four-minute call, and 679 of them — a third of
+     * the whole log — came from `MatrixRTCVisibilityAudit`, which prints every
+     * MatrixRTC state event in the room on every publish. That room had 89 of
+     * them. The audit exists to answer "why is Element not seeing my membership",
+     * which is a question you ask once, deliberately, with the room to hand — not
+     * a thing to leave running through every call.
+     *
+     * WARN/ERROR from those subsystems are unaffected: a failed state fetch is
+     * still reported, because that is a real problem rather than a shape dump.
+     */
+    @Volatile
+    var auditEnabled: Boolean =
+        System.getenv("ORBIT_AUDIT")?.trim()?.lowercase() in setOf("1", "true", "on", "yes")
+
+    /** True when [subsystem] is one of the protocol-audit dumps. */
+    fun isAuditSubsystem(subsystem: String): Boolean =
+        subsystem == "MatrixRTCVisibilityAudit" || subsystem == "ElementReferenceDump"
+
     fun d(subsystem: String, message: String) {
         if (shouldEmit(Level.DEBUG, subsystem)) println("DEBUG [$subsystem] $message")
     }
@@ -39,7 +61,12 @@ object OrbitLog {
     }
 
     fun shouldEmit(level: Level, subsystem: String): Boolean = when (level) {
-        Level.DEBUG -> debugEnabled && subsystem.lowercase() !in mutedSubsystems
+        Level.DEBUG ->
+            debugEnabled &&
+                subsystem.lowercase() !in mutedSubsystems &&
+                // The protocol-shape dumps sit one step above debug. See
+                // auditEnabled for why, and ORBIT_AUDIT=1 to turn them back on.
+                (!isAuditSubsystem(subsystem) || auditEnabled)
         else -> true
     }
 

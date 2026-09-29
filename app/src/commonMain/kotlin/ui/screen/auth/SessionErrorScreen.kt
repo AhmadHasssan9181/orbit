@@ -9,6 +9,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import ui.components.OrbitButton
+import ui.components.OrbitButtonTone
 import ui.theme.rememberCosmicTokens
 
 import ui.screen.auth.*
@@ -38,7 +40,8 @@ fun SessionErrorScreen(
             Text(
                 text = "Session Error",
                 style = MaterialTheme.typography.headlineMedium,
-                color = Color.White
+                // Was a bare Color.White: white-on-white in the Light theme.
+                color = tokens.Text_White
             )
             Spacer(modifier = Modifier.height(16.dp))
             Text(
@@ -56,13 +59,15 @@ fun SessionErrorScreen(
                 Text("Retry Connection")
             }
             Spacer(modifier = Modifier.height(12.dp))
-            OutlinedButton(
+            // Quiet secondary, no ring: the filled "Retry Connection" above is
+            // the action, so this only needs to be readable and clickable.
+            OrbitButton(
+                text = "Login with New Account",
                 onClick = onLogout,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
-            ) {
-                Text("Login with New Account")
-            }
+                tone = OrbitButtonTone.Neutral,
+                fullWidth = true,
+                size = 40.dp
+            )
         }
     }
 }

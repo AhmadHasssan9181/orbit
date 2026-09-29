@@ -7,17 +7,11 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.unit.dp
 
-import ui.screen.auth.*
-import ui.screen.settings.*
-import ui.screen.drawer.*
-import ui.screen.server.*
-import ui.screen.call.*
-import ui.screen.media.*
-import ui.screen.main.*
 
 val LightColorScheme = lightColorScheme(
     primary = Colour.PrimaryLight,
@@ -95,15 +89,18 @@ private val DefaultColorScheme = darkColorScheme(
     surfaceContainerHighest = Colour.SurfaceContainerHighestDark,
 )
 
-val LocalIsLiteMode = compositionLocalOf<Boolean> { false }
-val LocalOnLiteModeChange = compositionLocalOf<(Boolean) -> Unit> { {} }
 val LocalActiveTheme = compositionLocalOf<Theme> { Theme.Default }
 val LocalOnThemeChange = compositionLocalOf<(Theme) -> Unit> { {} }
-val LocalMessageDensity = compositionLocalOf<String> { "Comfortable" }
-val LocalFontSize = compositionLocalOf<Float> { 50f }
+
+// `LocalMessageDensity`, `LocalMentionsOnly` and `LocalNotificationSound` were
+// removed: they were provided but never read, and the settings panes that wrote
+// their backing values had no reader either.
+// `LocalFontSize` was removed from here. It was PROVIDED by OrbitApp on every
+// frame and READ by nothing: the font-size setting reaches the UI as a custom
+// `Density` instead, so this local was a second, dead route for the same value.
+// Providing something no one reads is the exact case the removed
+// `LocalMessageDensity` / `LocalMentionsOnly` locals were deleted for.
 val LocalReduceMotion = compositionLocalOf<Boolean> { false }
-val LocalMentionsOnly = compositionLocalOf<Boolean> { true }
-val LocalNotificationSound = compositionLocalOf<String> { "Chime" }
 val LocalChatWallpaper = compositionLocalOf<String> { "auto" }
 val LocalShowTimestamps = compositionLocalOf<Boolean> { true }
 val LocalCompactMode = compositionLocalOf<Boolean> { false }
@@ -116,6 +113,13 @@ val LocalDateFormat = compositionLocalOf<String> { "DD/MM/YYYY" }
 /** Members of the open room, so message UI can resolve avatars without extra lookups. */
 val LocalRoomMembers = compositionLocalOf<List<ui.model.OrbitUser>> { emptyList() }
 
+/**
+ * The app's single [repository.SettingsManager] instance, so UI that is far
+ * below the settings screen (the drawer's voice popover, for example) can read
+ * and write the same persisted values instead of keeping its own dead copy.
+ */
+val LocalSettingsManager = compositionLocalOf<repository.SettingsManager?> { null }
+
 /** Room id → id of the first message that arrived while the room was away this session. */
 val LocalRoomUnreadMarkers = compositionLocalOf<Map<String, String>> { emptyMap() }
 
@@ -126,6 +130,11 @@ val LocalRoomUnreadMarkers = compositionLocalOf<Map<String, String>> { emptyMap(
  * with forty files disagreeing about what "muted" means. Anything new goes
  * here first, and the per-package `internal val` aliases (ScreenTokens.kt,
  * ChatTokens.kt, …) keep the old call sites compiling unchanged.
+ *
+ * The dark tokens below are pinned to Discord's dark theme: the Ink ramp in
+ * OrbitPalette.kt is Discord's real surface greys with no blue cast, and the
+ * accent is Discord blurple. Do not "improve" a neutral by tinting it — that
+ * is the one thing that made this read as a different app.
  */
 data class CosmicTokens(
     // ── Structural surfaces ──────────────────────────────────────
@@ -212,10 +221,10 @@ data class CosmicTokens(
     val ScrollbarThumb: Color,
     val ScrollbarThumbHover: Color,
 ) {
-    /** Elevation levels as (blurRadius, spread-ish) pairs for Modifier.shadow. */
-    val shadowSmall get() = 1.dp to 2.dp
-    val shadowMedium get() = 6.dp to 4.dp
-    val shadowLarge get() = 18.dp to 8.dp
+    // `shadowSmall` / `shadowMedium` / `shadowLarge` were removed. No
+    // `Modifier.shadow` call site ever passed them -- they were three hard-coded
+    // elevation pairs that a theme change would silently leave behind. Shadows
+    // that ARE used pass an elevation directly and let Compose derive the colour.
 }
 
 private fun darkTokens(cs: androidx.compose.material3.ColorScheme) = CosmicTokens(
@@ -238,14 +247,22 @@ private fun darkTokens(cs: androidx.compose.material3.ColorScheme) = CosmicToken
     Text_Muted = DarkFgMuted,
     Text_Subtle = DarkFgSubtle,
 
-    Separator = Color(0xFF21262F),
-    SeparatorStrong = Color(0xFF2E3542),
+    // Discord's divider grey. Deliberately *not* on the Ink ramp: it sits
+    // between Ink650 and Ink700, and "tidying" it onto the ramp is what
+    // previously gave dividers the wrong hue.
+    Separator = Color(0xFF3F4147),
+    // Was Color(0xFF2E3542), which was the OLD Ink600. Once the Ink ramp moved to
+    // Discord's neutrals this literal was stranded on the retired blue-black hue,
+    // which made every strong divider the one wrong-coloured line on screen. Kept
+    // as its own value because a strong divider is darker than a hairline on
+    // Discord, not lighter.
+    SeparatorStrong = Color(0xFF232428),
 
     Header_Bg = Ink780,
     Input_Bg = Ink700,
     Members_Bg = Ink800,
     Rail_Bg = Ink950,
-    Rail_Active = cs.primary.copy(alpha = 0.16f),
+    Rail_Active = Ink650,   // flat grey, not an accent wash — Discord's server rail
     Pill_Color = DarkFgStrong,
     Drawer_Bg = Ink850,
     UserBar_Bg = Ink950,
@@ -253,9 +270,10 @@ private fun darkTokens(cs: androidx.compose.material3.ColorScheme) = CosmicToken
     Hover = Color(0x0AFFFFFF),
     Pressed = Color(0x14FFFFFF),
     Selected_Bg = cs.primary.copy(alpha = 0.14f),
-    ChannelSelected_Bg = cs.primary.copy(alpha = 0.14f),
-    ChannelHover_Bg = Color(0x0AFFFFFF),
-    MessageHover_Bg = Color(0x08FFFFFF),
+    // Discord uses flat greys for row states, not accent-tinted washes.
+    ChannelSelected_Bg = Ink700,
+    ChannelHover_Bg = Ink750,
+    MessageHover_Bg = Ink750,
     MentionHighlight = cs.primary.copy(alpha = 0.10f),
 
     Success = Sage500,
@@ -280,7 +298,10 @@ private fun darkTokens(cs: androidx.compose.material3.ColorScheme) = CosmicToken
     Link = Iris400,
     AvatarRing = Color(0x14FFFFFF),
 
-    Scrim = Color(0xCC05070A),
+    // Was Color(0xCC05070A) -- a blue-black, i.e. the old Ink950. The modal
+    // backdrop is the one surface that must be darker than everything behind it,
+    // so it pins to Discord's deepest neutral rather than a ramp value.
+    Scrim = Color(0xCC111214),
     FocusRing = Iris400.copy(alpha = 0.55f),
     ScrollbarTrack = Color.Transparent,
     ScrollbarThumb = Color(0x24FFFFFF),
@@ -361,7 +382,15 @@ fun rememberCosmicTokens(): CosmicTokens {
     val cs = MaterialTheme.colorScheme
     // Derive light/dark from the scheme's own luminance rather than the theme
     // enum, so user colour overrides and dynamic schemes stay coherent.
-    return if (cs.background.luminance() < 0.5f) darkTokens(cs) else lightTokens(cs)
+    //
+    // The memo is load-bearing, not an optimisation: ~44 `@Composable get()`
+    // aliases (ChatTokens.kt, ScreenTokens.kt) each call this to read a single
+    // colour, so without it every `Text(color = Text_Muted)` built a fresh
+    // 70-field token object with ~30 `Color.copy` allocations. ColorScheme is
+    // @Immutable, so it is a sound equality key.
+    return remember(cs) {
+        if (cs.background.luminance() < 0.5f) darkTokens(cs) else lightTokens(cs)
+    }
 }
 
 /**
@@ -526,12 +555,11 @@ enum class Theme {
 
 @Composable
 fun getColorScheme(
-    requestedTheme: Theme,
-    colourOverrides: OverridableColourScheme? = null
+    requestedTheme: Theme
 ): ColorScheme {
     val systemInDarkTheme = isSystemInDarkTheme()
 
-    val colorScheme = when {
+    return when {
         requestedTheme == Theme.Default -> DefaultColorScheme
         requestedTheme == Theme.Light -> LightColorScheme
         requestedTheme == Theme.Amoled -> AmoledColorScheme
@@ -544,20 +572,16 @@ fun getColorScheme(
         requestedTheme == Theme.None && systemInDarkTheme -> DefaultColorScheme
         requestedTheme == Theme.None && !systemInDarkTheme -> LightColorScheme
         else -> DefaultColorScheme
-    }.copy()
-
-    if (colourOverrides == null) return colorScheme
-    return colourOverrides.applyTo(colorScheme)
+    }
 }
 
 @Composable
 fun StoatTheme(
     requestedTheme: Theme,
     requestedUserInterfaceFont: UserInterfaceFont,
-    colourOverrides: OverridableColourScheme? = null,
     content: @Composable () -> Unit
 ) {
-    val colorScheme = getColorScheme(requestedTheme, colourOverrides)
+    val colorScheme = getColorScheme(requestedTheme)
     val typography = when (requestedUserInterfaceFont) {
         UserInterfaceFont.Default -> StoatTypography
         UserInterfaceFont.GoogleSansFlex -> GoogleTypography
@@ -570,25 +594,10 @@ fun StoatTheme(
     )
 }
 
-fun systemSupportsDynamicColors(): Boolean {
-    return false
-}
-
-fun getDefaultTheme(): Theme {
-    return when {
-        systemSupportsDynamicColors() -> Theme.M3Dynamic
-        else -> Theme.Default
-    }
-}
-
-fun isThemeDark(theme: Theme, systemIsDark: Boolean): Boolean {
-    return when (theme) {
-        Theme.Default, Theme.Amoled, Theme.Ocean, Theme.Forest, Theme.Sunset,
-        Theme.Cyberpunk, Theme.Graphite, Theme.Slate -> true
-        Theme.Light -> false
-        Theme.M3Dynamic, Theme.None -> systemIsDark
-    }
-}
-
-@Composable
-fun isThemeDark(theme: Theme) = isThemeDark(theme, isSystemInDarkTheme())
+// `systemSupportsDynamicColors()`, `getDefaultTheme()` and the two
+// `isThemeDark(...)` overloads used to sit here with zero callers.
+// `systemSupportsDynamicColors` hard-returned `false`, so `getDefaultTheme` was a
+// constant function with one caller that did not exist, and `isThemeDark` was
+// unreachable while `Theme.M3Dynamic` was simultaneously filtered out of the theme
+// picker -- three pieces of scaffolding for a feature that was never switched on.
+// `SettingsManager.activeTheme` defaults to `Theme.Default` directly.

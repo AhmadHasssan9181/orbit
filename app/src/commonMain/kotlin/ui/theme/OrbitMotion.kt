@@ -98,23 +98,8 @@ object OrbitMotion {
 // call site; passing `remember { false }` keeps them usable in non-composable
 // contexts (e.g. remember{} initialisers that still need an AnimationSpec).
 
-@Composable
-@ReadOnlyComposable
-fun rememberReducedMotion(): Boolean = LocalReduceMotion.current
-
-/** 0 when reduced motion is on, 1 otherwise. Multiply durations by it. */
-@Composable
-@ReadOnlyComposable
-fun motionScale(): Int = if (LocalReduceMotion.current) 0 else 1
-
-@Composable
-fun motionTween(durationMillis: Int, delayMillis: Int = 0, easing: Easing = OrbitMotion.Standard): FiniteAnimationSpec<Float> =
-    if (LocalReduceMotion.current) tween(0) else tween(durationMillis, delayMillis, easing)
-
-@Composable
-fun motionTweenDp(durationMillis: Int, delayMillis: Int = 0, easing: Easing = OrbitMotion.Standard): FiniteAnimationSpec<androidx.compose.ui.unit.Dp> =
-    if (LocalReduceMotion.current) tween(0) else tween(durationMillis, delayMillis, easing)
-
-@Composable
-fun motionTweenOffset(durationMillis: Int, delayMillis: Int = 0, easing: Easing = OrbitMotion.Standard): FiniteAnimationSpec<IntOffset> =
-    if (LocalReduceMotion.current) tween(0) else tween(durationMillis, delayMillis, easing)
+// The `rememberReducedMotion` / `motionScale` / `motionTween` / `motionTweenDp` /
+// `motionTweenOffset` helpers that used to sit here had zero call sites: every
+// animation site either uses an `OrbitMotion.*` spec directly or inlines
+// `LocalReduceMotion.current`. They are gone rather than left as an invitation to
+// adopt a second, subtly different reduced-motion convention.

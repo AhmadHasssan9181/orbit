@@ -33,9 +33,11 @@ import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -62,133 +64,6 @@ import ui.theme.OrbitRadius
 import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
 
-/**
- * Direct messages.
- *
- * The DM row is the densest list in the app and it was carrying the most
- * inconsistency: a `#F23F42` unread pill, a 20dp call/close button pair that
- * only existed on hover, and a "close" icon that did nothing at all. It now
- * matches `OrbitListRow` exactly, and the hover actions are real call buttons
- * that fade in from the right instead of popping.
- */
-@Composable
-internal fun DirectMessageSearchBar() {
-    val t = rememberCosmicTokens()
-    val reduce = LocalReduceMotion.current
-    val interaction = remember { MutableInteractionSource() }
-    val hovered by interaction.collectIsHoveredAsState()
-
-    val bg by animateColorAsState(
-        targetValue = if (hovered) t.CardBgHover else t.Input_Bg,
-        animationSpec = OrbitMotion.SnappyColor,
-        label = "dmSearchBg"
-    )
-    val fg by animateColorAsState(
-        targetValue = if (hovered) t.Text_White else t.Text_Muted,
-        animationSpec = OrbitMotion.SnappyColor,
-        label = "dmSearchText"
-    )
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = OrbitSpace.sm, vertical = OrbitSpace.sm)
-            .height(32.dp)
-            .clip(OrbitRadius.mdShape)
-            .background(bg)
-            .border(1.dp, t.Separator, OrbitRadius.mdShape)
-            .hoverable(interaction)
-            .padding(horizontal = OrbitSpace.sm),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(OrbitSpace.sm)
-    ) {
-        androidx.compose.material3.Icon(
-            imageVector = Icons.Default.Search,
-            contentDescription = null,
-            tint = t.Text_Subtle,
-            modifier = Modifier.size(14.dp)
-        )
-        Text(
-            text = "Find or start a conversation",
-            style = MaterialTheme.typography.bodySmall.copy(
-                color = fg,
-                fontSize = 12.5.sp,
-                fontWeight = FontWeight.Medium
-            ),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
-
-@Composable
-internal fun DirectMessageNav() {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = OrbitSpace.sm, vertical = OrbitSpace.xxs),
-        verticalArrangement = Arrangement.spacedBy(1.dp)
-    ) {
-        DirectMessageNavItem(Icons.Default.People, "Friends")
-        DirectMessageNavItem(Icons.Default.Star, "Nitro")
-        DirectMessageNavItem(Icons.Default.Storefront, "Shop")
-        DirectMessageNavItem(Icons.Default.Explore, "Quests")
-    }
-}
-
-@Composable
-internal fun DirectMessageNavItem(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String
-) {
-    OrbitNavStub(icon = icon, label = label)
-}
-
-@Composable
-private fun OrbitNavStub(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String
-) {
-    val t = rememberCosmicTokens()
-    val interaction = remember { MutableInteractionSource() }
-    val hovered by interaction.collectIsHoveredAsState()
-
-    val bg by animateColorAsState(
-        targetValue = if (hovered) t.ChannelHover_Bg else Color.Transparent,
-        animationSpec = OrbitMotion.SnappyColor,
-        label = "navBg"
-    )
-    val fg by animateColorAsState(
-        targetValue = if (hovered) t.Text_White else t.Text_Muted,
-        animationSpec = OrbitMotion.SnappyColor,
-        label = "navFg"
-    )
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(32.dp)
-            .clip(OrbitRadius.smShape)
-            .background(bg)
-            .hoverable(interaction)
-            .padding(horizontal = OrbitSpace.sm),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(OrbitSpace.md)
-    ) {
-        androidx.compose.material3.Icon(icon, contentDescription = label, tint = fg, modifier = Modifier.size(17.dp))
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium.copy(
-                color = fg,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium
-            ),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
-
 @Composable
 internal fun DmListContent(
     channels: List<OrbitChannel>,
@@ -197,11 +72,26 @@ internal fun DmListContent(
     onVoiceCall: ((String) -> Unit)? = null,
     onVideoCall: ((String) -> Unit)? = null,
     unreadCounts: Map<String, Int> = emptyMap(),
+    repository: repository.OrbitRepository? = null,
     modifier: Modifier = Modifier
 ) {
-    val isLiteMode = ui.theme.LocalIsLiteMode.current
     val t = rememberCosmicTokens()
     val listState = rememberLazyListState()
+
+    // Real avatars and presence for the other member of each 1:1. The list used
+    // to hard-code ONLINE and a seeded initial for every row, which was simply
+    // wrong information. Resolved off the channel set so a rename or a new DM
+    // triggers one refresh, not one per row per recomposition.
+    var dmContacts by remember { mutableStateOf<Map<String, ui.model.OrbitUser>>(emptyMap()) }
+    // Keyed on the room-id SET, not on the channel objects. OrbitChannel.topic
+    // carries the last-message preview, so keying on the objects re-ran the
+    // whole membership sweep every time any conversation received a message.
+    val channelIds = remember(channels) { channels.map { it.matrixRoomId.ifBlank { it.id } }.distinct() }
+    val channelKey = remember(channelIds) { channelIds.joinToString("|") }
+    LaunchedEffect(channelKey, repository) {
+        val repo = repository ?: return@LaunchedEffect
+        dmContacts = repo.resolveDmContacts(channelIds)
+    }
 
     Box(modifier = modifier.fillMaxWidth()) {
         LazyColumn(
@@ -215,31 +105,40 @@ internal fun DmListContent(
             ),
             verticalArrangement = Arrangement.spacedBy(1.dp)
         ) {
-            if (!isLiteMode) {
-                item(key = "dm_header") {
-                    Text(
-                        text = "DIRECT MESSAGES",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontWeight = FontWeight.SemiBold,
-                            color = t.Text_Muted,
-                            letterSpacing = 0.7.sp,
-                            fontSize = 10.5.sp
-                        ),
-                        modifier = Modifier.padding(start = 8.dp, top = 8.dp, bottom = 6.dp)
-                    )
-                }
+            item(key = "dm_header") {
+                Text(
+                    text = "DIRECT MESSAGES",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        color = t.Text_Muted,
+                        letterSpacing = 0.7.sp,
+                        fontSize = 10.5.sp
+                    ),
+                    modifier = Modifier.padding(start = 8.dp, top = 8.dp, bottom = 6.dp)
+                )
             }
-            items(channels, key = { it.id }) { ch ->
+            items(
+            channels,
+            // Composite key, defensive: a duplicate LazyColumn key throws out of
+            // the content lambda and takes the process down.
+            key = { "${it.id}#${it.type}#${it.categoryId}" },
+            contentType = { "dm" }
+        ) { ch ->
+                val contact = dmContacts[ch.matrixRoomId.ifBlank { ch.id }]
                 DmItem(
-                    displayName = ch.name,
+                    // The resolved member's display name is authoritative; the
+                    // channel name is a stale denormalised copy of it.
+                    displayName = contact?.displayName?.takeIf { it.isNotBlank() } ?: ch.name,
                     avatarColor = ui.theme.avatarSeedColor(ch.id).value.toInt(),
-                    status = UserStatus.ONLINE,
+                    // Null (unknown) rather than a fabricated ONLINE when the
+                    // other member could not be resolved.
+                    status = contact?.status,
+                    avatarUrl = contact?.avatarUrl ?: ch.avatarUrl,
                     isSelected = ch.id == selectedChannelId,
                     unreadCount = maxOf(unreadCounts[ch.id] ?: 0, unreadCounts[ch.matrixRoomId] ?: 0),
                     onClick = { onChannelClick(ch.id) },
                     onVoiceCall = { onVoiceCall?.invoke(ch.id) },
-                    onVideoCall = { onVideoCall?.invoke(ch.id) },
-                    lastMessage = ch.topic.ifBlank { "Start a conversation" }
+                    onVideoCall = { onVideoCall?.invoke(ch.id) }
                 )
             }
         }
@@ -251,17 +150,15 @@ internal fun DmListContent(
 internal fun DmItem(
     displayName: String,
     avatarColor: Int,
-    status: UserStatus,
+    status: UserStatus?,
     isSelected: Boolean,
     onClick: () -> Unit,
+    avatarUrl: String? = null,
     onVoiceCall: (() -> Unit)? = null,
     onVideoCall: (() -> Unit)? = null,
-    lastMessage: String = "Start a conversation",
-    time: String = "",
     unreadCount: Int = 0
 ) {
     val t = rememberCosmicTokens()
-    val isLiteMode = ui.theme.LocalIsLiteMode.current
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
     val reduce = LocalReduceMotion.current
@@ -291,20 +188,6 @@ internal fun DmItem(
         label = "dmActions"
     )
 
-    if (isLiteMode) {
-        LiteDmItem(
-            displayName = displayName,
-            avatarColor = avatarColor,
-            status = status,
-            isSelected = isSelected,
-            unreadCount = unreadCount,
-            lastMessage = lastMessage,
-            time = time,
-            onClick = onClick
-        )
-        return
-    }
-
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -321,7 +204,7 @@ internal fun DmItem(
             .padding(start = 8.dp, end = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        DmAvatar(displayName, avatarColor, status, size = 30.dp)
+        DmAvatar(displayName, avatarColor, status, avatarUrl = avatarUrl, size = 30.dp)
         Spacer(Modifier.width(OrbitSpace.sm))
         Text(
             text = displayName,
@@ -348,9 +231,12 @@ internal fun DmItem(
                     modifier = Modifier.alpha(1f - actionsAlpha * 2f)
                 )
             }
-            if (!reduce && actionsAlpha > 0.01f) {
+            if (actionsAlpha > 0.01f) {
+                // Gating on `!reduce` used to hide the buttons entirely, so the
+                // accessibility toggle removed the only way to call from the DM
+                // list. Only the animation is conditional now.
                 Row(
-                    modifier = Modifier.alpha(actionsAlpha),
+                    modifier = if (reduce) Modifier else Modifier.alpha(actionsAlpha),
                     horizontalArrangement = Arrangement.spacedBy(1.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -377,113 +263,45 @@ internal fun DmItem(
 }
 
 @Composable
-private fun LiteDmItem(
-    displayName: String,
-    avatarColor: Int,
-    status: UserStatus,
-    isSelected: Boolean,
-    unreadCount: Int,
-    lastMessage: String,
-    time: String,
-    onClick: () -> Unit
-) {
-    val t = rememberCosmicTokens()
-    val interaction = remember { MutableInteractionSource() }
-    val hovered by interaction.collectIsHoveredAsState()
-    val bg by animateColorAsState(
-        targetValue = when {
-            isSelected -> t.AccentGhost
-            hovered -> t.Hover
-            else -> Color.Transparent
-        },
-        animationSpec = OrbitMotion.SnappyColor,
-        label = "liteDmBg"
-    )
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 4.dp, vertical = 2.dp)
-            .clip(OrbitRadius.mdShape)
-            .background(bg)
-            .hoverable(interaction)
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onClick
-            )
-            .padding(horizontal = 10.dp, vertical = 8.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            DmAvatar(displayName, avatarColor, status, size = 44.dp)
-            Spacer(Modifier.width(OrbitSpace.md))
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = displayName,
-                        style = MaterialTheme.typography.bodyMedium.copy(
-                            color = t.Text_White,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 15.sp
-                        ),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
-                    if (isOrbitVerifiedUser(displayName)) {
-                        Spacer(Modifier.width(4.dp))
-                        OrbitVerifiedBadge(modifier = Modifier.size(14.dp))
-                    }
-                    if (time.isNotBlank()) {
-                        Spacer(Modifier.weight(1f))
-                        Text(
-                            text = time,
-                            style = MaterialTheme.typography.labelSmall.copy(color = t.Text_Subtle, fontSize = 11.sp),
-                            maxLines = 1
-                        )
-                    }
-                }
-                Spacer(Modifier.height(1.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = lastMessage,
-                        style = MaterialTheme.typography.bodySmall.copy(color = t.Text_Muted, fontSize = 12.5.sp),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    if (unreadCount > 0) {
-                        OrbitCountBadge(count = unreadCount, color = t.Accent)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
 internal fun DmAvatar(
     displayName: String,
     avatarColor: Int,
-    status: UserStatus,
+    status: UserStatus?,
+    avatarUrl: String? = null,
     size: androidx.compose.ui.unit.Dp = 32.dp
 ) {
     val t = rememberCosmicTokens()
     Box(modifier = Modifier.size(size)) {
-        OrbitDefaultAvatar(
-            label = displayName,
-            seed = displayName,
-            color = Color(avatarColor),
-            modifier = Modifier.size(size)
-        )
-        Box(
-            modifier = Modifier
-                .size(if (size > 40.dp) 13.dp else 10.dp)
-                .align(Alignment.BottomEnd)
-                .offset(x = 1.dp, y = 1.dp)
-                .border(2.dp, t.Drawer_Bg, CircleShape)
-                .padding(1.5.dp)
-                .clip(CircleShape)
-                .background(statusColor(status))
-        )
+        if (avatarUrl != null) {
+            coil3.compose.AsyncImage(
+                model = avatarUrl,
+                contentDescription = displayName,
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier
+                    .size(size)
+                    .clip(CircleShape)
+            )
+        } else {
+            OrbitDefaultAvatar(
+                label = displayName,
+                seed = displayName,
+                color = Color(avatarColor),
+                modifier = Modifier.size(size)
+            )
+        }
+        // Only drawn when real presence is known — a hard-coded green dot on
+        // every conversation was fabricated data.
+        if (status != null) {
+            Box(
+                modifier = Modifier
+                    .size(if (size > 40.dp) 13.dp else 10.dp)
+                    .align(Alignment.BottomEnd)
+                    .offset(x = 1.dp, y = 1.dp)
+                    .border(2.dp, t.Drawer_Bg, CircleShape)
+                    .padding(1.5.dp)
+                    .clip(CircleShape)
+                    .background(presenceColor(t, status))
+            )
+        }
     }
 }

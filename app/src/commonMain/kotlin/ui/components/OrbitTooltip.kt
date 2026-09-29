@@ -10,6 +10,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -18,7 +19,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -73,6 +77,17 @@ fun OrbitTooltip(
 /**
  * Tooltip that appears on hover rather than on long-press. Used for the server
  * rail, where the tooltip is the only way to name a space.
+ *
+ * The tooltip is a child of the rail item's own Box, so it is MEASURED with that
+ * box's constraints -- which for a rail item is about 68dp wide. With 54dp of
+ * start padding, the text had roughly 14dp to draw in, and with `maxLines = 1` and
+ * no overflow it was sliced mid-glyph rather than ellipsised. Every space name
+ * came out as a stub.
+ *
+ * [unboundedWidth] measures the label against an infinite max width so it can size
+ * to its content and overflow the rail, which is what a tooltip is supposed to do.
+ * The cap keeps a pathologically long name from running off the window, and the
+ * ellipsis is the backstop if it ever hits that cap.
  */
 @Composable
 fun HoverTooltip(
@@ -95,16 +110,22 @@ fun HoverTooltip(
                     .align(Alignment.CenterStart)
                     .padding(start = 54.dp)
                     .clip(OrbitRadius.xsShape)
+                    // No ring: a tooltip is a transient label, not a container,
+                    // and a 1dp outline on a 20dp-tall badge is pure noise. The
+                    // raised fill alone separates it from the rail.
                     .background(t.ElevatedAlt)
-                    .border(1.dp, t.Separator, OrbitRadius.xsShape)
                     .padding(horizontal = 8.dp, vertical = 4.dp)
+                    .unboundedWidth()
+                    .widthIn(max = 320.dp)
             ) {
                 Text(
                     text = text,
                     fontSize = 11.5.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = t.Text_White,
-                    maxLines = 1
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    softWrap = false
                 )
             }
         }
@@ -112,32 +133,28 @@ fun HoverTooltip(
 }
 
 /**
- * Small arrow-tip tooltip anchored below a point — the quick-switcher hint and
- * the empty-state call to action use this.
+ * Measures this composable's child with an unbounded width while still reporting
+ * the child's size to the parent.
+ *
+ * Compose has no built-in "ignore my parent's max width", and a tooltip anchored
+ * inside a narrow rail is exactly the case that needs one: the parent is a 68dp
+ * column, and the thing inside it is a label whose whole job is to be as wide as
+ * the text in it.
  */
-@Composable
-fun OrbitPopoverCard(
-    modifier: Modifier = Modifier,
-    elevated: Boolean = true,
-    padding: androidx.compose.foundation.layout.PaddingValues =
-        androidx.compose.foundation.layout.PaddingValues(0.dp),
-    content: @Composable () -> Unit
-) {
-    val t = rememberCosmicTokens()
-    Box(
-        modifier = modifier
-            .then(
-                if (elevated) {
-                    Modifier.shadow(18.dp, OrbitRadius.lgShape, clip = false, ambientColor = Color.Black, spotColor = Color.Black)
-                } else {
-                    Modifier
-                }
-            )
-            .clip(OrbitRadius.lgShape)
-            .background(t.Elevated)
-            .border(1.dp, t.SeparatorStrong, OrbitRadius.lgShape)
-            .padding(padding)
-    ) {
-        content()
+private fun Modifier.unboundedWidth(): Modifier = layout { measurable, _ ->
+    val placeable = measurable.measure(
+        Constraints(minWidth = 0, maxWidth = Constraints.Infinity)
+    )
+    layout(placeable.width, placeable.height) {
+        placeable.place(0, 0)
     }
 }
+
+// `OrbitPopoverCard` used to live here -- a small elevated surface with a shadow
+// and a hairline, documented as being for the quick-switcher hint and the empty
+// state. Zero call sites in app/src. Both of those screens ended up drawing their
+// own surface inline, so it was a third spelling of "a floating panel" alongside
+// `OrbitMenu`'s container and `OrbitDialog`'s.
+//
+// Also removed from this file during the de-boxing pass: the hairline on
+// [HoverTooltip]'s badge, which is a transient label rather than a surface.

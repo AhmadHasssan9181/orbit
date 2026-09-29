@@ -3,28 +3,33 @@ package ui.theme
 import androidx.compose.ui.graphics.Color
 
 /**
- * Orbit palette — "Graphite & Iris".
+ * Orbit palette — Discord's dark theme, as a ramp.
  *
- * The app used to lean on Discord-flavoured near-black blues and hard-coded
- * status reds/greens scattered across ~40 files. That read as neon, and every
- * screen improvised its own contrast, so the product never felt like one thing.
+ * These values are pinned to Discord's real dark-theme greys *on purpose*.
+ * The ramps previously ran on a single blue-black hue (~222°, e.g. #14171D),
+ * which looked handsome in isolation but made the product read as a different
+ * app from the one it was imitating: side by side, a ~222° cast against
+ * Discord's essentially neutral grey is obvious at a glance. The hue cast has
+ * therefore been removed rather than dialled down, and the accent is now
+ * Discord blurple (#5865F2).
  *
- * Everything below is a *ramp*, not a one-off: neutrals share a single hue
- * (~222°) and a deliberately low chroma, so large surfaces sit next to each
- * other without vibrating. Exactly one accent carries intent.
+ * Everything below is a *ramp*, not a one-off, so the names other files
+ * reference still resolve — only the underlying values move. Exactly one
+ * accent carries intent.
  */
 
 // ─── Dark neutrals ───────────────────────────────────────────────────────
-val Ink950 = Color(0xFF08090C)
-val Ink900 = Color(0xFF0B0D11)
-val Ink850 = Color(0xFF101318)
-val Ink800 = Color(0xFF14171D)
-val Ink780 = Color(0xFF181C22)
-val Ink750 = Color(0xFF1B1F27)
-val Ink700 = Color(0xFF1F242C)
-val Ink650 = Color(0xFF262C36)
-val Ink600 = Color(0xFF2E3542)
-val Ink550 = Color(0xFF3A4250)
+// Pinned to Discord's actual surface colours.
+val Ink950 = Color(0xFF111214)   // Discord "modal/dropdown" — deepest surface
+val Ink900 = Color(0xFF1E1F22)   // Discord server rail
+val Ink850 = Color(0xFF2B2D31)   // Discord channel sidebar
+val Ink800 = Color(0xFF313338)   // Discord chat background  <- the app's main surface
+val Ink780 = Color(0xFF383A40)   // Discord chat input
+val Ink750 = Color(0xFF2E3035)   // Discord message hover
+val Ink700 = Color(0xFF404249)   // Discord selected channel row
+val Ink650 = Color(0xFF4E5058)   // Discord modal border / strong divider
+val Ink600 = Color(0xFF5C5E66)
+val Ink550 = Color(0xFF80848E)   // Discord offline status grey
 
 // ─── Light neutrals ──────────────────────────────────────────────────────
 val Paper0 = Color(0xFFFFFFFF)
@@ -36,10 +41,12 @@ val Paper300 = Color(0xFFD2D8E2)
 val Paper400 = Color(0xFFB4BCC9)
 
 // ─── Text ────────────────────────────────────────────────────────────────
-val DarkFgStrong = Color(0xFFE9EBF1)
-val DarkFgDefault = Color(0xFFC0C6D2)
-val DarkFgMuted = Color(0xFF8B93A3)
-val DarkFgSubtle = Color(0xFF636B7B)
+// DarkFgDefault is Discord's message-body grey (#dbdee1). Message text binds to
+// Text_Secondary, so getting this one value right is what makes chat read right.
+val DarkFgStrong = Color(0xFFF2F3F5)
+val DarkFgDefault = Color(0xFFDBDEE1)
+val DarkFgMuted = Color(0xFF949BA4)
+val DarkFgSubtle = Color(0xFF6D6F78)
 
 val LightFgStrong = Color(0xFF13161C)
 val LightFgDefault = Color(0xFF3B4351)
@@ -47,12 +54,14 @@ val LightFgMuted = Color(0xFF697180)
 val LightFgSubtle = Color(0xFF98A0AE)
 
 // ─── Accent · Iris ───────────────────────────────────────────────────────
-val Iris600 = Color(0xFF6E67DE)
-val Iris500 = Color(0xFF7B74E8)
-val Iris400 = Color(0xFF928CF0)
-val Iris200 = Color(0xFFC9C5FA)
-val Iris900 = Color(0xFF1F1D45)
-val Iris800 = Color(0xFF2B2858)
+// Still called Iris, but now Discord blurple (#5865F2). Ramp ordering is
+// unchanged: 600 is the darker/hover step, 500 is the base.
+val Iris600 = Color(0xFF4752C4)   // Discord blurple hover/pressed
+val Iris500 = Color(0xFF5865F2)   // Discord blurple
+val Iris400 = Color(0xFF7C86F5)
+val Iris200 = Color(0xFFC0C5FC)
+val Iris900 = Color(0xFF23244A)
+val Iris800 = Color(0xFF32357A)
 val Iris050 = Color(0xFFEDEBFD)
 
 // ─── Semantic ────────────────────────────────────────────────────────────
@@ -76,10 +85,10 @@ val Steel900 = Color(0xFF11202F)
 val Steel050 = Color(0xFFE8F1FA)
 
 // ─── Presence ────────────────────────────────────────────────────────────
-val PresenceOnline = Color(0xFF49AE81)
-val PresenceIdle = Color(0xFFD2A03C)
-val PresenceDnd = Color(0xFFD65A54)
-val PresenceOffline = Color(0xFF565E6D)
+val PresenceOnline = Color(0xFF23A55A)
+val PresenceIdle = Color(0xFFF0B232)
+val PresenceDnd = Color(0xFFF23F43)
+val PresenceOffline = Color(0xFF80848E)
 
 // ─── Avatar seeds ────────────────────────────────────────────────────────
 // Muted jewel tones. Saturated primaries made generated avatars shout, and a

@@ -24,7 +24,6 @@ import de.connect2x.trixnity.client.verification
 import de.connect2x.trixnity.clientserverapi.model.media.Media
 import de.connect2x.trixnity.clientserverapi.model.room.CreateRoom
 import de.connect2x.trixnity.clientserverapi.model.room.GetEvents.Direction
-import de.connect2x.trixnity.clientserverapi.model.user.ProfileField
 import de.connect2x.trixnity.clientserverapi.model.user.avatarUrl
 import de.connect2x.trixnity.clientserverapi.model.user.displayName
 import de.connect2x.trixnity.core.model.EventId
@@ -33,9 +32,6 @@ import de.connect2x.trixnity.core.model.UserId
 import de.connect2x.trixnity.core.model.events.EventType
 import de.connect2x.trixnity.core.model.events.ClientEvent.RoomEvent
 import de.connect2x.trixnity.core.model.events.UnknownEventContent
-import de.connect2x.trixnity.core.model.events.m.call.CallEventContent
-import de.connect2x.trixnity.core.model.events.m.call.Purpose
-import de.connect2x.trixnity.core.model.events.m.call.StreamMetadata
 import de.connect2x.trixnity.core.model.events.m.ReactionEventContent
 import de.connect2x.trixnity.core.model.events.m.RelatesTo
 import de.connect2x.trixnity.core.model.events.m.room.AudioInfo
@@ -64,11 +60,13 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.Url
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
+import io.ktor.util.date.getTimeMillis
 import io.ktor.utils.io.ByteReadChannel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -91,6 +89,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -114,20 +113,8 @@ import util.getRoomDatabaseBuilder
 import util.performSsoLogin
 import kotlin.time.Duration.Companion.seconds
 
-import ui.screen.auth.*
-import ui.screen.settings.*
-import ui.screen.drawer.*
-import ui.screen.server.*
-import ui.screen.call.*
-import ui.screen.media.*
-import ui.screen.main.*
 
 
-
-class LiveMessageState(
-    val flow: MutableSharedFlow<List<OrbitMessage>>,
-    val messages: MutableList<OrbitMessage> = mutableListOf()
-)
 
 data class RoomMetadata(
     val id: String,
@@ -140,13 +127,74 @@ data class RoomMetadata(
     val avatarUrl: String? = null
 )
 
-class MatrixContext(val homeserverUrl: String) {
+/**
+ * Normalises a homeserver URL typed by the user into the canonical base the
+ * client and every raw request are built from:
+ *  - a missing scheme defaults to https (never silently plain http)
+ *  - non http/https schemes are rejected
+ *  - trailing slashes, query and fragment are stripped
+ *  - the path is preserved (reverse-proxied Synapse at /matrix must work)
+ *
+ * Done at construction so the long-lived access token is only ever put on the
+ * wire over a validated origin.
+ */
+object HomeserverUrlNormalizer {
+    fun normalize(input: String): String {
+        val trimmed = input.trim()
+        require(trimmed.isNotEmpty()) { "Homeserver URL is empty" }
+
+        val withScheme = if (trimmed.contains("://")) trimmed else "https://$trimmed"
+        val url = io.ktor.http.Url(withScheme)
+        val scheme = url.protocol.name.lowercase()
+        require(scheme == "http" || scheme == "https") {
+            "Homeserver URL must use http or https, got '${url.protocol.name}'"
+        }
+        if (scheme == "http") {
+            println(
+                "WARN [MatrixContext] homeserver '$withScheme' is plain HTTP: the Matrix access " +
+                    "token will be sent in cleartext to $scheme://${url.host}"
+            )
+        }
+        val host = url.host.ifBlank {
+            throw IllegalArgumentException("Homeserver URL has no host: '$withScheme'")
+        }
+        val defaultPort = if (scheme == "https") 443 else 80
+        val port = if (url.port != defaultPort) ":${url.port}" else ""
+        // Keep the path. Synapse behind a reverse proxy is commonly hosted at
+        // https://example.org/matrix, and dropping it would send every request
+        // to the origin root and 404. Only trailing slashes are stripped.
+        val path = url.encodedPath.trimEnd('/')
+        return "$scheme://$host$port$path"
+    }
+}
+
+class MatrixContext(homeserverUrl: String) {
     var accessToken: String? = CredentialManager.accessToken
     var userId: String? = CredentialManager.userId
     var deviceId: String? = CredentialManager.deviceId
     var trixnityClient: MatrixClient? = null
 
-    val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    val homeserverUrl: String = HomeserverUrlNormalizer.normalize(homeserverUrl)
+
+    private val scopeJob = SupervisorJob()
+    val repositoryScope = CoroutineScope(scopeJob + Dispatchers.Default)
+
+    @Volatile
+    private var closed = false
+
+    /**
+     * Releases everything this context owns: the repository scope and the CIO
+     * HTTP client (which holds a selector thread plus its own dispatcher).
+     * Idempotent. A context that is never closed leaks both for the life of the
+     * process, which is why every failed login attempt closes its own.
+     */
+    fun close() {
+        if (closed) return
+        closed = true
+        scopeJob.cancel("MatrixContext closed")
+        runCatching { httpClient.close() }
+            .onFailure { println("WARN [MatrixContext] closing httpClient failed: ${it.message}") }
+    }
 
     val jsonConfig = Json {
         ignoreUnknownKeys = true
@@ -163,13 +211,28 @@ class MatrixContext(val homeserverUrl: String) {
         }
     }
 
-    val roomListFlow = MutableSharedFlow<List<OrbitServer>>(replay = 1)
-    val callEventsFlow = MutableSharedFlow<CallEvent>(extraBufferCapacity = 10)
+    val callEventsFlow = MutableSharedFlow<CallEvent>(
+        extraBufferCapacity = 10,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
+    )
     val globalActiveCalls = MutableStateFlow<Map<String, String>>(emptyMap())
     val authStatusFlow = MutableStateFlow<AuthStatus>(AuthStatus.Authenticated)
 
     // Room ids whose call-related state changed; group-call observers re-resolve on tick.
-    val groupCallStateChanges = MutableSharedFlow<String>(extraBufferCapacity = 64)
+    // tryEmit-only producer, so SUSPEND overflow would silently drop every change
+    // once 64 were pending; these are coalescible nudges, not events to replay.
+    val groupCallStateChanges = MutableSharedFlow<String>(
+        extraBufferCapacity = 64,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
+    )
+
+    // The sync collector emits here from its own scope while UI coroutines
+    // collect; SUSPEND overflow would make a slow UI backpressure the sync loop.
+    val roomListFlow = MutableSharedFlow<List<OrbitServer>>(
+        replay = 1,
+        extraBufferCapacity = 1,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
+    )
 
     // Live chat-message arrivals for EVERY room as (matrixRoomId, message);
     // the app shell consumes this to maintain unread counts per channel.
@@ -178,16 +241,68 @@ class MatrixContext(val homeserverUrl: String) {
         onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
     )
 
-    val liveMessageStates = mutableMapOf<String, LiveMessageState>()
-    val activeCalls = mutableMapOf<String, MutableStateFlow<CallEvent.Invite?>>()
-    val activeGroupCalls = mutableMapOf<String, MutableStateFlow<String?>>()
-    val activeCallMembers = mutableMapOf<String, MutableStateFlow<List<OrbitUser>>>()
+    // roomId -> live message flow. Value is the flow only: an accumulating list
+    // alongside it was never read and grew without bound for the session.
+    // All of these are written from the sync collector (Dispatchers.Default)
+    // AND from the Compose/EDT dispatcher, so they are ConcurrentHashMaps, not
+    // LinkedHashMaps. The previous code wrapped SOME of the accesses in
+    // `synchronized` and left others bare -- which is worse than no lock at all,
+    // because it looks safe. A plain HashMap corrupted by concurrent put/get
+    // can lose entries or (Java 8+ cyclic bin chains) spin forever inside
+    // get(), which presents as an unreproducible app freeze.
+    //
+    // Kotlin's ConcurrentMap.getOrPut is atomic (putIfAbsent), so the callers
+    // that used to synchronize can just do that.
+    val liveMessageStates = java.util.concurrent.ConcurrentHashMap<String, MutableSharedFlow<List<OrbitMessage>>>()
+    val activeCalls = java.util.concurrent.ConcurrentHashMap<String, MutableStateFlow<CallEvent.Invite?>>()
+    val activeGroupCalls = java.util.concurrent.ConcurrentHashMap<String, MutableStateFlow<String?>>()
+    val activeCallMembers = java.util.concurrent.ConcurrentHashMap<String, MutableStateFlow<List<OrbitUser>>>()
     // Per-device call roster ((userId, deviceId) pairs) driving the matrixRTC
     // E2EE media-key exchange; mirrors activeCallMembers but keeps devices distinct.
-    val activeCallDevices = mutableMapOf<String, MutableStateFlow<Set<livekit.CallDevice>>>()
-    val accountDataCache = mutableMapOf<String, MutableStateFlow<Any?>>()
-    val roomMetadataCache = mutableMapOf<String, RoomMetadata>()
-    private val joinedMemberCountCache = mutableMapOf<String, Int>()
+    val activeCallDevices = java.util.concurrent.ConcurrentHashMap<String, MutableStateFlow<Set<livekit.CallDevice>>>()
+
+    /**
+     * roomId -> `origin_server_ts` of the room's `m.call` definition event, i.e.
+     * when the CURRENT call began. Membership records older than this belong to a
+     * call that already ended; see [MatrixRtcMembership] for why the `expires`
+     * window alone cannot tell the two apart. Written by the roster poller, which
+     * already downloads the full room state, so it costs nothing extra.
+     */
+    val activeCallStartedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /**
+     * Room -> category assignment from `/_matrix/client/v1/categories`, paired with
+     * the time it was fetched. Null until the first load. See [MatrixCategories].
+     */
+    @Volatile
+    internal var categoriesCache: Pair<Map<String, RoomCategory>, Long>? = null
+
+    /** Lazily built; shares the repository's HttpClient, so it costs nothing extra. */
+    internal val categories: MatrixCategories by lazy { MatrixCategories(this) }
+    val accountDataCache = java.util.concurrent.ConcurrentHashMap<String, MutableStateFlow<Any?>>()
+
+    // Event types whose account data has already been requested. The request used
+    // to be fired on every collect(), so re-composition re-hit the network.
+    val accountDataFetchStarted = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
+    val roomMetadataCache = java.util.concurrent.ConcurrentHashMap<String, RoomMetadata>()
+
+    // userId -> (profile, fetched-at). The call rosters polled a profile
+    // request per member per 3s tick, which is what triggered rate limiting.
+    private val userProfileCache = java.util.concurrent.ConcurrentHashMap<String, CachedProfile>()
+
+    private data class CachedProfile(val user: OrbitUser, val fetchedAtMillis: Long)
+
+    // roomId -> (joined count, fetched-at). Without an expiry a room that gained
+    // or lost members kept its original count for the whole session, so DM
+    // classification stayed wrong until restart.
+    private val joinedMemberCountCache = java.util.concurrent.ConcurrentHashMap<String, CachedJoinedCount>()
+
+    private data class CachedJoinedCount(val count: Int, val fetchedAtMillis: Long)
+
+    private companion object {
+        const val USER_PROFILE_TTL_MS = 5 * 60 * 1000L
+        const val JOINED_MEMBER_COUNT_TTL_MS = 2 * 60 * 1000L
+    }
 
     // Part I: the public matrix.org SFU is a DEV FALLBACK only. Resolution order:
     // settings override → homeserver .well-known org.matrix.msc4143.rtc_foci → this.
@@ -213,13 +328,27 @@ class MatrixContext(val homeserverUrl: String) {
      */
     suspend fun refreshWellKnownRtcFoci() {
         try {
-            val base = if (homeserverUrl.startsWith("http")) {
-                homeserverUrl.trimEnd('/')
-            } else {
-                "https://${homeserverUrl.trimEnd('/')}"
+            // Build the well-known URL from the homeserver's ORIGIN, taken from
+            // the already-parsed and validated URL. The old code stripped the
+            // scheme with string surgery and then hardcoded https, which broke
+            // the two deployments a self-hoster is most likely to run:
+            //   - http://localhost:8008  -> requested https://localhost:8008/...
+            //   - https://host:8448      -> requested https://host/...  (port lost)
+            // Either way the fetch failed, the failure was swallowed, and the
+            // app silently fell back to the public matrix.org SFU -- so a
+            // self-hosted call would try to reach the wrong LiveKit.
+            val parsed = io.ktor.http.Url(homeserverUrl)
+            val origin = buildString {
+                append(parsed.protocol.name)
+                append("://")
+                append(parsed.host)
+                val defaultPort = if (parsed.protocol.name == "https") 443 else 80
+                if (parsed.port != defaultPort) {
+                    append(':')
+                    append(parsed.port)
+                }
             }
-            val host = base.removePrefix("https://").removePrefix("http://")
-            val response = httpClient.get("https://$host/.well-known/matrix/client")
+            val response = httpClient.get("$origin/.well-known/matrix/client")
             if (response.status.value !in 200..299) {
                 println("DEBUG [MatrixContext] .well-known/matrix.client status=${response.status.value}; keeping current SFU config")
                 return
@@ -291,7 +420,12 @@ class MatrixContext(val homeserverUrl: String) {
         val allRoomsMap = trixnity.room.getAll().first()
         val snapshot = mutableListOf<de.connect2x.trixnity.client.store.Room>()
         for (roomFlow in allRoomsMap.values) {
-            roomFlow.first()?.let { snapshot.add(it) }
+            val room = roomFlow.first() ?: continue
+            // Left/left-behind rooms and pure invites are not channels: listing
+            // them let the user "open" a room they are not in, which then 403s
+            // on every timeline load.
+            if (room.membership != de.connect2x.trixnity.core.model.events.m.room.Membership.JOIN) continue
+            snapshot.add(room)
         }
         return snapshot
     }
@@ -300,8 +434,106 @@ class MatrixContext(val homeserverUrl: String) {
         return room.name?.explicitName ?: room.name?.heroes?.firstOrNull()?.localpart ?: room.roomId.full.takeLast(8)
     }
 
+    /**
+     * Rooms whose MatrixRTC call state says they are a voice room.
+     *
+     * Why this exists: channel typing used to be `roomName.contains("voice")`.
+     * On matrix.org — which is where this was first noticed — a room called
+     * "general" that is a perfectly ordinary voice room was typed TEXT, and a
+     * text room called "voice-chat-announcements" was typed VOICE. The drawer's
+     * entire Voice Channels section was therefore fiction, and a fabricated
+     * "General Voice" row was added to paper over the fact that the real voice
+     * rooms were missing.
+     *
+     * The authoritative signal is the room's own `m.call` / `m.call.member`
+     * state — specifically the `m.kind` field, which MatrixRTC sets to `"voice"`
+     * for voice rooms and which the spec leaves absent for 1:1 calls. This is
+     * read from the room state already synced into the client store, so it costs
+     * no extra HTTP request.
+     *
+     * Cached per room and refreshed only when the room's call state actually
+     * changes, because `getChannelsForSpace` runs on every `roomListFlow`
+     * emission and a per-room HTTP probe there would be dozens of requests per
+     * sync.
+     */
+    private val voiceRoomCache = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+    /** Force a re-probe. Called after a call is joined or left. */
+    fun invalidateVoiceRoomCache(roomId: String? = null) {
+        if (roomId == null) voiceRoomCache.clear() else voiceRoomCache.remove(roomId)
+    }
+
+    /**
+     * Whether this room is a voice room, per its own Matrix state.
+     *
+     * Reads `GET /rooms/{id}/state` — the same all-state scan
+     * `MatrixCallsRepository` uses for call definitions, because that is the only
+     * endpoint that carries `origin_server_ts` alongside the content. One request
+     * per room, cached, so it is not repeated on every sync.
+     *
+     * [knownCallRoomIds] short-circuits for rooms with a live call so a room you
+     * are standing in never flickers between the two headings.
+     */
+    suspend fun isVoiceRoom(roomId: String, knownCallRoomIds: Set<String> = emptySet()): Boolean {
+        if (roomId in knownCallRoomIds) return true
+        voiceRoomCache[roomId]?.let { return it }
+
+        val detected = try {
+            val response = httpClient.get(fullUrl("/rooms/$roomId/state")) {
+                header(HttpHeaders.Authorization, "Bearer $accessToken")
+            }
+            if (response.status.value !in 200..299) {
+                response.drain()
+                false
+            } else {
+                Json.parseToJsonElement(response.bodyAsText()).jsonArray.any { element ->
+                    val raw = element.jsonObject
+                    val type = raw["type"]?.jsonPrimitive?.contentOrNull
+                    type in MATRIXRTC_VOICE_STATE_TYPES &&
+                        callKindOf(raw["content"]?.jsonPrimitive?.contentOrNull)
+                            ?.equals("voice", ignoreCase = true) == true
+                }
+            }
+        } catch (_: Throwable) {
+            false
+        }
+        voiceRoomCache[roomId] = detected
+        return detected
+    }
+
+    /** `m.call` / `org.matrix.msc3401.call`, definition and member alike. */
+    private val MATRIXRTC_VOICE_STATE_TYPES = setOf(
+        "m.call", "org.matrix.msc3401.call", "m.call.member", "org.matrix.msc3401.call.member"
+    )
+
+    /**
+     * Pull `"m.kind"` out of a serialised call-state content object.
+     *
+     * `m.kind` is `"voice"` for a voice room and absent for a 1:1 call, which is
+     * exactly the distinction this needs. Read with a regex rather than a typed
+     * decode because the content is attacker-shaped input — anyone in the room
+     * can publish room state — and being wrong here only puts a room under the
+     * wrong heading.
+     */
+    private fun callKindOf(contentJson: String?): String? {
+        if (contentJson == null || !contentJson.contains("m.kind")) return null
+        return Regex("\"m\\.kind\"\\s*:\\s*\"([^\"]+)\"")
+            .find(contentJson)?.groupValues?.get(1)
+    }
+
+    /**
+     * Name-based fallback, used ONLY for rooms this app created itself.
+     *
+     * `createChannel` names voice rooms `"<name>-voice-channel"`, so a room we
+     * made is identifiable without a network round trip. Applying this to
+     * arbitrary rooms is what produced the bug above, so it must not be reached
+     * for one we did not create — hence the suffix requirement.
+     */
     fun inferChannelType(roomName: String): ui.model.ChannelType {
-        return if (roomName.contains("voice", ignoreCase = true)) ui.model.ChannelType.VOICE else ui.model.ChannelType.TEXT
+        val looksLikeOurOwnVoiceRoom = Regex(
+            "(?i)[-_\\s]+voice(?:[-_\\s]+channel)?$"
+        ).containsMatchIn(roomName)
+        return if (looksLikeOurOwnVoiceRoom) ui.model.ChannelType.VOICE else ui.model.ChannelType.TEXT
     }
 
     fun orbitChannelName(roomName: String, type: ui.model.ChannelType): String {
@@ -314,6 +546,10 @@ class MatrixContext(val homeserverUrl: String) {
     }
 
     suspend fun fetchUserProfile(targetUserId: String): OrbitUser? {
+        val now = getTimeMillis()
+        userProfileCache[targetUserId]?.let { cached ->
+            if (now - cached.fetchedAtMillis < USER_PROFILE_TTL_MS) return cached.user
+        }
         return try {
             val trixnity = trixnityClient ?: return null
             val profile = trixnity.api.user.getProfile(UserId(targetUserId)).getOrThrow()
@@ -325,7 +561,7 @@ class MatrixContext(val homeserverUrl: String) {
                 status = UserStatus.ONLINE,
                 isBot = false,
                 avatarUrl = profile.avatarUrl?.let { convertMxcUrl(it.toString()) }
-            )
+            ).also { userProfileCache[targetUserId] = CachedProfile(it, now) }
         } catch (e: Exception) {
             null
         }
@@ -361,14 +597,14 @@ class MatrixContext(val homeserverUrl: String) {
         val trixnity = trixnityClient
         if (trixnity != null) {
             try {
-                // Check cache first to avoid UI lag
-                val cachedCount = joinedMemberCountCache[room.roomId.full]
-                if (cachedCount != null) {
-                    if (cachedCount == 2 && noExplicitName) return true
+                val now = getTimeMillis()
+                val cached = joinedMemberCountCache[room.roomId.full]
+                if (cached != null && now - cached.fetchedAtMillis < JOINED_MEMBER_COUNT_TTL_MS) {
+                    if (cached.count == 2 && noExplicitName) return true
                 } else {
                     val joined = trixnity.api.room.getJoinedMembers(room.roomId).getOrNull()?.joined?.size ?: 0
                     if (joined > 0) {
-                        joinedMemberCountCache[room.roomId.full] = joined
+                        joinedMemberCountCache[room.roomId.full] = CachedJoinedCount(joined, now)
                     }
                     if (joined == 2 && noExplicitName) return true
                 }
@@ -378,4 +614,3 @@ class MatrixContext(val homeserverUrl: String) {
         return false
     }
 }
-

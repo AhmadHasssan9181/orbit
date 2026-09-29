@@ -4,6 +4,8 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 import javax.sound.sampled.AudioFormat
 import javax.sound.sampled.AudioSystem
 import javax.sound.sampled.DataLine
@@ -160,10 +162,23 @@ private object PlaybackDump {
 object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
     private const val UNDERRUN_WINDOW_NS = 250_000_000L
 
-    private val lock = Any()
+    // ReentrantLock, not `synchronized`: onMixedAudioFrame runs on the native
+    // real-time render thread and must be able to tryLock() instead of blocking.
+    private val lock = ReentrantLock()
+    // All three are owned by `lock`. The player loop is the only writer; the
+    // native render thread only publishes what format it wants via the
+    // pending* fields below, because opening a SourceDataLine on a real-time
+    // callback is an audible dropout.
     private var line: SourceDataLine? = null
     private var currentSampleRate = 0
     private var currentChannels = 0
+
+    // Written by the native render thread (volatile, no lock taken), read by the
+    // player loop. Kept separate from current* so the render thread can never
+    // desynchronise the line cache by writing the field ensureLine uses as its
+    // "the line is already open at this format" key.
+    @Volatile private var pendingSampleRate = 0
+    @Volatile private var pendingChannels = 0
     @Volatile private var expectedSessionId = 0L
     @Volatile private var expectedEpoch = 0L
     @Volatile private var bridge: OrbitLiveKitNativeBridge? = null
@@ -213,19 +228,38 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
 
     private val audioQueue = LinkedBlockingQueue<ByteArray>(100) // Buffer up to ~1 sec without blocking C++
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private var playerJob: Job? = null
+    @Volatile private var playerJob: Job? = null
     private val lastPcmAtNs = AtomicLong(0L)
 
     // Playback is the most deadline-sensitive thread in the app; a dedicated
     // high-priority thread keeps writes steady when the rest of the process is
-    // busy (e.g. decoding many remote video streams in a big room).
-    private val playerDispatcher by lazy {
-        Executors.newSingleThreadExecutor { r ->
-            Thread(r, "orbit-audio-playback").apply {
-                priority = Thread.MAX_PRIORITY
-                isDaemon = true
-            }
-        }.asCoroutineDispatcher()
+    // busy (e.g. decoding many remote video streams in a big room). It is created
+    // on first use and shut down again in stop() — an executor that is never
+    // closed keeps its thread (and stack) alive for the whole process.
+    private val playerExecutorLock = Any()
+    @Volatile private var playerDispatcherRef: ExecutorCoroutineDispatcher? = null
+
+    private fun playerDispatcher(): ExecutorCoroutineDispatcher = synchronized(playerExecutorLock) {
+        val existing = playerDispatcherRef
+        if (existing != null) {
+            existing
+        } else {
+            Executors.newSingleThreadExecutor { r ->
+                Thread(r, "orbit-audio-playback").apply {
+                    priority = Thread.MAX_PRIORITY
+                    isDaemon = true
+                }
+            }.asCoroutineDispatcher().also { playerDispatcherRef = it }
+        }
+    }
+
+    private fun shutdownPlayerDispatcher() {
+        val dispatcher = synchronized(playerExecutorLock) {
+            val current = playerDispatcherRef
+            playerDispatcherRef = null
+            current
+        }
+        runCatching { dispatcher?.close() }
     }
 
     private val firstFrameParamsLogged = AtomicLong(0)
@@ -253,8 +287,13 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
     }
 
     private fun startPlayerLoop() {
-        playerJob?.cancel()
-        playerJob = scope.launch(playerDispatcher) {
+        // cancelAndJoin, not cancel: a plain cancel left the previous loop alive
+        // inside audioQueue.poll(50ms) or out.write(), so a reconnect overlapped
+        // two loops on one dispatcher and the old loop's onFailure branch could
+        // close the line the new one had just opened.
+        val previous = playerJob
+        playerJob = scope.launch(playerDispatcher()) {
+            previous?.cancelAndJoin()
             println("DEBUG [LiveKitNativeAudioPlayer] Async playback loop started")
             while (isActive) {
                 val pcm = audioQueue.poll(50, TimeUnit.MILLISECONDS)
@@ -264,9 +303,13 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
                 }
                 if (outputMuted) continue // Deafened: discard frame, keep queue draining
                 lastPcmAtNs.set(System.nanoTime())
-                val (sr, ch) = synchronized(lock) { currentSampleRate to currentChannels }
+                // Adopt whatever format the render thread last published, then
+                // open/reopen the line under the lock if it changed. This is the
+                // only place a SourceDataLine is ever opened.
+                val sr = maxOf(currentSampleRate, pendingSampleRate)
+                val ch = maxOf(currentChannels, pendingChannels)
                 if (sr <= 0 || ch <= 0) continue
-                val out = synchronized(lock) { ensureLine(sr, ch) } ?: continue
+                val out = lock.withLock { ensureLine(sr, ch) } ?: continue
                 runCatching {
                     // True underrun = output line fully drained while remote frames are still flowing
                     val available = runCatching { out.available() }.getOrDefault(-1)
@@ -289,7 +332,7 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
                     CallPathStats.onPlayerFramePlayed()
                 }.onFailure { error ->
                     CallPathStats.onPlayerWriteFailure()
-                    synchronized(lock) {
+                    lock.withLock {
                         reportPlaybackError(
                             code = NativeErrorCode.REMOTE_AUDIO_FAILED,
                             message = error.message ?: "JVM audio playback write failed"
@@ -307,11 +350,28 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
         errorSink = null
         expectedSessionId = 0L
         expectedEpoch = 0L
-        playerJob?.cancel()
+        val job = playerJob
         playerJob = null
         audioQueue.clear()
         PlaybackDump.close()
-        closeLine()
+        if (job == null) {
+            closeLine()
+            shutdownPlayerDispatcher()
+            return
+        }
+        // stop() is called from the EDT (LiveKitNativeMediaSession.disconnect()).
+        // Join the playback coroutine on the IO scope so it cannot open a NEW
+        // SourceDataLine after closeLine() already ran, and so the caller is not
+        // blocked while it unwinds.
+        scope.launch {
+            job.cancelAndJoin()
+            // A start() during the join means playback is live again: leave the
+            // line alone.
+            if (playerJob == null) {
+                closeLine()
+                shutdownPlayerDispatcher()
+            }
+        }
     }
 
     override fun onMixedAudioFrame(
@@ -344,13 +404,16 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
         }
         CallPathStats.onPlayerFrameArrived()
 
-        synchronized(lock) {
-            if (currentSampleRate != sampleRate || currentChannels != channels) {
-                currentSampleRate = sampleRate
-                currentChannels = channels
-                ensureLine(sampleRate, channels)
-            }
-        }
+        // Record the format and hand off. Opening a SourceDataLine takes tens of
+        // ms, and this runs on the native real-time render thread, so the line
+        // must be opened by the player loop, never here. The previous code
+        // only avoided BLOCKING on the lock and then opened the line anyway
+        // inside the tryLock-success branch -- and since closeLine() zeroes
+        // currentSampleRate/currentChannels, that branch is taken on the first
+        // frame after every stop(), every output-device change and every call
+        // start, so the render thread stalled for tens of ms each time.
+        pendingSampleRate = sampleRate
+        pendingChannels = channels
 
         if (!audioQueue.offer(pcm.copyOf())) {
             // Queue full: drop oldest frame to maintain low latency without blocking native C++
@@ -442,8 +505,11 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
     }
 
     private fun closeLine() {
-        synchronized(lock) {
-            runCatching { line?.drain() }
+        lock.withLock {
+            // flush(), never drain(): drain() blocks until the speaker line has
+            // played everything still buffered (hundreds of ms) and it is called
+            // while holding the lock the render thread needs.
+            runCatching { line?.flush() }
             runCatching { line?.stop() }
             runCatching { line?.close() }
             line = null

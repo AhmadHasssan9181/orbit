@@ -60,7 +60,20 @@ public class NativeLoader {
 		Path tempPath = Files.createTempFile(tempName, ext);
 		File tempFile = tempPath.toFile();
 
-		try (InputStream is = NativeLoader.class.getClassLoader().getResourceAsStream(libFileName)) {
+		// Prefer the webrtc-deps/ copy. The classpath root used to hold a second,
+		// older build of this DLL that was missing native exports the Java classes
+		// declare (e.g. VideoDeviceSource.setBackgroundBlur), so loading it threw
+		// UnsatisfiedLinkError at call time. webrtc-deps/ is the single source of
+		// truth; the root is only a fallback for jars that still ship it there.
+		InputStream source = openResource(libFileName);
+		if (source == null) {
+			tempFile.delete();
+			throw new IllegalStateException(
+				"Native library not found on the classpath: " + libFileName
+					+ " (looked in /webrtc-deps/ and at the classpath root)");
+		}
+
+		try (InputStream is = source) {
 			Files.copy(is, tempPath, StandardCopyOption.REPLACE_EXISTING);
 		}
 		catch (Exception e) {
@@ -87,6 +100,15 @@ public class NativeLoader {
 		else {
 			tempFile.deleteOnExit();
 		}
+	}
+
+	private static InputStream openResource(String libFileName) throws Exception {
+		ClassLoader loader = NativeLoader.class.getClassLoader();
+		InputStream inWebrtcDeps = loader.getResourceAsStream("webrtc-deps/" + libFileName);
+		if (inWebrtcDeps != null) {
+			return inWebrtcDeps;
+		}
+		return loader.getResourceAsStream(libFileName);
 	}
 
 	private static String getExtension(String fileName) {

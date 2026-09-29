@@ -27,6 +27,11 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import ui.components.OrbitListRow
+import ui.components.OrbitNoticeHost
+import ui.components.OrbitNotices
+// Member extension on Result — needs its own import even though the object is
+// imported, exactly like any extension declared inside an object.
+import ui.components.OrbitNotices.onFailureOrNotify
 import ui.components.OrbitRowLeading
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -45,8 +50,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -55,6 +58,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -77,7 +81,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -101,11 +107,10 @@ import ui.model.ChannelType
 import ui.model.MessageContent
 import ui.model.OrbitChannel
 import ui.model.OrbitMessage
+import ui.model.applyLiveAmendments
 import ui.model.OrbitServer
 import ui.model.OrbitUser
 import ui.model.UserStatus
-import ui.theme.LocalIsLiteMode
-import ui.theme.LocalOnLiteModeChange
 import ui.theme.rememberCosmicTokens
 import webrtc.CallManager
 import webrtc.CallState
@@ -127,6 +132,7 @@ import ui.screen.server.*
 import ui.screen.call.*
 import ui.screen.media.*
 import ui.screen.main.*
+import ui.screen.orbitGlobalShortcuts
 import ui.screen.ChatScreen
 import ui.icons.*
 import ui.theme.*
@@ -139,7 +145,7 @@ private val coilHttpClient = HttpClient(CIO) {
             override fun log(message: String) {
                 // Gate at the source: LogLevel.INFO already builds header strings,
                 // so don't pay for them unless debug logging is actually on.
-                if (util.OrbitLog.debugEnabled) println("DEBUG: [Coil-Ktor] $message")
+                if (util.OrbitLog.debugEnabled) util.OrbitLog.d("Coil-Ktor", message)
             }
         }
         level = io.ktor.client.plugins.logging.LogLevel.INFO
@@ -177,15 +183,10 @@ fun OrbitApp(
     var authResult by remember { mutableStateOf<AuthResult?>(null) }
     
     val settingsManager = remember { SettingsManager() }
-    val isLiteMode by settingsManager.isLiteMode.collectAsState(false)
     val activeTheme by settingsManager.activeTheme.collectAsState(ui.theme.Theme.Default)
-    val messageDensity by settingsManager.messageDensity.collectAsState("Comfortable")
     val fontSize by settingsManager.fontSize.collectAsState(50f)
     val reduceMotion by settingsManager.reduceMotion.collectAsState(false)
-    val mentionsOnly by settingsManager.mentionsOnly.collectAsState(true)
-    val notificationSound by settingsManager.notificationSound.collectAsState("Chime")
     val chatWallpaper by settingsManager.chatWallpaper.collectAsState("auto")
-    val colorSaturation by settingsManager.colorSaturation.collectAsState(100f)
 
     val showTimestamps by settingsManager.showTimestamps.collectAsState(true)
     val compactMode by settingsManager.compactMode.collectAsState(false)
@@ -196,25 +197,27 @@ fun OrbitApp(
     val dateFormat by settingsManager.dateFormat.collectAsState("DD/MM/YYYY")
     val scope = rememberCoroutineScope()
 
-    setSingletonImageLoaderFactory { context ->
-        ImageLoader.Builder(context)
-            .components {
-                add(KtorNetworkFetcherFactory(httpClient = coilHttpClient))
-            }
-            .crossfade(true)
-            .build()
+    // `setSingletonImageLoaderFactory` is a @Composable that re-runs whenever the
+    // factory instance changes, and a lambda literal is a new instance on every
+    // recomposition — so the builder ran (and the global was re-set) each time.
+    // A remembered factory makes it once per composition lifetime.
+    val imageLoaderFactory: (coil3.PlatformContext) -> ImageLoader = remember(coilHttpClient) {
+        { context: coil3.PlatformContext ->
+            ImageLoader.Builder(context)
+                .components {
+                    add(KtorNetworkFetcherFactory(httpClient = coilHttpClient))
+                }
+                .crossfade(true)
+                .build()
+        }
     }
+    setSingletonImageLoaderFactory(imageLoaderFactory)
 
     CompositionLocalProvider(
-        LocalIsLiteMode provides isLiteMode,
-        LocalOnLiteModeChange provides { settingsManager.setLiteMode(it) },
+        ui.theme.LocalSettingsManager provides settingsManager,
         ui.theme.LocalActiveTheme provides activeTheme,
         ui.theme.LocalOnThemeChange provides { settingsManager.setTheme(it) },
-        ui.theme.LocalMessageDensity provides messageDensity,
-        ui.theme.LocalFontSize provides fontSize,
         ui.theme.LocalReduceMotion provides reduceMotion,
-        ui.theme.LocalMentionsOnly provides mentionsOnly,
-        ui.theme.LocalNotificationSound provides notificationSound,
         ui.theme.LocalChatWallpaper provides chatWallpaper,
         ui.theme.LocalShowTimestamps provides showTimestamps,
         ui.theme.LocalCompactMode provides compactMode,
@@ -239,14 +242,26 @@ fun OrbitApp(
                 val windowSize = windowSizeClassFor(maxWidth)
 
                 CompositionLocalProvider(LocalWindowSizeClass provides windowSize) {
-                    val authStatus by (repository?.authStatus?.collectAsState(AuthStatus.Authenticated) ?: remember { mutableStateOf(AuthStatus.Authenticated) })
+                    val authStatusFlow = remember(repository) {
+                        repository?.authStatus ?: flowOf(AuthStatus.Authenticated)
+                    }
+                    val authStatus by authStatusFlow.collectAsState(initial = AuthStatus.Authenticated)
 
                     LaunchedEffect(Unit) {
                         val token = CredentialManager.accessToken
                         val hs = CredentialManager.homeserverUrl
                         val uId = CredentialManager.userId
                         if (token != null && hs != null && uId != null) {
-                            val repo = MatrixOrbitRepository(hs)
+                            // The constructor normalises and validates the
+                            // homeserver URL and throws on a bad one. A stored
+                            // but invalid URL used to throw out of this effect
+                            // with no handler, taking down the app at startup and
+                            // leaving no way to reach the login screen.
+                            val repo = runCatching { MatrixOrbitRepository(hs) }.getOrElse { error ->
+                                println("WARN [OrbitApp] stored homeserver '$hs' is unusable: ${error.message}")
+                                CredentialManager.clear()
+                                return@LaunchedEffect
+                            }
                             repo.setAccessToken(token)
                             repo.setUserId(uId)
                             repository = repo
@@ -314,7 +329,10 @@ private fun MainAppContent(
 ) {
     val scope = rememberCoroutineScope()
 
-    val verificationState by (repository.activeDeviceVerification?.collectAsState(null) ?: remember { mutableStateOf(null) })
+    val verificationFlow = remember(repository) {
+        repository.activeDeviceVerification ?: flowOf(null)
+    }
+    val verificationState by verificationFlow.collectAsState(initial = null)
     VerificationOverlay(verificationState as? de.connect2x.trixnity.client.verification.ActiveDeviceVerification)
 
     // ─── WebRTC Call Manager ────────────────────────────────────
@@ -339,7 +357,12 @@ private fun MainAppContent(
     val myActiveStatus = runCatching { UserStatus.valueOf(myStatusStored) }.getOrDefault(UserStatus.ONLINE)
 
     LaunchedEffect(myActiveStatus) {
-        runCatching { repository.setPresence(myActiveStatus) }
+        // Presence is best-effort and the user did not explicitly ask for it, so
+        // this reports without a Retry — nagging someone because their status did
+        // not reach the server is worse than the status being briefly wrong.
+        OrbitNotices.notifying("Presence update", "Presence") {
+            repository.setPresence(myActiveStatus)
+        }
     }
 
     // Compact navigation state
@@ -366,23 +389,43 @@ private fun MainAppContent(
     val notificationModes = remember { mutableStateMapOf<String, String>() }
     val firstUnreadByRoom = remember { mutableStateMapOf<String, String>() }
 
+    // derivedStateOf, NOT remember(map) { map.toMap() }: SnapshotStateMap does
+    // not override equals, so keying a remember on the map instance compares by
+    // reference -- the block would run exactly once and freeze these at their
+    // initial empty values, so unread badges, server-rail dots and the "NEW"
+    // separator would never update. derivedStateOf re-runs on content change
+    // and only notifies downstream when the resulting Map actually differs,
+    // which is also what stops the per-recomposition allocation this replaced.
+    val unreadCountsSnapshot by remember {
+        derivedStateOf { unreadCounts.toMap() }
+    }
+    val firstUnreadSnapshot by remember {
+        derivedStateOf { firstUnreadByRoom.toMap() }
+    }
+
     LaunchedEffect(servers) {
         val index = mutableMapOf<String, String>()
         servers.forEach { server ->
             runCatching { repository.getChannelsForSpace(server.id) }.getOrNull()?.forEach { ch ->
                 index[ch.id] = server.id
                 ch.matrixRoomId?.let { index[it] = server.id }
-                launch {
-                    runCatching {
-                        settingsManager.roomNotificationMode(ch.id).collect { mode ->
-                            notificationModes[ch.id] = mode
-                            ch.matrixRoomId?.let { mr -> notificationModes[mr] = mode }
-                        }
-                    }
-                }
             }
         }
         channelServerById = index
+    }
+
+    // One collector for every room, in its own effect keyed on the room, instead
+    // of a never-ending child per channel launched from a `LaunchedEffect(servers)`
+    // that cancels and recreates all of them on every server update.
+    val notificationRoomIds = remember(channelServerById) { channelServerById.keys.toList() }
+    notificationRoomIds.forEach { roomId ->
+        LaunchedEffect(roomId, settingsManager) {
+            runCatching {
+                settingsManager.roomNotificationMode(roomId).collect { mode ->
+                    notificationModes[roomId] = mode
+                }
+            }
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -421,9 +464,12 @@ private fun MainAppContent(
         compactOpenChannelId?.let { unreadCounts.remove(it) }
     }
 
-    val unreadByServer = remember(unreadCounts.toMap(), channelServerById) {
+    val unreadByServer: Map<String, Int> = remember(unreadCountsSnapshot, channelServerById) {
         val totals = mutableMapOf<String, Int>()
-        unreadCounts.forEach { (roomId, count) ->
+        // Read the derived snapshot, not the live map: reading the live map here
+        // would register a snapshot dependency on data that is not in this
+        // remember's key list.
+        unreadCountsSnapshot.forEach { (roomId, count) ->
             channelServerById[roomId]?.let { sid -> totals[sid] = (totals[sid] ?: 0) + count }
         }
         totals
@@ -466,17 +512,46 @@ private fun MainAppContent(
         selectedChannelId = ""
         compactOpenChannelId = null
         try {
-            val loaded = repository.getChannelsForSpace(selectedServerId)
-            channels = loaded
-            val firstText = loaded.firstOrNull { it.type == ChannelType.TEXT }
-            if (firstText != null && windowSize.isExpanded) {
-                // Auto-select only on desktop — on phone/tablet user taps to navigate
-                selectedChannelId = firstText.id
+            // Hard timeout, and `finally` for the flag rather than a trailing
+            // assignment.
+            //
+            // Both matter. `getChannelsForSpace` does a full room-state read plus a
+            // profile lookup per DM conversation, and any one of those can stall on
+            // a network that accepts the connection and then goes quiet. With a
+            // plain `try/catch` and a trailing `isLoadingChannels = false`, a stall
+            // meant the flag was never cleared and the UI sat on its loading
+            // placeholder forever -- which is exactly the "direct messages keep on
+            // loading" report: the DM path resolves the most profiles, so it is the
+            // first to hit it.
+            //
+            // `finally` additionally covers cancellation. Switching servers cancels
+            // this effect mid-load; catching broadly and continuing would have left
+            // the previous server's channels under the new server's name.
+            val loaded: List<OrbitChannel>? = withTimeoutOrNull(20_000L) {
+                repository.getChannelsForSpace(selectedServerId)
             }
+            if (loaded == null) {
+                util.OrbitLog.w(
+                    "OrbitApp",
+                    "channel load for $selectedServerId timed out after 20s; showing empty list"
+                )
+                channels = emptyList()
+            } else {
+                channels = loaded
+                val firstText = loaded.firstOrNull { it.type == ChannelType.TEXT }
+                if (firstText != null && windowSize.isExpanded) {
+                    // Auto-select only on desktop — on phone/tablet user taps to navigate
+                    selectedChannelId = firstText.id
+                }
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
+            util.OrbitLog.w("OrbitApp", "channel load for $selectedServerId failed: ${e.message}")
             channels = emptyList()
+        } finally {
+            isLoadingChannels = false
         }
-        isLoadingChannels = false
     }
 
     // Live channel updates
@@ -580,7 +655,7 @@ private fun MainAppContent(
     // ─── Route to appropriate layout ────────────────────────────
     CompositionLocalProvider(
         LocalCallManager provides callManager,
-        ui.theme.LocalRoomUnreadMarkers provides firstUnreadByRoom.toMap()
+        ui.theme.LocalRoomUnreadMarkers provides firstUnreadSnapshot
     ) {
         Box(modifier = modifier) {
             when (windowSize) {
@@ -605,7 +680,7 @@ private fun MainAppContent(
                     onAddServer = { showJoinServer = true },
                     onCreateRoom = { showCreateRoom = true },
                     onOpenRoles = { showServerRoles = true },
-                    unreadCounts = unreadCounts.toMap(),
+                    unreadCounts = unreadCountsSnapshot,
                     unreadByServer = unreadByServer,
                     modifier = Modifier.fillMaxSize()
                 )
@@ -625,7 +700,7 @@ private fun MainAppContent(
                     onAddServer = { showJoinServer = true },
                     onCreateRoom = { showCreateRoom = true },
                     onOpenRoles = { showServerRoles = true },
-                    unreadCounts = unreadCounts.toMap(),
+                    unreadCounts = unreadCountsSnapshot,
                     unreadByServer = unreadByServer,
                     modifier = Modifier.fillMaxSize()
                 )
@@ -645,7 +720,7 @@ private fun MainAppContent(
                     onAddServer = { showJoinServer = true },
                     onCreateRoom = { showCreateRoom = true },
                     onOpenRoles = { showServerRoles = true },
-                    unreadCounts = unreadCounts.toMap(),
+                    unreadCounts = unreadCountsSnapshot,
                     unreadByServer = unreadByServer,
                     modifier = Modifier.fillMaxSize()
                 )
@@ -667,22 +742,29 @@ private fun MainAppContent(
             }
 
             val createRoomServer = servers.find { it.id == selectedServerId && !it.isDM }
-            if (showCreateRoom && createRoomServer != null) {
-                CreateRoomDialog(
-                    repository = repository,
-                    server = createRoomServer,
-                    onClose = { showCreateRoom = false },
-                    onRoomCreated = { channelId ->
-                        selectedChannelId = channelId
-                        selectedBottomTab = BottomNavTab.Servers
-                        if (windowSize == WindowSizeClass.Compact) {
-                            compactOpenChannelId = channelId
+            if (showCreateRoom) {
+                // Reset the flag in the else branch too: selecting a DM (or a
+                // server that has not loaded yet) used to leave showCreateRoom
+                // true, so the dialog popped open later on its own.
+                if (createRoomServer != null) {
+                    CreateRoomDialog(
+                        repository = repository,
+                        server = createRoomServer,
+                        onClose = { showCreateRoom = false },
+                        onRoomCreated = { channelId ->
+                            selectedChannelId = channelId
+                            selectedBottomTab = BottomNavTab.Servers
+                            if (windowSize == WindowSizeClass.Compact) {
+                                compactOpenChannelId = channelId
+                            }
+                            scope.launch {
+                                channels = repository.getChannelsForSpace(createRoomServer.id)
+                            }
                         }
-                        scope.launch {
-                            channels = repository.getChannelsForSpace(createRoomServer.id)
-                        }
-                    }
-                )
+                    )
+                } else {
+                    showCreateRoom = false
+                }
             }
 
             val rolesServer = servers.find { it.id == selectedServerId && !it.isDM }
@@ -715,55 +797,42 @@ private fun MainAppContent(
             // (e.g. navigated into a server whose channel list differs), so the
             // mini view has somewhere to render instead of the call vanishing.
             val callActive = callState != CallState.IDLE && callState != CallState.ENDED
-            val shouldShowPopup =
-                (activeCallChannel != null && activeCallChannel.categoryId == "dm") ||
-                    (callActive && isGroupCall) ||
-                    // P2P calls may live outside the dm category or have their channel
-                    // unresolvable entirely — they must still surface their UI.
-                    (callActive && !isGroupCall)
-            // While the user is looking at a GROUP call's own channel, the embedded
-            // VoiceChannelScreen/ChatScreen surface already renders there — a
-            // second fullscreen overlay here blanketed the entire window and made
-            // navigation impossible. P2P calls have no embedded surface at all,
-            // so this popup is their ONLY UI and must render even in-channel
-            // (otherwise an incoming DM invite rings invisibly until it expires).
-            val viewingCallChannel = activeCallChannel != null && selectedChannelId == activeCallChannel.id
 
-            LaunchedEffect(selectedChannelId, activeRoomId, channels) {
-                if (activeRoomId != null) {
-                    val callChannel = channels.find { it.matrixRoomId == activeRoomId || it.id == activeRoomId }
-                    if (callChannel == null || selectedChannelId != callChannel.id) {
-                        callManager.isMinimized.value = true
-                    } else {
-                        // Back inside the call's own channel: the embedded surface renders
-                        // expanded here, and a stale minimized flag would draw a second
-                        // floating bar next to nothing.
-                        callManager.isMinimized.value = false
-                    }
-                }
+            // ── No floating call widget ────────────────────────────────────
+            //
+            // There used to be a draggable pill pinned to the bottom-right
+            // corner, and a `forceMinimized` surface behind it. It is gone.
+            //
+            // Discord's model: a call IS the channel. You click the voice
+            // channel and the call fills the main column; there is no second
+            // representation of it floating over the window. The pill broke
+            // that in two ways — it covered the message list and composer, and
+            // it made a live call look like a *notification* rather than
+            // somewhere you are.
+            //
+            // Group calls render inline through `VoiceChannelScreen` (and
+            // `ChatScreen` for a text room with a live MatrixRTC call), so no
+            // overlay is needed at all.
+            //
+            // P2P/DM calls still need a surface of their own: a DM has no
+            // MatrixRTC call state, so nothing inline renders for it and an
+            // incoming invite would ring invisibly until it expired. That one
+            // keeps a full-bleed surface in the root Box, but `isEmbedded`
+            // stops it drawing its own corner card on top of itself.
+            val showP2pSurface = callActive && !isGroupCall
+
+            if (showP2pSurface) {
+                CallScreen(
+                    callManager = callManager,
+                    callerName = callerName,
+                    isEmbedded = true,
+                    modifier = Modifier.fillMaxSize()
+                )
             }
 
-            if (shouldShowPopup && (!viewingCallChannel || !isGroupCall)) {
-                if (isGroupCall) {
-                    LiveKitGroupCallSurface(
-                        callManager = callManager,
-                        modifier = Modifier.fillMaxSize(),
-                        remoteFallbackName = callerName,
-                        forceMinimized = true,
-                        onRestore = {
-                            val target = activeCallChannel?.id
-                            if (target != null) navigateTo(target)
-                            callManager.isMinimized.value = false
-                        }
-                    )
-                } else {
-                    CallScreen(
-                        callManager = callManager,
-                        callerName = callerName,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-            }
+            // LAST child of the root Box so it draws over the call surfaces,
+            // which are fillMaxSize and would otherwise sit on top of it.
+            OrbitNoticeHost()
         }
     }
 }
@@ -793,6 +862,48 @@ fun ChatScreenWithRepo(
     var readReceipts by remember(channel.id) { mutableStateOf<Map<String, String>>(emptyMap()) }
     var activeCall by remember(channel.id) { mutableStateOf<repository.CallEvent.Invite?>(null) }
     var activeGroupCallUrl by remember(channel.id) { mutableStateOf<String?>(null) }
+    // A send that failed hands its text back to the composer. The field clears
+    // itself the instant send is pressed, so without this the message is gone.
+    var failedDraft by remember(channel.id) { mutableStateOf<String?>(null) }
+
+    /**
+     * Resend one message, used by the Retry button on a failed send.
+     *
+     * Local rather than inline in the notice so that the slash-command
+     * interpretation is identical between the original attempt and the retry —
+     * a retry that silently sent the raw `/me waves` as a normal message would
+     * be a worse bug than the one being fixed.
+     */
+    suspend fun resendMessage(roomId: String, body: String, trimmed: String): Result<Unit> {
+        val result = runCatching {
+            when {
+                trimmed.startsWith("/me ") || trimmed == "/me" -> {
+                    val action = trimmed.removePrefix("/me").trim()
+                    if (action.isNotEmpty()) {
+                        repository.sendEmoteMessage(roomId, action).getOrThrow()
+                    }
+                }
+                trimmed.startsWith("/shrug") -> {
+                    val suffix = trimmed.removePrefix("/shrug").trim()
+                    val text = "¯\\_(ツ)_/¯" + if (suffix.isNotEmpty()) " $suffix" else ""
+                    repository.sendMessage(roomId, text).getOrThrow()
+                }
+                else -> repository.sendMessage(roomId, body).getOrThrow()
+            }
+            // The `when` is the value of the try-block, and its branches are
+            // Results of different types (String txnId vs Unit). Collapse it to
+            // Unit so `result` is Result<Unit> and the retry path typechecks.
+            @Suppress("UNUSED_EXPRESSION")
+            Unit
+        }
+        if (result.isSuccess) {
+            // Clear the restored draft: the message landed, so the composer
+            // must not put the old text back.
+            failedDraft = null
+            messages = repository.getMessagesForChannel(roomId, limit = 50)
+        }
+        return result
+    }
 
     // Mirror the shell's chosen presence into the chat surface.
     val statusSettings = remember { SettingsManager() }
@@ -838,12 +949,18 @@ fun ChatScreenWithRepo(
 
     LaunchedEffect(channel.id) {
         repository.observeMessages(channel.id).collect { newMessages ->
-            println("DEBUG: [UI] Received ${newMessages.size} new messages for ${channel.id}")
+            util.OrbitLog.d("UI", "Received ${newMessages.size} new messages for ${channel.id}")
             if (newMessages.isNotEmpty()) {
-                messages = (messages + newMessages)
-                    .groupBy { it.transactionId ?: it.id }
-                    .map { it.value.last() }
-                    .sortedBy { it.timestamp }
+                // Reactions and edits are folded into their parent rather than
+                // appended. The history path does this in the repository, but
+                // the live path used to append the pseudo-messages as if they
+                // were ordinary ones -- so in an open channel every reaction
+                // anyone sent appeared as a lone "thumbs up" bubble while the
+                // parent's chip never moved, and someone else's edit showed as a
+                // second bubble with the new text while the original kept the
+                // old one. Only your own edits/reactions repaired it, because
+                // those force a full history reload.
+                messages = applyLiveAmendments(messages, newMessages)
             }
         }
     }
@@ -892,47 +1009,76 @@ fun ChatScreenWithRepo(
         activeGroupCallUrl = activeGroupCallUrl,
         onSend = { body ->
             scope.launch {
-                try {
-                    val trimmed = body.trim()
+                val trimmed = body.trim()
+                val result: Result<Unit> = runCatching {
                     when {
                         // Slash commands — /me sends an m.emote, /shrug appends the classic shrug
                         trimmed.startsWith("/me ") || trimmed == "/me" -> {
                             val action = trimmed.removePrefix("/me").trim()
-                            if (action.isNotEmpty()) repository.sendEmoteMessage(channel.id, action).getOrThrow()
+                            if (action.isNotEmpty()) {
+                                repository.sendEmoteMessage(channel.id, action).getOrThrow()
+                            }
                         }
                         trimmed.startsWith("/shrug") -> {
                             val suffix = trimmed.removePrefix("/shrug").trim()
                             val text = "¯\\_(ツ)_/¯" + if (suffix.isNotEmpty()) " $suffix" else ""
                             repository.sendMessage(channel.id, text).getOrThrow()
                         }
-                        else -> repository.sendMessage(channel.id, body)
+                        else -> repository.sendMessage(channel.id, body).getOrThrow()
                     }
-                    val loaded = repository.getMessagesForChannel(channel.id, limit = 50)
-                    messages = loaded
-                } catch (e: Exception) {
-                    util.OrbitLog.e("ChatSend", "message send failed: ${e.message}")
+                }
+
+                // The composer already cleared itself and nothing was written.
+                // Three things now happen, and all three used to not happen:
+                //   1. the message goes back into the field
+                //   2. the user is told, instead of the app looking successful
+                //   3. there is a Retry that resends this exact text
+                if (result.isFailure) {
+                    OrbitNotices.error(
+                        text = "Message not sent: ${result.exceptionOrNull()?.message ?: "unknown error"}",
+                        subsystem = "ChatSend",
+                        retryLabel = "Retry",
+                        retry = { scope.launch { resendMessage(channel.id, body, trimmed) } }
+                    )
+                    failedDraft = body
+                } else {
+                    messages = repository.getMessagesForChannel(channel.id, limit = 50)
                 }
             }
         },
         onSendAttachment = { bytes, filename, mimeType ->
             scope.launch {
-                try {
+                // The upload and the send are two separate operations against two
+                // different endpoints. A failure in either loses the file — there
+                // is no draft of an attachment anywhere, so Retry is the only copy
+                // and it re-runs both steps. `mxcUrl` is deliberately NOT reused
+                // on retry: a half-finished upload may have left media on the
+                // server, and re-uploading is cheaper than referencing an orphan.
+                // Returns Unit and throws on failure, so `runCatching { … }`
+                // around it yields the Result<Unit> the retry path wants without
+                // any of the branches disagreeing on a type.
+                suspend fun attempt() {
                     val mxcUrl = repository.uploadMedia(bytes, mimeType, filename).getOrThrow()
                     when {
-                        mimeType.startsWith("image/") -> {
-                            repository.sendImageMessage(channel.id, mxcUrl, filename, mimeType, null, null, bytes.size.toLong())
-                        }
-                        mimeType.startsWith("audio/") -> {
-                            repository.sendAudioMessage(channel.id, mxcUrl, filename, mimeType, null, bytes.size.toLong())
-                        }
-                        else -> {
-                            repository.sendFileMessage(channel.id, mxcUrl, filename, mimeType, bytes.size.toLong())
-                        }
+                        mimeType.startsWith("image/") ->
+                            repository.sendImageMessage(channel.id, mxcUrl, filename, mimeType, null, null, bytes.size.toLong()).getOrThrow()
+                        mimeType.startsWith("audio/") ->
+                            repository.sendAudioMessage(channel.id, mxcUrl, filename, mimeType, null, bytes.size.toLong()).getOrThrow()
+                        else ->
+                            repository.sendFileMessage(channel.id, mxcUrl, filename, mimeType, bytes.size.toLong()).getOrThrow()
                     }
-                    val loaded = repository.getMessagesForChannel(channel.id, limit = 50)
-                    messages = loaded
-                } catch (e: Exception) {
-                    util.OrbitLog.e("ChatSend", "attachment send failed: ${e.message}")
+                }
+
+                val result = runCatching { attempt() }
+                if (result.isFailure) {
+                    OrbitNotices.error(
+                        "Attachment not sent: ${result.exceptionOrNull()?.message ?: "unknown error"}",
+                        "ChatSend",
+                        "Retry",
+                        { scope.launch { runCatching { attempt() }.onFailureOrNotify("Attachment", "ChatSend") } }
+                    )
+                } else {
+                    messages = repository.getMessagesForChannel(channel.id, limit = 50)
                 }
             }
         },
@@ -944,55 +1090,155 @@ fun ChatScreenWithRepo(
         },
         onReact = { eventId, emoji ->
             scope.launch {
-                runCatching { repository.sendReaction(channel.id, eventId, emoji) }
-                messages = repository.getMessagesForChannel(channel.id, limit = 50)
+                // Every one of these used to be `runCatching { ... }` with the
+                // Result dropped, followed by an unconditional re-read from the
+                // server. A failure therefore looked exactly like success: the
+                // re-read brought the unchanged state back and the UI reported
+                // nothing. Now the failure is surfaced and the re-read is skipped,
+                // because re-reading after a failed write just paints over the
+                // optimistic state the user was shown.
+                val result = repository.sendReaction(channel.id, eventId, emoji)
+                if (result.isFailure) {
+                    OrbitNotices.error(
+                        "Reaction not added: ${result.exceptionOrNull()?.message ?: "unknown error"}",
+                        "ChatReact",
+                        "Retry",
+                        { scope.launch { repository.sendReaction(channel.id, eventId, emoji)
+                            .onFailureOrNotify("Reaction", "ChatReact") } }
+                    )
+                } else {
+                    messages = repository.getMessagesForChannel(channel.id, limit = 50)
+                }
             }
         },
         onEditMessage = { eventId, newBody ->
             scope.launch {
-                runCatching { repository.editMessage(channel.id, eventId, newBody) }
-                messages = repository.getMessagesForChannel(channel.id, limit = 50)
+                val result = repository.editMessage(channel.id, eventId, newBody)
+                if (result.isFailure) {
+                    OrbitNotices.error(
+                        "Edit failed: ${result.exceptionOrNull()?.message ?: "unknown error"}",
+                        "ChatEdit",
+                        "Retry",
+                        { scope.launch { repository.editMessage(channel.id, eventId, newBody)
+                            .onFailureOrNotify("Edit", "ChatEdit") } }
+                    )
+                } else {
+                    messages = repository.getMessagesForChannel(channel.id, limit = 50)
+                }
             }
         },
         onDeleteMessage = { eventId ->
             scope.launch {
-                runCatching { repository.deleteMessage(channel.id, eventId) }
-                messages = repository.getMessagesForChannel(channel.id, limit = 50)
+                val result = repository.deleteMessage(channel.id, eventId)
+                if (result.isFailure) {
+                    OrbitNotices.error(
+                        "Message not deleted: ${result.exceptionOrNull()?.message ?: "unknown error"}",
+                        "ChatDelete",
+                        "Retry",
+                        { scope.launch { repository.deleteMessage(channel.id, eventId)
+                            .onFailureOrNotify("Delete", "ChatDelete") } }
+                    )
+                } else {
+                    messages = repository.getMessagesForChannel(channel.id, limit = 50)
+                }
             }
         },
         onTogglePin = { eventId ->
             scope.launch {
                 val currentlyPinned = messages.firstOrNull { it.id == eventId }?.isPinned == true
-                runCatching { repository.pinMessage(channel.id, eventId, !currentlyPinned) }
-                messages = repository.getMessagesForChannel(channel.id, limit = 50)
+                val result = repository.pinMessage(channel.id, eventId, !currentlyPinned)
+                if (result.isFailure) {
+                    val verb = if (currentlyPinned) "Unpin" else "Pin"
+                    OrbitNotices.error(
+                        "$verb failed: ${result.exceptionOrNull()?.message ?: "unknown error"}",
+                        "ChatPin",
+                        "Retry",
+                        { scope.launch { repository.pinMessage(channel.id, eventId, !currentlyPinned)
+                            .onFailureOrNotify(verb, "ChatPin") } }
+                    )
+                } else {
+                    messages = repository.getMessagesForChannel(channel.id, limit = 50)
+                }
             }
         },
         onSendReply = { replyToEventId, body ->
             scope.launch {
-                runCatching { repository.sendReplyMessage(channel.id, replyToEventId, body) }
-                messages = repository.getMessagesForChannel(channel.id, limit = 50)
+                val result = repository.sendReplyMessage(channel.id, replyToEventId, body)
+                if (result.isFailure) {
+                    // Same reasoning as onSend: the reply box has already closed
+                    // and cleared, so the text comes back to the composer too.
+                    OrbitNotices.error(
+                        "Reply not sent: ${result.exceptionOrNull()?.message ?: "unknown error"}",
+                        "ChatSend",
+                        "Retry",
+                        { scope.launch { repository.sendReplyMessage(channel.id, replyToEventId, body)
+                            .onFailureOrNotify("Reply", "ChatSend") } }
+                    )
+                    failedDraft = body
+                } else {
+                    messages = repository.getMessagesForChannel(channel.id, limit = 50)
+                }
             }
         },
+        onSendFailed = { failedDraft = it },
         memberRoles = memberRoles,
         onKickUser = { userId ->
             scope.launch {
-                runCatching { repository.kickUser(channel.id, userId, null).getOrThrow() }
-                runCatching { members = repository.getRoomMembers(channel.id) }
-                rolesVersion++
+                // These two called `.getOrThrow()` INSIDE the `runCatching`, so
+                // the exception was raised and then thrown away — the UI
+                // reported success for a kick that never happened. Worse than
+                // a silent failure: the user believes they enforced something.
+                val result = repository.kickUser(channel.id, userId, null)
+                if (result.isFailure) {
+                    OrbitNotices.error(
+                        "Kick failed — you may not have permission: " +
+                            (result.exceptionOrNull()?.message ?: "unknown error"),
+                        "RoomMod",
+                        "Retry",
+                        { scope.launch { repository.kickUser(channel.id, userId, null)
+                            .onFailureOrNotify("Kick", "RoomMod") } }
+                    )
+                } else {
+                    members = repository.getRoomMembers(channel.id)
+                    rolesVersion++
+                }
             }
         },
         onBanUser = { userId ->
             scope.launch {
-                runCatching { repository.banUser(channel.id, userId, null).getOrThrow() }
-                runCatching { members = repository.getRoomMembers(channel.id) }
-                rolesVersion++
+                val result = repository.banUser(channel.id, userId, null)
+                if (result.isFailure) {
+                    OrbitNotices.error(
+                        "Ban failed — you may not have permission: " +
+                            (result.exceptionOrNull()?.message ?: "unknown error"),
+                        "RoomMod",
+                        "Retry",
+                        { scope.launch { repository.banUser(channel.id, userId, null)
+                            .onFailureOrNotify("Ban", "RoomMod") } }
+                    )
+                } else {
+                    members = repository.getRoomMembers(channel.id)
+                    rolesVersion++
+                }
             }
         },
         onSetPowerLevel = { userId, level ->
             scope.launch {
-                runCatching { repository.setUserPowerLevel(channel.id, userId, level) }
-                    .onFailure { util.OrbitLog.e("Moderation", "power level change failed: ${it.message}") }
-                rolesVersion++
+                // This one DID log the failure — to the console, where nobody
+                // looks. It is the same class of bug as the others: correct
+                // repository, discarded outcome, no user-visible signal.
+                val result = repository.setUserPowerLevel(channel.id, userId, level)
+                if (result.isFailure) {
+                    OrbitNotices.error(
+                        "Role change failed: ${result.exceptionOrNull()?.message ?: "unknown error"}",
+                        "RoomMod",
+                        "Retry",
+                        { scope.launch { repository.setUserPowerLevel(channel.id, userId, level)
+                            .onFailureOrNotify("Role change", "RoomMod") } }
+                    )
+                } else {
+                    rolesVersion++
+                }
             }
         },
         notifMode = roomNotifMode,
@@ -1099,9 +1345,15 @@ private fun QuickSwitcherDialog(
                             onDismiss()
                             true
                         }
+                        // Unhandled here falls through to the .orbitGlobalShortcuts()
+                        // below, which sits later in this same chain and so
+                        // receives the event only after this handler declines it.
+                        // Ctrl+K, the call shortcuts and push-to-talk used to be
+                        // dead for as long as the switcher was open.
                         else -> false
                     }
                 }
+                .orbitGlobalShortcuts()
         ) {
             Column(modifier = Modifier.padding(vertical = 8.dp)) {
                 Row(

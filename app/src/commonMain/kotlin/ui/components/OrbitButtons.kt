@@ -50,6 +50,20 @@ enum class OrbitButtonTone { Primary, Neutral, Ghost, Danger, Success }
  * Previously every screen called Material's `Button` with hand-picked
  * container colours, which meant the same action looked different in the
  * settings pane, the call screen and the join-server dialog.
+ *
+ * ## Why most buttons draw nothing at rest
+ *
+ * A neutral button used to be a filled rounded rectangle with a 1dp border,
+ * and it almost always lived inside a card that is *also* a filled rounded
+ * rectangle with a 1dp border. Stacked, that is three outlines for one action
+ * and a screen that reads as boxy rather than calm. Discord's calm comes from
+ * having very few visible edges: quiet controls are text plus an icon until
+ * the cursor arrives, and only the accent-filled primary action keeps a
+ * resting surface.
+ *
+ * So `Neutral` and `Ghost` are quiet at rest (no fill, no outline), `Primary`,
+ * `Danger` and `Success` keep their fill because that fill *is* the emphasis,
+ * and the only outline a resting button ever draws is the keyboard focus ring.
  */
 @Composable
 fun OrbitButton(
@@ -63,6 +77,15 @@ fun OrbitButton(
     loading: Boolean = false,
     size: Dp = 34.dp,
     shape: Shape = OrbitRadius.smShape,
+    /**
+     * Stretch to the full width offered.
+     *
+     * DANGER: never pass this for a child of a `Row`/`Column` that has a weighted
+     * sibling. A Row measures non-weighted children against the FULL width first
+     * and only then shares the remainder, so `fillMaxWidth()` here wins outright
+     * and the weighted sibling collapses to zero. To share a Row evenly, pass
+     * `modifier = Modifier.weight(1f)` and leave this false.
+     */
     fullWidth: Boolean = false
 ) {
     val t = rememberCosmicTokens()
@@ -71,35 +94,39 @@ fun OrbitButton(
     val pressed by interaction.pressSource.collectIsPressedAsState()
     val focused by interaction.focusSource.collectIsFocusedAsState()
 
+    // Quiet tones have no resting surface at all; the hovered colour is the
+    // first time they draw one. Filled tones keep their fill at rest because
+    // that fill is what separates the primary action from everything else.
+    val quiet = tone == OrbitButtonTone.Neutral || tone == OrbitButtonTone.Ghost
+
     val resting = when (tone) {
         OrbitButtonTone.Primary -> t.Accent
-        OrbitButtonTone.Neutral -> t.CardBgHover
-        OrbitButtonTone.Ghost -> Color.Transparent
+        OrbitButtonTone.Neutral, OrbitButtonTone.Ghost -> Color.Transparent
         OrbitButtonTone.Danger -> t.Danger
         OrbitButtonTone.Success -> t.Success
     }
     val hoveredColor = when (tone) {
         OrbitButtonTone.Primary -> t.AccentLight
-        OrbitButtonTone.Neutral -> t.ElevatedAlt
-        OrbitButtonTone.Ghost -> t.Hover
+        // A quiet button reveals a plain surface, not a brighter box: the hover
+        // is a hint that the target is live, not a second resting style.
+        OrbitButtonTone.Neutral, OrbitButtonTone.Ghost -> t.Hover
         OrbitButtonTone.Danger -> t.Danger.copy(alpha = 0.86f)
         OrbitButtonTone.Success -> t.Success.copy(alpha = 0.88f)
     }
-    val outline = when (tone) {
-        OrbitButtonTone.Ghost -> if (hovered) t.AccentBorder else Color.Transparent
-        OrbitButtonTone.Neutral -> t.Separator
-        else -> Color.Transparent
-    }
+    // A quiet button is secondary by TEXT alone -- no fill, no ring -- which is
+    // the whole difference between it and the accent-filled primary.
     val content = when (tone) {
         OrbitButtonTone.Primary, OrbitButtonTone.Danger, OrbitButtonTone.Success -> onColorFor(resting)
-        OrbitButtonTone.Neutral -> t.Text_White
-        OrbitButtonTone.Ghost -> if (hovered) t.Text_White else t.Text_Secondary
+        OrbitButtonTone.Neutral, OrbitButtonTone.Ghost -> if (hovered || pressed) t.Text_White else t.Text_Secondary
     }
 
     val bg by animateColorAsState(
         targetValue = when {
-            !enabled -> t.CardBg.copy(alpha = 0.5f)
-            pressed -> resting.copy(alpha = 0.82f)
+            // A disabled quiet button is text, not a grey box. Dimming a fill
+            // that no longer exists would leave a phantom surface behind the
+            // label.
+            !enabled -> if (quiet) Color.Transparent else t.CardBg.copy(alpha = 0.5f)
+            pressed -> t.Pressed
             hovered -> hoveredColor
             else -> resting
         },
@@ -111,12 +138,12 @@ fun OrbitButton(
         animationSpec = OrbitMotion.SnappyColor,
         label = "btnFg"
     )
+    // The focus ring is the only outline a button ever draws. The old
+    // `Neutral -> Separator` outline ringed every secondary action in the app,
+    // and the `Ghost` hover outline ringed them again the moment the cursor
+    // passed over; this one carries information instead of decoration.
     val borderColor by animateColorAsState(
-        targetValue = when {
-            !enabled -> Color.Transparent
-            focused -> t.FocusRing
-            else -> outline
-        },
+        targetValue = if (focused && enabled) t.FocusRing else Color.Transparent,
         animationSpec = OrbitMotion.SnappyColor,
         label = "btnOutline"
     )
@@ -226,7 +253,7 @@ fun OrbitIconButton(
 
     val core: @Composable () -> Unit = {
         Box(
-            modifier = Modifier
+            modifier = modifier
                 .size(size)
                 .clip(shape)
                 .background(bg)
@@ -276,11 +303,15 @@ fun OrbitIconButtonRound(
 
     val bg by animateColorAsState(
         targetValue = when {
-            !enabled -> t.CardBg
+            // Quiet at rest, like every other button: this control floats over
+            // the message list, so a filled circle plus a 1dp ring is two edges
+            // drawn for one affordance. Hover reveals the surface instead.
+            !enabled -> Color.Transparent
             filled -> accentColor
             active -> t.AccentGhostStrong
-            hovered -> t.CardBgHover
-            else -> t.CardBg
+            pressed -> t.Pressed
+            hovered -> t.Hover
+            else -> Color.Transparent
         },
         animationSpec = OrbitMotion.SnappyColor,
         label = "roundBtnBg"
@@ -297,11 +328,6 @@ fun OrbitIconButtonRound(
         animationSpec = OrbitMotion.SnappyColor,
         label = "roundBtnTint"
     )
-    val borderColor by animateColorAsState(
-        targetValue = if (filled) Color.Transparent else t.Separator,
-        animationSpec = OrbitMotion.SnappyColor,
-        label = "roundBtnOutline"
-    )
     val scale by animateFloatAsState(
         targetValue = if (hovered) 1.05f else 1f,
         animationSpec = OrbitMotion.Snappy,
@@ -314,7 +340,6 @@ fun OrbitIconButtonRound(
                 .size(size)
                 .clip(CircleShape)
                 .background(bg)
-                .border(1.dp, borderColor, CircleShape)
                 .hoverable(interaction.hoverSource, enabled)
                 .scale(if (pressed) 0.94f else scale)
                 .orbitClickable(interaction, enabled, Role.Button, onClick = onClick),

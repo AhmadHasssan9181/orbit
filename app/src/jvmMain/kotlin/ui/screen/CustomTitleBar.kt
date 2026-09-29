@@ -32,6 +32,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -149,6 +153,12 @@ private fun TitleBarButton(
             .fillMaxHeight()
             .width(46.dp)
             .background(bg)
+            // The glyphs are drawn shapes / an Icon with a null description, so
+            // without this the window buttons were unlabelled to a screen reader.
+            .semantics {
+                contentDescription = description
+                role = Role.Button
+            }
             .hoverable(interaction)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },

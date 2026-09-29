@@ -112,8 +112,4 @@ enum class BottomNavTab(
         icon = OrbitIcons.Members,
         selectedIcon = OrbitIcons.Members
     );
-
-    companion object {
-        val entries = listOf(DMs, Servers, Search, Profile)
-    }
 }

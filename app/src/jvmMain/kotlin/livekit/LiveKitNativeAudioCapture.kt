@@ -1,5 +1,6 @@
 package livekit
 
+import util.OrbitLog
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import javax.sound.sampled.AudioFormat
@@ -12,6 +13,7 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 import kotlin.math.tanh
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -20,7 +22,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 
 object LiveKitNativeAudioCapture {
     const val SAMPLE_RATE = 48000
@@ -36,7 +38,34 @@ object LiveKitNativeAudioCapture {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var captureJob: Job? = null
+
+    /**
+     * Monotonic token identifying the CURRENT capture session.
+     *
+     * The capture loop used to test a shared `@Volatile started` flag. That flag
+     * belongs to whoever set it last, not to the loop that is running, so:
+     *
+     *  - Hang up, then immediately rejoin. The old loop is parked in
+     *    `line.read()` (which blocks ~10ms) and only re-checks the flag on the
+     *    next iteration. `start()` has already flipped it back to true by then, so
+     *    the old loop now sees `read <= 0` from ITS closed line, takes the
+     *    undelayed `continue`, hot-spins, and after 100 empty reads reports
+     *    `AUDIO_DEVICE_UNAVAILABLE` -- against the NEW call. That is the
+     *    "join right after hanging up fails" symptom.
+     *  - `activeLine` had no owner either, so a second `requestStop()` closed the
+     *    NEW loop's line.
+     *
+     * A per-session token fixes both: a stale loop's generation no longer matches,
+     * so it exits at the top of its own `while` instead of competing with the new
+     * session, and `requestStop` only closes the line it actually owns.
+     */
+    private val captureGeneration = java.util.concurrent.atomic.AtomicLong(0)
+
     @Volatile private var activeLine: TargetDataLine? = null
+
+    /** Which generation [activeLine] belongs to, so stop cannot close someone else's. */
+    @Volatile private var activeLineGeneration: Long = -1L
+
     @Volatile private var started = false
     @Volatile private var muted = false
     @Volatile private var sessionId = 0L
@@ -78,6 +107,13 @@ object LiveKitNativeAudioCapture {
     private const val LOW_INPUT_MESSAGE =
         "Captured microphone PCM is near silence. Check Windows mic level or select another input device."
 
+    // LiveKitNativeAudioBridge.acceptingFrames is a JNI call that takes the global
+    // native session mutex, which the EDT also holds across thread joins � polling
+    // it every 10 ms stalled mic capture. The native push already re-checks
+    // hasReadyMicLocked() per frame and silently drops, so a coarser poll costs at
+    // most a handful of dropped frames.
+    private const val ACCEPTING_FRAMES_POLL_FRAMES = 50
+
     data class MicProbeResult(
         val mixerName: String,
         val mixerDescription: String,
@@ -112,11 +148,20 @@ object LiveKitNativeAudioCapture {
         nativeBridge: OrbitLiveKitNativeBridge,
         onFailure: (NativeError) -> Unit
     ): Boolean {
-        if (started) return true
+        // Synchronised so two concurrent starts cannot both pass the guard and
+        // launch two capture loops onto the same device. The old `if (started)`
+        // check-then-set had a window between the read and the write.
+        val myGeneration: Long
+        synchronized(captureGeneration) {
+            if (started) return true
+            myGeneration = captureGeneration.incrementAndGet()
+            started = true
+        }
 
         LiveKitNativeAudioBridge.resetFrameDropLog()
         if (!LiveKitNativeAudioBridge.acceptingFrames) {
             println("ERROR [LiveKitNativeAudioCapture] Native C++ audio is not accepting frames")
+            started = false
             return false
         }
 
@@ -133,19 +178,52 @@ object LiveKitNativeAudioCapture {
         lowInputWarningLogged = false
         gainLogged = false
         apmLogged = false
-        started = true
         captureJob = scope.launch {
-            runCaptureLoop()
+            runCaptureLoop(myGeneration)
         }
         return true
     }
 
+    /**
+     * Stops capture and returns the job that was running, so a caller that is
+     * NOT on the UI thread can actually join it.
+     *
+     * Two things this fixes:
+     *
+     *  - `activeLine` is only closed if it belongs to the CURRENT generation. It
+     *    was a bare field, so a second `requestStop()` after a rejoin closed the
+     *    NEW loop's line.
+     *  - The generation is bumped, which is what actually retires a stale loop.
+     *    Setting `started = false` alone did not, because the stale loop reads
+     *    that flag only between 10ms reads and by then a rejoin had set it true
+     *    again.
+     */
+    /**
+     * Is [generation] still the live capture session?
+     *
+     * This is what a capture loop asks instead of reading `started`. The flag
+     * says "someone is capturing"; this says "*I* am the one capturing". The
+     * difference is the whole bug: a stale loop and a fresh one both saw
+     * `started == true`, so the stale one kept reading its closed line and
+     * eventually reported a device failure against the new call.
+     */
+    private fun isCurrentGeneration(generation: Long): Boolean =
+        started && captureGeneration.get() == generation
+
     private fun requestStop(): Job? {
         val job = captureJob
-        started = false
-        activeLine?.let { line ->
-            runCatching { line.stop() }
-            runCatching { line.close() }
+        synchronized(captureGeneration) {
+            started = false
+            captureGeneration.incrementAndGet()
+            // Only close the line this manager currently owns. The generation is
+            // bumped FIRST so the loop sees itself retired before its line is
+            // closed underneath it.
+            activeLine?.let { line ->
+                runCatching { line.stop() }
+                runCatching { line.close() }
+            }
+            activeLine = null
+            activeLineGeneration = -1L
         }
         job?.cancel()
         captureJob = null
@@ -164,13 +242,31 @@ object LiveKitNativeAudioCapture {
         muted = isMuted
     }
 
-    fun stopAndJoin() {
-        val job = requestStop()
-        if (job != null) {
-            runBlocking {
-                job.cancelAndJoin()
-            }
-        }
+    /**
+     * Stops capture and returns the capture job, or null if nothing was running.
+     *
+     * Prefer this over [stop] wherever the caller is not the UI thread: [stop]
+     * returns immediately, so "the old loop has definitely finished" is never
+     * actually established and a caller that reuses resources immediately after
+     * it is racing the loop it just cancelled.
+     */
+    fun stopAndJoin(): Job? = requestStop()
+
+    /**
+     * Fire-and-forget stop for callers on the UI thread.
+     *
+     * The join deliberately happens on the IO scope rather than blocking: this
+     * is reached from the Compose/EDT thread via
+     * `LiveKitNativeMediaSession.disconnect()`, and the capture loop only notices
+     * cancellation between 10ms reads, so a blocking join froze the window.
+     *
+     * Prefer [stopAndJoin] wherever the caller is NOT the UI thread — this
+     * returns before the loop has actually stopped, so a caller that immediately
+     * reuses the device is racing the loop it just cancelled.
+     */
+    fun stopAndJoinAsync() {
+        val job = requestStop() ?: return
+        scope.launch { job.cancelAndJoin() }
     }
 
     fun runMicCaptureSelfTest(durationMs: Long = 3000): MicCaptureSelfTestResult {
@@ -195,9 +291,25 @@ object LiveKitNativeAudioCapture {
         val candidatesToProbe = if (overrideName.isNotBlank()) {
             val matches = candidates.filter { it.overrideMatch }
             if (matches.isEmpty()) {
-                println("ERROR [LiveKitNativeAudioCapture] orbit.audio.inputDeviceName matched no TargetDataLine input device: $overrideName")
+                // FALL BACK, do not hard-fail. A configured device that Java
+                // cannot see is routine, not fatal: WASAPI-only virtual inputs
+                // (NVIDIA Broadcast, virtual audio cables, some Bluetooth
+                // headsets) never appear in AudioSystem's mixer list, because
+                // that list is DirectAudio. Probing nothing here produced
+                // "mixers=0", MIC_INPUT_TOO_LOW, and AUDIO_DEVICE_UNAVAILABLE --
+                // i.e. the app refused to call at all while four working inputs
+                // sat there unused. The override is a preference; the call is
+                // more important than the preference.
+                println(
+                    "WARN [LiveKitNativeAudioCapture] configured input '$overrideName' is not " +
+                        "visible to Java's audio mixer list (common with WASAPI-only virtual " +
+                        "devices). Falling back to the best available input; clear " +
+                        "orbit.audio.inputDeviceName to use the system default."
+                )
+                candidates
+            } else {
+                matches
             }
-            matches
         } else {
             candidates
         }
@@ -230,7 +342,13 @@ object LiveKitNativeAudioCapture {
         )
     }
 
-    fun prepareMicrophoneForCall(durationMs: Long = 3000): NativeResult<MicCaptureSelfTestResult> {
+    suspend fun prepareMicrophoneForCall(durationMs: Long = 3000): NativeResult<MicCaptureSelfTestResult> =
+        // 3 s PER MIXER of blocking TargetDataLine.read() probing. The connect path
+        // is driven from the Compose scope, so the whole probe is offloaded here
+        // rather than relying on the caller to pick the right dispatcher.
+        withContext(Dispatchers.IO) { prepareMicrophoneForCallOnIo(durationMs) }
+
+    private fun prepareMicrophoneForCallOnIo(durationMs: Long): NativeResult<MicCaptureSelfTestResult> {
         if (configuredTestTone()) {
             println("DEBUG [LiveKitNativeAudioCapture] microphone self-test skipped because test tone is enabled")
             return NativeResult.success(
@@ -289,19 +407,29 @@ object LiveKitNativeAudioCapture {
     fun configuredPublishChannels(): Int =
         if (configuredTestTone() && configuredTestToneStereo()) 2 else CHANNELS
 
-    private suspend fun runCaptureLoop() {
+    /**
+     * @param myGeneration the token [start] minted for THIS loop. The loop tests
+     *   its own token rather than the shared `started` flag, so a loop that has
+     *   been superseded stops itself instead of racing the session that replaced
+     *   it. See [captureGeneration] for the failure this prevents.
+     */
+    private suspend fun runCaptureLoop(myGeneration: Long) {
+        if (!isCurrentGeneration(myGeneration)) {
+            println("DEBUG [LiveKitNativeAudioCapture] capture loop for generation $myGeneration exited before opening a device (superseded)")
+            return
+        }
         val testTone = configuredTestTone()
         val testToneStereo = configuredTestToneStereo()
         val overrideName = configuredInputDeviceName()
         val explicitCaptureGain = orbitAudioConfig("orbit.audio.captureGain", "ORBIT_AUDIO_CAPTURE_GAIN")
             ?.toDoubleOrNull()
             ?.coerceIn(0.0, 100.0)
-        // With the APM active, AGC2 owns loudness; the old ×8 default boost is
+        // With the APM active, AGC2 owns loudness; the old �8 default boost is
         // only a fallback for the unprocessed path.
         val captureGain = explicitCaptureGain ?: if (OrbitApm.enabled) 1.0 else 8.0
         println("DEBUG [LiveKitNativeAudioCapture] audio flags: testTone=$testTone testToneStereo=$testToneStereo captureGain=$captureGain apm=${OrbitApm.enabled} inputDeviceName=${overrideName.ifBlank { "<none>" }} publishChannels=${configuredPublishChannels()}")
         if (testTone) {
-            runTestToneCaptureLoop()
+            runTestToneCaptureLoop(myGeneration)
             return
         }
 
@@ -335,9 +463,20 @@ object LiveKitNativeAudioCapture {
         val directBuffer = ByteBuffer.allocateDirect(FRAME_BYTES).order(ByteOrder.LITTLE_ENDIAN)
         var consecutivePushFailures = 0
         var frameOffset = 0
+        var acceptingPollCounter = 0
 
         val line = selectedLine.line
-        activeLine = line
+        // Record which session owns this line, so `requestStop` can close it only
+        // for the session that opened it.
+        synchronized(captureGeneration) {
+            if (!isCurrentGeneration(myGeneration)) {
+                runCatching { line.stop() }
+                runCatching { line.close() }
+                return
+            }
+            activeLine = line
+            activeLineGeneration = myGeneration
+        }
         // C1: when the device refused the pipeline format, the line opens at its
         // native format and every chunk converts through the resampler.
         val openFormat = selectedLine.openFormat ?: format
@@ -375,12 +514,12 @@ object LiveKitNativeAudioCapture {
             println("DEBUG [LiveKitNativeAudioCapture] capture line flushed after start available=${line.available()} bufferSize=${line.bufferSize}")
             println("DEBUG [LiveKitNativeAudioCapture] Recording loop started")
 
-            // A device that vanishes mid-call makes line.read return 0 immediately —
+            // A device that vanishes mid-call makes line.read return 0 immediately �
             // an unbounded `continue` here would hot-spin at 100% CPU with a "live"
             // call and nothing captured. Bail out via failureSink after a burst of
             // consecutive empty reads.
             var consecutiveEmptyReads = 0
-            while (started && kotlinx.coroutines.currentCoroutineContext().isActive) {
+            while (isCurrentGeneration(myGeneration) && kotlinx.coroutines.currentCoroutineContext().isActive) {
                 if (resampler == null) {
                     val requested = FRAME_BYTES - frameOffset
                     val read = line.read(heapBuffer, frameOffset, requested)
@@ -389,7 +528,7 @@ object LiveKitNativeAudioCapture {
                         CallPathStats.onMicReadStall()
                         consecutiveEmptyReads += 1
                         if (consecutiveEmptyReads == 25) {
-                            println("WARN [LiveKitNativeAudioCapture] mic read repeatedly returned $read (${consecutiveEmptyReads}x) — device may be gone")
+                            println("WARN [LiveKitNativeAudioCapture] mic read repeatedly returned $read (${consecutiveEmptyReads}x) � device may be gone")
                         }
                         if (consecutiveEmptyReads >= 100) {
                             failureSink?.invoke(
@@ -415,7 +554,7 @@ object LiveKitNativeAudioCapture {
                         CallPathStats.onMicReadStall()
                         consecutiveEmptyReads += 1
                         if (consecutiveEmptyReads == 25) {
-                            println("WARN [LiveKitNativeAudioCapture] resampled mic read repeatedly returned $read (${consecutiveEmptyReads}x) — device may be gone")
+                            println("WARN [LiveKitNativeAudioCapture] resampled mic read repeatedly returned $read (${consecutiveEmptyReads}x) � device may be gone")
                         }
                         if (consecutiveEmptyReads >= 100) {
                             failureSink?.invoke(
@@ -456,7 +595,7 @@ object LiveKitNativeAudioCapture {
                 }
                 if (muted) {
                     // C2: transmission gating is owned by the native track mute
-                    // (nativeSetAudioMuted + C++ worker skip) — no JVM-side zero-fill,
+                    // (nativeSetAudioMuted + C++ worker skip) � no JVM-side zero-fill,
                     // so a stuck JVM boolean can no longer cause permanent silence.
                     CallPathStats.onMicFrameMuted()
                 }
@@ -468,8 +607,12 @@ object LiveKitNativeAudioCapture {
                 logCapturedFrame(heapBuffer, FRAME_BYTES, muted, rawStats, captureGain)
                 CallPathStats.onMicFrameRead()
 
-                if (!LiveKitNativeAudioBridge.acceptingFrames) {
-                    continue
+                acceptingPollCounter += 1
+                if (acceptingPollCounter >= ACCEPTING_FRAMES_POLL_FRAMES) {
+                    acceptingPollCounter = 0
+                    if (!LiveKitNativeAudioBridge.acceptingFrames) {
+                        continue
+                    }
                 }
 
                 directBuffer.clear()
@@ -504,8 +647,22 @@ object LiveKitNativeAudioCapture {
                     break
                 }
             }
+        } catch (error: CancellationException) {
+            // Rethrown, not reported.
+            //
+            // `kotlinx.coroutines.CancellationException` is a `RuntimeException` on
+            // the JVM, so a `catch (Throwable)` — or even a `catch (Exception)` —
+            // catches it. Swallowing it here meant a loop that was deliberately
+            // cancelled ran its failure path, `cancelAndJoin` observed a
+            // "completed" job that had actually reported a device failure, and
+            // the failure was attributed to whichever call happened to be running.
+            //
+            // This was the only place in the codebase that did this. The
+            // repository layer rethrows it in 16 places; `NativeAwait` even calls
+            // `coroutineContext.ensureActive()` before converting a result.
+            throw error
         } catch (error: Throwable) {
-            if (started) {
+            if (isCurrentGeneration(myGeneration)) {
                 println("ERROR [LiveKitNativeAudioCapture] Capture failed: ${error.message}")
                 // C1: a failed open/start used to be swallowed here — the call looked
                 // live while nothing was ever captured. Surface it loudly instead.
@@ -517,19 +674,29 @@ object LiveKitNativeAudioCapture {
                         recoverable = true
                     )
                 )
+            } else {
+                println("DEBUG [LiveKitNativeAudioCapture] capture generation $myGeneration failed after being superseded; not reporting")
             }
         } finally {
             runCatching { line.stop() }
             runCatching { line.close() }
-            if (activeLine === line) {
-                activeLine = null
+            synchronized(captureGeneration) {
+                // Only tear down state if THIS loop still owns it. The old code
+                // cleared `started` unconditionally, so a superseded loop's
+                // `finally` retired the session that had replaced it — which then
+                // saw itself as not-current and exited, taking the new call's mic
+                // down with it. One stale loop could therefore kill two calls.
+                if (activeLineGeneration == myGeneration) {
+                    activeLine = null
+                    activeLineGeneration = -1L
+                    started = false
+                }
             }
-            started = false
-            println("DEBUG [LiveKitNativeAudioCapture] Recording loop stopped")
+            println("DEBUG [LiveKitNativeAudioCapture] Recording loop stopped (generation=$myGeneration)")
         }
     }
 
-    private suspend fun runTestToneCaptureLoop() {
+    private suspend fun runTestToneCaptureLoop(myGeneration: Long) {
         val channels = configuredPublishChannels()
         val frameBytes = SAMPLES_PER_CHANNEL * channels * BYTES_PER_SAMPLE
         println("DEBUG [LiveKitNativeAudioCapture] test tone enabled channels=$channels bytesPerFrame=$frameBytes")
@@ -539,9 +706,10 @@ object LiveKitNativeAudioCapture {
         val phaseStep = 2.0 * Math.PI * TEST_TONE_HZ / SAMPLE_RATE.toDouble()
         var diagnosticsLogged = false
         var consecutivePushFailures = 0
+        var acceptingPollCounter = 0
 
         try {
-            while (started && kotlinx.coroutines.currentCoroutineContext().isActive) {
+            while (isCurrentGeneration(myGeneration) && kotlinx.coroutines.currentCoroutineContext().isActive) {
                 phase = writeTestToneFrame(heapBuffer, phase, phaseStep, channels)
                 if (!diagnosticsLogged) {
                     val stats = pcmStats(heapBuffer, frameBytes)
@@ -549,9 +717,13 @@ object LiveKitNativeAudioCapture {
                     diagnosticsLogged = true
                 }
 
-                if (!LiveKitNativeAudioBridge.acceptingFrames) {
-                    delay(FRAME_MS.toLong())
-                    continue
+                acceptingPollCounter += 1
+                if (acceptingPollCounter >= ACCEPTING_FRAMES_POLL_FRAMES) {
+                    acceptingPollCounter = 0
+                    if (!LiveKitNativeAudioBridge.acceptingFrames) {
+                        delay(FRAME_MS.toLong())
+                        continue
+                    }
                 }
 
                 directBuffer.clear()
@@ -628,8 +800,23 @@ object LiveKitNativeAudioCapture {
                 .joinToString(" | ") { it.toDebugString() }
                 .ifBlank { "<unspecified>" }
             val extra = if (candidate.supportedFormats.size > 8) " (+${candidate.supportedFormats.size - 8} more)" else ""
+            // Behind the debug flag. This dumps every supported format of every
+            // mixer, for every mic open, on every connect attempt -- hundreds of
+            // lines that buried the one line that actually mattered
+            // (AUDIO_DEVICE_UNAVAILABLE) in a wall of noise.
+            if (OrbitLog.debugEnabled) {
+                println(
+                    "DEBUG [LiveKitNativeAudioCapture] input mixer #${index + 1}: name=${info.name} description=${info.description} vendor=${info.vendor} version=${info.version} targetLineClasses=${candidate.targetLineClasses.joinToString()} desiredFormatSupported=${candidate.desiredFormatSupported} overrideMatch=${candidate.overrideMatch} score=${candidate.score} supportedFormats=$formats$extra"
+                )
+            }
+        }
+        // Always say what was chosen, in one line, regardless of debug level.
+        if (candidates.isNotEmpty()) {
             println(
-                "DEBUG [LiveKitNativeAudioCapture] input mixer #${index + 1}: name=${info.name} description=${info.description} vendor=${info.vendor} version=${info.version} targetLineClasses=${candidate.targetLineClasses.joinToString()} desiredFormatSupported=${candidate.desiredFormatSupported} overrideMatch=${candidate.overrideMatch} score=${candidate.score} supportedFormats=$formats$extra"
+                "DEBUG [LiveKitNativeAudioCapture] ${candidates.size} input mixer(s) available; " +
+                    "override=${overrideName.ifBlank { "<none>" }}; " +
+                    "names=${candidates.joinToString(", ") { it.mixerInfo.name }} " +
+                    "(set -Dorbit.debug=true for the full inventory)"
             )
         }
     }
@@ -734,18 +921,29 @@ object LiveKitNativeAudioCapture {
         probeDurationMs: Long
     ): SelectedInputLine? {
         val usableCandidates = candidates.filter { it.desiredFormatSupported }
-        val candidatesToProbe = if (overrideName.isNotBlank()) {
+        val overrideMatches = if (overrideName.isNotBlank()) {
             usableCandidates.filter { it.overrideMatch }
         } else {
-            usableCandidates
+            emptyList()
+        }
+        // Same fallback as the self-test, and for the same reason: a configured
+        // device that Java's DirectAudio mixer list cannot see must not stop
+        // the call. Without this the self-test could pass on a fallback device
+        // and then the real open would still refuse, failing the join.
+        val candidatesToProbe = when {
+            overrideName.isBlank() -> usableCandidates
+            overrideMatches.isNotEmpty() -> overrideMatches
+            else -> {
+                println(
+                    "WARN [LiveKitNativeAudioCapture] configured input '$overrideName' is not " +
+                        "visible to Java's audio mixer list; falling back to the best available input."
+                )
+                usableCandidates
+            }
         }
 
         if (candidatesToProbe.isEmpty()) {
-            if (overrideName.isNotBlank()) {
-                println("ERROR [LiveKitNativeAudioCapture] orbit.audio.inputDeviceName did not match a usable input mixer: $overrideName")
-                return null
-            }
-            // C1: no device advertises the 48 kHz pipeline format — open one at its
+            // C1: no device advertises the 48 kHz pipeline format � open one at its
             // native format and resample, instead of failing the call.
             openResampledFallbackLine(candidates, format)?.let { return it }
             println("ERROR [LiveKitNativeAudioCapture] no input mixer supports a convertible PCM format")
@@ -805,7 +1003,7 @@ object LiveKitNativeAudioCapture {
 
         if (overrideName.isNotBlank()) return null
 
-        // C1: probes found no usable 48 kHz line — try a native-format + resample
+        // C1: probes found no usable 48 kHz line � try a native-format + resample
         // open before degrading to the system default.
         openResampledFallbackLine(candidates, format)?.let { return it }
 

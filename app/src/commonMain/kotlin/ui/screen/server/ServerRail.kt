@@ -4,17 +4,16 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -30,10 +29,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Explore
-import androidx.compose.material.icons.filled.DonutLarge
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -45,18 +41,15 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import ui.assets.OrbitBrandMark
 import ui.assets.OrbitServerAssetIcon
+import ui.components.HoverTooltip
 import ui.components.OrbitCountBadge
 import ui.components.OrbitScrollbar
 import ui.model.OrbitServer
-import ui.theme.LocalIsLiteMode
 import ui.theme.OrbitMotion
-import ui.theme.OrbitRadius
 import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
 
@@ -79,17 +72,9 @@ fun ServerRail(
     selectedServerId: String?,
     onServerClick: (String) -> Unit,
     onAddServerClick: () -> Unit = {},
-    selectedWhatsAppTab: String = "Chats",
-    onWhatsAppTabClick: (String) -> Unit = {},
     unreadByServer: Map<String, Int> = emptyMap(),
     modifier: Modifier = Modifier
 ) {
-    val isLiteMode = ui.theme.LocalIsLiteMode.current
-    if (isLiteMode) {
-        WhatsAppRail(selectedWhatsAppTab, onWhatsAppTabClick, modifier)
-        return
-    }
-
     val t = rememberCosmicTokens()
     val listState = rememberLazyListState()
     val spaces = servers.filter { !it.isDM }
@@ -98,7 +83,7 @@ fun ServerRail(
     Box(
         modifier = modifier
             .fillMaxHeight()
-            .width(72.dp)
+            .width(ui.theme.OrbitMetrics.railWidth)
             .background(t.Rail_Bg)
     ) {
         LazyColumn(
@@ -144,7 +129,7 @@ fun ServerRail(
                 )
             }
 
-            items(spaces, key = { it.id }) { server ->
+            items(spaces, key = { it.id }, contentType = { "space" }) { server ->
                 val isSelected = server.id == selectedServerId
                 ServerRailItem(
                     selected = isSelected,
@@ -259,55 +244,73 @@ private fun ServerRailItem(
         label = "railTileAlpha"
     )
 
-    Box(
+    HoverTooltip(
+        text = label,
+        visible = hovered,
         modifier = Modifier
             .fillMaxWidth()
-            .height(50.dp),
-        contentAlignment = Alignment.Center
+            .height(50.dp)
     ) {
-        Box(
-            modifier = Modifier
-                .align(Alignment.CenterStart)
-                .padding(start = 3.dp)
-                .width(3.dp)
-                .height(pillHeight)
-                .clip(RoundedCornerShape(topEnd = 3.dp, bottomEnd = 3.dp))
-                .background(pillColor)
-        )
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 3.dp)
+                    .width(3.dp)
+                    .height(pillHeight)
+                    .clip(RoundedCornerShape(topEnd = 3.dp, bottomEnd = 3.dp))
+                    .background(pillColor)
+            )
 
-        Box(
-            modifier = Modifier
-                .size(50.dp)
-                .alpha(tileAlpha)
-                .hoverable(interaction)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    role = Role.Button,
-                    onClick = onClick
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            content(hovered)
-
-            if (unreadCount > 0) {
+            // Hover names the space.
+            //
+            // The rail tile only ever draws `initialsOf(name)` when a space has no
+            // avatar, so three spaces can all read as "G" and nothing on screen
+            // identifies them. There was NO tooltip here at all — the comment
+            // below used to claim there was one, and the wrapper it referred to
+            // had been left with an empty content lambda, which measured 0x0 and
+            // so resolved its offset against nothing.
+            //
+            // The tile keeps the full 50dp height as the tooltip's anchor box so
+            // the popup appears beside the icon rather than through it.
+            ui.components.HoverTooltip(
+                text = label,
+                visible = hovered,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp)
+            ) {
                 Box(
                     modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(end = 3.dp, top = 2.dp)
+                        .size(50.dp)
+                        .alpha(tileAlpha)
+                        .hoverable(interaction)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            role = Role.Button,
+                            onClick = onClick
+                        ),
+                    contentAlignment = Alignment.Center
                 ) {
-                    OrbitCountBadge(count = unreadCount, color = t.Danger)
+                    content(hovered)
+
+                    if (unreadCount > 0) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(end = 3.dp, top = 2.dp)
+                        ) {
+                            OrbitCountBadge(count = unreadCount, color = t.Danger)
+                        }
+                    }
                 }
             }
         }
-
-        // Name, revealed on hover — the only way to know a space without opening it.
-        ui.components.HoverTooltip(
-            text = label,
-            visible = hovered,
-            modifier = Modifier
-        ) { }
     }
+    // The tooltip is the only way to name a space without opening it, so the
+    // tile itself is now its content: an empty content lambda left the wrapper
+    // 0x0 and the 54dp offset resolved against nothing.
 }
 
 @Composable
@@ -321,7 +324,11 @@ private fun RailActionTile(
     val hovered by interaction.collectIsHoveredAsState()
 
     val bg by animateColorAsState(
-        targetValue = if (hovered) t.CardBgHover else t.CardBg,
+        // Quiet at rest like every other button. This tile used to be a filled
+        // rounded square with a 1dp ring permanently drawn on it, and switched
+        // the ring to accent on hover -- a box that changed colour under the
+        // cursor, which is the loudest possible way to say "button".
+        targetValue = if (hovered) t.Hover else Color.Transparent,
         animationSpec = OrbitMotion.SnappyColor,
         label = "railActionBg"
     )
@@ -337,117 +344,46 @@ private fun RailActionTile(
     )
 
     Box(modifier = Modifier.fillMaxWidth().height(50.dp), contentAlignment = Alignment.Center) {
-        Box(
+        ui.components.HoverTooltip(
+            text = description,
+            visible = hovered,
             modifier = Modifier
-                .size(42.dp)
-                .scale(scale)
-                .clip(RoundedCornerShape(animateRailCorner(selected = false, hovered = hovered)))
-                .background(bg)
-                .border(1.dp, if (hovered) t.AccentBorder else t.Separator, RoundedCornerShape(18.dp))
-                .hoverable(interaction)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    role = Role.Button,
-                    onClick = onClick
-                ),
-            contentAlignment = Alignment.Center
+                .fillMaxWidth()
+                .height(50.dp)
         ) {
-            Icon(icon, contentDescription = description, tint = tint, modifier = Modifier.size(18.dp))
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .scale(scale)
+                        .clip(RoundedCornerShape(animateRailCorner(selected = false, hovered = hovered)))
+                        .background(bg)
+                        .hoverable(interaction)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            role = Role.Button,
+                            onClick = onClick
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(icon, contentDescription = description, tint = tint, modifier = Modifier.size(18.dp))
+                }
+            }
         }
-        ui.components.HoverTooltip(text = description, visible = hovered) { }
     }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
+/** Word-boundary split for initials; compiled once instead of per call. */
+private val WhitespaceRun = Regex("\\s+")
+
 internal fun initialsOf(name: String): String = when {
     name.isBlank() -> "?"
     name.length <= 2 -> name.uppercase()
-    else -> name.split(Regex("\\s+"))
+    else -> name.split(WhitespaceRun)
         .filter { it.isNotEmpty() }
         .take(2)
         .joinToString("") { it.first().uppercase() }
-}
-
-// ─── Lite Mode Messenger Rail ────────────────────────────────────────────
-
-@Composable
-private fun WhatsAppRail(selectedTab: String, onTabClick: (String) -> Unit, modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier
-            .fillMaxHeight()
-            .width(60.dp)
-            .background(ui.theme.rememberCosmicTokens().Rail_Bg)
-            .padding(vertical = OrbitSpace.md),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Top
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(OrbitSpace.xs)
-        ) {
-            LiteRailItem(ui.icons.OrbitIcons.TextChannel, "Chats", isSelected = selectedTab == "Chats", onClick = { onTabClick("Chats") })
-            LiteRailItem(ui.icons.OrbitIcons.Call, "Calls", isSelected = selectedTab == "Calls", onClick = { onTabClick("Calls") })
-            LiteRailItem(Icons.Default.DonutLarge, "Status", isSelected = selectedTab == "Status", onClick = { onTabClick("Status") })
-            LiteRailItem(ui.icons.OrbitIcons.Members, "Groups", isSelected = selectedTab == "Communities", onClick = { onTabClick("Communities") })
-        }
-    }
-}
-
-@Composable
-private fun LiteRailItem(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    isSelected: Boolean,
-    onClick: () -> Unit
-) {
-    val t = rememberCosmicTokens()
-    val interaction = remember { MutableInteractionSource() }
-    val hovered by interaction.collectIsHoveredAsState()
-
-    val bgColor by animateColorAsState(
-        targetValue = when {
-            isSelected -> t.ChannelSelected_Bg
-            hovered -> t.ChannelHover_Bg
-            else -> Color.Transparent
-        },
-        animationSpec = OrbitMotion.SnappyColor,
-        label = "liteRailBg"
-    )
-    val iconTint by animateColorAsState(
-        targetValue = when {
-            isSelected -> t.Accent
-            hovered -> t.Text_White
-            else -> t.Text_Muted
-        },
-        animationSpec = OrbitMotion.SnappyColor,
-        label = "liteRailTint"
-    )
-
-    Column(
-        modifier = Modifier
-            .size(50.dp)
-            .clip(OrbitRadius.mdShape)
-            .background(bgColor)
-            .hoverable(interaction)
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onClick
-            ),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Icon(imageVector = icon, contentDescription = label, tint = iconTint, modifier = Modifier.size(19.dp))
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall.copy(
-                color = iconTint,
-                fontSize = 8.5.sp,
-                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-            ),
-            maxLines = 1
-        )
-    }
 }

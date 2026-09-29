@@ -19,27 +19,46 @@ object CallRingtone {
     private const val CYCLE_SAMPLES = SAMPLE_RATE * 4L
     private const val FADE_SAMPLES = SAMPLE_RATE / 125L
 
-    private var playing = false
+    /**
+     * Read by the worker thread on every 100 ms chunk, written by [setPlaying].
+     *
+     * It was a plain `var` with no happens-before edge between the write (inside
+     * `@Synchronized`) and the read (on the worker, unsynchronized), so the loop
+     * could legitimately never observe the stop and would ring until the line was
+     * closed from elsewhere.
+     *
+     * `AtomicBoolean` rather than `@Volatile`: the value is only ever compared,
+     * and an explicit atomic documents that the comparison and the flip are the
+     * contract rather than an accident.
+     */
+    private val playing = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    @Volatile
     private var worker: Thread? = null
 
     @Synchronized
     fun setPlaying(start: Boolean) {
-        if (start == playing) return
-        playing = start
+        if (start == playing.get()) return
+        playing.set(start)
         if (start) {
             worker = thread(name = "orbit-ringtone", isDaemon = true) { runLoop() }
+        } else {
+            // Drop the handle as soon as we are told to stop, so the loop's
+            // `worker === self` guard stops it even if the flag write is delayed.
+            worker = null
         }
     }
 
     private fun runLoop() {
         val self = Thread.currentThread()
+        var line: javax.sound.sampled.SourceDataLine? = null
         try {
             val format = AudioFormat(SAMPLE_RATE.toFloat(), 16, 1, true, false)
-            val line = AudioSystem.getSourceDataLine(format)
+            line = AudioSystem.getSourceDataLine(format)
             line.open(format, SAMPLE_RATE / 2)
             line.start()
             var phase = 0L
-            while (playing && worker === self) {
+            while (playing.get() && worker === self) {
                 val chunkSamples = SAMPLE_RATE / 10
                 val bytes = ByteArray(chunkSamples * 2)
                 for (i in 0 until chunkSamples) {
@@ -60,10 +79,20 @@ object CallRingtone {
                 }
                 line.write(bytes, 0, bytes.size)
             }
-            line.stop()
-            line.close()
         } catch (error: Throwable) {
             println("WARN [CallRingtone] playback failed: ${error.message}")
+            // Reset the flag if the DEVICE failed to open. It used to stay `true`
+            // with a non-null worker, so every later `setPlaying(true)` short-
+            // circuited on `start == playing` and the ringtone never sounded again
+            // for the rest of the process -- one unavailable output device and the
+            // feature is dead until restart.
+            playing.set(false)
+            synchronized(this) {
+                if (worker === self) worker = null
+            }
+        } finally {
+            runCatching { line?.stop() }
+            runCatching { line?.close() }
         }
     }
 }

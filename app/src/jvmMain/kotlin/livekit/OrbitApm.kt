@@ -29,16 +29,23 @@ object OrbitApm {
         agcEnabled = autoGainControl
         val processor = apm ?: return
         if (!changed) return
-        synchronized(stateLock) {
-            if (apm == null) return
-            runCatching {
-                processor.applyConfig(buildConfig())
-                println(
-                    "DEBUG [OrbitApm] config updated ns=$noiseSuppression ec=$echoCancellation " +
-                        "agc2=$autoGainControl hpf=true"
-                )
-            }.onFailure { error ->
-                println("WARN [OrbitApm] applyConfig failed: ${error.message}")
+        // processLock FIRST, then stateLock — the same order stop() uses, so the
+        // pair cannot invert. applyConfig re-initialises the AEC3/NS/AGC2 state
+        // inside the native object, so it must not land in the middle of an
+        // in-flight processStream; taking only stateLock did not exclude the
+        // processing threads, which use a different lock.
+        synchronized(processLock) {
+            synchronized(stateLock) {
+                if (apm == null) return
+                runCatching {
+                    processor.applyConfig(buildConfig())
+                    println(
+                        "DEBUG [OrbitApm] config updated ns=$noiseSuppression ec=$echoCancellation " +
+                            "agc2=$autoGainControl hpf=true"
+                    )
+                }.onFailure { error ->
+                    println("WARN [OrbitApm] applyConfig failed: ${error.message}")
+                }
             }
         }
     }
@@ -50,6 +57,14 @@ object OrbitApm {
     private var renderChunk: ByteArray = ByteArray(0)
 
     private val stateLock = Any()
+    // processCapture runs on the IO capture coroutine while processRender runs on
+    // the dedicated orbit-audio-playback thread; one AudioProcessing instance is
+    // NOT reentrant, so concurrent calls corrupt AEC/AGC/NS internal state.
+    // EVERY native call on `apm` takes this lock — processStream,
+    // processReverseStream, applyConfig, setStreamDelayMs and dispose — because
+    // the corruption is in the native object, not in one particular entry point.
+    // Lock order is processLock -> stateLock, always.
+    private val processLock = Any()
     private var firstCaptureLogged = false
     private var firstRenderLogged = false
     private var captureFailures = 0L
@@ -82,11 +97,15 @@ object OrbitApm {
     }
 
     fun stop() {
-        synchronized(stateLock) {
-            runCatching { apm?.dispose() }
-            apm = null
-            firstCaptureLogged = false
-            firstRenderLogged = false
+        // processLock is taken first so a dispose can never land in the middle of
+        // an in-flight processStream/processReverseStream on the native object.
+        synchronized(processLock) {
+            synchronized(stateLock) {
+                runCatching { apm?.dispose() }
+                apm = null
+                firstCaptureLogged = false
+                firstRenderLogged = false
+            }
         }
     }
 
@@ -95,14 +114,19 @@ object OrbitApm {
      * Returns true when the frame was processed.
      */
     fun processCapture(buffer: ByteArray, byteLength: Int, sampleRate: Int, channels: Int): Boolean {
-        val processor = apm ?: return false
         val config = captureConfig.takeIf { it.sampleRate == sampleRate && it.channels == channels }
             ?: AudioProcessingStreamConfig(sampleRate, channels).also { captureConfig = it }
-        val result = runCatching {
-            processor.processStream(buffer, config, config, buffer)
-        }.getOrElse { error ->
-            logCaptureFailure("processCapture threw: ${error.message}")
-            return false
+        val result = synchronized(processLock) {
+            // Re-read the handle INSIDE the lock. Reading it outside meant a
+            // stop() could dispose the native object in the gap and the wait
+            // here would then call processStream on freed memory.
+            val processor = apm ?: return false
+            runCatching {
+                processor.processStream(buffer, config, config, buffer)
+            }.getOrElse { error ->
+                logCaptureFailure("processCapture threw: ${error.message}")
+                return false
+            }
         }
         if (result != 0) {
             logCaptureFailure("processCapture returned $result")
@@ -123,7 +147,7 @@ object OrbitApm {
      * Accepts arbitrary frame sizes; internally processes 10 ms chunks.
      */
     fun processRender(pcm: ByteArray, sampleRate: Int, channels: Int) {
-        val processor = apm ?: return
+        if (apm == null) return
         val frameSamples = sampleRate / 100
         val frameBytes = frameSamples * channels * 2
         if (frameBytes <= 0 || pcm.size < frameBytes) return
@@ -135,11 +159,16 @@ object OrbitApm {
         var offset = 0
         while (offset + frameBytes <= pcm.size) {
             System.arraycopy(pcm, offset, renderChunk, 0, frameBytes)
-            val result = runCatching {
-                processor.processReverseStream(renderChunk, config, config, renderChunk)
-            }.getOrElse { error ->
-                logRenderFailure("processReverseStream threw: ${error.message}")
-                return
+            val result = synchronized(processLock) {
+                // Re-read inside the lock, for the same dispose-race reason as
+                // processCapture.
+                val processor = apm ?: return
+                runCatching {
+                    processor.processReverseStream(renderChunk, config, config, renderChunk)
+                }.getOrElse { error ->
+                    logRenderFailure("processReverseStream threw: ${error.message}")
+                    return
+                }
             }
             if (result != 0) {
                 logRenderFailure("processReverseStream returned $result")

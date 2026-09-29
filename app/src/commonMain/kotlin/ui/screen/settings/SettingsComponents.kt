@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -48,6 +49,17 @@ import ui.theme.rememberCosmicTokens
  * hovering a static information row lit it up like a button. Cards are now
  * inert; only the actual control is interactive. That single change removes
  * most of the ways the settings screen used to feel broken.
+ *
+ * ## Why the card keeps its ring
+ *
+ * The card is the one surface in the app that is *supposed* to draw a
+ * permanent edge. A settings page is a long scroll of unrelated rows, and
+ * without the boundary a switch at the end of "Minimize to tray" reads as
+ * belonging to whatever came before it. The borderless pass is therefore
+ * directional: cards keep the fill and the hairline, and everything placed
+ * *inside* a card gives its own border up -- buttons, the segmented control
+ * and the text fields all do. That is what stops the old stack of
+ * border-in-border-in-border.
  */
 @Composable
 internal fun PrefCard(
@@ -77,7 +89,22 @@ internal fun PrefCard(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            PrefCardHeading(title, description, icon, Modifier.weight(1f).padding(end = OrbitSpace.lg))
+            PrefCardHeading(
+                title,
+                description,
+                icon,
+                // The floor matters as much as the weight. `weight(1f)` is a
+                // REQUEST for leftover space, not a guarantee: any sibling that
+                // measures wide takes the remainder first and this one collapses
+                // to nothing. A zero-width Text wraps one glyph per line, which is
+                // how "App Theme" turned into a vertical A-p-p-T-h-e-m-e. 120dp is
+                // below any real label but well above one character, so the worst
+                // case is a clipped word instead of a broken layout.
+                Modifier
+                    .weight(1f, fill = false)
+                    .widthIn(min = 120.dp)
+                    .padding(end = OrbitSpace.lg)
+            )
             content()
         }
     }
@@ -156,66 +183,28 @@ internal fun SectionHeader(text: String, subtitle: String? = null) {
     }
 }
 
+/**
+ * Segmented selector, themed to match the rest of the app.
+ *
+ * [fillWidth] defaults to false here even though the underlying control defaults
+ * to true. Every `ChipGroup` sits in a `PrefCard` next to a heading, which is
+ * exactly the arrangement that starves a `fillMaxWidth()` sibling. Content-width
+ * segments plus the control's own horizontal scroll means the chips never eat the
+ * heading's space, however many options a theme list grows to have.
+ */
 @Composable
-internal fun HeroCard(
-    icon: ImageVector,
-    iconTint: Color,
-    title: String,
-    subtitle: String,
-    gradient: List<Color>? = null,
-    buttonText: String? = null,
-    onButtonClick: () -> Unit = {}
+internal fun ChipGroup(
+    options: List<String>,
+    selected: String,
+    onSelect: (String) -> Unit,
+    fillWidth: Boolean = false
 ) {
-    val t = rememberCosmicTokens()
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(OrbitRadius.mdShape)
-            .background(if (gradient != null) Brush.horizontalGradient(gradient) else Brush.linearGradient(listOf(t.CardBg, t.CardBg)))
-            .border(1.dp, t.Separator, OrbitRadius.mdShape)
-            .padding(OrbitSpace.xxl),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Box(
-            modifier = Modifier
-                .size(46.dp)
-                .clip(OrbitRadius.lgShape)
-                .background(iconTint.copy(alpha = 0.14f)),
-            contentAlignment = Alignment.Center
-        ) {
-            androidx.compose.material3.Icon(icon, null, tint = iconTint, modifier = Modifier.size(24.dp))
-        }
-        Spacer(Modifier.height(OrbitSpace.md))
-        Text(
-            title,
-            style = MaterialTheme.typography.titleMedium.copy(
-                color = t.Text_White,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 16.sp
-            ),
-            textAlign = TextAlign.Center
-        )
-        Spacer(Modifier.height(OrbitSpace.xs))
-        Text(
-            subtitle,
-            style = MaterialTheme.typography.bodySmall.copy(color = t.Text_Muted, lineHeight = 18.sp),
-            textAlign = TextAlign.Center
-        )
-        if (buttonText != null) {
-            Spacer(Modifier.height(OrbitSpace.lg))
-            OrbitButton(text = buttonText, onClick = onButtonClick, tone = OrbitButtonTone.Primary)
-        }
-    }
-}
-
-/** Segmented selector, themed to match the rest of the app. */
-@Composable
-internal fun ChipGroup(options: List<String>, selected: String, onSelect: (String) -> Unit) {
     OrbitSegmentedControl(
         options = options,
         selected = selected,
         onSelect = onSelect,
-        label = { it }
+        label = { it },
+        fillWidth = fillWidth
     )
 }
 
@@ -227,23 +216,4 @@ internal fun CosmicSwitch(
 ) {
     val t = rememberCosmicTokens()
     OrbitSwitch(checked = checked, onCheckedChange = onCheckedChange)
-}
-
-@Composable
-internal fun StatusBadge(text: String, color: Color) {
-    Box(
-        modifier = Modifier
-            .clip(OrbitRadius.xsShape)
-            .background(color.copy(alpha = 0.15f))
-            .padding(horizontal = 8.dp, vertical = 3.dp)
-    ) {
-        Text(
-            text,
-            style = MaterialTheme.typography.labelSmall.copy(
-                color = color,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 10.5.sp
-            )
-        )
-    }
 }

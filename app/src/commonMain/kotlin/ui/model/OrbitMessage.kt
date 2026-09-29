@@ -1,5 +1,6 @@
 package ui.model
 
+import androidx.compose.runtime.Immutable
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
@@ -16,6 +17,9 @@ import ui.screen.main.*
  * Sealed hierarchy of all Matrix message content types.
  * Used to drive rich rendering in the UI without stringly-typed branching.
  */
+// Every leaf is a data class of vals of stable types and the hierarchy is
+// closed, so the sealed base is stable as far as Compose is concerned.
+@Immutable
 sealed class MessageContent {
     /** m.text — regular plain or formatted text */
     data class Text(
@@ -106,6 +110,21 @@ sealed class MessageContent {
     /** Redacted / deleted message */
     data class Redacted(val reason: String? = null) : MessageContent()
 
+    /**
+     * An encrypted message we could not read.
+     *
+     * Its own type rather than a `Text` body carrying a placeholder string,
+     * because a placeholder rendered as an ordinary message with the sender's
+     * name and avatar is indistinguishable from real content -- it looks
+     * something you could read and act on. This lets the renderer draw it
+     * muted and say something true.
+     *
+     * @param pending true when the megolm session is still expected to arrive,
+     *   so more messages may decrypt. False when we tried and failed, which for
+     *   a message from before this device joined the room means it never will.
+     */
+    data class Undecryptable(val pending: Boolean) : MessageContent()
+
     /** Any message type we don't yet handle */
     data class Unsupported(val type: String, val fallbackBody: String = "") : MessageContent()
 }
@@ -126,6 +145,11 @@ val MessageContent.displayText: String
         is MessageContent.Edit -> newContent.displayText
         is MessageContent.Reply -> actualContent.displayText
         is MessageContent.Redacted -> reason?.let { "Message deleted: $it" } ?: "Message deleted"
+        is MessageContent.Undecryptable ->
+            // Honest about which of the two situations this is. "Waiting for
+            // keys" on a message from months ago is a promise nothing is going
+            // to keep.
+            if (pending) "Encrypted — waiting for keys" else "This message couldn't be decrypted"
         is MessageContent.Unsupported -> fallbackBody.ifBlank { "[$type]" }
     }
 
@@ -133,6 +157,8 @@ val MessageContent.displayText: String
  * Represents a message in a channel conversation.
  * Extends the original model with rich content type support.
  */
+// Stable: vals of String/Boolean/Instant/@Immutable MessageContent/List/Map.
+@Immutable
 data class OrbitMessage(
     val id: String,
     val userId: String,
