@@ -17,6 +17,34 @@ object MatrixRtcMembershipContent {
     const val LEGACY_EXPIRES_MS = 43_200_000L // 12 h — Element mirror shape
     const val MODERN_EXPIRES_MS = 14_400_000L // 4 h — modern shape
 
+    /**
+     * `lifetime` for the `m.call` **definition** event Orbit publishes.
+     *
+     * This is a different field from the membership event's `expires`, and its
+     * absence was a real defect.
+     *
+     * MSC3401 gives a call definition a `lifetime` precisely so a call can end
+     * without anyone publishing a termination: the definition stops being a call
+     * `origin_server_ts + lifetime` milliseconds after it was sent. That covers
+     * the ordinary way calls die -- whoever started it crashes, is killed, or
+     * loses connectivity at hangup and never gets round to writing
+     * `m.terminated`.
+     *
+     * `startGroupCall` published only `m.intent` and `m.foci_preferred`, so every
+     * call Orbit ever started had an immortal definition. The evidence is in a
+     * run log: a room still reporting `current call began 10534060322ms ago`
+     * -- 121 days -- with its definition un-terminated and therefore
+     * un-terminatable. Because the definition could never age out,
+     * `CallStateResolver.definitionAgedOut` returned false ("cannot prove it
+     * expired" -- there was no `lifetime` to prove anything with), the room read
+     * as permanently live, and its 3-second roster poller ran for the rest of
+     * the session.
+     *
+     * 8 hours matches what Element Web publishes, and is comfortably longer than
+     * any real call so a long conversation is never cut off mid-sentence.
+     */
+    const val DEFINITION_LIFETIME_MS = 28_800_000L // 8 h — Element's own value
+
     fun expiresMs(legacyElementShape: Boolean): Long =
         if (legacyElementShape) LEGACY_EXPIRES_MS else MODERN_EXPIRES_MS
 
