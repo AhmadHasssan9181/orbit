@@ -512,24 +512,58 @@ was verified with a reference count (or a compile) before cutting.
 
 ## 6. Known-unimplemented
 
-Honest list. None of these are wired to anything, and none of them are quick.
-The failed-send blocker and the fifteen silent failures are **gone** — see §4.
+Honest list, re-verified against the code on 2026-09-30 rather than trusted
+from an earlier pass. Two items that used to be here are gone
+(`switchCamera()` has no definition anywhere in `app/src`; the roster
+reconciliation and the join-call banner are fixed and deleted respectively).
+Everything below is confirmed still open by reading the code or a run log.
 
-| Thing | State |
+### Costs the user something today
+
+| Thing | State | Evidence |
+|---|---|---|
+| **Playback underruns** | `underruns=364` in a single 5s window while `play.arrived=500 play.played=500`. The playback sink is starving and refilling, not the mixer — the mixer reported `drops=0 catchUp=0 qDepth=3360` in the same call. Compounded by `output device "Speakers (NVIDIA Broadcast)" matched no mixer, using default` | run 14 `CallPathStats` |
+| **Video heap** | 3,686,400 bytes per 1280x720 frame at 30 fps. `heap used=258MB` mid-call, and the 3.6 MB `ByteArray` per frame is copied on every UI update | run 14 `RemoteVideoUI frame updated` |
+| **Key-exchange convergence sweep never gives up** | `convergence sweep: resending key index=N to 1 underdelivered device(s) ([@nfak_ism:matrix.org:ZVK65HTOZW])` every 3s for the whole call, then `deferring 1 device(s) without stored keys` — the same device, immediately after deferring it. The loop has no attempt cap or backoff | run 14, every run |
+| **Avatars in 1:1** | The local "You" tile and the whole P2P path never resolve `avatarUrl`, so 1:1s fall back to a seed colour next to group tiles | read 2026-09-30 |
+| **Chat history stops at 50** | The repository's `fromToken` is correct; the UI never supplies one, so there is no scrollback | read 2026-09-30 |
+| **Room topic is never read back** | `createRoom` writes `m.room.topic`, and no code path parses it back into `OrbitChannel.topic`. `ChatHeader` renders the subtitle correctly and it is always blank | grep: `topic =` appears only on the create path |
+| **`raise_hand` does nothing** | `sendCallEvent` is a `when` over trixnity's *closed* `CallEventContent` — only `m.call.invite/answer/negotiate/candidates/hangup`. `io.orbit.raise_hand` is not a case, so the button logs `Unknown call event type` and stops | `MatrixCallsRepository.sendCallEvent` |
+| **`OrbitVideoEngine.injectVideoProcessor`** | No implementation in any shipped DLL (verified: sibling symbols are present). Also why the virtual background is inert | DLL symbol check |
+| **`OrbitAudioDeviceModule.setAttenuationStrength`** | Same. Also why **Ducking Strength is inert in group calls** | DLL symbol check |
+| No way to *start* device verification | `VerificationOverlay` handles an incoming request and SAS completion correctly, but nothing ever calls `verification.requestVerification()`. You can verify when asked; you can never ask | read 2026-09-30 |
+| `CallGrid` tile overflow | Tiles stack unbounded past the grid | read 2026-09-30 |
+| Reconnect watchdog | `GroupCallConnectionTracker.Reconnecting` has no timeout, so a dead socket reconnects forever | read 2026-09-30 |
+| Soundboard in 1:1 | Local-monitor only. In a group call it is broadcast; in a P2P call you hear yourself | read 2026-09-30 |
+| Banner URL | Parsed and then rendered nowhere | read 2026-09-30 |
+| `callRenderThumbnail` / `callFlagDirectChatForRoom` | Called from `WebRtcEffects` into `trixnity` APIs that don't exist | read 2026-09-30 |
+
+### Not fixable in this codebase
+
+| Thing | Why |
 |---|---|
-| **Avatars in 1:1** | The local "You" tile and the whole P2P path never resolve `avatarUrl`. They fall back to a seed colour, so 1:1s look flat next to group tiles. **Now the top user-visible defect** |
-| `switchCamera()` | `override fun switchCamera() {}`. An empty body behind a working button |
-| `OrbitVideoEngine.injectVideoProcessor` | No implementation in any shipped DLL (verified: sibling symbols are present) |
-| `OrbitAudioDeviceModule.setAttenuationStrength` | Same. Also why **Ducking Strength is inert in group calls** |
-| No way to *start* device verification | `VerificationOverlay` handles an incoming request and SAS completion correctly, but nothing ever calls `verification.requestVerification()`. You can verify when asked; you can never ask |
-| Chat history pagination | The repository's `fromToken` is correct — the gap is that the UI never supplies one, so the list stops at 50 messages |
-| Soundboard in 1:1 | Local-monitor only. In a group call it is broadcast; in a P2P call you hear yourself |
-| `CallGrid` tile overflow | Tiles stack unbounded past the grid |
-| Reconnect watchdog | `GroupCallConnectionTracker.Reconnecting` has no timeout, so a dead socket reconnects forever |
-| Banner URL | Parsed and then rendered nowhere |
-| Deafen-of-others | **Impossible by protocol.** Local output muting only; there is no wire signal. Never promise this |
-| E2EE key lifecycle | Zero test coverage. Native-only; needs two encrypted clients and a mid-call network drop |
-| `callRenderThumbnail` / `callFlagDirectChatForRoom` | Called from `WebRtcEffects` into `trixnity` APIs that don't exist |
+| Deafen-of-others | **Impossible by protocol.** Local output muting only; there is no wire signal in MatrixRTC. Never promise this |
+| E2EE key lifecycle test coverage | Needs two encrypted clients and a mid-call network drop. Zero coverage today and no way to get it without a harness |
+
+### Corrected as of this session
+
+- The 50ms `g_sessionMutex` self-cleanup wait on both remote readers is gone.
+  It could never succeed (the holder is the thread blocked joining) and only
+  added 50ms to every hangup. Now one non-blocking attempt. **The video
+  reader's warning still appears on a *mute* event, not teardown** — a track
+  that goes muted exits its reader mid-call while the room delegate holds the
+  lock. Harmless (the rescan restarts it, and run 14 shows
+  `rescan recovered missing readers video=1`) but the warning is misleading.
+- `jbMinMs` was a cumulative sum printed per-frame (38,438,400 ms = 10.7
+  hours). Now normalised like `jbTargetMs`; run 14 reads 26–34ms.
+- Remote audio is genuinely working: run 14 shows `inRms=339 outRms=339` and
+  `RXSTAT lost=0`. The silence that looked like a second bug was the mixer
+  evicting its own buffer.
+- One thing that is *not* a bug, and will read as one: run 14 shows
+  `concealedSamples=228165 silentConcealed=221520` and `inRms=0` at several
+  sample points, alongside repeated `remote mic muted` / `remote mic
+  unmuted`. The remote peer is muting. `silentConcealed` tracks their mute
+  state, not a fault on our side.
 
 ### What still has no error surface
 
@@ -682,8 +716,23 @@ Three limitations it states plainly, because they are counter-intuitive:
 
 ## 10. Open UI work
 
-The call view and drawer now match Discord's *structure* and palette. What has
-not been redone:
+The call view and drawer now match Discord's *structure* and palette. The
+call/chat arrangement was settled on 2026-09-30 after three wrong attempts,
+and the reasoning is worth keeping because it is not obvious:
+
+- **Call in the main column at full width, room timeline in a 380dp side
+  panel.** Both on screen, neither a mode. Below 600dp they stack.
+- A `Voice` row under every room in the drawer. It is a **call action on the
+  room above it** — no `OrbitChannel`, no id, no category — because Discord
+  has two kinds of channel and Matrix does not, and synthesising a fake voice
+  channel is what produced three rooms called "General" where clicking one
+  opened another.
+- Pressing it opens the room and joins. **It never hangs up**; leaving is the
+  red button. It was a toggle once and that was a bug — see §4.
+- The in-room "join call" banner was deleted. Two affordances for one action
+  is how a call ends up running while the UI still invites you to start it.
+
+Not redone:
 
 - Message list density — Discord runs ~22px rows; Orbit's are roomier
 - Server rail — Discord's is 48px flat; Orbit's is wider and rounder
@@ -692,9 +741,9 @@ not been redone:
   properly means changing token values
 
 (The channel-header topic line is **not** on this list — `ChatHeader` does render
-`channel.topic` as a subtitle when it is non-blank. It is usually blank, because
+`channel.topic` as a subtitle when it is non-blank. It is always blank because
 `m.room.topic` is written on create and never parsed back. That is a repository
-gap, not a UI gap; it is in section 6.)
+gap, not a UI gap; it is in §6.)
 
 ---
 
@@ -718,17 +767,32 @@ whoever happens to be editing the file.
 
 Being explicit, because "it compiles" is not "it works".
 
-- **Nothing in the call path has been exercised.** Roster reconciliation, avatars,
-  the speaking ring, and media playback are all fixed or implemented and all
-  untested at runtime. They need two accounts and a real call.
-- **Four of today's concurrency fixes have no test.** The frame-store commit
-  lock, the COM de-duplication, the ringtone latch, and the readiness cache.
-  Each needs a native reader thread, a WASAPI session, or an audio device. They
-  are reasoned and compiler-verified. For `MonotonicEpoch` I could prove the test
-  works by reverting the fix and watching it go red; for these four I could not,
-  so treat the next app run as the test.
-- **`orbit_livekit_audio.cpp` behaviour under real load.** The mixer deadlock fix
-  removes a lock from a 200 Hz path. It is strictly safer, but I have no
-  measurement showing the contention it was causing.
+**Now verified in a real run** (2026-09-30, two accounts, real LiveKit call):
+
+- Remote audio actually decodes and plays. `inRms=339 outRms=339`,
+  `RXSTAT lost=0 jbTargetMs=26`, and `drops=0 catchUp=0 qDepth=3360` for a
+  whole call where it previously climbed past 19,000. The mixer catch-up fix is
+  measured, not reasoned.
+- Roster shows 2 people for a 2-person call.
+- Navigating spaces and rooms during a call does not disconnect it. The only
+  `endCall` in the log comes from `CallControlsBar`.
+- The drawer no longer starts a poller for rooms you merely opened. The
+  121-day `roster tick` is gone from the log entirely.
+
+**Still unverified:**
+
+- **Four concurrency fixes have no test.** The frame-store commit lock, the COM
+  de-duplication, the ringtone latch, and the readiness cache. Each needs a
+  native reader thread, a WASAPI session, or an audio device. For
+  `MonotonicEpoch` I could prove the test works by reverting the fix and
+  watching it go red; for these four I could not.
+- **Avatars, the speaking ring, and the 1:1 P2P path** have still never been
+  exercised at runtime. They need a second 1:1 call, not a group call.
 - **58 readiness derive sites** still read fields individually. Narrower clobber
-  window, not zero. Section 6 explains why I stopped.
+  window, not zero. §6 explains why I stopped.
+- **The playback underrun** is measured but not diagnosed. I know the sink is
+  starving (`underruns=364`) and that the mixer is not responsible
+  (`drops=0`), and that it coincides with the output device falling back to the
+  default mixer. I have not read `LiveKitNativeAudioPlayer`'s ring buffer, so I
+  do not yet know whether it is too small, refilling badly, or being reset by
+  the mute toggles. That is tomorrow's first job.
