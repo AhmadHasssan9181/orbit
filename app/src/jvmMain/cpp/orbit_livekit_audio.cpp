@@ -19,12 +19,17 @@
 #include <cstdint>
 #include <cmath>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <exception>
+#include <functional>
 #include <future>
 #include <iostream>
 #include <limits>
+// std::map is used for g_participantMediaKeys; it is not pulled in
+// transitively on every toolchain, so include it explicitly.
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -40,7 +45,7 @@
 namespace {
 
 std::once_flag g_initializeOnce;
-std::mutex g_sessionMutex;
+std::timed_mutex g_sessionMutex;
 std::unique_ptr<livekit::Room> g_room;
 std::unique_ptr<livekit::RoomDelegate> g_delegate;
 std::shared_ptr<livekit::AudioSource> g_audioSource;
@@ -91,6 +96,11 @@ std::atomic_bool g_shareLoopbackModeResolved{false};
 // Share-audio echo cancellation: cached JVM upcall into livekit.ShareAudioAec,
 // which subtracts Orbit's own playout from full-device loopback captures and
 // feeds cleaned frames back via nativeFeedProcessedShareAudioFrame.
+// The pair is written by whichever thread resolves it first (the publishing JVM
+// thread or the loopback worker) and read by the loopback worker every 10 ms,
+// so it is published under g_shareAecMutex: reading the class and the method id
+// without the lock can observe a new class with a stale method id.
+std::mutex g_shareAecMutex;
 jclass g_shareAecRouterClass = nullptr;
 jmethodID g_shareAecOnFrameMethod = nullptr;
 // Raw publisher source handed to the AEC round-trip. Deliberately NOT guarded
@@ -142,6 +152,23 @@ jmethodID g_eventSinkMethod = nullptr;
 std::mutex g_jniAttachLogMutex;
 std::unordered_set<std::string> g_loggedJniAttachSuccess;
 std::unordered_set<std::string> g_loggedCallbackSkips;
+
+// g_sessionMutex is non-recursive, so a JNI upcall made while this thread holds
+// it can re-enter a native entry point (nativeSetAcceptingFrames,
+// setMixedAudioSink, disableRemoteVideoSink, ...) that takes the same mutex and
+// deadlock the SDK worker that raised the event. Upcalls raised under the lock
+// are therefore queued here and flushed by SessionLock as soon as it unlocks,
+// which keeps their relative order intact.
+// thread_local, NOT a shared vector: a queued lambda captures a JNIEnv*, which
+// is thread-confidential. With a global queue, one thread's ~SessionLock could
+// flush another thread's pending entry and run it with a foreign env (undefined
+// behaviour, and it also inverts event order across threads). Per-thread is
+// also all the design ever needed -- only the lock-owning thread defers, and
+// only the lock-owning thread flushes.
+thread_local std::vector<std::function<void()>> g_deferredDispatches;
+// Per-thread nesting depth of SessionLock; only this thread's own dispatches
+// are deferred, so a reader thread is never blocked by another thread's lock.
+thread_local int g_sessionLockDepth = 0;
 
 struct RemoteAudioReader {
     std::string trackSid;
@@ -195,6 +222,21 @@ constexpr std::size_t kTargetParticipantQueueSamples = kSamplesPerChannel * 8; /
 constexpr std::size_t kMaxParticipantQueueSamples = kSamplesPerChannel * 16; // 160 ms burst headroom
 constexpr std::size_t kStarvationReprimeSamples = kSamplesPerChannel * 2; // 20 ms top-up after a true drain
 
+// Mixer catch-up budget. See `mixLoop` for why the loop must be able to run
+// faster than real-time, and why the catch-up is bounded.
+//
+// 8 frames = 80 ms of backlog removable in a single tick, which comfortably
+// covers ordinary scheduler jitter and a normal GC pause without the burst
+// becoming audible as a discontinuity of its own.
+constexpr int kMaxCatchUpFramesPerTick = 8;
+
+// Past this much lateness the tick is resynced to now rather than repaid in
+// full. At 80 ms of catch-up per tick, a sustained 200 ms deficit would still be
+// climbing; resyncing converts an unrecoverable debt into a one-off latency
+// spike, which the queue's overflow policy then handles by dropping the oldest
+// audio. Losing old samples beats emitting an ever-growing pile of stale ones.
+constexpr int kCatchUpResyncMs = 200;
+
 // H6: receiver jitter-buffer recovery. When the SDK's NetEQ target stays
 // inflated (post-E2EE-key arrival storm, key rotations) the only cure is a
 // fresh receiver, i.e. setSubscribed(false->true). Guarded so failure modes
@@ -221,7 +263,14 @@ constexpr int kMinScreenShareMaxBitrateBps = 300000;
 constexpr int kMaxScreenShareMaxBitrateBps = 8000000;
 constexpr int kDefaultShareAudioMaxBitrateBps = 128000;
 constexpr jlong kRawSessionId = 1;
+// g_rawEpoch is written under g_sessionMutex. Several dispatch helpers run on
+// remote-reader threads, which teardown joins WHILE holding g_sessionMutex, so
+// those helpers must not take that mutex just to read the epoch: a reader
+// blocked on it would deadlock the teardown that is waiting for the reader.
+// Mirror the epoch into an atomic instead; every writer refreshes it while it
+// still holds g_sessionMutex.
 jlong g_rawEpoch = 0;
+std::atomic<jlong> g_rawEpochForCallbacks{0};
 bool g_rawDisconnecting = false;
 // Set via nativeConfigureE2EE before connect; survives reconnects until the
 // next configure call. Read in connectRoom under g_sessionMutex.
@@ -273,11 +322,46 @@ void setRawErrorThreadSafe(
     const std::string& operation,
     bool recoverable);
 
+// g_rawEpoch only ever moves FORWARD. Kotlin drives it from a monotonic
+// counter, but a publish that overtakes a reconnect used to ASSIGN the older
+// value and rewind the epoch; from then on every mute/frame push was rejected
+// as stale for the rest of the process. Callers must hold g_sessionMutex.
+void adoptEpochLocked(jlong epoch) {
+    if (epoch > g_rawEpoch) {
+        g_rawEpoch = epoch;
+    }
+    g_rawEpochForCallbacks.store(g_rawEpoch, std::memory_order_release);
+}
+
+// Full epoch write for the paths that legitimately own the value (session
+// create, connect, disconnect). Callers must hold g_sessionMutex.
+void setRawEpochLocked(jlong epoch) {
+    g_rawEpoch = epoch;
+    g_rawEpochForCallbacks.store(g_rawEpoch, std::memory_order_release);
+}
+
 struct ParticipantPcmQueue {
-    explicit ParticipantPcmQueue(std::string identity)
-        : participantIdentity(std::move(identity)) {}
+    // `identity` is what gets REPORTED to the UI (active-speaker events);
+    // `trackSid` is kept for diagnostics, and is what the owning map is keyed by.
+    //
+    // These used to be a single field, initialised from the track SID. That made
+    // every ActiveSpeakersChanged event carry a value like "TR_AMAobYX4..." rather
+    // than "@user:host:DEVICE", so the Kotlin side compared it against
+    // participant identities, never matched, and the speaking ring was permanently
+    // dark. The event was firing correctly the whole time -- it was reporting in
+    // the wrong namespace, which is why "no speaking events in the log" and
+    // "speaking events with the wrong value" looked identical from the outside.
+    //
+    // They must stay separate because the queues are keyed by track SID on
+    // purpose (see the comment where remote audio is subscribed): one participant
+    // sharing screen-with-audio has TWO audio tracks, and collapsing them into an
+    // identity-keyed queue doubles that participant's inflow and lets either
+    // track's teardown destroy the shared buffer.
+    ParticipantPcmQueue(std::string identity, std::string trackSid)
+        : participantIdentity(std::move(identity)), trackSid(std::move(trackSid)) {}
 
     std::string participantIdentity;
+    std::string trackSid;
     std::deque<std::int16_t> pcm;
     std::mutex queueMutex;
     std::atomic_bool active{true};
@@ -285,9 +369,10 @@ struct ParticipantPcmQueue {
     bool startupPrimed{false};
     bool starved{true};
     // Per-participant output gain (1.0 = unity, 0.0 = individually muted).
-    // Written under mutex_ while holding queueMutex; read in mixOneFrame
-    // after the queue lock section. Muted queues still drain so starvation
-    // and jitter-depth bookkeeping stay identical.
+    // Written and read under queueMutex only: setParticipantGainEverywhere
+    // writes it from the UI thread and mixOneFrame snapshots it from the mixer
+    // thread. Muted queues still drain so starvation and jitter-depth
+    // bookkeeping stay identical.
     float gain{1.0f};
     // Active-speaker detection: RMS of the RAW (pre-gain) decoded frames.
     // Fast-attack/slow-release EMA + hysteresis so the glow doesn't flicker
@@ -325,6 +410,8 @@ void dispatchRemoteParticipantDisconnected(const std::string& participantIdentit
 void dispatchRemoteAudioMuteChanged(const std::string& participantIdentity, bool muted);
 void dispatchRemoteConnectionQuality(const std::string& participantIdentity, long long jitterMs, long long rttMs, double lossPct);
 void requestAudioTrackResubscribe(const std::string& participantIdentity, const std::string& trackSid, long long jbTargetMs);
+void stopRemoteReaderLocked(const std::string& rawTrackSid);
+void stopRemoteReadersForParticipantLocked(const std::string& participantIdentity);
 
 struct PcmDiagnostics {
     double rms{0.0};
@@ -502,6 +589,7 @@ private:
         enqIntervalMinNs_ = UINT64_MAX;
         enqIntervalMaxNs_ = 0;
         formatDiagnosticsLogged_ = 0;
+        captureFrameStatsLogged_ = 0;
         preCaptureDiagnosticsLogged_ = 0;
         workerFrameSequence_ = 0;
         lastFrameTimestampNs_ = 0;
@@ -585,7 +673,7 @@ private:
                 const bool micPublished = g_micPublished.load(std::memory_order_relaxed);
                 bool trackMuted;
                 {
-                    std::unique_lock<std::mutex> sessionLock(g_sessionMutex, std::try_to_lock);
+                    std::unique_lock<std::timed_mutex> sessionLock(g_sessionMutex, std::try_to_lock);
                     if (sessionLock.owns_lock() && g_audioTrack != nullptr) {
                         trackMuted = g_audioTrack->muted();
                         g_micTrackMutedCache.store(trackMuted, std::memory_order_relaxed);
@@ -644,7 +732,19 @@ private:
                               << std::endl;
                 }
 
-                if (formatDiagnosticsLogged_ <= 10) {
+                // This was `if (formatDiagnosticsLogged_ <= 10)` — a
+                // *comparison* where an increment was meant. The counter is
+                // bumped a hundred lines earlier for a different diagnostic and
+                // never here, so the guard never went false and this printed
+                // once per 10 ms frame: ~100 lines/second, 1,259 of them in a
+                // four-minute call. That drowned every other line in the log,
+                // including the two real errors, and the iostream lock it
+                // contends for is on the audio push thread (pushMaxMs was
+                // 63 ms against a 10 ms frame budget).
+                //
+                // `captureFrameStatsLogged_` is its own counter for this one.
+                if (captureFrameStatsLogged_ < 5) {
+                    captureFrameStatsLogged_ += 1;
                     std::cout << "DEBUG [OrbitLiveKitAudio] LiveKit AudioFrame("
                               << "buffer.size=" << frame.data().size()
                               << ", totalSamples=" << frame.totalSamples()
@@ -753,6 +853,12 @@ private:
     std::chrono::steady_clock::time_point lastStatsLog_{};
     std::string lastCaptureError_;
     int formatDiagnosticsLogged_{0};
+    /**
+     * Separate budget for the per-frame format dump. It previously shared
+     * formatDiagnosticsLogged_ with a `<= 10` comparison that never incremented,
+     * so it fired on every frame. See the use site for the full account.
+     */
+    int captureFrameStatsLogged_{0};
     int preCaptureDiagnosticsLogged_{0};
     std::uint64_t workerFrameSequence_{0};
     std::int64_t lastFrameTimestampNs_{0};
@@ -784,8 +890,9 @@ NativeAudioSourceWorker g_audioSourceWorker;
 // Per-participant output gains requested from Kotlin. Kept outside the mixer
 // so a setter that arrives before the participant's queue exists (or while no
 // call is connected) is remembered and applied when addParticipant creates the
-// queue. Persists for process lifetime so Kotlin-side UI state and native
-// state cannot diverge; entries are tiny and bounded by distinct identities.
+// queue. Entries are erased when the participant's readers are torn down, so
+// Kotlin-side UI state and native state cannot diverge and the map cannot grow
+// without bound across calls.
 std::mutex g_participantGainsMutex;
 std::unordered_map<std::string, float> g_participantGains;
 
@@ -827,9 +934,15 @@ public:
             std::lock_guard<std::mutex> lock(mutex_);
             auto& existing = participants_[trackSid];
             if (existing == nullptr) {
-                existing = std::make_shared<ParticipantPcmQueue>(trackSid);
-                std::cout << "DEBUG [OrbitLiveKitAudio] remote audio participant added: "
-                          << trackSid << " (identity=" << participantIdentity << ")" << std::endl;
+                // Report the PARTICIPANT identity, not the track SID. An empty
+                // identity falls back to the SID so the reported value is never
+                // blank: the mixer pushes this straight into the active-speaker
+                // event the UI matches against, and an empty string there would
+                // silently never match anything.
+                existing = std::make_shared<ParticipantPcmQueue>(
+                    participantIdentity.empty() ? trackSid : participantIdentity, trackSid);
+                std::cout << "DEBUG [OrbitLiveKitAudio] remote audio participant added: trackSid="
+                          << trackSid << " identity=" << existing->participantIdentity << std::endl;
             }
             existing->active = true;
             queue = existing;
@@ -968,7 +1081,10 @@ inline std::vector<std::int16_t> resampleLinear(
             std::lock_guard<std::mutex> lock(mutex_);
             auto& existing = participants_[identity];
             if (existing == nullptr) {
-                existing = std::make_shared<ParticipantPcmQueue>(identity);
+                // This path is already keyed by identity (legacy P2P callers pass
+                // the identity where the LiveKit path passes a track SID), so both
+                // fields get the same value.
+                existing = std::make_shared<ParticipantPcmQueue>(identity, identity);
                 std::cout << "DEBUG [OrbitLiveKitAudio] remote audio participant added: "
                           << identity << " inSampleRate=" << sampleRate << " inChannels=" << channels << std::endl;
             }
@@ -1027,6 +1143,30 @@ inline std::vector<std::int16_t> resampleLinear(
     }
 
 private:
+    /**
+     * Deepest active queue right now, for MIXSTAT.
+     *
+     * This is the measurement that distinguishes "the mixer is behind" from
+     * "the mixer is fine and something upstream is wrong". Before the catch-up
+     * fix, `qDepth` would have sat pinned at 160 ms with `drops` climbing, which
+     * is the signature of a drain rate that can never exceed the arrival rate.
+     * Reading each queue's depth takes that queue's own mutex briefly; it runs
+     * once per 500 frames (~5 s), so the cost is irrelevant next to the
+     * diagnosis it buys.
+     */
+    std::size_t maxQueueDepthSamples() {
+        const auto queues = snapshotQueues();
+        std::size_t deepest = 0;
+        for (const auto& queue : queues) {
+            if (queue == nullptr) {
+                continue;
+            }
+            std::lock_guard<std::mutex> queueLock(queue->queueMutex);
+            deepest = std::max(deepest, queue->pcm.size());
+        }
+        return deepest;
+    }
+
     std::vector<std::shared_ptr<ParticipantPcmQueue>> snapshotQueues() {
         std::vector<std::shared_ptr<ParticipantPcmQueue>> queues;
         std::lock_guard<std::mutex> lock(mutex_);
@@ -1126,8 +1266,14 @@ private:
             // Per-participant gain (0.0 = individually muted). The frames were
             // already popped above so queue-depth/starvation bookkeeping is
             // untouched by muting; a muted participant simply contributes
-            // silence to the sum.
-            const float participantGain = queue->gain;
+            // silence to the sum. The gain is snapshotted INSIDE the queue lock
+            // because setParticipantGainEverywhere writes it from the UI thread
+            // while holding the same mutex.
+            float participantGain = 1.0f;
+            {
+                std::lock_guard<std::mutex> queueLock(queue->queueMutex);
+                participantGain = queue->gain;
+            }
             for (int i = 0; i < kSamplesPerChannel; ++i) {
                 accumulator[static_cast<std::size_t>(i)] += static_cast<std::int32_t>(
                     std::lround(static_cast<double>(frame[static_cast<std::size_t>(i)]) * participantGain));
@@ -1138,11 +1284,21 @@ private:
         {
             std::sort(speakers.begin(), speakers.end());
             bool shouldEmit = false;
-            jlong epoch = 0;
-            {
-                std::lock_guard<std::mutex> sessionLock(g_sessionMutex);
-                epoch = g_rawEpoch;
-            }
+            // Read the epoch from the atomic mirror, NOT from g_sessionMutex.
+            //
+            // This is the exact case the comment on g_rawEpochForCallbacks
+            // (line ~251) warns about, and it was doing it anyway. That comment
+            // exists because remote-reader helpers run on threads which teardown
+            // JOINS while holding g_sessionMutex -- so a helper that takes the
+            // mutex can block, and the teardown that is waiting for it can never
+            // complete. mixOneFrame runs on the mixer thread, which
+            // NativeAudioMixer::stop() joins from under that same mutex, so this
+            // was a live deadlock risk on hangup, not merely a 200-acquisitions-
+            // per-second contention cost.
+            //
+            // It also fired unconditionally, even when the speaker set was empty
+            // and no event was going to be emitted.
+            const jlong epoch = g_rawEpochForCallbacks.load(std::memory_order_acquire);
             const auto nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::steady_clock::now().time_since_epoch()).count();
             {
@@ -1217,6 +1373,13 @@ private:
                           << " outRms=" << static_cast<long long>(mixStatOutEma_)
                           << " starved=" << starvationEvents_.load(std::memory_order_relaxed)
                           << " drops=" << overflowDroppedSamples_.load(std::memory_order_relaxed)
+                          // Catch-up frames, and the queue depth that resulted.
+                          // `drops` climbing with `catchUp` flat means the mixer
+                          // was never given the chance to catch up (the old
+                          // loop); `catchUp` climbing with `drops` flat means it
+                          // is working and the lateness is upstream.
+                          << " catchUp=" << catchUpFrames_.load(std::memory_order_relaxed)
+                          << " qDepth=" << maxQueueDepthSamples()
                           << std::endl;
             }
         }
@@ -1230,15 +1393,79 @@ void mixLoop() {
         using clock = std::chrono::steady_clock;
         auto nextTick = clock::now();
 
-        while (running_) {
-            nextTick += std::chrono::milliseconds(kFrameMs);
-            mixOneFrame();
-            std::this_thread::sleep_until(nextTick);
+        // An exception escaping a std::thread body calls std::terminate() and
+        // kills the JVM, so the whole loop is guarded: the mixer must survive a
+        // bad frame and keep draining participant queues.
+        //
+        // CATCH-UP, and why this loop was a guaranteed audio defect.
+        //
+        // It used to mix exactly one 480-sample frame per 10 ms tick, forever.
+        // One frame per tick is real-time and nothing else, so the drain rate was
+        // pinned to exactly the arrival rate with no way to exceed it. The mixer
+        // does real work between ticks -- `mixOneFrame` ends with
+        // `dispatchMixedAudioFrame`, a JNI upcall that attaches the thread and
+        // crosses into the JVM -- and the OS will also simply deschedule it.
+        // Every millisecond lost there was a millisecond of backlog that could
+        // never be recovered, because the loop could not run faster than
+        // real-time.
+        //
+        // So the consequence was not a transient. Each participant queue filled
+        // to `kMaxParticipantQueueSamples` (160 ms) and STAYED there: the
+        // enqueue side evicts the oldest samples to make room (`remote audio
+        // queue overflow ... droppedSamples=480`), which means a permanently
+        // full queue is a permanently climbing `drops` counter. Runs showed
+        // `drops=4320`, then `11040`, then `19680`, still climbing at hangup --
+        // which is why remote audio had been arriving as `silentConcealed` all
+        // day. The buffer was saturated with evicted audio, not glitching.
+        //
+        // The fix is to emit as many frames as wall-clock says we are behind, so
+        // the backlog is actually worked off. The playback sink consumes at
+        // real-time either way; handing it two frames after a 20 ms stall just
+        // gives its buffer two frames early and removes 20 ms of latency, which
+        // is what the sink is built to absorb.
+        //
+        // Capped at `kMaxCatchUpFramesPerTick` so a long stall (laptop suspend, a
+        // multi-second GC) cannot become a burst dumping seconds of stale audio
+        // into the output. Whatever exceeds the cap is left to the queue's own
+        // overflow policy, which drops OLD audio -- the right trade, because
+        // stale audio is worse than missing audio.
+        try {
+            while (running_) {
+                nextTick += std::chrono::milliseconds(kFrameMs);
+                mixOneFrame();
 
-            const auto now = clock::now();
-            if (now > nextTick + std::chrono::milliseconds(20)) {
-                nextTick = now;
+                const auto now = clock::now();
+                if (now <= nextTick) {
+                    std::this_thread::sleep_until(nextTick);
+                    continue;
+                }
+
+                // Behind schedule: emit the frames the elapsed time is worth.
+                auto behindMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now - nextTick).count();
+                int extraFrames = static_cast<int>(behindMs / kFrameMs);
+                if (extraFrames > kMaxCatchUpFramesPerTick) {
+                    extraFrames = kMaxCatchUpFramesPerTick;
+                }
+                if (extraFrames > 0) {
+                    catchUpFrames_.fetch_add(extraFrames, std::memory_order_relaxed);
+                    for (int i = 0; i < extraFrames; ++i) {
+                        if (!running_) break;
+                        mixOneFrame();
+                    }
+                }
+
+                // Still behind after the cap: drop the debt rather than
+                // accumulating an unbounded one.
+                if (clock::now() > nextTick + std::chrono::milliseconds(kCatchUpResyncMs)) {
+                    nextTick = clock::now();
+                }
             }
+        } catch (const std::exception& error) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] mixer thread threw: "
+                      << error.what() << std::endl;
+        } catch (...) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] mixer thread threw: unknown" << std::endl;
         }
         std::cout << "DEBUG [OrbitLiveKitAudio] mixer thread exited" << std::endl;
     }
@@ -1251,6 +1478,10 @@ void mixLoop() {
     std::atomic<std::int64_t> starvationEvents_{0};
     std::atomic<std::int64_t> overflowDroppedSamples_{0};
     std::atomic<std::int64_t> lastOverflowWarnMs_{0};
+    // Extra frames emitted to repay scheduling backlog. Reported in MIXSTAT so
+    // the catch-up is observable: a run where this climbs steadily means the
+    // mixer thread is being descheduled and the drops counter is the symptom.
+    std::atomic<std::int64_t> catchUpFrames_{0};
     std::thread worker_;
     std::mutex mutex_;
     std::unordered_map<std::string, std::shared_ptr<ParticipantPcmQueue>> participants_;
@@ -1270,15 +1501,30 @@ void setParticipantGainEverywhere(const std::string& identity, float gain) {
 
     std::vector<std::string> trackSidsToUpdate;
     {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         for (const auto& entry : g_remoteAudioReaders) {
             if (entry.second != nullptr) {
                 const auto& participantId = entry.second->participantIdentity;
-                if (participantId == identity ||
-                    participantId.rfind(identity, 0) == 0 ||
-                    identity.rfind(participantId, 0) == 0 ||
-                    participantId.find(identity) != std::string::npos ||
-                    identity.find(participantId) != std::string::npos) {
+                // Prefix match on a DELIMITER, not a bare substring.
+                //
+                // This used to be five tests including two `find(...) != npos`,
+                // i.e. "does this string appear anywhere inside that one". LiveKit
+                // identities are `${userId}:${deviceId}`, and device ids are
+                // routinely a prefix of one another -- `@alice:h:ABC123` is a
+                // substring of `@alice:h:ABC1234`. So muting one device's tile
+                // muted the other, and with it every other participant whose id
+                // happened to contain the first one's.
+                //
+                // The identity pair is only matched when the strings are equal, or
+                // when one ends exactly at the other's `:` separator -- which is
+                // what "same user, unknown device" and "same device, user omitted"
+                // both look like. Anything looser than that is a bug waiting for
+                // a long device id.
+                const bool sameParticipant =
+                    participantId == identity ||
+                    participantId.rfind(identity + ":", 0) == 0 ||
+                    identity.rfind(participantId + ":", 0) == 0;
+                if (sameParticipant) {
                     trackSidsToUpdate.push_back(entry.second->trackSid);
                 }
             }
@@ -1322,6 +1568,55 @@ void logCallbackSkipOnce(const char* callbackType, const char* reason) {
         std::cout << "DEBUG [OrbitLiveKitAudio] " << type
                   << " callback skipped because " << reasonText << std::endl;
     }
+}
+
+void flushDeferredDispatches() {
+    // No mutex: the queue is thread_local, so only this thread ever wrote it and
+    // only this thread drains it.
+    std::vector<std::function<void()>> pending;
+    pending.swap(g_deferredDispatches);
+    for (const auto& dispatch : pending) {
+        try {
+            dispatch();
+        } catch (const std::exception& error) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] deferred native event dispatch threw: "
+                      << error.what() << std::endl;
+        } catch (...) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] deferred native event dispatch threw unknown error" << std::endl;
+        }
+    }
+}
+
+// Drop-in replacement for std::lock_guard<std::timed_mutex> on g_sessionMutex in
+// every scope that can raise a JNI upcall. Releases the mutex and then drains
+// the deferred upcalls, so Java code is never re-entered with the lock held.
+class SessionLock {
+public:
+    SessionLock() : lock_(g_sessionMutex) {
+        ++g_sessionLockDepth;
+    }
+    ~SessionLock() {
+        --g_sessionLockDepth;
+        lock_.unlock();
+        if (g_sessionLockDepth == 0) {
+            flushDeferredDispatches();
+        }
+    }
+    SessionLock(const SessionLock&) = delete;
+    SessionLock& operator=(const SessionLock&) = delete;
+
+private:
+    std::unique_lock<std::timed_mutex> lock_;
+};
+
+void deferDispatchIfSessionLockHeld(const std::function<void()>& dispatch) {
+    if (g_sessionLockDepth == 0) {
+        dispatch();
+        return;
+    }
+    // thread_local queue: no lock needed, and it guarantees a queued lambda's
+    // captured JNIEnv* is only ever run on the thread that created it.
+    g_deferredDispatches.push_back(dispatch);
 }
 
 bool callbacksStopped(const char* callbackType) {
@@ -1484,7 +1779,20 @@ void dispatchMixedAudioFrame(const std::vector<std::int16_t>& samples, std::int6
         jlong epoch = 0;
         bool shouldDispatch = false;
         {
-            std::lock_guard<std::mutex> lock(g_sessionMutex);
+            // DELIBERATELY STILL TAKES g_sessionMutex.
+            //
+            // Unlike the epoch read in mixOneFrame (now fixed to use the
+            // g_rawEpochForCallbacks mirror), this one also needs `g_connected`
+            // and `g_rawDisconnecting`, and neither has an atomic mirror. Making
+            // them readable here would mean mirroring two more pieces of state at
+            // every one of their ~10 write sites, and a single missed writer is a
+            // silent data race -- a worse outcome than the contention this costs.
+            //
+            // This is 100 calls/sec and holds the mutex for a bool read and a
+            // long copy, so it is contention, not a deadlock: unlike the mixer
+            // loop, this dispatch is not inside a join-under-mutex teardown path.
+            // Revisit with the other sites if the render thread is ever moved.
+            std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
             epoch = g_rawEpoch;
             shouldDispatch = g_connected && !g_rawDisconnecting;
         }
@@ -1492,8 +1800,7 @@ void dispatchMixedAudioFrame(const std::vector<std::int16_t>& samples, std::int6
         if (shouldDispatch) {
             const auto byteLength = static_cast<jsize>(samples.size() * sizeof(std::int16_t));
             jbyteArray pcm = env->NewByteArray(byteLength);
-            if (pcm != nullptr) {
-                env->SetByteArrayRegion(
+            if (pcm != nullptr) {                env->SetByteArrayRegion(
                     pcm,
                     0,
                     byteLength,
@@ -1629,7 +1936,7 @@ void requestAudioTrackResubscribe(const std::string& participantIdentity, const 
                 }
                 {
                     // Snapshot the publication pointer only; release before any SDK call.
-                    std::unique_lock<std::mutex> lock(g_sessionMutex, std::try_to_lock);
+                    std::unique_lock<std::timed_mutex> lock(g_sessionMutex, std::try_to_lock);
                     if (lock.owns_lock() && g_room != nullptr && g_connected) {
                         for (const auto& participant : g_room->remoteParticipants()) {
                             if (participant == nullptr || participant->identity() != participantIdentity) {
@@ -1677,7 +1984,7 @@ void requestAudioTrackResubscribe(const std::string& participantIdentity, const 
             std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
             {
-                std::unique_lock<std::mutex> lock(g_sessionMutex, std::try_to_lock);
+                std::unique_lock<std::timed_mutex> lock(g_sessionMutex, std::try_to_lock);
                 const bool sessionAlive = lock.owns_lock() && g_room != nullptr && g_connected;
                 if (!sessionAlive) {
                     std::cout << "WARN [OrbitLiveKitAudio] JB-RESUB aborted before resubscribe: session gone sid=" << trackSid << std::endl;
@@ -1709,10 +2016,24 @@ void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track, const
             std::cout << "WARN [OrbitLiveKitAudio] remote audio track sid had trailing padding: len="
                       << rawTrackSid.size() << " -> " << trackSid.size() << std::endl;
         }
-        if (g_remoteAudioReaders.find(trackSid) != g_remoteAudioReaders.end()) {
-            std::cout << "DEBUG [OrbitLiveKitAudio] Remote audio reader already active for track "
-                      << trackSid << std::endl;
-            return;
+        {
+            auto it = g_remoteAudioReaders.find(trackSid);
+            if (it != g_remoteAudioReaders.end()) {
+                const auto& existing = it->second;
+                if (existing != nullptr && existing->running.load()) {
+                    std::cout << "DEBUG [OrbitLiveKitAudio] Remote audio reader already active for track "
+                              << trackSid << std::endl;
+                    return;
+                }
+                // Entry left behind by a reader whose thread already exited: drop
+                // it so this track can be re-subscribed instead of staying silent
+                // for the rest of the call. stopReader joins the dead thread; it
+                // only waits on g_sessionMutex for a bounded 500 ms, so holding
+                // the session mutex here cannot deadlock.
+                std::cout << "DEBUG [OrbitLiveKitAudio] replacing dead audio reader entry trackSid="
+                          << trackSid << std::endl;
+                stopRemoteReaderLocked(trackSid);
+            }
         }
 
         livekit::AudioStream::Options options;
@@ -1731,183 +2052,242 @@ void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track, const
         reader->track = track;
         // Announce the subscribe-time mute state so late joiners see the badge
         // for peers who were already muted (no TrackMuted event will fire).
-        dispatchRemoteAudioMuteChanged(reader->participantIdentity, track->muted());
+        // Deferred when the session lock is held so the Java sink is not
+        // re-entered with g_sessionMutex still taken.
+        const bool initialMuted = track->muted();
+        deferDispatchIfSessionLockHeld(
+            [reader, initialMuted] { dispatchRemoteAudioMuteChanged(reader->participantIdentity, initialMuted); });
         reader->thread = std::thread([reader] {
-            livekit::AudioFrameEvent event;
-            auto lastRxStat = std::chrono::steady_clock::now();
-            while (reader->running && reader->stream != nullptr && reader->stream->read(event)) {
-                if (callbacksStopped("remote-audio-reader")) {
-                    break;
-                }
-                const auto& samples = event.frame.data();
-                if (samples.empty()) {
-                    continue;
-                }
-                reader->lastFrameSteadyMs.store(
-                    std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::steady_clock::now().time_since_epoch()).count(),
-                    std::memory_order_relaxed);
-                const auto timestampNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                    std::chrono::steady_clock::now().time_since_epoch()).count();
-                g_audioMixer.pushParticipantFrame(
-                    reader->trackSid,
-                    samples.data(),
-                    event.frame.sampleRate(),
-                    event.frame.samplesPerChannel(),
-                    event.frame.numChannels(),
-                    static_cast<std::int64_t>(timestampNs));
+            // An exception escaping a std::thread body calls std::terminate()
+            // and takes the whole JVM with it, so the read loop is guarded and
+            // the self-removal below is reached on every exit path.
+            try {
+                livekit::AudioFrameEvent event;
+                auto lastRxStat = std::chrono::steady_clock::now();
+                while (reader->running && reader->stream != nullptr && reader->stream->read(event)) {
+                    if (callbacksStopped("remote-audio-reader")) {
+                        break;
+                    }
+                    const auto& samples = event.frame.data();
+                    if (samples.empty()) {
+                        continue;
+                    }
+                    reader->lastFrameSteadyMs.store(
+                        std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch()).count(),
+                        std::memory_order_relaxed);
+                    const auto timestampNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch()).count();
+                    g_audioMixer.pushParticipantFrame(
+                        reader->trackSid,
+                        samples.data(),
+                        event.frame.sampleRate(),
+                        event.frame.samplesPerChannel(),
+                        event.frame.numChannels(),
+                        static_cast<std::int64_t>(timestampNs));
 
-                // Receiver-side loss/concealment telemetry: proves whether
-                // garble originates as RTP loss (decoder concealment /
-                // NetEQ speed-up) before it ever reaches our mixer.
-                const auto nowSteady = std::chrono::steady_clock::now();
-                if (nowSteady - lastRxStat >= std::chrono::seconds(5) && reader->track != nullptr) {
-                    lastRxStat = nowSteady;
-                    try {
-                        auto statsFuture = reader->track->getStats();
-                        if (statsFuture.wait_for(std::chrono::milliseconds(50)) == std::future_status::ready) {
-                            double rttSec = -1.0;
-                            double remoteFractionLost = -1.0;
-                            long long jitterMs = -1;
-                            long long packetsReceived = -1;
-                            long long packetsLost = -1;
-                            for (const auto& stat : statsFuture.get()) {
-                                const auto* inbound = std::get_if<livekit::RtcInboundRtpStats>(&stat.stats);
-                                if (inbound != nullptr) {
-                                    // jitter_buffer_target_delay / jitter_buffer_delay are
-                                    // CUMULATIVE sums over every emitted frame (live proof:
-                                    // raw target read 2342400 ms = 39 min while the real
-                                    // per-frame delay averaged 68 ms). The instantaneous
-                                    // value is the per-frame average; -1 until frames flow.
-                                    const double emittedCount =
-                                        static_cast<double>(inbound->inbound.jitter_buffer_emitted_count);
-                                    const long long jbTargetMs = emittedCount > 0.0
-                                        ? static_cast<long long>(
-                                              inbound->inbound.jitter_buffer_target_delay * 1000.0 / emittedCount)
-                                        : -1LL;
-                                    const long long jbTargetSumMs = static_cast<long long>(
-                                        inbound->inbound.jitter_buffer_target_delay * 1000.0);
-                                    jitterMs = static_cast<long long>(inbound->received.jitter * 1000.0);
-                                    packetsReceived = static_cast<long long>(inbound->received.packets_received);
-                                    packetsLost = static_cast<long long>(inbound->received.packets_lost);
-                                    std::cout << "RXSTAT sid=" << reader->trackSid
-                                              << " recv=" << inbound->received.packets_received
-                                              << " lost=" << inbound->received.packets_lost
-                                              << " jitterMs=" << static_cast<long long>(inbound->received.jitter * 1000.0)
-                                              << " jbTargetMs=" << jbTargetMs
-                                              << " jbAvgMs=" << (inbound->inbound.jitter_buffer_emitted_count > 0
-                                                    ? static_cast<long long>(inbound->inbound.jitter_buffer_delay * 1000.0 /
-                                                        static_cast<double>(inbound->inbound.jitter_buffer_emitted_count))
-                                                    : -1LL)
-                                              << " jbMinMs=" << static_cast<long long>(inbound->inbound.jitter_buffer_minimum_delay * 1000.0)
-                                              << " jbTargetSumMs=" << jbTargetSumMs
-                                              << " concealedSamples=" << inbound->inbound.concealed_samples
-                                              << " silentConcealed=" << inbound->inbound.silent_concealed_samples
-                                              << " concealEvents=" << inbound->inbound.concealment_events
-                                              << " acceleratedSamples=" << inbound->inbound.removed_samples_for_acceleration
-                                              << " decelInsertedSamples=" << inbound->inbound.inserted_samples_for_deceleration
-                                              << " discarded=" << inbound->inbound.packets_discarded
-                                              << " retransmitted=" << inbound->inbound.retransmitted_packets_received
-                                              << std::endl;
-                                    // H6 watchdog: a sustained inflated jitter-buffer target means the
-                                    // receiver is playing stale audio (NetEQ peak-mode decays it over
-                                    // minutes). Fire the guarded resubscribe once the streak, warmup,
-                                    // cooldown and lifetime caps all pass.
-                                    {
-                                        const long long nowSteadyMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                            std::chrono::steady_clock::now().time_since_epoch()).count();
-                                        const long long ageMs = nowSteadyMs - std::chrono::duration_cast<std::chrono::milliseconds>(
-                                            reader->createdSteady.time_since_epoch()).count();
-                                        const long long sinceFrameMs = nowSteadyMs - reader->lastFrameSteadyMs.load(std::memory_order_relaxed);
-                                        const bool active = sinceFrameMs <= kJitterBufferActiveWindowMs;
-                                        const bool jbTargetSane =
-                                            jbTargetMs >= 0 && jbTargetMs <= kJitterBufferGarbageCapMs;
-                                        if (jbTargetSane && jbTargetMs > kJitterBufferRecoverTargetMs && active) {
-                                            reader->jbHighStreak += 1;
-                                            if (reader->jbHighStreak >= 2) {
-                                                std::cout << "JBWATCH sid=" << reader->trackSid
-                                                          << " jbTargetMs=" << jbTargetMs
-                                                          << " streak=" << reader->jbHighStreak << std::endl;
+                    // Receiver-side loss/concealment telemetry: proves whether
+                    // garble originates as RTP loss (decoder concealment /
+                    // NetEQ speed-up) before it ever reaches our mixer.
+                    const auto nowSteady = std::chrono::steady_clock::now();
+                    if (nowSteady - lastRxStat >= std::chrono::seconds(5) && reader->track != nullptr) {
+                        lastRxStat = nowSteady;
+                        try {
+                            auto statsFuture = reader->track->getStats();
+                            if (statsFuture.wait_for(std::chrono::milliseconds(50)) == std::future_status::ready) {
+                                double rttSec = -1.0;
+                                double remoteFractionLost = -1.0;
+                                long long jitterMs = -1;
+                                long long packetsReceived = -1;
+                                long long packetsLost = -1;
+                                for (const auto& stat : statsFuture.get()) {
+                                    const auto* inbound = std::get_if<livekit::RtcInboundRtpStats>(&stat.stats);
+                                    if (inbound != nullptr) {
+                                        // jitter_buffer_target_delay / jitter_buffer_delay are
+                                        // CUMULATIVE sums over every emitted frame (live proof:
+                                        // raw target read 2342400 ms = 39 min while the real
+                                        // per-frame delay averaged 68 ms). The instantaneous
+                                        // value is the per-frame average; -1 until frames flow.
+                                        const double emittedCount =
+                                            static_cast<double>(inbound->inbound.jitter_buffer_emitted_count);
+                                        const long long jbTargetMs = emittedCount > 0.0
+                                            ? static_cast<long long>(
+                                                  inbound->inbound.jitter_buffer_target_delay * 1000.0 / emittedCount)
+                                            : -1LL;
+                                        const long long jbTargetSumMs = static_cast<long long>(
+                                            inbound->inbound.jitter_buffer_target_delay * 1000.0);
+                                        jitterMs = static_cast<long long>(inbound->received.jitter * 1000.0);
+                                        packetsReceived = static_cast<long long>(inbound->received.packets_received);
+                                        packetsLost = static_cast<long long>(inbound->received.packets_lost);
+                                        std::cout << "RXSTAT sid=" << reader->trackSid
+                                                  << " recv=" << inbound->received.packets_received
+                                                  << " lost=" << inbound->received.packets_lost
+                                                  << " jitterMs=" << static_cast<long long>(inbound->received.jitter * 1000.0)
+                                                  << " jbTargetMs=" << jbTargetMs
+                                                  << " jbAvgMs=" << (inbound->inbound.jitter_buffer_emitted_count > 0
+                                                        ? static_cast<long long>(inbound->inbound.jitter_buffer_delay * 1000.0 /
+                                                            static_cast<double>(inbound->inbound.jitter_buffer_emitted_count))
+                                                        : -1LL)
+                                                  << " jbMinMs=" << static_cast<long long>(inbound->inbound.jitter_buffer_minimum_delay * 1000.0)
+                                                  << " jbTargetSumMs=" << jbTargetSumMs
+                                                  << " concealedSamples=" << inbound->inbound.concealed_samples
+                                                  << " silentConcealed=" << inbound->inbound.silent_concealed_samples
+                                                  << " concealEvents=" << inbound->inbound.concealment_events
+                                                  << " acceleratedSamples=" << inbound->inbound.removed_samples_for_acceleration
+                                                  << " decelInsertedSamples=" << inbound->inbound.inserted_samples_for_deceleration
+                                                  << " discarded=" << inbound->inbound.packets_discarded
+                                                  << " retransmitted=" << inbound->inbound.retransmitted_packets_received
+                                                  << std::endl;
+                                        // H6 watchdog: a sustained inflated jitter-buffer target means the
+                                        // receiver is playing stale audio (NetEQ peak-mode decays it over
+                                        // minutes). Fire the guarded resubscribe once the streak, warmup,
+                                        // cooldown and lifetime caps all pass.
+                                        {
+                                            const long long nowSteadyMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                std::chrono::steady_clock::now().time_since_epoch()).count();
+                                            const long long ageMs = nowSteadyMs - std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                reader->createdSteady.time_since_epoch()).count();
+                                            const long long sinceFrameMs = nowSteadyMs - reader->lastFrameSteadyMs.load(std::memory_order_relaxed);
+                                            const bool active = sinceFrameMs <= kJitterBufferActiveWindowMs;
+                                            const bool jbTargetSane =
+                                                jbTargetMs >= 0 && jbTargetMs <= kJitterBufferGarbageCapMs;
+                                            if (jbTargetSane && jbTargetMs > kJitterBufferRecoverTargetMs && active) {
+                                                reader->jbHighStreak += 1;
+                                                if (reader->jbHighStreak >= 2) {
+                                                    std::cout << "JBWATCH sid=" << reader->trackSid
+                                                              << " jbTargetMs=" << jbTargetMs
+                                                              << " streak=" << reader->jbHighStreak << std::endl;
+                                                }
+                                            } else {
+                                                reader->jbHighStreak = 0;
                                             }
-                                        } else {
-                                            reader->jbHighStreak = 0;
+                                            const long long lastResubMs = reader->lastResubSteadyMs.load(std::memory_order_relaxed);
+                                            const long long sinceResubMs = lastResubMs < 0
+                                                ? std::numeric_limits<long long>::max()
+                                                : nowSteadyMs - lastResubMs;
+                                            if (reader->jbHighStreak >= kJitterBufferRecoverStreak &&
+                                                ageMs >= kJitterBufferWarmupMs &&
+                                                active &&
+                                                sinceResubMs >= kJitterBufferCooldownMs &&
+                                                reader->resubCount.load(std::memory_order_relaxed) < kJitterBufferMaxResubPerReader) {
+                                                reader->jbHighStreak = 0;
+                                                reader->resubCount.fetch_add(1, std::memory_order_relaxed);
+                                                reader->lastResubSteadyMs.store(nowSteadyMs, std::memory_order_relaxed);
+                                                std::cout << "JBWATCH firing resubscribe sid=" << reader->trackSid
+                                                          << " jbTargetMs=" << jbTargetMs
+                                                          << " attempt=" << reader->resubCount.load(std::memory_order_relaxed) << std::endl;
+                                                requestAudioTrackResubscribe(reader->participantIdentity, reader->trackSid, jbTargetMs);
+                                            }
                                         }
-                                        const long long lastResubMs = reader->lastResubSteadyMs.load(std::memory_order_relaxed);
-                                        const long long sinceResubMs = lastResubMs < 0
-                                            ? std::numeric_limits<long long>::max()
-                                            : nowSteadyMs - lastResubMs;
-                                        if (reader->jbHighStreak >= kJitterBufferRecoverStreak &&
-                                            ageMs >= kJitterBufferWarmupMs &&
-                                            active &&
-                                            sinceResubMs >= kJitterBufferCooldownMs &&
-                                            reader->resubCount.load(std::memory_order_relaxed) < kJitterBufferMaxResubPerReader) {
-                                            reader->jbHighStreak = 0;
-                                            reader->resubCount.fetch_add(1, std::memory_order_relaxed);
-                                            reader->lastResubSteadyMs.store(nowSteadyMs, std::memory_order_relaxed);
-                                            std::cout << "JBWATCH firing resubscribe sid=" << reader->trackSid
-                                                      << " jbTargetMs=" << jbTargetMs
-                                                      << " attempt=" << reader->resubCount.load(std::memory_order_relaxed) << std::endl;
-                                            requestAudioTrackResubscribe(reader->participantIdentity, reader->trackSid, jbTargetMs);
-                                        }
+                                        continue;
                                     }
-                                    continue;
+                                    const auto* remoteInbound = std::get_if<livekit::RtcRemoteInboundRtpStats>(&stat.stats);
+                                    if (remoteInbound != nullptr) {
+                                        rttSec = remoteInbound->remote_inbound.round_trip_time;
+                                        remoteFractionLost = remoteInbound->remote_inbound.fraction_lost;
+                                    }
                                 }
-                                const auto* remoteInbound = std::get_if<livekit::RtcRemoteInboundRtpStats>(&stat.stats);
-                                if (remoteInbound != nullptr) {
-                                    rttSec = remoteInbound->remote_inbound.round_trip_time;
-                                    remoteFractionLost = remoteInbound->remote_inbound.fraction_lost;
+                                // Connection-quality bars: per-interval loss from the
+                                // RTP counter deltas, plus jitter and RTT captured
+                                // above. -1 = unknown (no sample yet).
+                                double lossPct = -1.0;
+                                if (packetsReceived >= 0 && packetsLost >= 0) {
+                                    const long long prevRecv =
+                                        reader->prevPacketsReceived.exchange(packetsReceived, std::memory_order_relaxed);
+                                    const long long prevLost =
+                                        reader->prevPacketsLost.exchange(packetsLost, std::memory_order_relaxed);
+                                    const double deltaRecv = static_cast<double>(packetsReceived - prevRecv);
+                                    const double deltaLost = static_cast<double>(packetsLost - prevLost);
+                                    if (prevRecv >= 0 && deltaRecv >= 0.0 && deltaLost >= 0.0) {
+                                        lossPct = deltaRecv + deltaLost > 0.0
+                                            ? deltaLost * 100.0 / (deltaRecv + deltaLost)
+                                            : 0.0;
+                                    }
+                                }
+                                const long long rttMs =
+                                    rttSec >= 0.0 ? static_cast<long long>(rttSec * 1000.0 + 0.5) : -1LL;
+                                dispatchRemoteConnectionQuality(
+                                    reader->participantIdentity, jitterMs, rttMs, lossPct);
+                                if (rttSec >= 0.0) {
+                                    std::cout << "RXRTT sid=" << reader->trackSid
+                                              << " rttMs=" << rttMs
+                                              << " remoteFractionLostPct="
+                                              << static_cast<long long>(remoteFractionLost * 100.0)
+                                              << std::endl;
                                 }
                             }
-                            // Connection-quality bars: per-interval loss from the
-                            // RTP counter deltas, plus jitter and RTT captured
-                            // above. -1 = unknown (no sample yet).
-                            double lossPct = -1.0;
-                            if (packetsReceived >= 0 && packetsLost >= 0) {
-                                const long long prevRecv =
-                                    reader->prevPacketsReceived.exchange(packetsReceived, std::memory_order_relaxed);
-                                const long long prevLost =
-                                    reader->prevPacketsLost.exchange(packetsLost, std::memory_order_relaxed);
-                                const double deltaRecv = static_cast<double>(packetsReceived - prevRecv);
-                                const double deltaLost = static_cast<double>(packetsLost - prevLost);
-                                if (prevRecv >= 0 && deltaRecv >= 0.0 && deltaLost >= 0.0) {
-                                    lossPct = deltaRecv + deltaLost > 0.0
-                                        ? deltaLost * 100.0 / (deltaRecv + deltaLost)
-                                        : 0.0;
-                                }
-                            }
-                            const long long rttMs =
-                                rttSec >= 0.0 ? static_cast<long long>(rttSec * 1000.0 + 0.5) : -1LL;
-                            dispatchRemoteConnectionQuality(
-                                reader->participantIdentity, jitterMs, rttMs, lossPct);
-                            if (rttSec >= 0.0) {
-                                std::cout << "RXRTT sid=" << reader->trackSid
-                                          << " rttMs=" << rttMs
-                                          << " remoteFractionLostPct="
-                                          << static_cast<long long>(remoteFractionLost * 100.0)
-                                          << std::endl;
-                            }
+                        } catch (const std::exception& e) {
+                            std::cout << "DEBUG [OrbitLiveKitAudio] getStats failed track="
+                                      << reader->trackSid << ": " << e.what() << std::endl;
                         }
-                    } catch (const std::exception& e) {
-                        std::cout << "DEBUG [OrbitLiveKitAudio] getStats failed track="
-                                  << reader->trackSid << ": " << e.what() << std::endl;
                     }
                 }
+            } catch (const std::exception& error) {
+                std::cerr << "ERROR [OrbitLiveKitAudio] Remote audio reader threw track="
+                          << reader->trackSid << " message=" << error.what() << std::endl;
+            } catch (...) {
+                std::cerr << "ERROR [OrbitLiveKitAudio] Remote audio reader threw track="
+                          << reader->trackSid << " message=unknown" << std::endl;
             }
+            // Clear the liveness flag FIRST and unconditionally. Every
+            // recovery path keys on it -- startRemoteReaderLocked's
+            // "replace a dead entry" branch and nativeRescanRemoteVideoTracks'
+            // hasLiveReader check -- so leaving it true after we exit makes this
+            // track permanently un-restartable, which is the exact bug the
+            // self-erase below exists to cure.
+            reader->running.store(false);
             {
-                // try_to_lock is required: stopRemoteReaderLocked /
-                // stopAllRemoteReadersLocked erase us from the map and then
-                // join this thread WHILE holding g_sessionMutex. A blocking
-                // acquisition here would deadlock every teardown that
-                // coincides with a reader exiting.
-                std::unique_lock<std::mutex> lock(g_sessionMutex, std::try_to_lock);
+                // try_to_lock, NOT a bounded timed wait.
+                //
+                // stopRemoteReaderLocked / stopRemoteReadersForParticipantLocked
+                // erase us from the map and then join this thread WHILE holding
+                // g_sessionMutex. So whenever we are exiting during a teardown,
+                // the mutex is held by the thread that is blocked waiting on US.
+                // Waiting for it is waiting for ourselves: the old 50 ms timeout
+                // could not succeed in that case, it could only add 50 ms to
+                // every hangup.
+                //
+                // A single non-blocking attempt is the whole of it. Losing the
+                // race is recoverable because `running` is already false, and
+                // both recovery paths key on exactly that -- the rescan's
+                // "replace a dead entry" branch and its hasLiveReader check.
+                std::unique_lock<std::timed_mutex> lock(g_sessionMutex, std::try_to_lock);
                 if (lock.owns_lock()) {
                     auto it = g_remoteAudioReaders.find(reader->trackSid);
                     if (it != g_remoteAudioReaders.end() && it->second == reader) {
                         g_audioMixer.removeParticipant(reader->trackSid);
                         g_remoteAudioReaders.erase(it);
+                        // A successful erase proves the map held our only other
+                        // owner (every teardown path removes the entry before it
+                        // joins), so nothing can join this thread any more.
+                        // Detach, otherwise ~RemoteAudioReader runs on this very
+                        // thread with a still-joinable std::thread and calls
+                        // std::terminate().
+                        if (reader->thread.joinable()) {
+                            reader->thread.detach();
+                        }
                         std::cout << "DEBUG [OrbitLiveKitAudio] Remote audio reader exited for track "
                                   << reader->trackSid << std::endl;
                     }
+                } else {
+                    // `g_sessionMutex` is held by whoever is tearing the session
+                    // down, and that holder is blocked joining this very thread.
+                    // We cannot take the lock, and we must not wait for it: this
+                    // IS the thread the joiner is waiting on, so any further
+                    // timeout here is paid directly as hangup latency.
+                    //
+                    // The old 50 ms was the wrong trade. It bought nothing -- the
+                    // erase cannot succeed while teardown holds the mutex, which
+                    // is precisely when this branch runs -- and it delayed every
+                    // hangup by 50 ms to reach a conclusion it had already made.
+                    //
+                    // So: try once, and if it is busy, hand the work to the teardown
+                    // thread that IS holding the lock. `running` is already false,
+                    // which is what the rescan and the "replace a dead entry"
+                    // branch both key on, so the entry is reachable and
+                    // replaceable without us erasing it.
+                    std::cerr << "WARN [OrbitLiveKitAudio] remote audio reader self-cleanup deferred to teardown/rescan "
+                              << "(g_sessionMutex held by joiner) track=" << reader->trackSid << std::endl;
                 }
             }
             std::cout << "DEBUG [OrbitLiveKitAudio] reader thread exited track="
@@ -1957,6 +2337,26 @@ void stopRemoteReadersForParticipantLocked(const std::string& participantIdentit
         g_audioMixer.removeParticipant(reader->trackSid);
         stopReader(reader);
     }
+
+    // g_participantMediaKeys is deliberately NOT erased here. The previous
+    // comment claimed "a rejoining peer is re-sent its key by the distributor",
+    // but that is exactly the assumption H8-V3 disproves: a peer whose
+    // DeliveredKeyIndex already recorded the delivery will NOT resend, and
+    // OutdatedKeyFilter drops a same-index resend. So erasing on every
+    // onParticipantDisconnected -- and that fires on transient roster flickers
+    // the doc names explicitly -- meant the NEXT connectRoom built a fresh
+    // E2EEManager from the cache alone, found the identity absent, and nobody
+    // would ever fill it in again: permanent two-way deafness for the rest of the
+    // call, surviving a token-refresh reconnect.
+    //
+    // The map is bounded by distinct identities within one call, and is cleared
+    // in nativeDestroySession and nativeDisconnect.
+
+    // g_participantGains is deliberately NOT erased either: a local volume/mute
+    // the user set is meant to survive that participant dropping and rejoining
+    // mid-call, and the track SIDs are session-scoped anyway so the map stays
+    // bounded by distinct identities in a single call. Both maps are cleared on
+    // disconnect/destroy.
 }
 
 std::string trackSourceLabel(livekit::TrackSource source);
@@ -2003,7 +2403,7 @@ void dispatchRemoteParticipantConnected(const std::string& participantIdentity, 
             sink,
             method,
             kRawSessionId,
-            g_rawEpoch,
+            g_rawEpochForCallbacks.load(std::memory_order_acquire),
             jIdentity,
             jSid);
         if (env->ExceptionCheck()) {
@@ -2051,7 +2451,7 @@ void dispatchRemoteParticipantDisconnected(const std::string& participantIdentit
             sink,
             method,
             kRawSessionId,
-            g_rawEpoch,
+            g_rawEpochForCallbacks.load(std::memory_order_acquire),
             jIdentity,
             jSid);
         if (env->ExceptionCheck()) {
@@ -2098,7 +2498,7 @@ void dispatchRemoteAudioMuteChanged(const std::string& participantIdentity, bool
             sink,
             method,
             kRawSessionId,
-            g_rawEpoch,
+            g_rawEpochForCallbacks.load(std::memory_order_acquire),
             jIdentity,
             muted ? JNI_TRUE : JNI_FALSE);
         if (env->ExceptionCheck()) {
@@ -2143,7 +2543,7 @@ void dispatchRemoteConnectionQuality(const std::string& participantIdentity, lon
             sink,
             method,
             kRawSessionId,
-            g_rawEpoch,
+            g_rawEpochForCallbacks.load(std::memory_order_acquire),
             jIdentity,
             static_cast<jlong>(jitterMs),
             static_cast<jlong>(rttMs),
@@ -2288,7 +2688,10 @@ void notifyRemoteVideoTrackRemoved(const std::shared_ptr<RemoteVideoReader>& rea
               << " participantIdentity=" << reader->participantIdentity
               << " trackSid=" << reader->trackSid
               << std::endl;
-    dispatchRemoteVideoTrackRemoved(reader);
+    // Teardown reaches here while g_sessionMutex is held; dispatching straight
+    // into Java from there can re-enter the native entry points this teardown is
+    // itself calling into. Hand it to SessionLock instead.
+    deferDispatchIfSessionLockHeld([reader] { dispatchRemoteVideoTrackRemoved(reader); });
 }
 
 void dispatchRemoteVideoFrame(
@@ -2305,7 +2708,9 @@ void dispatchRemoteVideoFrame(
 
     const auto& frame = event.frame;
     const std::size_t byteLength = frame.dataSize();
-    if (frame.width() <= 0 || frame.height() <= 0 || byteLength == 0 ||
+    // dataSize() can be non-zero while the buffer pointer is null, which would
+    // hand SetByteArrayRegion a null source and crash the VM.
+    if (frame.data() == nullptr || frame.width() <= 0 || frame.height() <= 0 || byteLength == 0 ||
         byteLength > static_cast<std::size_t>(std::numeric_limits<jsize>::max())) {
         return;
     }
@@ -2490,8 +2895,22 @@ void startRemoteVideoReaderLocked(
     }
 
     const auto trackSid = normalizedSid(track->sid());
-    if (trackSid.empty() || g_remoteVideoReaders.find(trackSid) != g_remoteVideoReaders.end()) {
+    if (trackSid.empty()) {
         return;
+    }
+    {
+        auto it = g_remoteVideoReaders.find(trackSid);
+        if (it != g_remoteVideoReaders.end()) {
+            const auto& existing = it->second;
+            if (existing != nullptr && existing->running.load()) {
+                return;
+            }
+            // Entry left behind by a reader whose thread already exited: stop it
+            // (this also publishes the track-removed event) so this track can be
+            // subscribed again instead of staying frozen for the whole call.
+            std::cout << "DEBUG [RemoteVideo] replacing dead reader entry trackSid=" << trackSid << std::endl;
+            stopRemoteVideoReaderLocked(trackSid, "restart-dead-reader");
+        }
     }
 
     try {
@@ -2532,35 +2951,94 @@ void startRemoteVideoReaderLocked(
                   << " streamState=" << streamStateLabel(track->streamState())
                   << std::endl;
 
-        dispatchRemoteVideoTrackAdded(reader);
+        // Deferred when the session lock is held so the Java sink is not
+        // re-entered with g_sessionMutex still taken.
+        deferDispatchIfSessionLockHeld([reader] { dispatchRemoteVideoTrackAdded(reader); });
         reader->thread = std::thread([reader] {
-            std::uint64_t sequence = 0;
-            livekit::VideoFrameEvent event;
-            while (reader->running.load() && reader->stream != nullptr && reader->stream->read(event)) {
-                if (!reader->running.load()) {
-                    break;
+            // An escaping exception on a std::thread body calls std::terminate()
+            // and takes the whole JVM down, so the loop is guarded and the
+            // teardown below is reached on every path.
+            try {
+                std::uint64_t sequence = 0;
+                livekit::VideoFrameEvent event;
+                while (reader->running.load() && reader->stream != nullptr && reader->stream->read(event)) {
+                    if (!reader->running.load()) {
+                        break;
+                    }
+                    sequence += 1;
+                    const auto& frame = event.frame;
+                    const auto timestampNs = event.timestamp_us > 0
+                        ? static_cast<long long>(event.timestamp_us * 1000LL)
+                        : static_cast<long long>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                              std::chrono::steady_clock::now().time_since_epoch()).count());
+                    if (sequence <= 5 || sequence % 120 == 0) {
+                        std::cout << "DEBUG [RemoteVideo] frame "
+                                  << "participantIdentity=" << reader->participantIdentity
+                                  << " trackSid=" << reader->trackSid
+                                  << " seq=" << sequence
+                                  << " width=" << frame.width()
+                                  << " height=" << frame.height()
+                                  << " format=" << static_cast<int>(frame.type())
+                                  << " bytes=" << frame.dataSize()
+                                  << " timestampNs=" << timestampNs
+                                  << std::endl;
+                    }
+                    dispatchRemoteVideoFrame(reader, event, sequence);
                 }
-                sequence += 1;
-                const auto& frame = event.frame;
-                const auto timestampNs = event.timestamp_us > 0
-                    ? static_cast<long long>(event.timestamp_us * 1000LL)
-                    : static_cast<long long>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                          std::chrono::steady_clock::now().time_since_epoch()).count());
-                if (sequence <= 5 || sequence % 120 == 0) {
-                    std::cout << "DEBUG [RemoteVideo] frame "
-                              << "participantIdentity=" << reader->participantIdentity
-                              << " trackSid=" << reader->trackSid
-                              << " seq=" << sequence
-                              << " width=" << frame.width()
-                              << " height=" << frame.height()
-                              << " format=" << static_cast<int>(frame.type())
-                              << " bytes=" << frame.dataSize()
-                              << " timestampNs=" << timestampNs
-                              << std::endl;
-                }
-                dispatchRemoteVideoFrame(reader, event, sequence);
+            } catch (const std::exception& error) {
+                std::cerr << "ERROR [RemoteVideo] reader threw trackSid=" << reader->trackSid
+                          << " participantIdentity=" << reader->participantIdentity
+                          << " message=" << error.what() << std::endl;
+            } catch (...) {
+                std::cerr << "ERROR [RemoteVideo] reader threw trackSid=" << reader->trackSid
+                          << " participantIdentity=" << reader->participantIdentity
+                          << " message=unknown" << std::endl;
             }
-            notifyRemoteVideoTrackRemoved(reader, "reader-ended");
+            // Clear the liveness flag FIRST and unconditionally, for the same
+            // reason as the audio reader: startRemoteVideoReaderLocked's
+            // "replace a dead entry" branch and nativeRescanRemoteVideoTracks'
+            // hasLiveReader check both key on it, and leaving it true after we
+            // exit freezes this track for the rest of the call.
+            reader->running.store(false);
+            // Self-remove: startRemoteVideoReaderLocked and the rescan both skip
+            // a track sid that already has a map entry, so a reader that exits
+            // (stream->read() returned false) without erasing itself froze that
+            // track for the rest of the call. Only erase when the entry is still
+            // OURS so a later reader for the same sid is not dropped.
+            // try_to_lock, for the same reason as the audio reader above: the
+            // teardown thread that would let us erase is the one currently
+            // blocked joining US, so a timed wait can only ever add latency to
+            // hangup. `running == false` above is what makes the entry
+            // replaceable by the rescan if we lose the race.
+            bool selfRemoved = false;
+            {
+                std::unique_lock<std::timed_mutex> lock(g_sessionMutex, std::try_to_lock);
+                if (lock.owns_lock()) {
+                    auto it = g_remoteVideoReaders.find(reader->trackSid);
+                    if (it != g_remoteVideoReaders.end() && it->second == reader) {
+                        g_remoteVideoReaders.erase(it);
+                        selfRemoved = true;
+                    }
+                } else {
+                    // Expected during teardown; the rescan restarts the track.
+                    std::cerr << "WARN [RemoteVideo] reader self-cleanup deferred to rescan: "
+                              << "g_sessionMutex busy trackSid=" << reader->trackSid << std::endl;
+                }
+            }
+            if (selfRemoved) {
+                // A successful erase proves the map held our only other owner
+                // (every teardown path removes the entry before it joins), so
+                // nothing can join this thread any more. Detach, otherwise
+                // ~RemoteVideoReader runs on this very thread with a
+                // still-joinable std::thread and calls std::terminate().
+                if (reader->thread.joinable()) {
+                    reader->thread.detach();
+                }
+                // A replaced reader is already being torn down by whoever
+                // replaced it; do not publish a removal that would delete the
+                // tile the replacement just added.
+                notifyRemoteVideoTrackRemoved(reader, "reader-ended");
+            }
             std::cout << "DEBUG [RemoteVideo] reader thread exited "
                       << "participantIdentity=" << reader->participantIdentity
                       << " trackSid=" << reader->trackSid
@@ -2582,6 +3060,14 @@ void startRemoteVideoReaderLocked(
 class OrbitAudioRoomDelegate final : public livekit::RoomDelegate {
 public:
     void onLocalTrackPublished(livekit::Room&, const livekit::LocalTrackPublishedEvent& event) override {
+        // The LiveKit SDK invokes RoomDelegate from its own FFI event thread
+        // with no handler installed, so ANY exception unwinding out of here
+        // reaches std::terminate and takes the whole JVM down, not just the
+        // call. Every body below allocates (std::string copies of the event
+        // accessors, std::function in deferDispatchIfSessionLockHeld,
+        // make_shared + std::thread in the reader starters, join() and
+        // stream->close() in the stoppers), so the guard is not decorative.
+        try {
         if (event.track == nullptr) {
             return;
         }
@@ -2602,21 +3088,36 @@ public:
                   << " publicationEncryption=" << (publication != nullptr ? encryptionTypeLabel(publication->encryptionType()) : std::string{"unset"})
                   << " publicationAudioFeatures=" << (publication != nullptr ? audioFeaturesLabel(publication->audioFeatures()) : std::string{"[]"})
                   << std::endl;
+        } catch (const std::exception& error) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] onLocalTrackPublished threw: "
+                      << error.what() << std::endl;
+        } catch (...) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] onLocalTrackPublished threw: unknown" << std::endl;
+        }
     }
-
     void onParticipantConnected(livekit::Room&, const livekit::ParticipantConnectedEvent& event) override {
+        // The LiveKit SDK invokes RoomDelegate from its own FFI event thread
+        // with no handler installed, so ANY exception unwinding out of here
+        // reaches std::terminate and takes the whole JVM down, not just the
+        // call. Every body below allocates (std::string copies of the event
+        // accessors, std::function in deferDispatchIfSessionLockHeld,
+        // make_shared + std::thread in the reader starters, join() and
+        // stream->close() in the stoppers), so the guard is not decorative.
+        try {
         if (callbacksStopped("room-delegate")) {
             return;
         }
         if (event.participant == nullptr) {
             return;
         }
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        SessionLock lock;
         const std::string identity = event.participant->identity();
         const std::string sid = event.participant->sid();
         std::cout << "DEBUG [OrbitLiveKitAudio] remote participant connected identity="
                   << identity << " sid=" << sid << std::endl;
-        dispatchRemoteParticipantConnected(identity, sid);
+        // Deferred: Java's onRemoteParticipantConnected may call straight back
+        // into a native entry point that takes g_sessionMutex.
+        deferDispatchIfSessionLockHeld([identity, sid] { dispatchRemoteParticipantConnected(identity, sid); });
 
         for (const auto& publicationEntry : event.participant->trackPublications()) {
             const auto& publication = publicationEntry.second;
@@ -2631,15 +3132,30 @@ public:
                 startRemoteReaderLocked(track, identity);
             }
         }
+        } catch (const std::exception& error) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] onParticipantConnected threw: "
+                      << error.what() << std::endl;
+        } catch (...) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] onParticipantConnected threw: unknown" << std::endl;
+        }
     }
-
     void onTrackPublished(livekit::Room&, const livekit::TrackPublishedEvent& event) override {
+        // The LiveKit SDK invokes RoomDelegate from its own FFI event thread
+        // with no handler installed, so ANY exception unwinding out of here
+        // reaches std::terminate and takes the whole JVM down, not just the
+        // call. Every body below allocates (std::string copies of the event
+        // accessors, std::function in deferDispatchIfSessionLockHeld,
+        // make_shared + std::thread in the reader starters, join() and
+        // stream->close() in the stoppers), so the guard is not decorative.
+        try {
         if (callbacksStopped("room-delegate")) {
             return;
         }
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        SessionLock lock;
         if (event.participant != nullptr) {
-            dispatchRemoteParticipantConnected(event.participant->identity(), event.participant->sid());
+            const std::string identity = event.participant->identity();
+            const std::string sid = event.participant->sid();
+            deferDispatchIfSessionLockHeld([identity, sid] { dispatchRemoteParticipantConnected(identity, sid); });
         }
         logRemoteVideoPublicationDetected(
             event.participant,
@@ -2654,13 +3170,26 @@ public:
                 startRemoteReaderLocked(event.publication->track(), identity);
             }
         }
+        } catch (const std::exception& error) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] onTrackPublished threw: "
+                      << error.what() << std::endl;
+        } catch (...) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] onTrackPublished threw: unknown" << std::endl;
+        }
     }
-
     void onTrackUnpublished(livekit::Room&, const livekit::TrackUnpublishedEvent& event) override {
+        // The LiveKit SDK invokes RoomDelegate from its own FFI event thread
+        // with no handler installed, so ANY exception unwinding out of here
+        // reaches std::terminate and takes the whole JVM down, not just the
+        // call. Every body below allocates (std::string copies of the event
+        // accessors, std::function in deferDispatchIfSessionLockHeld,
+        // make_shared + std::thread in the reader starters, join() and
+        // stream->close() in the stoppers), so the guard is not decorative.
+        try {
         if (callbacksStopped("room-delegate")) {
             return;
         }
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        SessionLock lock;
         if (event.publication != nullptr && event.publication->kind() == livekit::TrackKind::KIND_VIDEO) {
             std::cout << "DEBUG [RemoteVideo] remote video track unpublished "
                       << "participantIdentity=" << (event.participant != nullptr ? event.participant->identity() : std::string{"<none>"})
@@ -2671,15 +3200,30 @@ public:
         } else if (event.publication != nullptr && event.publication->kind() == livekit::TrackKind::KIND_AUDIO) {
             stopRemoteReaderLocked(publicationTrackSid(event.publication));
         }
+        } catch (const std::exception& error) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] onTrackUnpublished threw: "
+                      << error.what() << std::endl;
+        } catch (...) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] onTrackUnpublished threw: unknown" << std::endl;
+        }
     }
-
     void onTrackSubscribed(livekit::Room&, const livekit::TrackSubscribedEvent& event) override {
+        // The LiveKit SDK invokes RoomDelegate from its own FFI event thread
+        // with no handler installed, so ANY exception unwinding out of here
+        // reaches std::terminate and takes the whole JVM down, not just the
+        // call. Every body below allocates (std::string copies of the event
+        // accessors, std::function in deferDispatchIfSessionLockHeld,
+        // make_shared + std::thread in the reader starters, join() and
+        // stream->close() in the stoppers), so the guard is not decorative.
+        try {
         if (callbacksStopped("room-delegate")) {
             return;
         }
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        SessionLock lock;
         if (event.participant != nullptr) {
-            dispatchRemoteParticipantConnected(event.participant->identity(), event.participant->sid());
+            const std::string identity = event.participant->identity();
+            const std::string sid = event.participant->sid();
+            deferDispatchIfSessionLockHeld([identity, sid] { dispatchRemoteParticipantConnected(identity, sid); });
         }
         if (event.track != nullptr && event.track->kind() == livekit::TrackKind::KIND_VIDEO) {
             logRemoteVideoPublicationDetected(event.participant, event.publication, event.track, "subscribed");
@@ -2711,16 +3255,29 @@ public:
                   << " remotePublicationAudioFeatures=" << (publication != nullptr ? audioFeaturesLabel(publication->audioFeatures()) : std::string{"[]"})
                   << std::endl;
         startRemoteReaderLocked(event.track, identity);
+        } catch (const std::exception& error) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] onTrackSubscribed threw: "
+                      << error.what() << std::endl;
+        } catch (...) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] onTrackSubscribed threw: unknown" << std::endl;
+        }
     }
-
     void onTrackUnsubscribed(livekit::Room&, const livekit::TrackUnsubscribedEvent& event) override {
+        // The LiveKit SDK invokes RoomDelegate from its own FFI event thread
+        // with no handler installed, so ANY exception unwinding out of here
+        // reaches std::terminate and takes the whole JVM down, not just the
+        // call. Every body below allocates (std::string copies of the event
+        // accessors, std::function in deferDispatchIfSessionLockHeld,
+        // make_shared + std::thread in the reader starters, join() and
+        // stream->close() in the stoppers), so the guard is not decorative.
+        try {
         if (callbacksStopped("room-delegate")) {
             return;
         }
         if (event.track == nullptr) {
             return;
         }
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        SessionLock lock;
         if (event.track->kind() == livekit::TrackKind::KIND_VIDEO) {
             std::cout << "DEBUG [RemoteVideo] remote video track unsubscribed "
                       << "participantIdentity=" << (event.participant != nullptr ? event.participant->identity() : std::string{"<none>"})
@@ -2731,9 +3288,22 @@ public:
         } else {
             stopRemoteReaderLocked(event.track->sid());
         }
+        } catch (const std::exception& error) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] onTrackUnsubscribed threw: "
+                      << error.what() << std::endl;
+        } catch (...) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] onTrackUnsubscribed threw: unknown" << std::endl;
+        }
     }
-
     void onTrackSubscriptionFailed(livekit::Room&, const livekit::TrackSubscriptionFailedEvent& event) override {
+        // The LiveKit SDK invokes RoomDelegate from its own FFI event thread
+        // with no handler installed, so ANY exception unwinding out of here
+        // reaches std::terminate and takes the whole JVM down, not just the
+        // call. Every body below allocates (std::string copies of the event
+        // accessors, std::function in deferDispatchIfSessionLockHeld,
+        // make_shared + std::thread in the reader starters, join() and
+        // stream->close() in the stoppers), so the guard is not decorative.
+        try {
         if (callbacksStopped("room-delegate")) {
             return;
         }
@@ -2742,13 +3312,26 @@ public:
                   << " trackSid=" << event.track_sid
                   << " error=" << event.error
                   << std::endl;
+        } catch (const std::exception& error) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] onTrackSubscriptionFailed threw: "
+                      << error.what() << std::endl;
+        } catch (...) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] onTrackSubscriptionFailed threw: unknown" << std::endl;
+        }
     }
-
     void onTrackMuted(livekit::Room&, const livekit::TrackMutedEvent& event) override {
+        // The LiveKit SDK invokes RoomDelegate from its own FFI event thread
+        // with no handler installed, so ANY exception unwinding out of here
+        // reaches std::terminate and takes the whole JVM down, not just the
+        // call. Every body below allocates (std::string copies of the event
+        // accessors, std::function in deferDispatchIfSessionLockHeld,
+        // make_shared + std::thread in the reader starters, join() and
+        // stream->close() in the stoppers), so the guard is not decorative.
+        try {
         if (callbacksStopped("room-delegate")) {
             return;
         }
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        SessionLock lock;
         if (event.publication != nullptr && event.publication->kind() == livekit::TrackKind::KIND_VIDEO) {
             std::cout << "DEBUG [RemoteVideo] remote video track muted "
                       << "participantIdentity=" << (event.participant != nullptr ? event.participant->identity() : std::string{"<none>"})
@@ -2764,18 +3347,32 @@ public:
             // announced by startRemoteReaderLocked instead.
             const auto track = event.publication != nullptr ? event.publication->track() : nullptr;
             if (event.participant != nullptr && track != nullptr && track->remote()) {
+                const std::string identity = event.participant->identity();
                 std::cout << "DEBUG [OrbitLiveKitAudio] remote mic muted identity="
-                          << event.participant->identity() << std::endl;
-                dispatchRemoteAudioMuteChanged(event.participant->identity(), true);
+                          << identity << std::endl;
+                deferDispatchIfSessionLockHeld([identity] { dispatchRemoteAudioMuteChanged(identity, true); });
             }
         }
+        } catch (const std::exception& error) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] onTrackMuted threw: "
+                      << error.what() << std::endl;
+        } catch (...) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] onTrackMuted threw: unknown" << std::endl;
+        }
     }
-
     void onTrackUnmuted(livekit::Room&, const livekit::TrackUnmutedEvent& event) override {
+        // The LiveKit SDK invokes RoomDelegate from its own FFI event thread
+        // with no handler installed, so ANY exception unwinding out of here
+        // reaches std::terminate and takes the whole JVM down, not just the
+        // call. Every body below allocates (std::string copies of the event
+        // accessors, std::function in deferDispatchIfSessionLockHeld,
+        // make_shared + std::thread in the reader starters, join() and
+        // stream->close() in the stoppers), so the guard is not decorative.
+        try {
         if (callbacksStopped("room-delegate")) {
             return;
         }
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        SessionLock lock;
         if (event.publication != nullptr && event.publication->kind() == livekit::TrackKind::KIND_VIDEO) {
             const auto track = event.publication->track();
             std::cout << "DEBUG [RemoteVideo] remote video track unmuted "
@@ -2790,48 +3387,96 @@ public:
         } else {
             const auto muteTrack = event.publication != nullptr ? event.publication->track() : nullptr;
             if (event.participant != nullptr && muteTrack != nullptr && muteTrack->remote()) {
+                const std::string identity = event.participant->identity();
                 std::cout << "DEBUG [OrbitLiveKitAudio] remote mic unmuted identity="
-                          << event.participant->identity() << std::endl;
-                dispatchRemoteAudioMuteChanged(event.participant->identity(), false);
+                          << identity << std::endl;
+                deferDispatchIfSessionLockHeld([identity] { dispatchRemoteAudioMuteChanged(identity, false); });
             }
         }
+        } catch (const std::exception& error) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] onTrackUnmuted threw: "
+                      << error.what() << std::endl;
+        } catch (...) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] onTrackUnmuted threw: unknown" << std::endl;
+        }
     }
-
     void onParticipantDisconnected(livekit::Room&, const livekit::ParticipantDisconnectedEvent& event) override {
+        // The LiveKit SDK invokes RoomDelegate from its own FFI event thread
+        // with no handler installed, so ANY exception unwinding out of here
+        // reaches std::terminate and takes the whole JVM down, not just the
+        // call. Every body below allocates (std::string copies of the event
+        // accessors, std::function in deferDispatchIfSessionLockHeld,
+        // make_shared + std::thread in the reader starters, join() and
+        // stream->close() in the stoppers), so the guard is not decorative.
+        try {
         if (callbacksStopped("room-delegate")) {
             return;
         }
         if (event.participant == nullptr) {
             return;
         }
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        SessionLock lock;
         const std::string identity = event.participant->identity();
         const std::string sid = event.participant->sid();
         std::cout << "DEBUG [OrbitLiveKitAudio] remote participant disconnected identity="
                   << identity << " sid=" << sid << std::endl;
-        dispatchRemoteParticipantDisconnected(identity, sid);
+        deferDispatchIfSessionLockHeld([identity, sid] { dispatchRemoteParticipantDisconnected(identity, sid); });
         stopRemoteReadersForParticipantLocked(identity);
         stopRemoteVideoReadersForParticipantLocked(identity, "participant-disconnected");
+        } catch (const std::exception& error) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] onParticipantDisconnected threw: "
+                      << error.what() << std::endl;
+        } catch (...) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] onParticipantDisconnected threw: unknown" << std::endl;
+        }
     }
-
     void onDisconnected(livekit::Room&, const livekit::DisconnectedEvent&) override {
+        // The LiveKit SDK invokes RoomDelegate from its own FFI event thread
+        // with no handler installed, so ANY exception unwinding out of here
+        // reaches std::terminate and takes the whole JVM down, not just the
+        // call. Every body below allocates (std::string copies of the event
+        // accessors, std::function in deferDispatchIfSessionLockHeld,
+        // make_shared + std::thread in the reader starters, join() and
+        // stream->close() in the stoppers), so the guard is not decorative.
+        try {
         if (callbacksStopped("room-delegate")) {
             return;
         }
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        // SessionLock, not lock_guard: stopping the readers publishes
+        // onRemoteVideoTrackRemoved, and Kotlin answers that by calling
+        // nativeSetAcceptingFrames / setMixedAudioSink(null) /
+        // disableRemoteVideoSink, every one of which takes g_sessionMutex. With a
+        // plain lock_guard that is a self-deadlock on a non-recursive mutex. The
+        // removals are deferred and flushed by ~SessionLock after the unlock.
+        SessionLock lock;
         g_acceptingFrames = false;
         g_micPublished = false;
         stopAllRemoteReadersLocked();
         stopAllRemoteVideoReadersLocked("room-disconnected");
         g_connected = false;
+        } catch (const std::exception& error) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] onDisconnected threw: "
+                      << error.what() << std::endl;
+        } catch (...) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] onDisconnected threw: unknown" << std::endl;
+        }
     }
 
     // Logging-only on purpose: this fires from webrtc worker threads and the
-    // session mutex may be held by teardown paths that join those threads.
+    // session mutex may be held by teardown paths that join those threads, so
+    // it takes no locks. Guarded anyway because it allocates a std::string copy
+    // of the identity, and an exception here reaches std::terminate.
     void onE2eeStateChanged(livekit::Room&, const livekit::E2eeStateChangedEvent& event) override {
-        const std::string identity = event.participant != nullptr ? event.participant->identity() : std::string{"<none>"};
-        std::cout << "DEBUG [OrbitLiveKitAudio] e2ee state changed identity=" << identity
-                  << " state=" << static_cast<int>(event.state) << std::endl;
+        try {
+            const std::string identity = event.participant != nullptr ? event.participant->identity() : std::string{"<none>"};
+            std::cout << "DEBUG [OrbitLiveKitAudio] e2ee state changed identity=" << identity
+                      << " state=" << static_cast<int>(event.state) << std::endl;
+        } catch (const std::exception& error) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] onE2eeStateChanged threw: "
+                      << error.what() << std::endl;
+        } catch (...) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] onE2eeStateChanged threw: unknown" << std::endl;
+        }
     }
 };
 
@@ -2841,10 +3486,14 @@ public:
 // teardown joins this thread before touching the shared source.
 void stopShareLoopbackThread() {
     g_shareAudioFeedTarget.store(nullptr, std::memory_order_release);
-    if (!g_shareLoopbackActive.load(std::memory_order_acquire)) return;
-    g_shareLoopbackActive.store(false, std::memory_order_release);
+    // Cleared BEFORE the early return: the previous session's answer is worse
+    // than no answer, because ShareAudioAec.Subtractor.checkExclusionOnce
+    // latches on the first value it sees and a stale 1 disables the echo
+    // canceller (so we re-transmit our own playback) for the whole new share.
     g_shareLoopbackFullDeviceFallback.store(false, std::memory_order_release);
     g_shareLoopbackModeResolved.store(false, std::memory_order_release);
+    if (!g_shareLoopbackActive.load(std::memory_order_acquire)) return;
+    g_shareLoopbackActive.store(false, std::memory_order_release);
     if (g_shareLoopbackThread.joinable()) {
         if (g_shareLoopbackThread.get_id() == std::this_thread::get_id()) {
             g_shareLoopbackThread.detach();
@@ -2854,6 +3503,11 @@ void stopShareLoopbackThread() {
     }
 }
 
+// Completion handler for ActivateAudioInterfaceAsync. It MUST be a real,
+// refcounted heap object: the OS keeps its own reference for the lifetime of the
+// async operation and may call ActivateCompleted long after the calling thread
+// gave up waiting. A stack object whose Release() never reached zero meant the
+// OS wrote into a dead frame and SetEvent()'d a closed HANDLE.
 class ShareAudioClientActivator : public IActivateAudioInterfaceCompletionHandler {
 public:
     HANDLE event = NULL;
@@ -2874,8 +3528,16 @@ public:
         *ppv = NULL;
         return E_NOINTERFACE;
     }
-    STDMETHODIMP_(ULONG) AddRef() override { return 1; }
-    STDMETHODIMP_(ULONG) Release() override { return 1; }
+    STDMETHODIMP_(ULONG) AddRef() override {
+        return static_cast<ULONG>(InterlockedIncrement(&refCount_));
+    }
+    STDMETHODIMP_(ULONG) Release() override {
+        const LONG remaining = InterlockedDecrement(&refCount_);
+        if (remaining == 0) {
+            delete this;
+        }
+        return static_cast<ULONG>(remaining > 0 ? remaining : 0);
+    }
 
     STDMETHODIMP ActivateCompleted(IActivateAudioInterfaceAsyncOperation* operation) override {
         HRESULT activateResult = E_FAIL;
@@ -2885,16 +3547,30 @@ public:
             result = unknown->QueryInterface(__uuidof(IAudioClient), (void**)&audioClient);
             unknown->Release();
         } else {
+            // GetActivateResult handed us a reference on every path that
+            // produced an object, including the ones where the activation
+            // itself failed; without this release the interface leaked.
+            if (unknown != NULL) {
+                unknown->Release();
+            }
             result = activateResult;
         }
         SetEvent(event);
         return S_OK;
     }
+
+private:
+    // Starts at 1: the waiter owns the first reference and hands it straight to
+    // ActivateAudioInterfaceAsync, which owns the second.
+    volatile LONG refCount_{1};
 };
 
 void resolveShareAecCallback(JNIEnv* env) {
     if (env == nullptr) return;
-    if (g_shareAecRouterClass != nullptr && g_shareAecOnFrameMethod != nullptr) return;
+    {
+        std::lock_guard<std::mutex> lock(g_shareAecMutex);
+        if (g_shareAecRouterClass != nullptr && g_shareAecOnFrameMethod != nullptr) return;
+    }
     jclass localClass = env->FindClass("livekit/ShareAudioAec");
     if (localClass == nullptr) {
         env->ExceptionClear();
@@ -2908,9 +3584,24 @@ void resolveShareAecCallback(JNIEnv* env) {
         std::cerr << "WARN [ScreenShareAudioPublish] ShareAudioAec.onLoopbackFrame not found; echo cancellation unavailable" << std::endl;
         return;
     }
-    g_shareAecRouterClass = static_cast<jclass>(env->NewGlobalRef(localClass));
+    jclass globalClass = static_cast<jclass>(env->NewGlobalRef(localClass));
     env->DeleteLocalRef(localClass);
-    g_shareAecOnFrameMethod = method;
+    bool installed = false;
+    {
+        // Two threads can race to resolve this (the publishing JVM thread and
+        // the loopback worker); the loser drops the global ref it just made
+        // instead of leaking it.
+        std::lock_guard<std::mutex> lock(g_shareAecMutex);
+        if (g_shareAecRouterClass == nullptr) {
+            g_shareAecRouterClass = globalClass;
+            g_shareAecOnFrameMethod = method;
+            installed = true;
+        }
+    }
+    if (!installed) {
+        if (globalClass != nullptr) env->DeleteGlobalRef(globalClass);
+        return;
+    }
     std::cout << "DEBUG [ScreenShareAudioPublish] share-audio AEC upcall resolved" << std::endl;
 }
 
@@ -2918,7 +3609,14 @@ void dispatchShareLoopbackFrame(
     JNIEnv* env,
     std::vector<std::int16_t>&& frameSamples,
     const std::shared_ptr<livekit::AudioSource>& source) {
-    if (env != nullptr && g_shareAecRouterClass != nullptr && g_shareAecOnFrameMethod != nullptr) {
+    jclass routerClass = nullptr;
+    jmethodID onFrameMethod = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_shareAecMutex);
+        routerClass = g_shareAecRouterClass;
+        onFrameMethod = g_shareAecOnFrameMethod;
+    }
+    if (env != nullptr && routerClass != nullptr && onFrameMethod != nullptr) {
         jbyteArray pcm = env->NewByteArray(static_cast<jsize>(frameSamples.size() * 2));
         if (pcm == nullptr) {
             if (env->ExceptionCheck() == JNI_TRUE) env->ExceptionClear();
@@ -2932,7 +3630,7 @@ void dispatchShareLoopbackFrame(
             env->DeleteLocalRef(pcm);
             return;
         }
-        env->CallStaticVoidMethod(g_shareAecRouterClass, g_shareAecOnFrameMethod, pcm);
+        env->CallStaticVoidMethod(routerClass, onFrameMethod, pcm);
         if (env->ExceptionCheck() == JNI_TRUE) {
             env->ExceptionDescribe();
             env->ExceptionClear();
@@ -2949,8 +3647,17 @@ void dispatchShareLoopbackFrame(
     }
 }
 
-void shareAudioLoopbackMain(std::shared_ptr<livekit::AudioSource> source) {
-    CoInitializeEx(NULL, COINIT_MULTITHREADED);
+void shareAudioLoopbackMainImpl(std::shared_ptr<livekit::AudioSource> source) {
+    // RPC_E_CHANGED_MODE means COM is already up on this thread under a
+    // different apartment model: the apartment is usable, but this call did not
+    // initialize it, so CoUninitialize() must NOT be balanced below.
+    const HRESULT comHr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    const bool comInitializedHere = SUCCEEDED(comHr);
+    if (!comInitializedHere && comHr != RPC_E_CHANGED_MODE) {
+        std::cerr << "ERROR [ScreenShareAudioPublish] CoInitializeEx failed hr=0x"
+                  << std::hex << comHr << std::dec << std::endl;
+        return;
+    }
     g_shareLoopbackFullDeviceFallback.store(false, std::memory_order_release);
     g_shareLoopbackModeResolved.store(false, std::memory_order_release);
 
@@ -2982,20 +3689,31 @@ void shareAudioLoopbackMain(std::shared_ptr<livekit::AudioSource> source) {
         LPWSTR deviceId = NULL;
         hr = device->GetId(&deviceId);
         if (SUCCEEDED(hr)) {
-            ShareAudioClientActivator activator;
+            // Heap-allocated so the OS-held reference stays valid even if the
+            // wait times out and this frame goes away.
+            ShareAudioClientActivator* activator = new ShareAudioClientActivator();
             IActivateAudioInterfaceAsyncOperation* asyncOp = NULL;
-            HRESULT asyncHr = ActivateAudioInterfaceAsync(deviceId, __uuidof(IAudioClient), &activateParams, &activator, &asyncOp);
+            HRESULT asyncHr =
+                ActivateAudioInterfaceAsync(deviceId, __uuidof(IAudioClient), &activateParams, activator, &asyncOp);
             if (SUCCEEDED(asyncHr) && asyncOp) {
-                WaitForSingleObject(activator.event, 2000);
-                if (SUCCEEDED(activator.result) && activator.audioClient != NULL) {
-                    audioClient = activator.audioClient;
+                const DWORD waitResult = WaitForSingleObject(activator->event, 2000);
+                if (waitResult != WAIT_OBJECT_0) {
+                    // The OS still holds its reference and will invoke
+                    // ActivateCompleted later, so the activator stays alive;
+                    // we just stop waiting and take the full-device path.
+                    g_shareLoopbackFullDeviceFallback.store(true, std::memory_order_release);
+                    std::cerr << "WARN [ScreenShareAudioPublish] process-loopback activation timed out waitResult="
+                              << waitResult
+                              << "; falling back to FULL-DEVICE loopback which WILL capture Orbit's own playback" << std::endl;
+                } else if (SUCCEEDED(activator->result) && activator->audioClient != NULL) {
+                    audioClient = activator->audioClient;
                     audioClient->AddRef();
                     g_shareLoopbackFullDeviceFallback.store(false, std::memory_order_release);
                     std::cout << "DEBUG [ScreenShareAudioPublish] process-loopback activated; own-process tree EXCLUDED from capture" << std::endl;
                 } else {
                     g_shareLoopbackFullDeviceFallback.store(true, std::memory_order_release);
                     std::cout << "WARN [ScreenShareAudioPublish] process-loopback activation failed hr=0x"
-                              << std::hex << activator.result << std::dec
+                              << std::hex << activator->result << std::dec
                               << " (EXCLUDE mode needs Windows 11 24H2+); falling back to FULL-DEVICE loopback which WILL capture Orbit's own playback" << std::endl;
                 }
                 g_shareLoopbackModeResolved.store(true, std::memory_order_release);
@@ -3007,6 +3725,10 @@ void shareAudioLoopbackMain(std::shared_ptr<livekit::AudioSource> source) {
                           << std::hex << asyncHr << std::dec
                           << "; falling back to FULL-DEVICE loopback which WILL capture Orbit's own playback" << std::endl;
             }
+            // Drop the waiter's reference on every path, including the timeout
+            // path: the OS still owns the other one and will free the object
+            // when the activation completes.
+            activator->Release();
             CoTaskMemFree(deviceId);
         }
     }
@@ -3042,8 +3764,13 @@ void shareAudioLoopbackMain(std::shared_ptr<livekit::AudioSource> source) {
         std::cout << "DEBUG [ScreenShareAudioPublish] loopback started sampleRate="
                   << captureRate << " channels=" << captureChannels << std::endl;
 
+        // Absolute-deadline pacing, same shape mixLoop() uses: Sleep(10) after
+        // the drain made the real period 10 ms + drain time, so frames were
+        // delivered in ~20 ms bursts instead of evenly every 10 ms.
+        auto nextTick = std::chrono::steady_clock::now();
         while (g_shareLoopbackActive.load(std::memory_order_acquire)) {
-            Sleep(10);
+            nextTick += std::chrono::milliseconds(10);
+            std::this_thread::sleep_until(nextTick);
 
             UINT32 packetLength = 0;
             if (FAILED(captureClient->GetNextPacketSize(&packetLength))) break;
@@ -3107,6 +3834,11 @@ void shareAudioLoopbackMain(std::shared_ptr<livekit::AudioSource> source) {
                 captureClient->ReleaseBuffer(framesAvailable);
                 if (FAILED(captureClient->GetNextPacketSize(&packetLength))) break;
             }
+
+            const auto now = std::chrono::steady_clock::now();
+            if (now > nextTick + std::chrono::milliseconds(20)) {
+                nextTick = now;
+            }
         }
         audioClient->Stop();
         std::cout << "DEBUG [ScreenShareAudioPublish] loopback stopped" << std::endl;
@@ -3119,7 +3851,22 @@ cleanup:
     if (mixFormat) CoTaskMemFree(mixFormat);
     if (device) device->Release();
     if (enumerator) enumerator->Release();
-    CoUninitialize();
+    if (comInitializedHere) CoUninitialize();
+}
+
+// Thread entry point. An exception escaping a std::thread body calls
+// std::terminate() and kills the JVM, and the WASAPI/COM plumbing below is
+// exactly the sort of code that can throw, so keep the body in a helper and
+// guard it here.
+void shareAudioLoopbackMain(std::shared_ptr<livekit::AudioSource> source) {
+    try {
+        shareAudioLoopbackMainImpl(std::move(source));
+    } catch (const std::exception& error) {
+        std::cerr << "ERROR [ScreenShareAudioPublish] loopback thread threw: "
+                  << error.what() << std::endl;
+    } catch (...) {
+        std::cerr << "ERROR [ScreenShareAudioPublish] loopback thread threw: unknown" << std::endl;
+    }
 }
 
 void resetRoomLocked() {
@@ -3220,6 +3967,13 @@ void resetRoomLocked() {
     }
     stopAllRemoteReadersLocked();
     stopAllRemoteVideoReadersLocked("room-reset");
+    // NOTE: g_participantMediaKeys is deliberately NOT cleared here.
+    // connectRoom() calls resetRoomLocked() and then, once the E2EE manager is
+    // up, re-applies every cached key to the provider (the "e2ee flushed cached
+    // key" loop). Clearing here would wipe the pre-connect cache that loop
+    // exists to consume, and peers that already consider us joined do not
+    // re-send -- that is the whole H8-V3 latecomer-deafness class of bug.
+    // Teardown paths (nativeDisconnect / nativeDestroySession) clear it.
     g_audioTrack.reset();
     g_audioSource.reset();
     g_delegate.reset();
@@ -3302,7 +4056,19 @@ std::string escapeJson(const std::string& input) {
                 output += "\\t";
                 break;
             default:
-                output += c;
+                // Raw control characters (including \0, \b, \f and 0x01-0x1F)
+                // are illegal inside a JSON string, so the whole payload fails
+                // to parse and the Kotlin side degrades to a generic UNKNOWN
+                // error. Escape them as \u00XX.
+                if (c < 0x20) {
+                    static const char kHexDigits[] = "0123456789ABCDEF";
+                    const auto byte = static_cast<unsigned char>(c);
+                    output += "\\u00";
+                    output += kHexDigits[(byte >> 4) & 0x0F];
+                    output += kHexDigits[byte & 0x0F];
+                } else {
+                    output += c;
+                }
                 break;
         }
     }
@@ -3485,7 +4251,7 @@ void setRawErrorThreadSafe(
     const std::string& message,
     const std::string& operation,
     bool recoverable) {
-    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
     setRawErrorLocked(code, message, operation, recoverable);
 }
 
@@ -3743,7 +4509,11 @@ bool connectRoom(
     try {
         initializeSdkOnce();
 
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        // SessionLock, not lock_guard: this block starts readers and announces
+        // participants, all of which cross into Java. The upcalls are deferred
+        // and flushed by ~SessionLock once the mutex is free.
+        SessionLock lock;
+        bool hasMixedAudioSink = false;
         resetRoomLocked();
         g_matrixRtcMemberId = requestedIdentity;
         std::cout << "DEBUG [OrbitLiveKitAudio] native connect started" << std::endl;
@@ -3834,7 +4604,13 @@ bool connectRoom(
             }
         }
 
-        if (g_mixedAudioSink != nullptr) {
+        {
+            // Snapshot under the sink's own mutex: g_mixedAudioSink is written
+            // by nativeSetMixedAudioSink on the JVM thread.
+            std::lock_guard<std::mutex> sinkLock(g_mixedAudioSinkMutex);
+            hasMixedAudioSink = g_mixedAudioSink != nullptr;
+        }
+        if (hasMixedAudioSink) {
             g_audioMixer.start();
         }
 
@@ -3842,7 +4618,11 @@ bool connectRoom(
             if (participant == nullptr) {
                 continue;
             }
-            dispatchRemoteParticipantConnected(participant->identity(), participant->sid());
+            {
+                const std::string identity = participant->identity();
+                const std::string sid = participant->sid();
+                deferDispatchIfSessionLockHeld([identity, sid] { dispatchRemoteParticipantConnected(identity, sid); });
+            }
             for (const auto& publicationEntry : participant->trackPublications()) {
                 const auto& publication = publicationEntry.second;
                 if (publication == nullptr || !publication->subscribed()) {
@@ -3880,7 +4660,11 @@ bool connectRoom(
         std::cout << "DEBUG [OrbitLiveKitAudio] native connect succeeded" << std::endl;
         return true;
     } catch (const std::exception& error) {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        // SessionLock, not lock_guard: resetRoomLocked() tears readers down,
+        // which publishes per-track removals into Java. With a plain guard the
+        // mutex is still held during that upcall, and the Kotlin handler calls
+        // back into JNI functions that take the same non-recursive mutex.
+        SessionLock lock;
         resetRoomLocked();
         if (errorMessage != nullptr) {
             *errorMessage = std::string("Connect threw: ") + error.what();
@@ -3888,7 +4672,7 @@ bool connectRoom(
         std::cerr << "ERROR [OrbitLiveKitAudio] Connect threw: " << error.what() << std::endl;
         return false;
     } catch (...) {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        SessionLock lock;
         resetRoomLocked();
         if (errorMessage != nullptr) {
             *errorMessage = "Connect threw unknown error";
@@ -3919,7 +4703,9 @@ extern "C" JNIEXPORT void JNICALL
 Java_livekit_LiveKitNativeAudioBridge_nativeDisconnect(JNIEnv*, jclass) {
     g_callbackShutdown = true;
     g_audioMixer.stop();
-    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    // SessionLock: resetRoomLocked publishes per-track removals into Java,
+    // which must not happen with g_sessionMutex held.
+    SessionLock lock;
     g_acceptingFrames = false;
     resetRoomLocked();
     {
@@ -3937,7 +4723,7 @@ Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(
         !isSupportedAudioChannels(channels) ||
         frameMs != kFrameMs ||
         !isSupportedAudioSourceQueueMs(queueSizeMs)) {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         g_acceptingFrames = false;
         g_micPublished = false;
         g_publishedAudioChannels = 0;
@@ -3947,7 +4733,7 @@ Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(
     }
 
     try {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         g_acceptingFrames = false;
         g_micPublished = false;
         g_publishedAudioChannels = 0;
@@ -4062,7 +4848,7 @@ Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(
         std::cout << "DEBUG [OrbitLiveKitAudio] acceptingFrames=true" << std::endl;
         return JNI_TRUE;
     } catch (const std::exception& error) {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         g_acceptingFrames = false;
         g_micPublished = false;
         g_publishedAudioChannels = 0;
@@ -4073,7 +4859,7 @@ Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(
         std::cerr << "ERROR [OrbitLiveKitAudio] Publish audio threw: " << error.what() << std::endl;
         return JNI_FALSE;
     } catch (...) {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         g_acceptingFrames = false;
         g_micPublished = false;
         g_publishedAudioChannels = 0;
@@ -4109,7 +4895,7 @@ Java_livekit_LiveKitNativeAudioBridge_nativePushAudioFrame(
     bool acceptingAudioFrames = false;
     bool nativeTrackMuted = false;
     {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         if (!hasReadyMicLocked()) {
             logFrameDroppedNotReadyLocked();
             return JNI_FALSE;
@@ -4131,12 +4917,22 @@ Java_livekit_LiveKitNativeAudioBridge_nativePushAudioFrame(
 
     const int expectedBytes = samplesPerChannel * channels * static_cast<jint>(sizeof(std::int16_t));
 
+    // Same capacity check the video push paths do: without it a caller-supplied
+    // direct buffer that is smaller than a frame makes the memcpy below read
+    // past the end of the native allocation.
+    const jlong capacity = env->GetDirectBufferCapacity(pcm);
+    if (capacity < static_cast<jlong>(expectedBytes)) {
+        std::cerr << "ERROR [OrbitLiveKitAudio] Audio frame buffer is smaller than one frame capacity="
+                  << capacity << " expectedBytes=" << expectedBytes << std::endl;
+        return JNI_FALSE;
+    }
+
     try {
         std::vector<std::int16_t> samples(static_cast<std::size_t>(expectedBytes / sizeof(std::int16_t)));
         std::memcpy(samples.data(), data, static_cast<std::size_t>(expectedBytes));
 
         {
-            std::lock_guard<std::mutex> lock(g_sessionMutex);
+            std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
             if (g_audioPushDiagnosticsLogged < 10) {
                 const auto stats = computePcmDiagnostics(samples.data(), samples.size());
                 g_audioPushDiagnosticsLogged += 1;
@@ -4191,13 +4987,13 @@ Java_livekit_LiveKitNativeAudioBridge_nativePushAudioFrame(
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_livekit_LiveKitNativeAudioBridge_nativeIsAcceptingFrames(JNIEnv*, jclass) {
-    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
     return hasReadyMicLocked() ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT void JNICALL
 Java_livekit_LiveKitNativeAudioBridge_nativeSetAcceptingFrames(JNIEnv*, jclass, jboolean accepting) {
-    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
     g_acceptingFrames = accepting == JNI_TRUE && g_connected && g_micPublished && g_audioSource != nullptr && g_audioTrack != nullptr;
 }
 
@@ -4206,8 +5002,28 @@ Java_livekit_LiveKitNativeAudioBridge_nativeSetParticipantGain(JNIEnv* env, jcla
     if (identity == nullptr) {
         return;
     }
-    const std::string identityUtf = jStringToString(env, identity);
-    setParticipantGainEverywhere(identityUtf, static_cast<float>(gain));
+    // A C++ exception crossing an extern "C" boundary is UB and, on MSVC,
+    // terminates the JVM. setParticipantGainEverywhere allocates std::strings
+    // and takes several mutexes, so guard the whole body.
+    try {
+        const std::string identityUtf = jStringToString(env, identity);
+        setParticipantGainEverywhere(identityUtf, static_cast<float>(gain));
+    } catch (const std::exception& error) {
+        setRawErrorThreadSafe(
+            "NATIVE_EXCEPTION",
+            std::string("Set participant gain failed: ") + error.what(),
+            "nativeSetParticipantGain",
+            true);
+        std::cerr << "ERROR [OrbitLiveKitAudio] nativeSetParticipantGain threw: "
+                  << error.what() << std::endl;
+    } catch (...) {
+        setRawErrorThreadSafe(
+            "NATIVE_EXCEPTION",
+            "Set participant gain failed",
+            "nativeSetParticipantGain",
+            true);
+        std::cerr << "ERROR [OrbitLiveKitAudio] nativeSetParticipantGain threw unknown error" << std::endl;
+    }
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -4251,8 +5067,8 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeCreateSession(JNIEnv*, jclass) {
     initializeSdkOnce();
     g_sessionDestroyed = false;
     g_callbackShutdown = false;
-    std::lock_guard<std::mutex> lock(g_sessionMutex);
-    g_rawEpoch += 1;
+    std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
+    setRawEpochLocked(g_rawEpoch + 1);
     g_rawDisconnecting = false;
     clearRawErrorLocked();
     return kRawSessionId;
@@ -4261,7 +5077,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeCreateSession(JNIEnv*, jclass) {
 extern "C" JNIEXPORT jint JNICALL
 Java_livekit_OrbitLiveKitNativeRaw_nativeDestroySession(JNIEnv* env, jclass, jlong sessionId) {
     if (!isRawSessionValid(sessionId)) {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativeDestroySession", false);
         return kStatusStaleEvent;
     }
@@ -4269,7 +5085,9 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeDestroySession(JNIEnv* env, jclass, jlo
     g_callbackShutdown = true;
     g_sessionDestroyed = true;
     {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        // SessionLock: stopping the video readers publishes removals into Java,
+        // which must not run with g_sessionMutex held.
+        SessionLock lock;
         g_rawDisconnecting = true;
         g_acceptingFrames = false;
         if (g_room != nullptr) {
@@ -4317,8 +5135,16 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeDestroySession(JNIEnv* env, jclass, jlo
             g_remoteVideoTrackRemovedMethod = nullptr;
         }
     }
-    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
     resetRoomLocked();
+    // Real teardown, so the caches go here rather than in resetRoomLocked():
+    // connectRoom() reuses that to replay the pre-connect key cache into a
+    // fresh E2EE manager.
+    g_participantMediaKeys.clear();
+    {
+        std::lock_guard<std::mutex> gainLock(g_participantGainsMutex);
+        g_participantGains.clear();
+    }
     clearRawErrorLocked();
     return kStatusOk;
 }
@@ -4349,7 +5175,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetEventSink(JNIEnv* env, jclass, jobje
                     env->ExceptionClear();
                 }
                 env->DeleteGlobalRef(newSink);
-                std::lock_guard<std::mutex> sessionLock(g_sessionMutex);
+                std::lock_guard<std::timed_mutex> sessionLock(g_sessionMutex);
                 setRawErrorLocked("NATIVE_EXCEPTION", "NativeMediaEventSink.onNativeEvent not found", "nativeSetEventSink", false);
                 return kStatusNativeException;
             }
@@ -4359,7 +5185,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetEventSink(JNIEnv* env, jclass, jobje
         }
     }
 
-    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
     clearRawErrorLocked();
     return kStatusOk;
 }
@@ -4380,7 +5206,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetMixedAudioSink(JNIEnv* env, jclass, 
             g_mixedAudioSinkMethod = nullptr;
         }
         g_audioMixer.stop();
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         clearRawErrorLocked();
         return kStatusOk;
     }
@@ -4399,7 +5225,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetMixedAudioSink(JNIEnv* env, jclass, 
             env->ExceptionClear();
         }
         env->DeleteGlobalRef(newSink);
-        std::lock_guard<std::mutex> sessionLock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> sessionLock(g_sessionMutex);
         setRawErrorLocked("NATIVE_EXCEPTION", "NativeMixedAudioSink.onMixedAudioFrame not found", "nativeSetMixedAudioSink", false);
         return kStatusNativeException;
     }
@@ -4417,7 +5243,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetMixedAudioSink(JNIEnv* env, jclass, 
         g_audioMixer.start();
     }
 
-    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
     clearRawErrorLocked();
     return kStatusOk;
 }
@@ -4444,7 +5270,17 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetRemoteVideoSink(JNIEnv* env, jclass,
             g_remoteVideoTrackRemovedMethod = nullptr;
         }
         {
-            std::lock_guard<std::mutex> lock(g_sessionMutex);
+            // SessionLock, NOT lock_guard: stopAllRemoteVideoReadersLocked
+            // publishes per-track removals into Java, and
+            // deferDispatchIfSessionLockHeld dispatches IMMEDIATELY when the
+            // SessionLock depth is 0 -- which a plain lock_guard leaves it at.
+            // So the upcall would be raised with g_sessionMutex still held, and
+            // the Kotlin handler calls back into JNI functions that take the
+            // same non-recursive mutex: a self-deadlock. It is currently masked
+            // only because the sink globals are nulled just above, so the
+            // dispatch bails at hasRemoteVideoSink(). Same class of bug the
+            // onDisconnected comment describes.
+            SessionLock lock;
             stopAllRemoteVideoReadersLocked("sink-cleared");
             clearRawErrorLocked();
         }
@@ -4491,7 +5327,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetRemoteVideoSink(JNIEnv* env, jclass,
             env->ExceptionClear();
         }
         env->DeleteGlobalRef(newSink);
-        std::lock_guard<std::mutex> sessionLock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> sessionLock(g_sessionMutex);
         setRawErrorLocked("NATIVE_EXCEPTION", "NativeRemoteVideoSink methods not found", "nativeSetRemoteVideoSink", false);
         return kStatusNativeException;
     }
@@ -4511,7 +5347,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetRemoteVideoSink(JNIEnv* env, jclass,
         g_remoteVideoTrackRemovedMethod = removedMethod;
     }
 
-    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
     clearRawErrorLocked();
     std::cout << "DEBUG [RemoteVideo] native remote video sink installed" << std::endl;
     return kStatusOk;
@@ -4527,18 +5363,22 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeConnectAsync(
     jstring token,
     jstring identity) {
     if (!isRawSessionValid(sessionId)) {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativeConnectAsync", false);
         return kStatusStaleEvent;
     }
 
+    // A C++ exception crossing an extern "C" boundary is UB and, on MSVC,
+    // terminates the JVM. The string conversions, the event dispatch and the
+    // std::thread construction below all allocate.
+    try {
     const std::string urlString = jStringToString(env, url);
     const std::string tokenString = jStringToString(env, token);
     const std::string identityString = jStringToString(env, identity);
     if (urlString.empty() || tokenString.empty()) {
         {
-            std::lock_guard<std::mutex> lock(g_sessionMutex);
-            g_rawEpoch = epoch;
+            std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
+            setRawEpochLocked(epoch);
             setRawErrorLocked("CONNECT_FAILED", "Missing LiveKit URL or token", "nativeConnectAsync", false);
         }
         dispatchErrorNativeEvent(
@@ -4554,8 +5394,8 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeConnectAsync(
     }
 
     {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
-        g_rawEpoch = epoch;
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
+        setRawEpochLocked(epoch);
         g_rawDisconnecting = false;
         clearRawErrorLocked();
     }
@@ -4563,14 +5403,17 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeConnectAsync(
     g_callbackShutdown = false;
 
     dispatchSimpleNativeEvent(env, "livekit/NativeMediaEvent$Connecting", sessionId, epoch);
+    // The worker is a native thread: an escaping exception calls
+    // std::terminate() and kills the JVM, so guard it here too.
     std::thread([sessionId, epoch, urlString, tokenString, identityString] {
+        try {
         std::string errorMessage;
         const bool connected = connectRoom(urlString, tokenString, identityString, &errorMessage);
 
         bool shouldDispatch = false;
         bool cleanupDisconnectedStaleConnect = false;
         {
-            std::lock_guard<std::mutex> lock(g_sessionMutex);
+            std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
             shouldDispatch = isRawSessionValid(sessionId) && epoch == g_rawEpoch && !g_rawDisconnecting;
             cleanupDisconnectedStaleConnect = connected && epoch == g_rawEpoch && g_rawDisconnecting;
             if (!connected && shouldDispatch) {
@@ -4583,7 +5426,9 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeConnectAsync(
         }
 
         if (cleanupDisconnectedStaleConnect) {
-            std::lock_guard<std::mutex> lock(g_sessionMutex);
+            // SessionLock: resetRoomLocked() publishes per-track removals into
+            // Java, which must not happen with g_sessionMutex held.
+            SessionLock lock;
             resetRoomLocked();
         }
 
@@ -4611,9 +5456,31 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeConnectAsync(
         }
 
         releaseJniEnv(attached);
+        } catch (const std::exception& error) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] connect worker threw: " << error.what() << std::endl;
+        } catch (...) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] connect worker threw unknown error" << std::endl;
+        }
     }).detach();
 
     return kStatusOk;
+    } catch (const std::exception& error) {
+        setRawErrorThreadSafe(
+            "NATIVE_EXCEPTION",
+            std::string("Native connect request failed: ") + error.what(),
+            "nativeConnectAsync",
+            true);
+        std::cerr << "ERROR [OrbitLiveKitAudio] nativeConnectAsync threw: " << error.what() << std::endl;
+        return kStatusNativeException;
+    } catch (...) {
+        setRawErrorThreadSafe(
+            "NATIVE_EXCEPTION",
+            "Native connect request failed",
+            "nativeConnectAsync",
+            true);
+        std::cerr << "ERROR [OrbitLiveKitAudio] nativeConnectAsync threw unknown error" << std::endl;
+        return kStatusNativeException;
+    }
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -4640,15 +5507,26 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeConfigureE2EE(
     jclass,
     jlong sessionId,
     jboolean enabled) {
-    if (!isRawSessionValid(sessionId)) {
-        return kStatusStaleEvent;
-    }
+    // The flag is module-level and is read by connectRoom when it builds
+    // RoomOptions, so it does NOT require a live session. The previous version
+    // returned kStatusStaleEvent first, which meant the pre-connect arming
+    // that Kotlin explicitly does (requestE2EE is called before the session
+    // exists) silently did nothing: the connect then built RoomOptions with
+    // E2EE off, so in an ENCRYPTED MatrixRTC room the media went out
+    // UNENCRYPTED and the whole media-key exchange had no effect. That is both
+    // a privacy failure and the H8 deafness bug class.
+    //
+    // Set the flag unconditionally. If a session id is supplied and it is not
+    // merely "not yet created", the caller still gets told.
+    const bool haveSession = isRawSessionValid(sessionId);
     {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         g_e2eeRequested = enabled == JNI_TRUE;
     }
     std::cout << "DEBUG [OrbitLiveKitAudio] e2ee configured requested="
-              << (enabled == JNI_TRUE ? "true" : "false") << std::endl;
+              << (enabled == JNI_TRUE ? "true" : "false")
+              << " liveSession=" << (haveSession ? "yes" : "no (pre-connect arming)")
+              << std::endl;
     return kStatusOk;
 }
 
@@ -4661,11 +5539,15 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetParticipantMediaKey(
     jbyteArray key,
     jint keyIndex) {
     if (!isRawSessionValid(sessionId)) {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativeSetParticipantMediaKey", false);
         return kStatusStaleEvent;
     }
 
+    // A C++ exception crossing an extern "C" boundary is UB and, on MSVC,
+    // terminates the JVM; the string conversion and the key vector below both
+    // allocate, so the whole body has to be inside the guard.
+    try {
     const std::string identityString = jStringToString(env, identity);
     if (identityString.empty() || key == nullptr) {
         std::cerr << "WARN [OrbitLiveKitAudio] e2ee set key rejected empty identity or null key" << std::endl;
@@ -4685,8 +5567,8 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetParticipantMediaKey(
         return kStatusNativeException;
     }
 
-    try {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+    {
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         g_participantMediaKeys[identityString] = {keyBytes, static_cast<int>(keyIndex)};
 
         if (g_room != nullptr) {
@@ -4703,9 +5585,22 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetParticipantMediaKey(
                   << " keyIndex=" << keyIndex
                   << " keyLen=" << keyLength << std::endl;
         return kStatusOk;
+    }
     } catch (const std::exception& error) {
-        std::cerr << "ERROR [OrbitLiveKitAudio] e2ee set key failed identity=" << identityString
-                  << " error=" << error.what() << std::endl;
+        std::cerr << "ERROR [OrbitLiveKitAudio] e2ee set key failed error=" << error.what() << std::endl;
+        setRawErrorThreadSafe(
+            "NATIVE_EXCEPTION",
+            std::string("E2EE set key failed: ") + error.what(),
+            "nativeSetParticipantMediaKey",
+            true);
+        return kStatusNativeException;
+    } catch (...) {
+        std::cerr << "ERROR [OrbitLiveKitAudio] e2ee set key failed unknown error" << std::endl;
+        setRawErrorThreadSafe(
+            "NATIVE_EXCEPTION",
+            "E2EE set key failed",
+            "nativeSetParticipantMediaKey",
+            true);
         return kStatusNativeException;
     }
 }
@@ -4718,24 +5613,37 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeDisconnect(
     jlong epoch,
     jboolean userInitiated) {
     if (!isRawSessionValid(sessionId)) {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativeDisconnect", false);
         return kStatusStaleEvent;
     }
 
-    g_callbackShutdown = true;
+    // NOTE: g_callbackShutdown is deliberately NOT raised here; see below.
     g_audioMixer.stop();
     {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
-        g_rawEpoch = epoch;
+        // SessionLock: the teardown publishes per-track removals into Java,
+        // which must not happen with g_sessionMutex held.
+        SessionLock lock;
+        setRawEpochLocked(epoch);
         g_rawDisconnecting = true;
         g_acceptingFrames = false;
         if (g_room != nullptr) {
             g_room->setDelegate(nullptr);
         }
+        // Readers are torn down BEFORE g_callbackShutdown latches: that flag
+        // makes dispatchRemoteVideoTrackRemoved a no-op, so raising it first
+        // suppressed the very per-track removals the teardown is supposed to
+        // publish and left stale tiles on every caller's screen.
         stopAllRemoteReadersLocked();
         stopAllRemoteVideoReadersLocked("native-disconnect");
+        g_callbackShutdown = true;
         resetRoomLocked();
+        // Hangup is a real boundary; connectRoom() is not.
+        g_participantMediaKeys.clear();
+        {
+            std::lock_guard<std::mutex> gainLock(g_participantGainsMutex);
+            g_participantGains.clear();
+        }
         clearRawErrorLocked();
         {
             std::lock_guard<std::mutex> announcedLock(g_announcedParticipantsMutex);
@@ -4764,14 +5672,22 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePublishAudio(
     jboolean expectedTestTone,
     jint maxBitrateBps) {
     if (!isRawSessionValid(sessionId)) {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativePublishAudio", false);
         return kStatusStaleEvent;
     }
 
     {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
-        g_rawEpoch = epoch;
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
+        // A publish that lands after a reconnect carries the OLD epoch. Applying
+        // it would rewind g_rawEpoch, after which every mute returns 23 and mic
+        // frames are dropped as stale — which itself counts as a push failure
+        // and tears capture down. Reject it instead.
+        if (epoch < g_rawEpoch) {
+            setRawErrorLocked("STALE_EVENT", "Stale native media epoch", "nativePublishAudio", false);
+            return kStatusStaleEvent;
+        }
+        adoptEpochLocked(epoch);
         clearRawErrorLocked();
     }
 
@@ -4782,7 +5698,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePublishAudio(
         return kStatusOk;
     }
 
-    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
     setRawErrorLocked("PUBLISH_AUDIO_FAILED", "LiveKit C++ microphone publish failed", "nativePublishAudio", false);
     return kStatusPublishAudioFailed;
 }
@@ -4799,13 +5715,13 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePushAudioFrame(
     jint samplesPerChannel,
     jlong) {
     if (!isRawSessionValid(sessionId)) {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativePushAudioFrame", false);
         return kStatusStaleEvent;
     }
 
     {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         if (epoch != g_rawEpoch) {
             setRawErrorLocked("STALE_EVENT", "Stale native media epoch", "nativePushAudioFrame", true);
             return kStatusStaleEvent;
@@ -4831,7 +5747,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePushAudioFrame(
         return kStatusOk;
     }
 
-    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
     setRawErrorLocked("AUDIO_CAPTURE_FAILED", "Native audio frame was rejected", "nativePushAudioFrame", true);
     return kStatusAudioCaptureFailed;
 }
@@ -4847,12 +5763,23 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePublishVideo(
     jint fps,
     jint format,
     jint maxBitrateBps) {
-    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    // SessionLock, not lock_guard: the VideoPublished upcall at the end of this
+    // function must not be made with g_sessionMutex held, or Java re-entry into
+    // any session entry point self-deadlocks. ~SessionLock releases the mutex
+    // before it flushes the deferred dispatch.
+    SessionLock lock;
     if (!isRawSessionValid(sessionId)) {
         setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativePublishVideo", false);
         return kStatusStaleEvent;
     }
-    g_rawEpoch = epoch;
+    // A publish that lands after a reconnect carries the OLD epoch. Applying it
+    // would rewind g_rawEpoch, after which every mute and frame push is rejected
+    // as stale for the rest of the process. Reject it instead.
+    if (epoch < g_rawEpoch) {
+        setRawErrorLocked("STALE_EVENT", "Stale native media epoch", "nativePublishVideo", false);
+        return kStatusStaleEvent;
+    }
+    adoptEpochLocked(epoch);
     clearRawErrorLocked();
 
     constexpr jint kVideoFormatI420 = 5;
@@ -5005,7 +5932,12 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePublishVideo(
         return kStatusPublishVideoFailed;
     }
 
-    dispatchSimpleNativeEvent(env, "livekit/NativeMediaEvent$VideoPublished", sessionId, epoch);
+    // Queued rather than sent here so the event reaches Java only after
+    // ~SessionLock has released g_sessionMutex; it is still delivered before
+    // this JNI call returns.
+    deferDispatchIfSessionLockHeld([env, sessionId, epoch] {
+        dispatchSimpleNativeEvent(env, "livekit/NativeMediaEvent$VideoPublished", sessionId, epoch);
+    });
     return kStatusOk;
 }
 
@@ -5027,7 +5959,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePushVideoFrame(
     constexpr jint kVideoFormatI420 = 5;
     std::shared_ptr<livekit::VideoSource> source;
     {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         if (!isRawSessionValid(sessionId)) {
             setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativePushVideoFrame", false);
             return kStatusStaleEvent;
@@ -5049,7 +5981,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePushVideoFrame(
     }
 
     if (buffer == nullptr || source == nullptr) {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         setRawErrorLocked("VIDEO_CAPTURE_FAILED", "Missing native video frame buffer or source", "nativePushVideoFrame", true);
         return kStatusVideoCaptureFailed;
     }
@@ -5057,7 +5989,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePushVideoFrame(
     void* data = env->GetDirectBufferAddress(buffer);
     const jlong capacity = env->GetDirectBufferCapacity(buffer);
     if (data == nullptr || capacity <= 0) {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         setRawErrorLocked("VIDEO_CAPTURE_FAILED", "Video frame buffer must be direct", "nativePushVideoFrame", true);
         return kStatusVideoCaptureFailed;
     }
@@ -5073,7 +6005,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePushVideoFrame(
 
     if (strideY != expectedStrideY || strideU != expectedStrideU || strideV != expectedStrideV ||
         static_cast<std::size_t>(capacity) < expectedBytes) {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         setRawErrorLocked("VIDEO_CAPTURE_FAILED", "Packed I420 frame layout is invalid", "nativePushVideoFrame", true);
         return kStatusVideoCaptureFailed;
     }
@@ -5099,7 +6031,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePushVideoFrame(
         source->captureFrame(frame, timestampUs, nativeRotation);
 
         {
-            std::lock_guard<std::mutex> lock(g_sessionMutex);
+            std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
             g_lastVideoTimestampNs = static_cast<std::int64_t>(timestampNs);
             if (g_videoPushDiagnosticsLogged < 8) {
                 g_videoPushDiagnosticsLogged += 1;
@@ -5120,11 +6052,11 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePushVideoFrame(
         }
         return kStatusOk;
     } catch (const std::exception& error) {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         setRawErrorLocked("VIDEO_CAPTURE_FAILED", std::string("Native video captureFrame failed: ") + error.what(), "nativePushVideoFrame", true);
         return kStatusVideoCaptureFailed;
     } catch (...) {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         setRawErrorLocked("VIDEO_CAPTURE_FAILED", "Native video captureFrame failed", "nativePushVideoFrame", true);
         return kStatusVideoCaptureFailed;
     }
@@ -5140,12 +6072,18 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePublishScreenShare(
     jint height,
     jint fps,
     jint maxBitrateBps) {
-    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
     if (!isRawSessionValid(sessionId)) {
         setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativePublishScreenShare", false);
         return kStatusStaleEvent;
     }
-    g_rawEpoch = epoch;
+    // A publish that lands after a reconnect carries the OLD epoch; applying it
+    // would rewind g_rawEpoch and permanently break mute and frame pushes.
+    if (epoch < g_rawEpoch) {
+        setRawErrorLocked("STALE_EVENT", "Stale native media epoch", "nativePublishScreenShare", false);
+        return kStatusStaleEvent;
+    }
+    adoptEpochLocked(epoch);
     clearRawErrorLocked();
 
     if (width <= 0 || height <= 0 || fps <= 0) {
@@ -5256,9 +6194,15 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeUnpublishScreenShare(
     jclass,
     jlong sessionId,
     jlong epoch) {
-    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
     if (!isRawSessionValid(sessionId)) {
         setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativeUnpublishScreenShare", false);
+        return kStatusStaleEvent;
+    }
+    // Same guard the other mutating entry points use: an unpublish from a
+    // previous epoch must not tear down the track the current epoch published.
+    if (epoch != g_rawEpoch) {
+        setRawErrorLocked("STALE_EVENT", "Stale native media epoch", "nativeUnpublishScreenShare", true);
         return kStatusStaleEvent;
     }
     clearRawErrorLocked();
@@ -5296,12 +6240,18 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePublishScreenShareAudio(
     jclass,
     jlong sessionId,
     jlong epoch) {
-    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
     if (!isRawSessionValid(sessionId)) {
         setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativePublishScreenShareAudio", false);
         return kStatusStaleEvent;
     }
-    g_rawEpoch = epoch;
+    // A publish that lands after a reconnect carries the OLD epoch; applying it
+    // would rewind g_rawEpoch and permanently break mute and frame pushes.
+    if (epoch < g_rawEpoch) {
+        setRawErrorLocked("STALE_EVENT", "Stale native media epoch", "nativePublishScreenShareAudio", false);
+        return kStatusStaleEvent;
+    }
+    adoptEpochLocked(epoch);
     clearRawErrorLocked();
 
     if (g_shareAudioPublished && g_shareAudioTrack != nullptr && g_shareAudioSource != nullptr) {
@@ -5408,21 +6358,33 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeFeedProcessedShareAudioFrame(
     if (pcm == nullptr) return;
     livekit::AudioSource* source = g_shareAudioFeedTarget.load(std::memory_order_acquire);
     if (source == nullptr) return;
-    const jsize byteLength = env->GetArrayLength(pcm);
-    if (byteLength <= 0 || (byteLength % 2) != 0) return;
-    std::vector<std::int16_t> samples(static_cast<std::size_t>(byteLength / 2));
-    env->GetByteArrayRegion(pcm, 0, byteLength, reinterpret_cast<jbyte*>(samples.data()));
-    if (env->ExceptionCheck() == JNI_TRUE) {
-        env->ExceptionClear();
-        return;
-    }
-    const int samplesPerChannel = static_cast<int>(samples.size() / 2);
-    if (samplesPerChannel <= 0) return;
+    // This is a RE-ENTRANT upcall: C++ -> JVM ShareAudioAec.onLoopbackFrame ->
+    // JNI straight back into here, so no Java-level try/catch can intercept a
+    // C++ exception and a std::bad_alloc from the vector below would unwind
+    // straight through the extern "C" boundary and terminate the VM. Everything
+    // that can throw has to live inside this guard.
     try {
-        livekit::AudioFrame frame(std::move(samples), kSampleRate, 2, samplesPerChannel);
-        source->captureFrame(frame, kAudioSourceCaptureTimeoutMs);
+        const jsize byteLength = env->GetArrayLength(pcm);
+        if (byteLength <= 0 || (byteLength % 2) != 0) return;
+        std::vector<std::int16_t> samples(static_cast<std::size_t>(byteLength / 2));
+        env->GetByteArrayRegion(pcm, 0, byteLength, reinterpret_cast<jbyte*>(samples.data()));
+        if (env->ExceptionCheck() == JNI_TRUE) {
+            env->ExceptionClear();
+            return;
+        }
+        const int samplesPerChannel = static_cast<int>(samples.size() / 2);
+        if (samplesPerChannel <= 0) return;
+        try {
+            livekit::AudioFrame frame(std::move(samples), kSampleRate, 2, samplesPerChannel);
+            source->captureFrame(frame, kAudioSourceCaptureTimeoutMs);
+        } catch (...) {
+            // Consumer not ready or transient overflow; drop.
+        }
+    } catch (const std::exception& error) {
+        std::cerr << "ERROR [ScreenShareAudioPublish] feed processed frame threw: "
+                  << error.what() << std::endl;
     } catch (...) {
-        // Consumer not ready or transient overflow; drop.
+        std::cerr << "ERROR [ScreenShareAudioPublish] feed processed frame threw unknown error" << std::endl;
     }
 }
 
@@ -5432,9 +6394,15 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeUnpublishScreenShareAudio(
     jclass,
     jlong sessionId,
     jlong epoch) {
-    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
     if (!isRawSessionValid(sessionId)) {
         setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativeUnpublishScreenShareAudio", false);
+        return kStatusStaleEvent;
+    }
+    // Same guard the other mutating entry points use: an unpublish from a
+    // previous epoch must not tear down the track the current epoch published.
+    if (epoch != g_rawEpoch) {
+        setRawErrorLocked("STALE_EVENT", "Stale native media epoch", "nativeUnpublishScreenShareAudio", true);
         return kStatusStaleEvent;
     }
     clearRawErrorLocked();
@@ -5478,7 +6446,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePushScreenShareFrame(
     constexpr jint kVideoFormatI420 = 5;
     std::shared_ptr<livekit::VideoSource> source;
     {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         if (!isRawSessionValid(sessionId)) {
             setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativePushScreenShareFrame", false);
             return kStatusStaleEvent;
@@ -5503,7 +6471,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePushScreenShareFrame(
     }
 
     if (buffer == nullptr || source == nullptr) {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         setRawErrorLocked("VIDEO_CAPTURE_FAILED", "Missing screen share frame buffer or source", "nativePushScreenShareFrame", true);
         return kStatusVideoCaptureFailed;
     }
@@ -5511,7 +6479,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePushScreenShareFrame(
     void* data = env->GetDirectBufferAddress(buffer);
     const jlong capacity = env->GetDirectBufferCapacity(buffer);
     if (data == nullptr || capacity <= 0) {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         setRawErrorLocked("VIDEO_CAPTURE_FAILED", "Screen share frame buffer must be direct", "nativePushScreenShareFrame", true);
         return kStatusVideoCaptureFailed;
     }
@@ -5524,7 +6492,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePushScreenShareFrame(
 
     if (strideY != width || strideU != chromaWidth || strideV != chromaWidth ||
         static_cast<std::size_t>(capacity) < expectedBytes) {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         setRawErrorLocked("VIDEO_CAPTURE_FAILED", "Screen share packed I420 frame layout is invalid", "nativePushScreenShareFrame", true);
         return kStatusVideoCaptureFailed;
     }
@@ -5550,7 +6518,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePushScreenShareFrame(
         source->captureFrame(frame, timestampUs, nativeRotation);
 
         {
-            std::lock_guard<std::mutex> lock(g_sessionMutex);
+            std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
             if (g_screenSharePushDiagnosticsLogged < 4) {
                 g_screenSharePushDiagnosticsLogged += 1;
                 std::cout << "DEBUG [ScreenSharePublish] frame #"
@@ -5566,11 +6534,11 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePushScreenShareFrame(
         }
         return kStatusOk;
     } catch (const std::exception& error) {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         setRawErrorLocked("VIDEO_CAPTURE_FAILED", std::string("Native screenshare captureFrame failed: ") + error.what(), "nativePushScreenShareFrame", true);
         return kStatusVideoCaptureFailed;
     } catch (...) {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         setRawErrorLocked("VIDEO_CAPTURE_FAILED", "Native screenshare captureFrame failed", "nativePushScreenShareFrame", true);
         return kStatusVideoCaptureFailed;
     }
@@ -5580,7 +6548,7 @@ extern "C" JNIEXPORT jint JNICALL
 Java_livekit_OrbitLiveKitNativeRaw_nativeSetAudioMuted(JNIEnv*, jclass, jlong sessionId, jlong epoch, jboolean muted) {
     std::shared_ptr<livekit::LocalAudioTrack> track;
     {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         if (!isRawSessionValid(sessionId)) {
             setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativeSetAudioMuted", false);
             return kStatusStaleEvent;
@@ -5617,11 +6585,11 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetAudioMuted(JNIEnv*, jclass, jlong se
                   << std::endl;
         return kStatusOk;
     } catch (const std::exception& error) {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         setRawErrorLocked("NATIVE_EXCEPTION", std::string("Native audio mute failed: ") + error.what(), "nativeSetAudioMuted", true);
         return kStatusNativeException;
     } catch (...) {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         setRawErrorLocked("NATIVE_EXCEPTION", "Native audio mute failed", "nativeSetAudioMuted", true);
         return kStatusNativeException;
     }
@@ -5631,7 +6599,7 @@ extern "C" JNIEXPORT jint JNICALL
 Java_livekit_OrbitLiveKitNativeRaw_nativeSetVideoMuted(JNIEnv*, jclass, jlong sessionId, jlong epoch, jboolean muted) {
     std::shared_ptr<livekit::LocalVideoTrack> track;
     {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         if (!isRawSessionValid(sessionId)) {
             setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativeSetVideoMuted", false);
             return kStatusStaleEvent;
@@ -5662,11 +6630,11 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetVideoMuted(JNIEnv*, jclass, jlong se
                   << std::endl;
         return kStatusOk;
     } catch (const std::exception& error) {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         setRawErrorLocked("NATIVE_EXCEPTION", std::string("Native video mute failed: ") + error.what(), "nativeSetVideoMuted", true);
         return kStatusNativeException;
     } catch (...) {
-        std::lock_guard<std::mutex> lock(g_sessionMutex);
+        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
         setRawErrorLocked("NATIVE_EXCEPTION", "Native video mute failed", "nativeSetVideoMuted", true);
         return kStatusNativeException;
     }
@@ -5674,19 +6642,39 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetVideoMuted(JNIEnv*, jclass, jlong se
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_livekit_OrbitLiveKitNativeRaw_nativeGetLastErrorJson(JNIEnv* env, jclass, jlong) {
-    std::lock_guard<std::mutex> lock(g_sessionMutex);
-    return env->NewStringUTF(g_rawLastErrorJson.c_str());
+    // A C++ exception crossing an extern "C" boundary is UB and, on MSVC,
+    // terminates the JVM. Copy the payload under the lock and only then touch
+    // JNI, so no allocation or encoding work happens while the mutex is held.
+    try {
+        std::string lastErrorJson;
+        {
+            std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
+            lastErrorJson = g_rawLastErrorJson;
+        }
+        return env->NewStringUTF(lastErrorJson.c_str());
+    } catch (const std::exception& error) {
+        std::cerr << "ERROR [OrbitLiveKitAudio] nativeGetLastErrorJson threw: "
+                  << error.what() << std::endl;
+        return nullptr;
+    } catch (...) {
+        std::cerr << "ERROR [OrbitLiveKitAudio] nativeGetLastErrorJson threw unknown error" << std::endl;
+        return nullptr;
+    }
 }
 
 // BUG-B fix: idempotent rescan of remote participants' video publications.
 // Reader startup previously depended solely on delegate events; a TrackSubscribed
 // landing before the sink was armed or a subscription completing after the
 // post-connect scan left the track with no frame reader forever. The Kotlin
-// session calls this periodically; startRemoteVideoReaderLocked skips tracks
-// that already have a reader, so re-invocation is safe.
+// session calls this periodically; the guards below only skip tracks that still
+// have a LIVE reader, and startRemoteVideoReaderLocked replaces a dead entry, so
+// re-invocation is safe and recovers a track whose reader thread died.
 extern "C" JNIEXPORT jint JNICALL
 Java_livekit_OrbitLiveKitNativeRaw_nativeRescanRemoteVideoTracks(JNIEnv*, jclass, jlong sessionId, jlong epoch) {
-    std::lock_guard<std::mutex> lock(g_sessionMutex);
+    // SessionLock, not lock_guard: the rescan announces participants and starts
+    // readers, both of which cross into Java. ~SessionLock releases the mutex
+    // before flushing those upcalls.
+    SessionLock lock;
     if (!isRawSessionValid(sessionId)) {
         setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativeRescanRemoteVideoTracks", false);
         return kStatusStaleEvent;
@@ -5711,7 +6699,9 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeRescanRemoteVideoTracks(JNIEnv*, jclass
             announced = g_announcedParticipantSids.find(normalizedSid(participant->sid())) != g_announcedParticipantSids.end();
         }
         if (!announced) {
-            dispatchRemoteParticipantConnected(participant->identity(), normalizedSid(participant->sid()));
+            const std::string identity = participant->identity();
+            const std::string sid = normalizedSid(participant->sid());
+            deferDispatchIfSessionLockHeld([identity, sid] { dispatchRemoteParticipantConnected(identity, sid); });
         }
         for (const auto& publicationEntry : participant->trackPublications()) {
             const auto& publication = publicationEntry.second;
@@ -5727,13 +6717,23 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeRescanRemoteVideoTracks(JNIEnv*, jclass
                 continue;
             }
             if (publication->kind() == livekit::TrackKind::KIND_VIDEO) {
-                if (g_remoteVideoReaders.find(trackSid) == g_remoteVideoReaders.end()) {
+                // Only skip tracks that still have a LIVE reader: a reader whose
+                // thread already exited leaves a map entry behind, and skipping
+                // that entry is what kept the track frozen for the rest of the
+                // call. startRemoteVideoReaderLocked replaces a dead entry.
+                auto it = g_remoteVideoReaders.find(trackSid);
+                const bool hasLiveReader =
+                    it != g_remoteVideoReaders.end() && it->second != nullptr && it->second->running.load();
+                if (!hasLiveReader) {
                     logRemoteVideoPublicationDetected(participant.get(), publication, track, "rescan");
                     startRemoteVideoReaderLocked(track, participant.get(), publication);
                     startedVideo += 1;
                 }
             } else if (publication->kind() == livekit::TrackKind::KIND_AUDIO) {
-                if (g_remoteAudioReaders.find(trackSid) == g_remoteAudioReaders.end()) {
+                auto it = g_remoteAudioReaders.find(trackSid);
+                const bool hasLiveReader =
+                    it != g_remoteAudioReaders.end() && it->second != nullptr && it->second->running.load();
+                if (!hasLiveReader) {
                     std::cout << "DEBUG [OrbitLiveKitAudio] rescan starting missing audio reader trackSid=" << trackSid << std::endl;
                     startRemoteReaderLocked(track, participant->identity());
                     startedAudio += 1;
@@ -5750,9 +6750,24 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeRescanRemoteVideoTracks(JNIEnv*, jclass
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_livekit_OrbitLiveKitNativeRaw_nativeGetReadinessJson(JNIEnv* env, jclass, jlong sessionId) {
-    std::lock_guard<std::mutex> lock(g_sessionMutex);
-    const std::string readinessJson = rawReadinessJsonLocked(sessionId);
-    return env->NewStringUTF(readinessJson.c_str());
+    // A C++ exception crossing an extern "C" boundary is UB and, on MSVC,
+    // terminates the JVM. rawReadinessJsonLocked builds a std::string with
+    // several concatenations, so the whole body has to be inside the guard.
+    try {
+        std::string readinessJson;
+        {
+            std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
+            readinessJson = rawReadinessJsonLocked(sessionId);
+        }
+        return env->NewStringUTF(readinessJson.c_str());
+    } catch (const std::exception& error) {
+        std::cerr << "ERROR [OrbitLiveKitAudio] nativeGetReadinessJson threw: "
+                  << error.what() << std::endl;
+        return nullptr;
+    } catch (...) {
+        std::cerr << "ERROR [OrbitLiveKitAudio] nativeGetReadinessJson threw unknown error" << std::endl;
+        return nullptr;
+    }
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -5764,8 +6779,22 @@ JNI_OnLoad(JavaVM* vm, void*) {
 }
 
 extern "C" JNIEXPORT void JNICALL
-JNI_OnUnload(JavaVM*, void*) {
+JNI_OnUnload(JavaVM* vm, void*) {
     g_callbackShutdown = true;
     g_sessionDestroyed = true;
     g_javaVm = nullptr;
+    // The AEC router class was cached as a global ref for the process
+    // lifetime; drop it here so unloading the library does not leave a global
+    // ref pointing at a class whose class loader may already be tearing down.
+    JNIEnv* env = nullptr;
+    const bool haveEnv =
+        vm != nullptr && vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_8) == JNI_OK;
+    if (haveEnv && env != nullptr) {
+        std::lock_guard<std::mutex> lock(g_shareAecMutex);
+        if (g_shareAecRouterClass != nullptr) {
+            env->DeleteGlobalRef(g_shareAecRouterClass);
+            g_shareAecRouterClass = nullptr;
+        }
+        g_shareAecOnFrameMethod = nullptr;
+    }
 }

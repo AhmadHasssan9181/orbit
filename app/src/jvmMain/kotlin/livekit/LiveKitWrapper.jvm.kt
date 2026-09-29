@@ -1,5 +1,8 @@
 package livekit
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
 actual suspend fun connectAndPublishToLiveKit(
     authResponse: LiveKitAuthResponse,
     isVideo: Boolean,
@@ -18,18 +21,25 @@ actual suspend fun connectAndPublishToLiveKit(
         )
     }
 
-    return LiveKitNativeMediaSession.connectAndPublish(
-        authResponse = authResponse,
-        videoPolicy = if (isVideo && LiveKitFeatureFlags.videoRequired) {
-            JoinVideoPolicy.VideoRequired
-        } else if (isVideo) {
-            JoinVideoPolicy.VideoOptional
-        } else {
-            JoinVideoPolicy.AudioOnly
-        },
-        refreshTokenFetcher = refreshTokenFetcher,
-        audioBitrateKbps = audioBitrateKbps
-    )
+    // CallManager drives this from rememberCoroutineScope() with no dispatcher of
+    // its own, so the join used to run entirely on the Compose/EDT thread and the
+    // multi-second mic/camera probing inside froze the window. Offload the whole
+    // native connect path to IO here, at the media entry point, so no caller has to
+    // remember to do it.
+    return withContext(Dispatchers.IO) {
+        LiveKitNativeMediaSession.connectAndPublish(
+            authResponse = authResponse,
+            videoPolicy = if (isVideo && LiveKitFeatureFlags.videoRequired) {
+                JoinVideoPolicy.VideoRequired
+            } else if (isVideo) {
+                JoinVideoPolicy.VideoOptional
+            } else {
+                JoinVideoPolicy.AudioOnly
+            },
+            refreshTokenFetcher = refreshTokenFetcher,
+            audioBitrateKbps = audioBitrateKbps
+        )
+    }
 }
 
 actual suspend fun ensureLiveKitMediaReady(): NativeResult<NativeMediaReadiness> =
@@ -44,6 +54,10 @@ actual fun setLiveKitReconnectedListener(listener: (() -> Unit)?) {
 
 actual fun disconnectFromLiveKit(userInitiated: Boolean) {
     LiveKitNativeMediaSession.disconnect(userInitiated = userInitiated)
+}
+
+actual fun releaseNativeLiveKitSession() {
+    LiveKitNativeMediaSession.releaseNativeSession()
 }
 
 actual fun setLiveKitPlaybackMuted(muted: Boolean) {

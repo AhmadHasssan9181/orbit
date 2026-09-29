@@ -18,13 +18,15 @@ import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.readBytes
-import io.ktor.client.statement.bodyAsText
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import util.OrbitLog
+import ui.components.OrbitTextField
 import ui.theme.rememberCosmicTokens
 
 import ui.screen.auth.*
@@ -94,7 +96,10 @@ fun GifPicker(commonHttpClient: HttpClient, onGifSelected: (ByteArray) -> Unit) 
             if (response.status.value !in 200..299) {
                 throw IllegalStateException("Tenor responded ${response.status.value}")
             }
-            val tenorRes = tenorJson.decodeFromString<TenorResponse>(response.bodyAsText())
+            // readBytes()/bodyAsText() on a response that was not `save()`d run on
+            // the calling thread; with CIO that is the Compose main thread.
+            val payload = withContext(Dispatchers.IO) { response.readBytes() }
+            val tenorRes = tenorJson.decodeFromString<TenorResponse>(payload.decodeToString())
             gifs = tenorRes.results.mapNotNull { it.mediaFormats.tinygif.url }
         } catch (e: Exception) {
             OrbitLog.e("GifPicker", "Tenor fetch failed: ${e.message}")
@@ -105,124 +110,127 @@ fun GifPicker(commonHttpClient: HttpClient, onGifSelected: (ByteArray) -> Unit) 
     }
 
     Surface(
-        modifier = Modifier.fillMaxWidth().height(300.dp),
+        // Capped and floating rather than a 300dp slab that pushed the whole
+        // composer down the screen. In the empty state (no API key) it is only
+        // a couple of lines tall, because there is nothing to show.
+        modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp),
         color = t.Input_Bg,
         shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
     ) {
-        Column(modifier = Modifier.fillMaxSize().padding(8.dp)) {
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                placeholder = { Text("Search Tenor GIFs...") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                colors = TextFieldDefaults.colors(
-                    focusedContainerColor = Color.Transparent,
-                    unfocusedContainerColor = Color.Transparent,
-                    focusedIndicatorColor = t.Accent,
-                    unfocusedIndicatorColor = Color.Gray
-                )
-            )
-            Spacer(Modifier.height(8.dp))
+        Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
             if (tenorApiKey.isBlank()) {
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally
+                // Compact, and the key field does NOT take focus. The old layout
+                // filled the full 300dp with a form whose first field grabbed
+                // keyboard focus, so opening the picker silently diverted
+                // everything the user typed away from the message box.
+                var keyInput by remember { mutableStateOf("") }
+                Text(
+                    "GIF search needs a free Tenor API key.",
+                    color = t.Text_Muted,
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(
-                        "Tenor API key not set — paste one below to browse GIFs.",
-                        color = Color.Gray,
-                        style = MaterialTheme.typography.bodySmall
+                    OrbitTextField(
+                        value = keyInput,
+                        onValueChange = { keyInput = it },
+                        placeholder = "API key",
+                        isPassword = true,
+                        singleLine = true,
+                        modifier = Modifier.width(260.dp)
                     )
-                    Spacer(Modifier.height(8.dp))
-                    var keyInput by remember { mutableStateOf("") }
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = keyInput,
-                            onValueChange = { keyInput = it },
-                            placeholder = { Text("API key") },
-                            visualTransformation = PasswordVisualTransformation(),
-                            singleLine = true,
-                            modifier = Modifier.width(260.dp),
-                            colors = TextFieldDefaults.colors(
-                                focusedContainerColor = Color.Transparent,
-                                unfocusedContainerColor = Color.Transparent,
-                                focusedIndicatorColor = t.Accent,
-                                unfocusedIndicatorColor = Color.Gray
-                            )
-                        )
-                        Button(
-                            onClick = {
-                                val trimmed = keyInput.trim()
-                                if (trimmed.isNotBlank()) {
-                                    settingsManager.setTenorApiKey(trimmed)
-                                    tenorApiKey = trimmed
-                                    isLoading = true
-                                }
-                            },
-                            enabled = keyInput.isNotBlank()
-                        ) {
-                            Text("Save")
-                        }
+                    Button(
+                        onClick = {
+                            val trimmed = keyInput.trim()
+                            if (trimmed.isNotBlank()) {
+                                settingsManager.setTenorApiKey(trimmed)
+                                tenorApiKey = trimmed
+                                isLoading = true
+                            }
+                        },
+                        enabled = keyInput.isNotBlank()
+                    ) {
+                        Text("Save")
                     }
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "Free key: developers.google.com/tenor",
-                        color = Color.Gray.copy(alpha = 0.6f),
-                        style = MaterialTheme.typography.labelSmall
-                    )
                 }
-            } else if (errorMessage != null) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(
-                        errorMessage!!,
-                        color = Color(0xFFD65A54),
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(horizontal = 16.dp)
-                    )
-                }
-            } else if (isLoading || isDownloading) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = t.Accent)
-                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Get one at developers.google.com/tenor",
+                    color = t.Text_Subtle,
+                    style = MaterialTheme.typography.labelSmall
+                )
             } else {
-                LazyVerticalGrid(
-                    columns = GridCells.Adaptive(100.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier.fillMaxSize()
+                OrbitTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = "Search Tenor GIFs...",
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+            // Everything below only exists when there IS a key, so the panel
+            // collapses to a couple of lines in the empty state instead of
+            // reserving 320dp of blank space.
+            if (tenorApiKey.isNotBlank()) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 180.dp, max = 300.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    items(gifs.size) { index ->
-                        val url = gifs[index]
-                        Box(
-                            modifier = Modifier
-                                .height(100.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable {
-                                    scope.launch {
-                                        isDownloading = true
-                                        try {
-                                            val response: HttpResponse = commonHttpClient.get(url)
-                                            if (response.status.value !in 200..299) {
-                                                throw IllegalStateException("Download failed ${response.status.value}")
-                                            }
-                                            onGifSelected(response.readBytes())
-                                        } catch (e: Exception) {
-                                            OrbitLog.e("GifPicker", "GIF download failed: ${e.message}")
-                                            errorMessage = "Couldn't download that GIF. Try again."
-                                        } finally {
-                                            isDownloading = false
-                                        }
-                                    }
-                                }
+                    when {
+                        errorMessage != null -> Text(
+                            errorMessage!!,
+                            color = Color(0xFFD65A54),
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        )
+
+                        isLoading || isDownloading -> CircularProgressIndicator(color = t.Accent)
+
+                        else -> LazyVerticalGrid(
+                            columns = GridCells.Adaptive(100.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.fillMaxSize()
                         ) {
-                            coil3.compose.AsyncImage(
-                                model = url,
-                                contentDescription = null,
-                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
+                            // Index-based key: Tenor can legitimately return the same
+                            // GIF twice, and duplicate keys throw in a lazy grid.
+                            items(gifs.size, key = { it }, contentType = { "gif" }) { index ->
+                                val url = gifs[index]
+                                Box(
+                                    modifier = Modifier
+                                        .height(100.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            scope.launch {
+                                                isDownloading = true
+                                                try {
+                                                    val response: HttpResponse = commonHttpClient.get(url)
+                                                    if (response.status.value !in 200..299) {
+                                                        throw IllegalStateException("Download failed ${response.status.value}")
+                                                    }
+                                                    val bytes = withContext(Dispatchers.IO) { response.readBytes() }
+                                                    onGifSelected(bytes)
+                                                } catch (e: Exception) {
+                                                    OrbitLog.e("GifPicker", "GIF download failed: ${e.message}")
+                                                    errorMessage = "Couldn't download that GIF. Try again."
+                                                } finally {
+                                                    isDownloading = false
+                                                }
+                                            }
+                                        }
+                                ) {
+                                    coil3.compose.AsyncImage(
+                                        model = url,
+                                        contentDescription = null,
+                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                }
+                            }
                         }
                     }
                 }

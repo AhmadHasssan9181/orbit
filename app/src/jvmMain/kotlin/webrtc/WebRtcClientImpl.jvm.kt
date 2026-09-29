@@ -294,12 +294,21 @@ class JvmWebRtcClient : WebRtcClient {
                 isVideoCaptureRunning = true
                 println("DEBUG: [WebRTC] videoSource started")
                 
-                // Inject our custom video processor if enabled
+                // Inject our custom video processor if enabled.
+                // Guarded on its own: injectVideoProcessor has no implementation
+                // in any shipped DLL, so it throws UnsatisfiedLinkError. Letting
+                // that reach the surrounding catch treated it as a source-start
+                // failure -- disposing the source and returning, which turned on
+                // background blur into a dead camera on the P2P path.
                 if (isVirtualBackgroundEnabled) {
                     val modelPath = extractModelToTempFile("selfie_segmentation.onnx")
                     if (modelPath != null) {
                         println("DEBUG: [WebRTC] Injecting video processor with model: $modelPath")
-                        OrbitVideoEngine.injectVideoProcessor(videoSource, modelPath)
+                        runCatching { OrbitVideoEngine.injectVideoProcessor(videoSource, modelPath) }
+                            .onSuccess { println("DEBUG: [WebRTC] virtual background processor injected") }
+                            .onFailure {
+                                println("WARN [WebRTC] virtual background unavailable, capturing unblurred: ${it.message}")
+                            }
                     }
                 }
             } catch (t: Throwable) {
@@ -381,17 +390,20 @@ class JvmWebRtcClient : WebRtcClient {
         }
     }
 
-    private val activeRemoteVideoTracks = mutableSetOf<String>()
+    // Mutated from WebRTC signaling threads via attachRemoteTrack, so it must be
+    // concurrent; it is also cleared in endCall() so ids do not leak across calls.
+    private val activeRemoteVideoTracks: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
     private fun attachRemoteTrack(track: MediaStreamTrack?) {
         when (track) {
             is AudioTrack -> attachRemoteAudioTrack(track)
             is VideoTrack -> {
-                if (activeRemoteVideoTracks.contains(track.getId())) {
+                // add() is the atomic contains+add; a separate contains() check
+                // would let two signaling threads attach the same track twice.
+                if (!activeRemoteVideoTracks.add(track.getId())) {
                     println("DEBUG: [WebRTC] Ignoring duplicate attachRemoteTrack for VideoTrack ID: ${track.getId()}")
                     return
                 }
-                activeRemoteVideoTracks.add(track.getId())
 
                 println("DEBUG: [WebRTC] Attaching VideoTrack sink! track ID: ${track.getId()}")
                 _onStreamAdded.tryEmit(true)
@@ -486,6 +498,8 @@ class JvmWebRtcClient : WebRtcClient {
         localAudioSender = null
         runCatching { localAudioTrack?.dispose() }
         localAudioTrack = null
+        // AudioTrackSource has no dispose() in this fork; the native source is
+        // released with the factory in endCall().
         localAudioSource = null
     }
 
@@ -763,38 +777,70 @@ class JvmWebRtcClient : WebRtcClient {
     }
 
     override fun endCall() {
-        try {
-            stopLocalMedia()
-            runCatching { livekit.LiveKitNativeAudioSession.disconnect() }
-            isLiveKitMediaStarted = false // Reset LiveKit media guard
-            
-            // Explicitly remove sinks to prevent native threads from calling back during shutdown
-            localVideoTrack?.removeSink(localRenderer)
-            cameraVideoTrack?.removeSink(localRenderer)
-            screenVideoTrack?.removeSink(localRenderer)
-            remoteVideoTrack?.removeSink(remoteRenderer)
-            remoteScreenVideoTrack?.removeSink(remoteScreenRenderer)
+        // Every step is independently guarded, and ordered by how expensive it is
+        // to skip.
+        //
+        // This used to be ONE try/catch around the whole body, so a throw from
+        // `stopLocalMedia()` skipped `peerConnection?.close()` and all three
+        // `dispose()` calls -- leaking a native factory and an audio device module
+        // for the rest of the process, so the SECOND call in the session allocated
+        // on top of the first and neither was ever released. The same catch also
+        // printed a stack trace to stderr and swallowed the reason.
+        //
+        // `stopLocalMedia()` goes first because it closes the audio device line,
+        // which is the most likely thing to throw and the most expensive to leak.
+        runCatching { stopLocalMedia() }
+            .onFailure { println("WARN [WebRtcClientImpl] endCall: stopLocalMedia failed: ${it.message}") }
+        runCatching { livekit.LiveKitNativeAudioSession.disconnect() }
+            .onFailure { println("WARN [WebRtcClientImpl] endCall: native audio disconnect failed: ${it.message}") }
+        isLiveKitMediaStarted = false // Reset LiveKit media guard
 
-            peerConnection?.close()
-            peerConnection = null
-            shareWindowTrackingJob?.cancel()
-            shareWindowTrackingJob = null
-            screenSource?.stop()
-            screenSource = null
-            screenVideoTrack = null
-            localVideoTrack = null
-            cameraVideoTrack = null
-            localAudioTrack = null
-            remoteVideoTrack = null
-            remoteScreenVideoTrack = null
-            _isRemoteScreenSharing.value = false
-            remoteAudioTrack = null
-            localVideoSender = null
-            
-            WindowsAudioDucker.unduckVolumes()
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        // Explicitly remove sinks to prevent native threads from calling back during shutdown
+        localVideoTrack?.removeSink(localRenderer)
+        cameraVideoTrack?.removeSink(localRenderer)
+        screenVideoTrack?.removeSink(localRenderer)
+        remoteVideoTrack?.removeSink(remoteRenderer)
+        remoteScreenVideoTrack?.removeSink(remoteRenderer)
+
+        runCatching { peerConnection?.close() }
+            .onFailure { println("WARN [WebRtcClientImpl] endCall: peerConnection.close failed: ${it.message}") }
+        peerConnection = null
+        shareWindowTrackingJob?.cancel()
+        shareWindowTrackingJob = null
+
+        // Hang up mid-share must DISPOSE, not just stop. This nulled both fields
+        // without disposing, unlike stopScreenShare() which does dispose -- so
+        // ending a call while sharing leaked a VideoDesktopSource plus its
+        // VideoTrack, both native handles, for the rest of the session.
+        runCatching { screenSource?.stop() }
+        runCatching { screenSource?.dispose() }
+        screenSource = null
+        runCatching { screenVideoTrack?.dispose() }
+        screenVideoTrack = null
+
+        localVideoTrack = null
+        cameraVideoTrack = null
+        localAudioTrack = null
+        localAudioSource = null
+        remoteVideoTrack = null
+        remoteScreenVideoTrack = null
+        _isRemoteScreenSharing.value = false
+        remoteAudioTrack = null
+        localVideoSender = null
+        // A track id seen in call #1 would otherwise make attachRemoteTrack
+        // ignore that track for the rest of the app's lifetime.
+        activeRemoteVideoTracks.clear()
+
+        // Release the native capture/speaker devices: without this a second
+        // call allocates another factory while the first is still open.
+        runCatching { shareCaptureFactory?.dispose() }
+        shareCaptureFactory = null
+        runCatching { audioDeviceModule?.dispose() }
+        audioDeviceModule = null
+        runCatching { factory?.dispose() }
+        factory = null
+
+        runCatching { WindowsAudioDucker.unduckVolumes() }
     }
 
     override fun setOrbitZeroEnabled(enabled: Boolean) {
@@ -920,7 +966,11 @@ class JvmWebRtcClient : WebRtcClient {
                 localAudioSender = pConn.addTrack(newAudioTrack, listOf("mediaStream"))
             }
 
-            // Clean up old track AND source
+            // Clean up the old track. AudioTrackSource has no dispose() in this
+            // JNI fork (JNI_PeerConnectionFactory::createAudioSource hands over a
+            // raw released pointer), so the source cannot be freed individually;
+            // it is reclaimed with the PeerConnectionFactory, which endCall()
+            // now disposes.
             kotlin.runCatching { localAudioTrack?.dispose() }
 
             localAudioSource = newAudioSource

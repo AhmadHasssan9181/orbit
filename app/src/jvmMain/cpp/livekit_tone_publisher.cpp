@@ -207,6 +207,23 @@ void logPublicationSnapshot(livekit::LocalParticipant* participant) {
   }
 }
 
+// Owns initialize()/shutdown() for everything created after it. main declares it
+// BEFORE the SDK objects, so it is destroyed AFTER them: livekit::shutdown() now
+// runs last. Calling shutdown() first left the Room/AudioSource/LocalAudioTrack
+// destructors running against an already torn-down runtime.
+class SdkSession {
+public:
+  SdkSession() {
+    livekit::initialize(livekit::LogLevel::Info, livekit::LogSink::kConsole);
+  }
+  ~SdkSession() {
+    livekit::shutdown();
+  }
+
+  SdkSession(const SdkSession&) = delete;
+  SdkSession& operator=(const SdkSession&) = delete;
+};
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -229,9 +246,10 @@ int main(int argc, char** argv) {
   std::cout << "[tone] trackName=audio source=SOURCE_MICROPHONE durationSeconds=" << durationSeconds
             << " channels=" << channels << std::endl;
 
-  try {
-    livekit::initialize(livekit::LogLevel::Info, livekit::LogSink::kConsole);
+  // Constructed before the SDK objects below so it is destroyed after them.
+  SdkSession sdk;
 
+  try {
     TonePublisherDelegate delegate;
     livekit::Room room;
     room.setDelegate(&delegate);
@@ -246,7 +264,6 @@ int main(int argc, char** argv) {
     std::cout << "[tone] connect result=" << (connected ? "true" : "false")
               << " state=" << connectionStateName(room.connectionState()) << std::endl;
     if (!connected) {
-      livekit::shutdown();
       return 1;
     }
 
@@ -254,7 +271,6 @@ int main(int argc, char** argv) {
     logPublicationSnapshot(localParticipant);
     if (localParticipant == nullptr) {
       std::cerr << "[tone] no local participant after connect" << std::endl;
-      livekit::shutdown();
       return 1;
     }
 
@@ -328,11 +344,9 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "[tone] finished captured=" << captured << " failed=" << failed << std::endl;
-    livekit::shutdown();
     return failed == 0 ? 0 : 1;
   } catch (const std::exception& ex) {
     std::cerr << "[tone] fatal error: " << ex.what() << std::endl;
-    livekit::shutdown();
     return 1;
   }
 }

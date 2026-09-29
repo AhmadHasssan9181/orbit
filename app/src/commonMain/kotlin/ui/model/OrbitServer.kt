@@ -1,8 +1,12 @@
 package ui.model
 
+import androidx.compose.runtime.Immutable
+
 /**
  * Represents a Discord-like server (space) in Orbit.
  */
+// Stable: every field is a val of String/Int/Boolean.
+@Immutable
 data class OrbitServer(
     val id: String,
     val name: String,

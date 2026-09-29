@@ -1,60 +1,43 @@
 package ui.screen.call
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.MutableTransitionState
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.hoverable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.wrapContentSize
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlin.math.roundToInt
 import livekit.LiveKitLocalVideoFrameStore
 import livekit.LiveKitRemoteVideoFrameStore
 import livekit.LiveKitVideoTileRenderer
@@ -92,12 +75,7 @@ private fun memberInfoFor(members: List<OrbitUser>, identity: String?): OrbitUse
 fun LiveKitGroupCallSurface(
     callManager: CallManager,
     modifier: Modifier = Modifier,
-    remoteFallbackName: String = "Participant",
-    // Overlay hosts (floating popup) always render the compact pill so an active
-    // call can never blanket the whole window and block navigation; the expanded
-    // controls live only in the in-channel surface.
-    forceMinimized: Boolean = false,
-    onRestore: (() -> Unit)? = null
+    remoteFallbackName: String = "Participant"
 ) {
     val callState by callManager.callState.collectAsState()
     val nativeReadiness by callManager.nativeMediaReadiness.collectAsState()
@@ -107,12 +85,22 @@ fun LiveKitGroupCallSurface(
     val isMuted = !isAudioEnabled
     val isDeafened by callManager.isDeafened.collectAsState()
     val isScreenSharing by callManager.isScreenSharing.collectAsState()
-    val isMinimized by callManager.isMinimized.collectAsState()
-    val localFrame by LiveKitLocalVideoFrameStore.latestFrame.collectAsState()
+    // Only "is there a local frame at all" is needed below. Collecting the frame
+    // object here made the whole group-call surface recompose at camera
+    // framerate (30/s) on top of the O(n) node list build.
+    val hasLocalFrame by remember { derivedStateOf { LiveKitLocalVideoFrameStore.latestFrame.value != null } }
     val activeTracks by LiveKitRemoteVideoFrameStore.activeTracks.collectAsState()
     val remoteParticipants by LiveKitRemoteVideoFrameStore.remoteParticipants.collectAsState()
     val isVideoIntent by callManager.isVideoCall.collectAsState()
+    // Raw Matrix membership roster: kept as the PROFILE DIRECTORY for tiles.
+    // A tile is keyed by a LiveKit identity, and the roster is the cheapest
+    // place to find the matching OrbitUser — but it is a membership record, so
+    // it is NOT a participant list and must never be rendered as one.
     val members by callManager.groupCallMembers.collectAsState()
+    // Reconciled against the LiveKit room (see CallRosterReconciliation); this is
+    // the roster a human may actually be shown.
+    val displayMembers by callManager.displayCallMembers.collectAsState()
+    val participantProfiles by callManager.participantProfiles.collectAsState()
     val selfNudgeRecovery by callManager.selfNudgeRecovery.collectAsState()
     val remoteMicMutedIds by callManager.remoteMicMutedIds.collectAsState()
     val connectionQuality by callManager.remoteConnectionQuality.collectAsState()
@@ -123,46 +111,30 @@ fun LiveKitGroupCallSurface(
     var showScreenShareDialog by remember { mutableStateOf(false) }
 
     // Ctrl+Shift+S (Start/Stop Stream) lands here via the root Window handler.
-    // Registered before the minimized early-return so stopping a share works
-    // from the compact pill too; opening the picker stays expanded-only.
+    // There is no minimized state any more, so there is nothing to gate the
+    // picker on — the shortcut works whenever this surface is on screen.
     DisposableEffect(callManager) {
         CallShortcuts.onToggleStream = {
             if (isScreenSharing) {
                 callManager.stopScreenShare()
-            } else if (!isMinimized && !forceMinimized) {
+            } else {
                 showScreenShareDialog = true
             }
         }
         onDispose { CallShortcuts.onToggleStream = null }
     }
 
-    if (forceMinimized) {
-        val totalParticipants = (members.map { it.id } + remoteParticipants).filter { it.isNotBlank() }.distinct().size
-        GroupCallMiniView(
-            connection = groupConnection,
-            callName = remoteFallbackName,
-            stageLabel = joinStageLabel(
-                groupConnection.stage,
-                isVideoIntent,
-                groupConnection.attempt
-            ),
-            participantCount = if (totalParticipants > 0) totalParticipants else 1,
-            isMuted = isMuted,
-            onToggleMute = { callManager.toggleMute(!isMuted) },
-            onRestore = onRestore ?: { callManager.isMinimized.value = false },
-            onLeave = { callManager.endCall() },
-            modifier = modifier
-        )
-        return
-    }
-
-    if (isMinimized) {
-        // Embedded surface with the call minimized: the app-level floating pill
-        // already represents this call — rendering our own here stacked a second
-        // bar ("Participant") next to the real one.
-        Box(modifier)
-        return
-    }
+    // `forceMinimized` and the `isMinimized` stand-down are both gone.
+    //
+    // The floating pill they existed to serve has been removed: a call renders
+    // in the channel, full size, and there is nothing to minimise *to*. Keeping
+    // the `isMinimized` branch would have been worse than dead code — it
+    // returned an empty Box, so clicking the "Voice Connected" card would have
+    // blanked the call you were standing in, with no widget left to click back
+    // into.
+    //
+    // `displayMembers` and `remoteParticipants` are still collected above and
+    // used by the full grid, so nothing is orphaned by this.
 
     var layoutMode by remember { mutableStateOf(CallLayoutMode.Grid) }
     var showSoundboard by remember { mutableStateOf(false) }
@@ -190,10 +162,10 @@ fun LiveKitGroupCallSurface(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color(0xFF0B0D11))
+            .background(ui.theme.Ink950)
     ) {
         if (renderingGrid) {
-            val localRenderer = if (isVideoEnabled && localFrame != null) {
+            val localRenderer = if (isVideoEnabled && hasLocalFrame) {
                 LiveKitVideoTileRenderer.LocalPreview
             } else {
                 null
@@ -211,9 +183,33 @@ fun LiveKitGroupCallSurface(
                 return id == self || base == self || id.startsWith("$self:")
             }
 
+            // Every identity that will get a tile, so each one's Matrix profile is
+            // fetched once. The membership roster only knows about peers that
+            // published a member event we happened to see, so a tile whose
+            // identity is missing from it rendered as a bare letter forever.
+            // Idempotent: CallManager skips identities it already resolved.
+            LaunchedEffect(remoteParticipants, activeTracks) {
+                val identities = buildSet {
+                    remoteParticipants.forEach { add(it) }
+                    activeTracks.keys.forEach { trackSid ->
+                        LiveKitRemoteVideoFrameStore.activeTracks.value[trackSid]?.participantIdentity?.let { add(it) }
+                    }
+                }
+                callManager.requestProfilesFor(identities)
+            }
+
+            // Roster first (it is a complete profile directory for the people we
+            // know are here), then the identity→profile cache as the fallback
+            // that rescues anyone the roster does not mention.
+            fun memberFor(identity: String?): OrbitUser? =
+                memberInfoFor(members, identity)
+                    ?: memberInfoFor(displayMembers, identity)
+                    ?: participantProfiles[identity]
+                    ?: callManager.profileForIdentity(identity)
+
             fun tileName(identity: String?): String =
-                memberInfoFor(members, identity)?.displayName?.takeIf { it.isNotBlank() }
-                    ?: memberInfoFor(members, identity)?.username?.takeIf { it.isNotBlank() }
+                memberFor(identity)?.displayName?.takeIf { it.isNotBlank() }
+                    ?: memberFor(identity)?.username?.takeIf { it.isNotBlank() }
                     ?: identityDisplayName(identity).takeIf { it != "Participant" }
                     ?: remoteFallbackName
 
@@ -227,7 +223,10 @@ fun LiveKitGroupCallSurface(
                         isMuted = isMuted,
                         isDeafened = isDeafened,
                         isHandRaised = myHandRaised,
-                        avatarColor = 0xFF7B74E8.toInt()
+                        // Our OWN avatar, not a coloured circle with "Y" in it.
+                        avatarUrl = callManager.profileForIdentity(selfId)?.avatarUrl,
+                        avatarColor = callManager.profileForIdentity(selfId)?.avatarColor
+                            ?: 0xFF7B74E8.toInt()
                     )
                 )
                 if (isScreenSharing) {
@@ -251,9 +250,9 @@ fun LiveKitGroupCallSurface(
                             participantIdentity = track.participantIdentity,
                             qualitySample = connectionQuality[track.participantIdentity],
                             isHandRaised = identityHasRaisedHand(track.participantIdentity, raisedHands),
-                            avatarColor = memberInfoFor(members, track.participantIdentity)?.avatarColor
+                            avatarColor = memberFor(track.participantIdentity)?.avatarColor
                                 ?: identityColor(track.participantIdentity),
-                            avatarUrl = memberInfoFor(members, track.participantIdentity)?.avatarUrl
+                            avatarUrl = memberFor(track.participantIdentity)?.avatarUrl
                         )
                     )
                 }
@@ -265,7 +264,7 @@ fun LiveKitGroupCallSurface(
                             renderer = LiveKitVideoTileRenderer.RemoteTrack(track.trackSid, isScreenShare = true),
                             isScreenShare = true,
                             participantIdentity = track.participantIdentity,
-                            avatarColor = memberInfoFor(members, track.participantIdentity)?.avatarColor
+                            avatarColor = memberFor(track.participantIdentity)?.avatarColor
                                 ?: identityColor(track.participantIdentity)
                         )
                     )
@@ -275,7 +274,7 @@ fun LiveKitGroupCallSurface(
                     .distinctBy { it.substringBeforeLast(':') }
 
                 voiceIdentities.forEach { identity ->
-                    val member = memberInfoFor(members, identity)
+                    val member = memberFor(identity)
                     val displayName = member?.displayName?.ifBlank { member.username }
                         ?: identityDisplayName(identity)
                     add(
@@ -361,6 +360,77 @@ fun LiveKitGroupCallSurface(
             showSoundboard = showSoundboard,
             onSoundboardToggle = { showSoundboard = !showSoundboard }
         )
+
+        // "Voice Connected" card, bottom-left.
+        //
+        // Discord keeps a persistent card there for the whole call showing who you
+        // are connected to, your mute state, and a hang-up button. Orbit had only
+        // the bottom-centre bar, so once the call was live there was nothing on
+        // screen naming the room you were in -- and when you minimised, the only
+        // cue that a call was running at all was a small floating pill.
+        //
+        // Built from displayMembers, never the raw Matrix roster: that roster is a
+        // membership record, so counting it is how a two-person call came to
+        // report eight participants.
+        val callLabel = remoteFallbackName.ifBlank { "Voice call" }
+        val visibleParticipants = remember(displayMembers, remoteParticipants) {
+            (displayMembers.map { it.id } + remoteParticipants)
+                .filter { it.isNotBlank() }
+                .distinct()
+                .size
+                .coerceAtLeast(1)
+        }
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(start = 24.dp, bottom = 24.dp)
+                .widthIn(max = 280.dp)
+                .clip(androidx.compose.foundation.shape.RoundedCornerShape(10.dp))
+                .background(ui.theme.Ink850)
+                .border(1.dp, ui.theme.Ink600, RoundedCornerShape(10.dp))
+                // Not clickable. It used to set `isMinimized`, which minimised to
+                // the floating pill. The pill is gone, so a click here would have
+                // done nothing at all — and worse, an earlier version of this
+                // change left the `isMinimized` branch in place, which made this
+                // card blank the entire call surface.
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = if (isMuted) OrbitIcons.MicOff else OrbitIcons.Mic,
+                    contentDescription = null,
+                    tint = if (isMuted) ui.theme.Rust500 else ui.theme.Sage500,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = if (isMuted) "Muted" else "Voice Connected",
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        color = ui.theme.Sage500,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 13.sp
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = callLabel,
+                    style = MaterialTheme.typography.bodySmall.copy(color = ui.theme.Ink550, fontSize = 12.sp),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = if (visibleParticipants > 1) "$visibleParticipants" else "",
+                    style = MaterialTheme.typography.bodySmall.copy(color = ui.theme.Ink550, fontSize = 11.sp)
+                )
+            }
+        }
     }
 }
 
@@ -394,7 +464,7 @@ private fun GroupCallJoinStatus(
         if (connection.stage == GroupCallStage.Failed) {
             Text(
                 text = connection.message ?: joinStageLabel(GroupCallStage.Failed, videoRequested, connection.attempt),
-                color = Color(0xFFD65A54)
+                color = ui.theme.Rust500
             )
             Button(onClick = onLeave) {
                 Text("Back")
@@ -450,156 +520,3 @@ private fun StatusChip(text: String, tint: Color) {
     }
 }
 
-@Composable
-private fun GroupCallMiniView(
-    connection: GroupCallConnection,
-    callName: String,
-    stageLabel: String,
-    participantCount: Int,
-    isMuted: Boolean,
-    onToggleMute: () -> Unit,
-    onRestore: () -> Unit,
-    onLeave: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    var offsetX by remember { mutableStateOf(0f) }
-    var offsetY by remember { mutableStateOf(0f) }
-
-    val subtitle = if (connection.audioOnlyFallback && connection.stage != GroupCallStage.Failed) {
-        "$stageLabel · Audio-only"
-    } else {
-        stageLabel
-    }
-
-    Box(modifier = modifier.wrapContentSize(Alignment.BottomEnd)) {
-        val entranceState = remember { MutableTransitionState(false).apply { targetState = true } }
-        AnimatedVisibility(
-            visibleState = entranceState,
-            enter = fadeIn(tween(220)) + slideInVertically(tween(260)) { it / 3 },
-            exit = fadeOut(tween(160)) + slideOutVertically(tween(200)) { it / 3 },
-            modifier = Modifier.align(Alignment.BottomEnd)
-        ) {
-            Surface(
-                shape = RoundedCornerShape(24.dp),
-                color = Color.Transparent,
-                shadowElevation = 16.dp,
-                modifier = Modifier
-                    .padding(24.dp)
-                    .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
-                    .pointerInput(Unit) {
-                        detectDragGestures { change, dragAmount ->
-                            change.consume()
-                            offsetX += dragAmount.x
-                            offsetY += dragAmount.y
-                        }
-                    }
-            ) {
-                Row(
-                    modifier = Modifier
-                        .clickable(onClick = onRestore)
-                        .background(
-                            Brush.horizontalGradient(
-                                listOf(
-                                    Color(0xFF1F242C).copy(alpha = 0.97f),
-                                    Color(0xFF262C36).copy(alpha = 0.97f),
-                                    Color(0xFF1F242C).copy(alpha = 0.97f)
-                                )
-                            )
-                        )
-                        .border(1.dp, Color.White.copy(alpha = 0.06f), RoundedCornerShape(24.dp))
-                        .padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    LiveDot(reconnecting = connection.stage == GroupCallStage.Reconnecting)
-
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(
-                            text = callName,
-                            color = Color.White,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 13.sp,
-                            maxLines = 1
-                        )
-                        Text(
-                            text = subtitle,
-                            color = Color.White.copy(alpha = 0.5f),
-                            fontSize = 11.sp,
-                            maxLines = 1
-                        )
-                    }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            OrbitIcons.Members,
-                            contentDescription = null,
-                            tint = Color.White.copy(alpha = 0.45f),
-                            modifier = Modifier.size(12.dp)
-                        )
-                        Text(
-                            text = "$participantCount",
-                            color = Color.White.copy(alpha = 0.7f),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-
-                    ControlSeparator()
-
-                    MiniPillButton(
-                        icon = if (isMuted) OrbitIcons.MicOff else OrbitIcons.Mic,
-                        contentDescription = if (isMuted) "Unmute" else "Mute",
-                        container = if (isMuted) Color(0xFFD65A54) else Color(0xFF1F242C),
-                        onClick = onToggleMute
-                    )
-                    MiniPillButton(
-                        icon = OrbitIcons.CallEnd,
-                        contentDescription = "Leave call",
-                        container = Color(0xFFD65A54),
-                        onClick = onLeave
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun LiveDot(reconnecting: Boolean) {
-    val transition = rememberInfiniteTransition(label = "liveDot")
-    val haloAlpha by transition.animateFloat(
-        initialValue = 0.9f,
-        targetValue = 0.25f,
-        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
-        label = "haloAlpha"
-    )
-    val baseColor = if (reconnecting) Color(0xFFFAA61A) else Color(0xFF23A559)
-    Box(contentAlignment = Alignment.Center) {
-        Box(Modifier.size(16.dp).background(baseColor.copy(alpha = haloAlpha * 0.35f), CircleShape))
-        Box(Modifier.size(7.dp).background(baseColor, CircleShape))
-    }
-}
-
-@Composable
-private fun MiniPillButton(
-    icon: ImageVector,
-    contentDescription: String,
-    container: Color,
-    onClick: () -> Unit
-) {
-    val hoverInteraction = remember { MutableInteractionSource() }
-    val isHovered by hoverInteraction.collectIsHoveredAsState()
-    IconButton(
-        onClick = onClick,
-        modifier = Modifier
-            .size(32.dp)
-            .hoverable(hoverInteraction)
-            .background(if (isHovered) container.copy(alpha = 0.85f) else container, CircleShape)
-            .then(if (isHovered) Modifier.scale(1.12f) else Modifier)
-    ) {
-        Icon(icon, contentDescription = contentDescription, tint = Color.White, modifier = Modifier.size(15.dp))
-    }
-}

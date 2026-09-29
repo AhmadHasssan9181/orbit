@@ -6,8 +6,10 @@ gradle-8.5/
 *.iml
 local.properties
 .DS_Store
-*.zip
 
+# Only the build's scratch archives are ignored, not every .zip in the tree:
+# a blanket *.zip rule silently untracked real project resources.
+**/build/jni/_downloads/*.zip
 *.hprof
 .kotlin/
 
@@ -26,3 +28,13 @@ orbit_audio_jni/webrtc/
 # Crash dumps and test files
 app/hs_err_pid*.log
 test_*.cpp
+
+# One-off debugging scratch files that live at the repo root
+/ListMics.java
+/ProbeMics.java
+/ListMics.class
+/ProbeMics.class
+/scratch_test.kt
+/fix_gif_crash.kt
+*.old2
+/build_baseline_test.log

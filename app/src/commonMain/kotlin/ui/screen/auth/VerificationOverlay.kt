@@ -22,6 +22,7 @@ import de.connect2x.trixnity.client.verification.ActiveSasVerificationState
 import de.connect2x.trixnity.client.verification.ActiveVerificationState
 import de.connect2x.trixnity.core.model.events.m.key.verification.VerificationMethod
 import kotlinx.coroutines.launch
+import ui.screen.orbitGlobalShortcuts
 import ui.theme.rememberCosmicTokens
 
 import ui.screen.auth.*
@@ -39,31 +40,39 @@ fun VerificationOverlay(activeVerification: ActiveDeviceVerification?) {
     if (activeVerification == null) return
 
     val state by activeVerification.state.collectAsState()
+    val t = rememberCosmicTokens()
 
-    // Terminal states stay on screen until the user closes them, but must be
-    // closable — an undismissable modal would brick the whole window. Interactive
-    // (mid-verification) states still require an explicit accept/decline action.
-    var dismissedTerminal by remember(activeVerification) { mutableStateOf(false) }
-    val isTerminal = state is ActiveVerificationState.Done ||
-        state is ActiveVerificationState.Cancel ||
-        state is ActiveVerificationState.AcceptedByOtherDevice ||
-        state is ActiveVerificationState.Undefined
-    if (dismissedTerminal && isTerminal) return
+    // Every state is dismissable. The previous gate only let terminal states
+    // close, so starting a verification and then losing the other device left
+    // the user behind a modal that Esc, an outside click and every button could
+    // not escape.
+    var dismissed by remember(activeVerification) { mutableStateOf(false) }
+    if (dismissed) return
 
-    Dialog(onDismissRequest = { if (isTerminal) dismissedTerminal = true }) {
+    val cancelAndDismiss: () -> Unit = {
+        coroutineScope.launch { runCatching { activeVerification.cancel() } }
+        dismissed = true
+    }
+
+    Dialog(onDismissRequest = { dismissed = true }) {
         Surface(
             shape = RoundedCornerShape(16.dp),
-            color = rememberCosmicTokens().Bg,
-            contentColor = Color.White
+            color = t.Bg,
+            contentColor = t.Text_White
         ) {
             Column(
-                modifier = Modifier.padding(24.dp).fillMaxWidth(),
+                modifier = Modifier
+                    // A Dialog is its own native window; without this the
+                    // app-wide shortcuts are dead while it is open.
+                    .orbitGlobalShortcuts()
+                    .padding(24.dp)
+                    .fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
                     text = "Device Verification",
                     style = MaterialTheme.typography.titleLarge,
-                    color = Color.White
+                    color = t.Text_White
                 )
                 Spacer(modifier = Modifier.height(16.dp))
 
@@ -86,6 +95,11 @@ fun VerificationOverlay(activeVerification: ActiveDeviceVerification?) {
                         LaunchedEffect(s) {
                             s.start(VerificationMethod.Sas)
                         }
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(
+                            onClick = cancelAndDismiss,
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                        ) { Text("Cancel verification") }
                     }
                     is ActiveVerificationState.Start -> {
                         val method = s.method
@@ -129,24 +143,44 @@ fun VerificationOverlay(activeVerification: ActiveDeviceVerification?) {
                                 is ActiveSasVerificationState.WaitForMacs -> {
                                     Text("Waiting for the other device...")
                                     CircularProgressIndicator(modifier = Modifier.padding(top = 16.dp))
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Button(
+                                        onClick = cancelAndDismiss,
+                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                                    ) { Text("Cancel verification") }
                                 }
                             }
                         } else {
                             Text("Unsupported verification method.")
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Button(
+                                onClick = cancelAndDismiss,
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                            ) { Text("Cancel verification") }
                         }
                     }
                     is ActiveVerificationState.OwnRequest -> {
                         Text("Waiting for other device to accept...")
                         CircularProgressIndicator(modifier = Modifier.padding(top = 16.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(
+                            onClick = cancelAndDismiss,
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                        ) { Text("Cancel verification") }
                     }
                     is ActiveVerificationState.WaitForDone -> {
                         Text("Completing verification...")
                         CircularProgressIndicator(modifier = Modifier.padding(top = 16.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(
+                            onClick = cancelAndDismiss,
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                        ) { Text("Cancel verification") }
                     }
                     is ActiveVerificationState.Done -> {
                         Text("Verification Successful!", color = Color(0xFF34D399))
                         Spacer(modifier = Modifier.height(16.dp))
-                        Button(onClick = { dismissedTerminal = true }) {
+                        Button(onClick = { dismissed = true }) {
                             Text("Dismiss")
                         }
                     }
@@ -155,15 +189,23 @@ fun VerificationOverlay(activeVerification: ActiveDeviceVerification?) {
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(s.content.reason)
                         Spacer(modifier = Modifier.height(16.dp))
-                        Button(onClick = { dismissedTerminal = true }) {
+                        Button(onClick = { dismissed = true }) {
                             Text("Close")
                         }
                     }
                     is ActiveVerificationState.AcceptedByOtherDevice -> {
                         Text("Accepted by another device.")
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(onClick = { dismissed = true }) {
+                            Text("Close")
+                        }
                     }
                     is ActiveVerificationState.Undefined -> {
                         Text("Verification state undefined.")
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(onClick = { dismissed = true }) {
+                            Text("Close")
+                        }
                     }
                 }
             }

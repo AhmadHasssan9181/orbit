@@ -46,7 +46,7 @@ fun CallGrid(
     onPinToggle: ((String) -> Unit)? = null
 ) {
     if (nodes.isEmpty()) {
-        Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Box(modifier = modifier.fillMaxSize().background(tokens.Sunken), contentAlignment = Alignment.Center) {
             Text(
                 "Waiting for participants...",
                 color = Color.White.copy(alpha = 0.4f),
@@ -122,6 +122,15 @@ fun CallGrid(
     }
 
     // ── Grid Mode ──
+    // The stage behind the tiles.
+    //
+    // Discord's call view is a dark room with slightly lighter tiles floating in
+    // it. Rendering the stage as `t.Bg` (the chat surface, #313338) put lighter
+    // tiles on a lighter stage, which flattened the whole view into one grey
+    // rectangle with no sense of depth -- the single biggest reason the call
+    // screen did not read as Discord. `Sunken` is the app's darkest surface and
+    // matches Discord's stage; the tiles sit above it.
+    Box(modifier = modifier.fillMaxSize().background(tokens.Sunken)) {
     when {
         nodes.size == 1 -> {
             // Single participant — centered large card with empty panel below
@@ -226,6 +235,7 @@ fun CallGrid(
             }
         }
     }
+    }
 }
 
 /**
@@ -287,7 +297,7 @@ private fun SharePagerArrows(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .padding(top = 10.dp)
-                .background(Color(0xFF0B0D11).copy(alpha = 0.75f), RoundedCornerShape(50))
+                .background(ui.theme.Ink950.copy(alpha = 0.75f), RoundedCornerShape(50))
                 .padding(horizontal = 10.dp, vertical = 4.dp)
         ) {
             Text(
@@ -314,7 +324,7 @@ private fun PagerArrowButton(
         modifier = modifier
             .hoverable(interaction)
             .size(36.dp)
-            .background(Color(0xFF0B0D11).copy(alpha = if (isHovered) 0.85f else 0.55f), CircleShape)
+            .background(ui.theme.Ink950.copy(alpha = if (isHovered) 0.85f else 0.55f), CircleShape)
             .border(1.dp, Color.White.copy(alpha = 0.08f), CircleShape)
     ) {
         Icon(

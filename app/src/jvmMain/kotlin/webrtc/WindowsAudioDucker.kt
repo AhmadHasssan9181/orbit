@@ -71,9 +71,67 @@ class ISimpleAudioVolume(pvInstance: Pointer) : Unknown(pvInstance) {
 
 object WindowsAudioDucker {
     private var isWindowsDuckingDisabled = false
-    private val duckedSessions = mutableListOf<Pair<ISimpleAudioVolume, Float>>()
+    // Read from the caller thread while Dispatchers.IO fade loops iterate it, so
+    // it has to be concurrent; CopyOnWriteArrayList also gives us a stable
+    // snapshot for iteration without ConcurrentModificationException.
+    private val duckedSessions = java.util.concurrent.CopyOnWriteArrayList<Pair<ISimpleAudioVolume, Float>>()
+
+    /**
+     * Native pointers already captured in [duckedSessions].
+     *
+     * CopyOnWriteArrayList makes each individual operation safe, not the
+     * check-then-add pair -- so without this, two concurrent ducking passes can
+     * capture one COM interface twice and `unduckVolumes` releases it twice. See the
+     * capture site for why that matters.
+     */
+    private val duckedKeys = java.util.Collections.synchronizedSet(mutableSetOf<Any>())
+    private val duckCaptureLock = Any()
     private val scope = CoroutineScope(Dispatchers.IO + Job())
+    private val fadeLock = Any()
     private var duckJob: Job? = null
+
+    /**
+     * Starts a fade, cancelling AND joining the previous one. cancel() alone
+     * cannot preempt a running non-suspending forEach, so two fade loops could
+     * be inside SetMasterVolume at the same time and the older one would win.
+     * COM is also initialized here (not just on the caller thread) because these
+     * coroutines run on Dispatchers.IO, which was never COM-initialized.
+     */
+    private fun replaceFadeJob(block: suspend CoroutineScope.() -> Unit) {
+        synchronized(fadeLock) {
+            val previous = duckJob
+            duckJob = scope.launch {
+                previous?.cancel()
+                previous?.join()
+                val comInited = comInitialize(Ole32.COINIT_APARTMENTTHREADED)
+                try {
+                    block()
+                } finally {
+                    // Only balance what we actually took. Uninitializing after a
+                    // FAILED CoInitializeEx decrements an apartment count this
+                    // coroutine never incremented, which poisons the shared
+                    // Dispatchers.IO worker for every other COM user.
+                    if (comInited) runCatching { Ole32.INSTANCE.CoUninitialize() }
+                }
+            }
+        }
+    }
+
+    /**
+     * CoInitializeEx on the CURRENT thread, returning whether it succeeded and
+     * therefore whether the caller owes a CoUninitialize.
+     *
+     * S_OK and S_FALSE both mean "initialized here", so both must be balanced.
+     * A failure (RPC_E_CHANGED_MODE on a worker already in another apartment,
+     * E_OUTOFMEMORY) must not be followed by CoUninitialize.
+     */
+    private fun comInitialize(apartment: Int): Boolean {
+        val hr = runCatching { Ole32.INSTANCE.CoInitializeEx(null, apartment) }
+            .getOrElse { return false }
+            .toLong()
+        // HRESULT: negative means failure. S_FALSE (1) still counts as success.
+        return hr >= 0
+    }
     
     fun disableWindowsDucking() {
         if (isWindowsDuckingDisabled) return
@@ -130,8 +188,7 @@ object WindowsAudioDucker {
         }
         
         if (duckedSessions.isNotEmpty()) {
-            duckJob?.cancel()
-            duckJob = scope.launch {
+            replaceFadeJob {
                 val currentFactor = 1.0f - strength
                 duckedSessions.forEach { (vol, original) ->
                     vol.SetMasterVolume(original * currentFactor, null)
@@ -140,6 +197,14 @@ object WindowsAudioDucker {
             return
         }
         
+        // COM MUST be initialized on the calling thread before the enumeration
+        // below. These callers are UI-driven (EDT / Compose scope) and JNA does
+        // not initialize COM for them, so CoCreateInstance failed with
+        // CO_E_NOTINITIALIZED, duckedSessions stayed empty, the fade job was
+        // never reached — and because the list stayed empty, ducking silently
+        // did nothing on every subsequent call too. Only the FADE runs on the
+        // COM-initialized Dispatchers.IO worker; the enumeration does not.
+        val comInited = comInitialize(Ole32.COINIT_MULTITHREADED)
         try {
             val currentPid = com.sun.jna.platform.win32.Kernel32.INSTANCE.GetCurrentProcessId()
             val ppEnumerator = PointerByReference()
@@ -173,7 +238,29 @@ object WindowsAudioDucker {
                                                 val volume = ISimpleAudioVolume(ppVolume.value)
                                                 val volRef = FloatByReference()
                                                 volume.GetMasterVolume(volRef)
-                                                duckedSessions.add(Pair(volume, volRef.value))
+                                                // De-duplicate BEFORE capturing.
+                                                //
+                                                // `duckedSessions` is a CopyOnWriteArrayList, so `add`
+                                                // and `isNotEmpty` are individually safe -- which is
+                                                // exactly the trap: the pair is not atomic, and two
+                                                // concurrent ducking passes can capture the SAME
+                                                // ISimpleAudioVolume twice. `unduckVolumes` then
+                                                // calls Release() once per entry, and a double COM
+                                                // Release decrements the refcount below what the
+                                                // audio subsystem still holds -- which surfaces much
+                                                // later as an access violation inside WASAPI, in
+                                                // code that has nothing to do with ducking.
+                                                //
+                                                // Keyed on the native pointer, not on equals: JNA
+                                                // interface wrappers do not override it, so two
+                                                // wrappers for one COM object compare unequal.
+                                                synchronized(duckCaptureLock) {
+                                                    val key: Any = ppVolume.value
+                                                        ?: System.identityHashCode(volume)
+                                                    if (duckedKeys.add(key)) {
+                                                        duckedSessions.add(Pair(volume, volRef.value))
+                                                    }
+                                                }
                                             }
                                         }
                                         control2.Release()
@@ -182,9 +269,8 @@ object WindowsAudioDucker {
                                 }
                             }
                             sessionEnumerator.Release()
-                            
-                            duckJob?.cancel()
-                            duckJob = scope.launch {
+
+                            replaceFadeJob {
                                 // Fade down
                                 for (step in 1..10) {
                                     val currentFactor = 1.0f - (strength * (step / 10.0f))
@@ -203,23 +289,40 @@ object WindowsAudioDucker {
             }
         } catch (e: Exception) {
             e.printStackTrace()
+        } finally {
+            if (comInited) runCatching { Ole32.INSTANCE.CoUninitialize() }
         }
     }
 
     fun unduckVolumes() {
-        if (duckedSessions.isEmpty()) return
-        
-        val sessionsToUnduck = duckedSessions.toList()
-        duckedSessions.clear()
-        
-        duckJob?.cancel()
-        duckJob = scope.launch {
-            // Restore original volume
-            sessionsToUnduck.forEach { (vol, original) ->
-                vol.SetMasterVolume(original, null)
+        val sessionsToUnduck = synchronized(duckCaptureLock) {
+            if (duckedSessions.isEmpty()) return
+            val copy = duckedSessions.toList()
+            duckedSessions.clear()
+            // Must clear alongside the list, or the next duck pass sees the
+            // pointers as "already captured" and captures nothing -- leaving
+            // playback permanently ducked.
+            duckedKeys.clear()
+            copy
+        }
+
+        replaceFadeJob {
+            try {
+                // Restore original volume
+                sessionsToUnduck.forEach { (vol, original) ->
+                    vol.SetMasterVolume(original, null)
+                }
+                delay(15) // small delay to ensure COM calls finish
+            } finally {
+                // Release in a non-cancellable context. These Release calls used
+                // to sit after a suspension point, so a duckVolumes() landing
+                // inside the 15 ms delay cancelled this job first and leaked
+                // every captured ISimpleAudioVolume permanently — one leaked
+                // interface per rapid screen-share toggle.
+                withContext(kotlinx.coroutines.NonCancellable) {
+                    sessionsToUnduck.forEach { runCatching { it.first.Release() } }
+                }
             }
-            delay(15) // small delay to ensure COM calls finish
-            sessionsToUnduck.forEach { it.first.Release() }
         }
     }
 }

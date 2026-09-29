@@ -8,6 +8,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clipToBounds
@@ -46,17 +47,29 @@ actual fun VideoRenderer(renderer: Any?, modifier: Modifier) {
             )
         }
         is LiveKitVideoTileRenderer.Remote -> {
-            val cameraFrame by LiveKitRemoteVideoFrameStore.latestCameraFrame.collectAsState()
-            val fallbackFrame by LiveKitRemoteVideoFrameStore.latestFrame.collectAsState()
-            val frame = cameraFrame ?: fallbackFrame
-            val matchingFrame = frame?.takeIf { current ->
-                renderer.participantIdentity == null || current.participantIdentity == renderer.participantIdentity
+            // Routed through the per-participant track rather than the global
+            // "latest camera frame": the global store changed on every frame from
+            // every participant, so in an N-person call all N tiles recomposed on
+            // every frame — O(N²) work at 30fps.
+            val tracks by LiveKitRemoteVideoFrameStore.activeTracks.collectAsState()
+            val framesByTrack by LiveKitRemoteVideoFrameStore.framesByTrack.collectAsState()
+            val identity = renderer.participantIdentity
+            val frame = remember(tracks, framesByTrack, identity) {
+                if (identity == null) {
+                    framesByTrack.values.lastOrNull()
+                } else {
+                    val cameraSids = tracks.values
+                        .filter { !it.isScreenShare && it.participantIdentity == identity }
+                        .map { it.trackSid }
+                    cameraSids.firstNotNullOfOrNull { framesByTrack[it] }
+                        ?: framesByTrack.values.lastOrNull { it.participantIdentity == identity }
+                }
             }
             LiveKitFrameRenderer(
-                image = rememberRemoteFrameImage(matchingFrame),
+                image = rememberRemoteFrameImage(frame),
                 modifier = modifier,
                 contentScale = ContentScale.Crop,
-                fallbackText = ""
+                fallbackText = "Video starting…"
             )
         }
         is LiveKitVideoTileRenderer.RemoteScreenShare -> {

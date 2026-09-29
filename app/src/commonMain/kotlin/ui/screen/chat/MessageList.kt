@@ -37,7 +37,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -89,11 +91,14 @@ internal fun MessageList(
     onEditMessage: ((String, String) -> Unit)? = null,
     onDeleteMessage: ((String) -> Unit)? = null,
     onTogglePin: ((String) -> Unit)? = null,
-    onReply: ((String) -> Unit)? = null
+    onReply: ((String) -> Unit)? = null,
+    onMentionUser: ((String) -> Unit)? = null
 ) {
     val t = rememberCosmicTokens()
     val listState = rememberLazyListState()
-    val grouped = groupMessages(messages)
+    // groupMessages is O(n) and produced a fresh list on every recomposition,
+    // which invalidated every memo keyed on `grouped` downstream.
+    val grouped = remember(messages) { groupMessages(messages) }
     val scope = rememberCoroutineScope()
     val reduceMotion = ui.theme.LocalReduceMotion.current
 
@@ -106,7 +111,6 @@ internal fun MessageList(
             rows.indexOfFirst { row ->
                 when (row) {
                     is MessageRow.Date -> false
-                    is MessageRow.Unread -> false
                     is MessageRow.Content -> row.contains(id)
                 }
             }.takeIf { it >= 0 }
@@ -140,14 +144,30 @@ internal fun MessageList(
     }
 
     // Read receipts: only the newest message, and only when the user is
-    // genuinely at the bottom of the room.
-    LaunchedEffect(listState.firstVisibleItemIndex, messages.size) {
-        if (messages.isNotEmpty() && rows.isNotEmpty()) {
-            val lastVisibleItemIndex = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-            if (lastVisibleItemIndex >= rows.size - 1) {
-                onSeen(messages.last().id)
+    // genuinely at the bottom of the room. The scroll index is observed inside
+    // the effect rather than read during composition — reading it here made
+    // every item boundary crossed restart the effect *and* invalidate the whole
+    // list's composition scope.
+    val currentOnSeen by rememberUpdatedState(onSeen)
+    LaunchedEffect(messages.size, rows.size) {
+        // Throttle on the id actually sent. This collector fires on every
+        // firstVisibleItemIndex change, and while the cursor sits at the bottom
+        // that is once per item boundary crossed -- so scrolling sent one
+        // read-receipt network request per row scrolled past.
+        var lastSentId: String? = null
+        snapshotFlow { listState.firstVisibleItemIndex }
+            .collect {
+                if (messages.isNotEmpty() && rows.isNotEmpty()) {
+                    val lastVisibleItemIndex = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+                    if (lastVisibleItemIndex >= rows.size - 1) {
+                        val newestId = messages.last().id
+                        if (newestId != lastSentId) {
+                            lastSentId = newestId
+                            currentOnSeen(newestId)
+                        }
+                    }
+                }
             }
-        }
     }
 
     val lastSeenOwnMessageId = remember(messages, currentUser) {
@@ -172,21 +192,39 @@ internal fun MessageList(
             verticalArrangement = Arrangement.spacedBy(0.dp)
         ) {
             if (isLoading) {
-                items(6) { OrbitMessageSkeleton() }
+                items(6, contentType = { "skeleton" }) { OrbitMessageSkeleton() }
             }
 
-            itemsIndexed(rows, key = { _, row -> row.key }) { index, row ->
+            itemsIndexed(
+                items = rows,
+                key = { _, row: MessageRow -> row.key }
+            ) { index: Int, row: MessageRow ->
                 Column(modifier = Modifier.fillMaxWidth()) {
                     when (row) {
                         is MessageRow.Date -> DateSeparator(row.label)
-                        is MessageRow.Unread -> UnreadSeparatorRow()
                         is MessageRow.Content -> {
                             if (index == unreadSeparatorIndex) UnreadSeparatorRow()
                             val group = row.group
                             if (ui.theme.LocalCompactMode.current) {
                                 when (group) {
-                                    is MessageGroup.Single -> DenseMessageBody(group.message)
-                                    is MessageGroup.Dense -> group.messages.forEach { DenseMessageBody(it) }
+                                    is MessageGroup.Single -> DenseMessageBody(
+                                        message = group.message,
+                                        onReact = onReact,
+                                        onReply = onReply,
+                                        onTogglePin = onTogglePin,
+                                        onDeleteMessage = onDeleteMessage,
+                                        onMentionUser = onMentionUser
+                                    )
+                                    is MessageGroup.Dense -> group.messages.forEach {
+                                        DenseMessageBody(
+                                            message = it,
+                                            onReact = onReact,
+                                            onReply = onReply,
+                                            onTogglePin = onTogglePin,
+                                            onDeleteMessage = onDeleteMessage,
+                                            onMentionUser = onMentionUser
+                                        )
+                                    }
                                 }
                             } else {
                                 when (group) {
@@ -197,33 +235,29 @@ internal fun MessageList(
                                         onEditMessage = onEditMessage,
                                         onDeleteMessage = onDeleteMessage,
                                         onTogglePin = onTogglePin,
-                                        onReply = onReply
+                                        onReply = onReply,
+                                        onMentionUser = onMentionUser
                                     )
                                     is MessageGroup.Dense -> {
-                                        if (ui.theme.LocalIsLiteMode.current) {
-                                            group.messages.forEach { msg ->
-                                                MessageBubbleFull(
-                                                    msg,
-                                                    currentUser,
-                                                    onReact = onReact,
-                                                    onEditMessage = onEditMessage,
-                                                    onDeleteMessage = onDeleteMessage,
-                                                    onTogglePin = onTogglePin
-                                                )
-                                            }
-                                        } else {
-                                            MessageBubbleFull(
-                                                group.messages[0],
-                                                currentUser,
+                                        MessageBubbleFull(
+                                            group.messages[0],
+                                            currentUser,
+                                            onReact = onReact,
+                                            onEditMessage = onEditMessage,
+                                            onDeleteMessage = onDeleteMessage,
+                                            onTogglePin = onTogglePin,
+                                            onReply = onReply,
+                                            onMentionUser = onMentionUser
+                                        )
+                                        for (i in 1 until group.messages.size) {
+                                            DenseMessageBody(
+                                                message = group.messages[i],
                                                 onReact = onReact,
-                                                onEditMessage = onEditMessage,
-                                                onDeleteMessage = onDeleteMessage,
+                                                onReply = onReply,
                                                 onTogglePin = onTogglePin,
-                                                onReply = onReply
+                                                onDeleteMessage = onDeleteMessage,
+                                                onMentionUser = onMentionUser
                                             )
-                                            for (i in 1 until group.messages.size) {
-                                                DenseMessageBody(group.messages[i])
-                                            }
                                         }
                                     }
                                 }
@@ -330,19 +364,17 @@ internal sealed interface MessageRow {
         override val key = "date_$epochDay"
     }
 
-    data object Unread : MessageRow {
-        override val key = "unread_marker"
-    }
-
     data class Content(val group: MessageGroup) : MessageRow {
         override val key = "c_${group.key}"
-        val ids: List<String>
-            get() = when (group) {
-                is MessageGroup.Single -> listOf(group.message.id)
-                is MessageGroup.Dense -> group.messages.map { it.id }
-            }
 
-        fun contains(id: String): Boolean = ids.contains(id)
+        // Was a `get()`: it allocated a fresh list on every access, and
+        // `row.ids.contains(...)` runs once per item per recomposition.
+        val ids: List<String> = when (group) {
+            is MessageGroup.Single -> listOf(group.message.id)
+            is MessageGroup.Dense -> group.messages.map { it.id }
+        }
+
+        fun contains(id: String?): Boolean = id != null && ids.contains(id)
     }
 }
 

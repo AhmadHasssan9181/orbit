@@ -16,7 +16,39 @@ interface OrbitAuthRepository {
     val activeDeviceVerification: Flow<Any?>? get() = null
     suspend fun loginWithSso(): AuthResult
     suspend fun login(identifier: String, password: String, deviceName: String = "Orbit"): AuthResult
-    suspend fun register(username: String, password: String): RegisterResult
+    /**
+     * Register an account.
+     *
+     * [auth] and [session] carry a user-interactive-auth retry: pass the stage
+     * answers plus the session the homeserver handed back. Most self-hosted
+     * servers require at least one stage (typically `m.login.dummy`) before they
+     * will issue credentials.
+     */
+    suspend fun register(
+        username: String,
+        password: String,
+        auth: Map<String, Map<String, String>> = emptyMap(),
+        session: String? = null
+    ): RegisterResult
+
+    /**
+     * The `m.login.*` flow types this homeserver offers, e.g. `m.login.password`,
+     * `m.login.sso`. Empty when discovery failed. Lets the UI hide an SSO button
+     * the server does not support instead of offering one that always fails.
+     */
+    suspend fun getLoginFlows(): List<String>
+
+    /**
+     * Resolves a Matrix ID or domain to a homeserver base URL via
+     * `/.well-known/matrix/client`, then validates it against
+     * `/_matrix/client/versions`.
+     *
+     * The "continue in browser" flow hands back a URL rather than an MXID, so
+     * the user often has a domain and not a base URL -- and a self-hosted server
+     * is usually reached by a name that is not the same as its base URL.
+     */
+    suspend fun discoverHomeserver(serverNameOrId: String): ServerDiscoveryResult
+
     suspend fun getCurrentUser(): OrbitUser?
     suspend fun logout()
 }
@@ -34,6 +66,18 @@ interface OrbitChannelsRepository {
     suspend fun createChannel(spaceId: String, name: String, type: ChannelType, topic: String = ""): Result<String>
     suspend fun getChannelById(channelId: String): OrbitChannel?
     suspend fun getRoomMembers(roomId: String): List<OrbitUser>
+
+    /**
+     * Resolves the OTHER member of each given DM room, so the DM list can show
+     * a real avatar and real presence instead of a seeded initial and a
+     * hard-coded "online". Returns roomId -> OrbitUser; rooms whose other member
+     * cannot be resolved are simply absent, and the caller falls back to the
+     * channel's own display name.
+     *
+     * Group rooms (3+ joined members) resolve to nobody, so a group accidentally
+     * passed in simply will not appear in the result.
+     */
+    suspend fun resolveDmContacts(roomIds: Collection<String>): Map<String, OrbitUser>
     fun observeChannelList(spaceId: String): Flow<List<OrbitChannel>>
 }
 
@@ -72,6 +116,7 @@ data class MemberRoleInfo(
 interface OrbitUsersRepository {
     suspend fun updateDisplayName(name: String): Result<Unit>
     suspend fun uploadAvatar(imageBytes: ByteArray): Result<String>
+    suspend fun uploadBanner(imageBytes: ByteArray): Result<String>
     suspend fun getUserProfile(userId: String): OrbitUser?
     suspend fun setPresence(status: UserStatus)
     suspend fun observePresence(userId: String): Flow<UserStatus>
@@ -106,6 +151,9 @@ interface OrbitCallsRepository {
     suspend fun isRoomEncrypted(roomId: String): Boolean
     fun startCallMediaKeyExchange(roomId: String, livekitIdentity: String)
     fun stopCallMediaKeyExchange()
+    // Stops the 3s per-room roster poller that feeds BOTH observeCallMembers and
+    // observeCallDevices. Must be called on any path that ends or aborts a call.
+    fun stopCallRosterPolling(channelId: String)
 }
 
 data class ResolvedGroupCall(
@@ -164,7 +212,21 @@ data class AuthResult(
 
 data class RegisterResult(
     val authFlow: AuthFlow,
-    val nextEndpoint: String
+    val nextEndpoint: String,
+    /**
+     * The next user-interactive-auth stage the homeserver wants, when it did not
+     * register us outright. A real self-hosted Synapse answers the first
+     * `/register` with a 401 and (usually) an `m.login.dummy` stage, so this is
+     * the normal path, not an error.
+     */
+    val stage: AuthStage = AuthStage.Complete,
+
+    /**
+     * The opaque `session` the homeserver handed back, to be echoed on the next
+     * `/register` attempt along with the stage answers. Null when the server did
+     * not ask for another step.
+     */
+    val authSession: String? = null
 )
 
 data class TurnServer(

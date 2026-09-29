@@ -66,8 +66,11 @@ fun OrbitScrollbar(
     }
 
     val geometry = rememberScrollbarGeometry(listState)
-    val geo = geometry ?: return
 
+    // The early `return` used to sit between these two animateFloatAsState
+    // calls, so a list going from one item to two changed the number of
+    // composable calls in the group and rebound the animations to the wrong
+    // slots. Only the rendering is guarded now.
     val alpha by animateFloatAsState(
         targetValue = if (moving) 1f else 0f,
         animationSpec = tween(if (reduceMotion) 0 else 220),
@@ -80,11 +83,11 @@ fun OrbitScrollbar(
     )
 
     val thicknessDp = thickness * grow
-    val topDp = geo.top
-    val thumbDp = geo.thumbSize
+    val topDp = geometry?.top ?: 0.dp
+    val thumbDp = geometry?.thumbSize ?: 0.dp
 
     Box(modifier = modifier.fillMaxSize()) {
-        if (alpha > 0.01f) {
+        if (geometry != null && alpha > 0.01f) {
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
@@ -144,33 +147,12 @@ private fun rememberScrollbarGeometry(state: LazyListState): ScrollGeometry? {
     return derived.value
 }
 
-/**
- * A `LazyColumn` with the Orbit scrollbar already wired up.
- *
- * Every scrolling surface should go through this so the scrollbar behaviour can
- * never regress on one screen only.
- */
-@Composable
-fun OrbitLazyColumn(
-    modifier: Modifier = Modifier,
-    state: LazyListState = rememberLazyListState(),
-    reverseLayout: Boolean = false,
-    verticalArrangement: androidx.compose.foundation.layout.Arrangement.Vertical =
-        androidx.compose.foundation.layout.Arrangement.Top,
-    horizontalAlignment: Alignment.Horizontal = Alignment.Start,
-    contentPadding: PaddingValues = PaddingValues(0.dp),
-    content: LazyListScope.() -> Unit
-) {
-    Box(modifier = modifier) {
-        LazyColumn(
-            state = state,
-            modifier = Modifier.fillMaxSize(),
-            reverseLayout = reverseLayout,
-            verticalArrangement = verticalArrangement,
-            horizontalAlignment = horizontalAlignment,
-            contentPadding = contentPadding,
-            content = content
-        )
-        OrbitScrollbar(listState = state)
-    }
-}
+// `OrbitLazyColumn` used to live here: a LazyColumn with the scrollbar pre-wired,
+// whose KDoc asserted "every scrolling surface should go through this so the
+// scrollbar behaviour can never regress on one screen only".
+//
+// That was never true -- every list in the app pairs a raw `LazyColumn` with an
+// explicit `OrbitScrollbar`, some with a custom alignment and some not. Keeping an
+// unused convenience wrapper whose docstring makes a false promise is worse than
+// having no wrapper: the next person to find it would reasonably conclude the app
+// had migrated and go looking for the regression the comment describes.

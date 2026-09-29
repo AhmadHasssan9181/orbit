@@ -70,10 +70,33 @@ object MatrixRtcCalls {
     val DEFINITION_TYPES = listOf("m.call", "org.matrix.msc3401.call")
     val MEMBER_TYPES = listOf("org.matrix.msc3401.call.member", "m.call.member")
 
-    fun isDefinitionTerminated(content: JsonObject): Boolean =
-        content["m.intent"]?.jsonPrimitive?.content == "m.terminated" ||
-            content["m.terminated"] != null ||
-            content.isEmpty()
+    /**
+     * True when a call definition says the call is over.
+     *
+     * `m.terminated` is `true`, or an object like `{"reason":"..."}`. It was
+     * previously read as "the key is present at all", which made a literal
+     * `m.terminated: false` -- i.e. explicitly NOT terminated -- read as
+     * terminated. Since this predicate decides whether a room currently has a
+     * call, getting it backwards on `false` means a live call is reported as over
+     * and the user cannot join it.
+     *
+     * `content.isEmpty()` still counts as terminated: with nothing in it there is
+     * no call to describe, and treating it as live would invent one.
+     */
+    fun isDefinitionTerminated(content: JsonObject): Boolean {
+        if (content.isEmpty()) return true
+        val intent = (content["m.intent"] as? JsonPrimitive)?.contentOrNull
+        if (intent == "m.terminated") return true
+        return when (val terminated = content["m.terminated"]) {
+            null -> false
+            // Canonical form: m.terminated: true
+            is JsonPrimitive -> terminated.contentOrNull == "true"
+            // Present with a reason: m.terminated: { "reason": "..." }
+            is JsonObject -> true
+            // false, a number, a string -- none of which assert termination.
+            else -> false
+        }
+    }
 }
 
 data class RtcCapabilities(

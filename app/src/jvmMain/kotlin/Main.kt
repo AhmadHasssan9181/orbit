@@ -3,6 +3,9 @@ package ui.screen
 import ui.screen.main.OrbitApp
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -10,11 +13,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.key.isAltPressed
-import androidx.compose.ui.input.key.isCtrlPressed
-import androidx.compose.ui.input.key.isShiftPressed
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -24,6 +22,8 @@ import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import ui.screen.call.ActiveCallPipWindow
+import ui.screen.installGlobalPttReleaseWatcher
+import ui.screen.publishPttAwtKeyCodes
 import ui.screen.settings.normalizedPttKeybind
 import ui.screen.settings.parsePttCombo
 import java.util.concurrent.atomic.AtomicBoolean
@@ -53,12 +53,38 @@ private fun armForcedExitWatchdog(budgetMs: Long = 5_000) {
 
 fun main() = application {
     util.installOrbitLogConsoleFilter()
+    // Process-wide, installed once: guarantees the push-to-talk KeyUp is seen
+    // even when a dialog that does not handle shortcuts owns focus.
+    remember { installGlobalPttReleaseWatcher() }
     val settingsManager = remember { repository.SettingsManager() }
     util.OrbitLog.debugEnabled = settingsManager.debugLoggingSync()
     val minimizeToTray by settingsManager.minimizeToTray.collectAsState(false)
     // Push-to-talk combo is user-rebindable; parse once per stored change.
     val storedPttKeybind by settingsManager.pushToTalkKeybind.collectAsState("Unassigned")
     val pttBinding = remember(storedPttKeybind) { parsePttCombo(normalizedPttKeybind(storedPttKeybind)) }
+    // The AWT-level release watcher cannot see the user's binding, so publish
+    // its AWT key codes here. Without this the watcher would have to guess, and
+    // a guess means either a stuck mic or a mic cut by unrelated keypresses.
+    remember(pttBinding) {
+        publishPttAwtKeyCodes(
+            pttBinding?.let { b ->
+                // Key.keyCode is the Unicode code point; map the two families
+                // parsePttCombo can actually produce onto AWT's virtual codes.
+                val char = b.key.keyCode.toInt().toChar()
+                setOfNotNull(
+                    if (b.ctrl) java.awt.event.KeyEvent.VK_CONTROL else null,
+                    if (b.shift) java.awt.event.KeyEvent.VK_SHIFT else null,
+                    if (b.alt) java.awt.event.KeyEvent.VK_ALT else null,
+                    when {
+                        char in 'a'..'z' -> java.awt.event.KeyEvent.VK_A + (char - 'a')
+                        char in 'A'..'Z' -> java.awt.event.KeyEvent.VK_A + (char - 'A')
+                        char in '0'..'9' -> java.awt.event.KeyEvent.VK_0 + (char - '0')
+                        else -> null
+                    }
+                )
+            } ?: emptySet()
+        )
+    }
 
     // A messenger is a window you keep open all day, so it opens large enough
     // to show the rail, the channel list, the chat and the member panel at
@@ -104,79 +130,36 @@ fun main() = application {
         undecorated = true,
         transparent = false,
         icon = painterResource("logo.jpeg"),
-        onPreviewKeyEvent = { event ->
-            // App-wide call keybinds (see webrtc.CallShortcuts).
-            val binding = pttBinding
-            if (binding != null &&
-                event.key == binding.key &&
-                event.isCtrlPressed == binding.ctrl &&
-                event.isShiftPressed == binding.shift &&
-                event.isAltPressed == binding.alt
-            ) {
-                // Push-to-talk: momentary mic open for as long as the combo
-                // is held; KeyUp releases it. Auto-repeat KeyDown is fine —
-                // the handler ignores repeats while already open.
-                webrtc.CallShortcuts.onPushToTalk?.invoke(
-                    event.type == androidx.compose.ui.input.key.KeyEventType.KeyDown
-                )
-                true
-            } else if (event.type == androidx.compose.ui.input.key.KeyEventType.KeyDown &&
-                event.isCtrlPressed && event.isShiftPressed
-            ) {
-                when (event.key) {
-                    androidx.compose.ui.input.key.Key.M -> {
-                        webrtc.CallShortcuts.onToggleMute?.invoke()
-                        true
-                    }
-                    androidx.compose.ui.input.key.Key.D -> {
-                        webrtc.CallShortcuts.onToggleDeafen?.invoke()
-                        true
-                    }
-                    androidx.compose.ui.input.key.Key.S -> {
-                        webrtc.CallShortcuts.onToggleStream?.invoke()
-                        true
-                    }
-                    androidx.compose.ui.input.key.Key.V -> {
-                        // Alt distinguishes Return to Active Call from Toggle Camera.
-                        if (event.isAltPressed) {
-                            webrtc.CallShortcuts.onReturnToCall?.invoke()
-                        } else {
-                            webrtc.CallShortcuts.onToggleCamera?.invoke()
-                        }
-                        true
-                    }
-                    else -> false
-                }
-            } else if (event.type == androidx.compose.ui.input.key.KeyEventType.KeyDown &&
-                event.isCtrlPressed && !event.isShiftPressed && !event.isAltPressed &&
-                event.key == androidx.compose.ui.input.key.Key.K
-            ) {
-                webrtc.CallShortcuts.onQuickSwitcher?.invoke()
-                true
-            } else if (event.type == androidx.compose.ui.input.key.KeyEventType.KeyDown &&
-                event.isAltPressed && !event.isCtrlPressed && !event.isShiftPressed
-            ) {
-                when (event.key) {
-                    androidx.compose.ui.input.key.Key.DirectionLeft -> {
-                        webrtc.CallShortcuts.onNavigateBack?.invoke()
-                        true
-                    }
-                    androidx.compose.ui.input.key.Key.DirectionRight -> {
-                        webrtc.CallShortcuts.onNavigateForward?.invoke()
-                        true
-                    }
-                    else -> false
-                }
-            } else {
-                false
+        onPreviewKeyEvent = { event -> dispatchOrbitShortcut(event, pttBinding) }
+    ) {
+        // Both of these used to run in the composable body, so every
+        // recomposition re-assigned windowRef and called attachWindow again —
+        // and attachWindow() adds a fresh WindowFocusListener each time with no
+        // way to remove it.
+        LaunchedEffect(Unit) {
+            windowRef = window
+            util.CallNotifier.attachWindow(window)
+        }
+        DisposableEffect(Unit) {
+            // Push-to-talk latches on KeyUp of its combo; if the window loses
+            // focus while the key is still down no further key event will ever
+            // arrive, so release it here or the mic stays hot.
+            val focusListener = object : java.awt.event.WindowFocusListener {
+                override fun windowGainedFocus(e: java.awt.event.WindowEvent?) = Unit
+                override fun windowLostFocus(e: java.awt.event.WindowEvent?) = forceReleasePushToTalk()
+            }
+            window.addWindowFocusListener(focusListener)
+            onDispose {
+                window.removeWindowFocusListener(focusListener)
+                util.CallNotifier.detachWindow(window)
+                forceReleasePushToTalk()
             }
         }
-    ) {
-        windowRef = window
-        util.CallNotifier.attachWindow(window)
-        Column(modifier = Modifier.fillMaxSize()) {
-            CustomTitleBar(state = state, onClose = ::closeRequested)
-            OrbitApp(modifier = Modifier.weight(1f))
+        CompositionLocalProvider(LocalPttKeyBinding provides pttBinding) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                CustomTitleBar(state = state, onClose = ::closeRequested)
+                OrbitApp(modifier = Modifier.weight(1f))
+            }
         }
     }
 

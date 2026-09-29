@@ -24,7 +24,6 @@ import de.connect2x.trixnity.client.verification
 import de.connect2x.trixnity.clientserverapi.model.media.Media
 import de.connect2x.trixnity.clientserverapi.model.room.CreateRoom
 import de.connect2x.trixnity.clientserverapi.model.room.GetEvents.Direction
-import de.connect2x.trixnity.clientserverapi.model.user.ProfileField
 import de.connect2x.trixnity.clientserverapi.model.user.avatarUrl
 import de.connect2x.trixnity.clientserverapi.model.user.displayName
 import de.connect2x.trixnity.core.model.EventId
@@ -33,9 +32,6 @@ import de.connect2x.trixnity.core.model.UserId
 import de.connect2x.trixnity.core.model.events.EventType
 import de.connect2x.trixnity.core.model.events.ClientEvent.RoomEvent
 import de.connect2x.trixnity.core.model.events.UnknownEventContent
-import de.connect2x.trixnity.core.model.events.m.call.CallEventContent
-import de.connect2x.trixnity.core.model.events.m.call.Purpose
-import de.connect2x.trixnity.core.model.events.m.call.StreamMetadata
 import de.connect2x.trixnity.core.model.events.m.ReactionEventContent
 import de.connect2x.trixnity.core.model.events.m.RelatesTo
 import de.connect2x.trixnity.core.model.events.m.room.AudioInfo
@@ -114,13 +110,6 @@ import util.getRoomDatabaseBuilder
 import util.performSsoLogin
 import kotlin.time.Duration.Companion.seconds
 
-import ui.screen.auth.*
-import ui.screen.settings.*
-import ui.screen.drawer.*
-import ui.screen.server.*
-import ui.screen.call.*
-import ui.screen.media.*
-import ui.screen.main.*
 
 
 
@@ -129,16 +118,39 @@ class MatrixAuthRepository(private val context: MatrixContext) : OrbitAuthReposi
     override val authStatus: Flow<AuthStatus> = context.authStatusFlow.asStateFlow()
 
     override suspend fun logout() {
-        context.trixnityClient?.stopSync()
+        // Order matters: stop sync first so no new events land in stores, then
+        // close the Trixnity client (which also stops its sync + closes the
+        // crypto/media stores), and only then tear down our own scope and HTTP
+        // client. Without this every logout/login cycle leaked a supervisor job
+        // plus a CIO selector thread and kept 401-storming the server.
+        val client = context.trixnityClient
         context.trixnityClient = null
+        runCatching { client?.stopSync() }
+            .onFailure { println("WARN [MatrixAuthRepository] stopSync on logout failed: ${it.message}") }
+        runCatching { client?.close() }
+            .onFailure { println("WARN [MatrixAuthRepository] closing Trixnity client failed: ${it.message}") }
         CredentialManager.clear()
+        context.close()
         context.authStatusFlow.value = AuthStatus.Unauthenticated
     }
 
     override val activeDeviceVerification: Flow<Any?>?
         get() = context.trixnityClient?.verification?.activeDeviceVerification ?: flowOf(null)
 
-    override suspend fun login(identifier: String, password: String, deviceName: String): AuthResult {
+    override suspend fun login(identifier: String, password: String, deviceName: String): AuthResult = try {
+        loginInternal(identifier, password, deviceName)
+    } catch (e: Exception) {
+        // The repository is built BEFORE the login attempt, so a wrong password
+        // or a wrong homeserver used to leave its HttpClient (own selector
+        // thread) and supervisor job running for the life of the process. The
+        // repository is unusable after a failed login, so release it here; the
+        // caller builds a fresh one for the next attempt.
+        runCatching { context.close() }
+            .onFailure { println("WARN [MatrixAuthRepository] closing context after failed login: ${it.message}") }
+        throw e
+    }
+
+    private suspend fun loginInternal(identifier: String, password: String, deviceName: String): AuthResult {
         val body = buildJsonObject {
             put("type", "m.login.password")
             put("identifier", buildJsonObject {
@@ -164,30 +176,62 @@ class MatrixAuthRepository(private val context: MatrixContext) : OrbitAuthReposi
         val deviceId = (resp["device_id"] as? JsonPrimitive)?.content ?: "orbit_device"
         val userId = (resp["user_id"] as? JsonPrimitive)?.content ?: ""
 
-        return AuthResult(accessToken, deviceId, context.homeserverUrl, userId).also {
-            context.accessToken = it.accessToken
-            context.userId = it.userId
-            CredentialManager.accessToken = it.accessToken
-            CredentialManager.deviceId = it.deviceId
-            CredentialManager.homeserverUrl = it.homeserverUrl
-            CredentialManager.userId = it.userId
-
-            val authProviderData = de.connect2x.trixnity.clientserverapi.client.ClassicMatrixClientAuthProviderData(
-                baseUrl = Url(it.homeserverUrl),
-                accessToken = it.accessToken,
-                accessTokenExpiresInMs = null,
-                refreshToken = null
+        // A 200 can still carry no access token: M_USER_INTERACTIVE returns
+        // {"flows": [...]} and the user has to complete another auth step.
+        // Persisting "" here used to produce a "logged in" session whose every
+        // request 401s, and then failed forever on the next launch.
+        if (accessToken.isBlank() || userId.isBlank()) {
+            val flows = resp["flows"]?.let { it.toString().take(200) }
+            throw IllegalStateException(
+                if (flows != null) {
+                    "The homeserver wants an additional sign-in step before it will issue a token."
+                } else {
+                    "Sign-in succeeded but the homeserver returned no access token."
+                }
             )
-            context.trixnityClient = MatrixClient.create(
-                repositoriesModule = RepositoriesModule.room(getRoomDatabaseBuilder()),
-                mediaStoreModule = MediaStoreModule.okio(getMediaStorePath()),
-                cryptoDriverModule = CryptoDriverModule.vodozemac(),
-                authProviderData = authProviderData
-            ).getOrThrow()
         }
+
+        val result = AuthResult(accessToken, deviceId, context.homeserverUrl, userId)
+        context.accessToken = result.accessToken
+        context.userId = result.userId
+
+        val authProviderData = de.connect2x.trixnity.clientserverapi.client.ClassicMatrixClientAuthProviderData(
+            baseUrl = Url(result.homeserverUrl),
+            accessToken = result.accessToken,
+            accessTokenExpiresInMs = null,
+            refreshToken = null
+        )
+        val client = MatrixClient.create(
+            repositoriesModule = RepositoriesModule.room(getRoomDatabaseBuilder()),
+            mediaStoreModule = MediaStoreModule.okio(getMediaStorePath()),
+            cryptoDriverModule = CryptoDriverModule.vodozemac(),
+            authProviderData = authProviderData
+        ).getOrThrow()
+
+        // Persist only after the client actually came up. If create() throws
+        // (whoami 401, crypto driver failure, DB migration failure) the caller
+        // must not be left holding a token with no working client, or the next
+        // launch auto-restores into a dead session and dead-ends on the error
+        // screen with no way out but an explicit logout.
+        context.trixnityClient = client
+        CredentialManager.accessToken = result.accessToken
+        CredentialManager.deviceId = result.deviceId
+        CredentialManager.homeserverUrl = result.homeserverUrl
+        CredentialManager.userId = result.userId
+        return result
     }
 
-    override suspend fun loginWithSso(): AuthResult = withContext(Dispatchers.IO) {
+    override suspend fun loginWithSso(): AuthResult = try {
+        withContext(Dispatchers.IO) { loginWithSsoInternal() }
+    } catch (e: Exception) {
+        // Same reasoning as login(): a failed or abandoned SSO round-trip must
+        // not leave the CIO client and its scope behind.
+        runCatching { context.close() }
+            .onFailure { println("WARN [MatrixAuthRepository] closing context after failed SSO: ${it.message}") }
+        throw e
+    }
+
+    private suspend fun loginWithSsoInternal(): AuthResult = withContext(Dispatchers.IO) {
         val loginToken = performSsoLogin(context.homeserverUrl)
 
         val body = buildJsonObject {
@@ -201,11 +245,24 @@ class MatrixAuthRepository(private val context: MatrixContext) : OrbitAuthReposi
         }
         val resp: JsonObject = httpResp.body()
 
-        val accessToken = (resp["access_token"] as? JsonPrimitive)?.content ?: ""
-        val deviceId = (resp["device_id"] as? JsonPrimitive)?.content ?: "orbit_device"
-        val userId = (resp["user_id"] as? JsonPrimitive)?.content ?: ""
+        // Without this check a non-200 yields accessToken == "", which is then
+        // persisted as a working session: every later request 401s and the blank
+        // token survives a restart. Check BEFORE writing any credential.
+        if (httpResp.status.value != 200) {
+            val errCode = (resp["errcode"] as? JsonPrimitive)?.content
+            val errMsg = (resp["error"] as? JsonPrimitive)?.content ?: "SSO login failed"
+            println("WARN [MatrixAuthRepository] SSO login rejected status=${httpResp.status.value} errcode=$errCode error=$errMsg")
+            throw IllegalStateException(errMsg)
+        }
 
-        AuthResult(accessToken, deviceId, context.homeserverUrl, userId).also {
+        val accessToken = (resp["access_token"] as? JsonPrimitive)?.content
+        val deviceId = (resp["device_id"] as? JsonPrimitive)?.content
+        val userId = (resp["user_id"] as? JsonPrimitive)?.content
+        if (accessToken.isNullOrBlank() || userId.isNullOrBlank()) {
+            throw IllegalStateException("SSO login succeeded but the server returned no access token")
+        }
+
+        AuthResult(accessToken, deviceId ?: "orbit_device", context.homeserverUrl, userId).also {
             context.accessToken = it.accessToken
             context.userId = it.userId
             CredentialManager.accessToken = it.accessToken
@@ -228,23 +285,132 @@ class MatrixAuthRepository(private val context: MatrixContext) : OrbitAuthReposi
         }
     }
 
-    override suspend fun register(username: String, password: String): RegisterResult {
+    override suspend fun register(
+        username: String,
+        password: String,
+        auth: Map<String, Map<String, String>>,
+        session: String?
+    ): RegisterResult {
         val body = buildJsonObject {
-            put("user", username)
+            put("username", username)
             put("password", password)
+            if (!auth.isEmpty()) {
+                put("auth", buildJsonObject {
+                    auth.forEach { (type, params) ->
+                        put(type, buildJsonObject {
+                            params.forEach { (k, v) -> put(k, v) }
+                        })
+                    }
+                })
+            }
+            if (!session.isNullOrBlank()) put("session", session)
         }
         val httpResp = context.httpClient.post(context.fullUrl("/register")) {
             contentType(ContentType.Application.Json)
             setBody(body)
         }
         val resp: JsonObject = httpResp.body()
-        if (httpResp.status.value == 200 && resp.containsKey("access_token")) {
+        if (resp.containsKey("access_token")) {
             return RegisterResult(
                 authFlow = AuthFlow.Password(username, password),
                 nextEndpoint = ""
             )
         }
-        throw IllegalStateException("Registration failed")
+
+        // A 401 with `flows` is the NORMAL first response against a real
+        // self-hosted Synapse: it almost always wants m.login.dummy, often plus
+        // m.login.terms. Throwing a bare "Registration failed" here is why
+        // self-hosting appeared broken.
+        val session = (resp["session"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+        val stage = nextAuthStage(
+            flows = resp["flows"] as? kotlinx.serialization.json.JsonArray,
+            completed = resp["completed"] as? kotlinx.serialization.json.JsonArray,
+            session = session,
+            hasCredentials = false
+        )
+        return RegisterResult(
+            authFlow = AuthFlow.Password(username, password),
+            nextEndpoint = "",
+            stage = stage,
+            authSession = session
+        )
+    }
+
+    override suspend fun discoverHomeserver(serverNameOrId: String): ServerDiscoveryResult = withContext(Dispatchers.IO) {
+        val serverName = matrixServerNameFrom(serverNameOrId)
+            ?: return@withContext ServerDiscoveryResult.Malformed("Could not read a server name from \"$serverNameOrId\".")
+        val origin = "https://$serverName"
+
+        val wellKnown = try {
+            context.httpClient.get("$origin/.well-known/matrix/client")
+        } catch (e: Exception) {
+            return@withContext ServerDiscoveryResult.Unreachable(e.message ?: "Could not reach $origin.")
+        }
+
+        if (wellKnown.status.value == 404 || wellKnown.status.value == 405) {
+            // Spec: a 404 means the server does not delegate, so the domain
+            // itself is the client. This is the common case for a homeserver
+            // hosted at its own origin.
+            return@withContext ServerDiscoveryResult.NotDelegated
+        }
+        if (wellKnown.status.value !in 200..299) {
+            return@withContext ServerDiscoveryResult.Unreachable(
+                "$origin returned HTTP ${wellKnown.status.value} for .well-known/matrix/client."
+            )
+        }
+
+        val body = runCatching { wellKnown.bodyAsText() }.getOrElse {
+            return@withContext ServerDiscoveryResult.Unreachable(it.message ?: "Could not read the well-known response.")
+        }
+        val baseUrl = parseWellKnownClient(body)
+            ?: return@withContext ServerDiscoveryResult.Malformed(
+                "$origin has a .well-known/matrix/client with no usable m.homeserver.base_url."
+            )
+
+        // Validate, per the spec. A well-known that points somewhere dead is the
+        // single most confusing failure mode here, so it gets its own message.
+        val validated = try {
+            context.httpClient.get("$baseUrl/_matrix/client/versions")
+        } catch (e: Exception) {
+            return@withContext ServerDiscoveryResult.Unreachable(
+                "$baseUrl could not be reached: ${e.message}"
+            )
+        }
+        if (validated.status.value !in 200..299) {
+            return@withContext ServerDiscoveryResult.Unreachable(
+                "$baseUrl answered HTTP ${validated.status.value} for /_matrix/client/versions."
+            )
+        }
+        val versionsBody = runCatching { validated.bodyAsText() }.getOrDefault("")
+        if (!looksLikeMatrixVersions(versionsBody)) {
+            return@withContext ServerDiscoveryResult.Malformed(
+                "$baseUrl does not look like a Matrix homeserver."
+            )
+        }
+        ServerDiscoveryResult.Delegated(baseUrl)
+    }
+
+    /**
+     * The login flows this homeserver supports.
+     *
+     * Queried so the UI can hide SSO when it is not configured (rather than
+     * offering a button that always fails) and can explain a server that does
+     * not offer password login.
+     */
+    override suspend fun getLoginFlows(): List<String> = try {
+        val resp: JsonObject = context.httpClient.get(context.fullUrl("/login"))
+            .body()
+        (resp["flows"] as? kotlinx.serialization.json.JsonArray)
+            .orEmpty()
+            .mapNotNull { flow ->
+                (flow as? kotlinx.serialization.json.JsonObject)
+                    ?.get("type")
+                    ?.toString()
+                    ?.trim('"')
+            }
+    } catch (e: Exception) {
+        println("DEBUG [MatrixAuthRepository] login flow discovery failed: ${e.message}")
+        emptyList()
     }
 
     override suspend fun getCurrentUser(): OrbitUser? {
@@ -267,4 +433,3 @@ class MatrixAuthRepository(private val context: MatrixContext) : OrbitAuthReposi
         }
     }
 }
-

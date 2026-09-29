@@ -51,7 +51,7 @@ fun EmptyVoicePanel(modifier: Modifier = Modifier) {
                 brush = Brush.verticalGradient(
                     colors = listOf(
                         tokens.Accent.copy(alpha = 0.06f),
-                        Color(0xFF14171D)
+                        tokens.Bg
                     )
                 )
             ),
@@ -80,7 +80,7 @@ fun EmptyVoicePanel(modifier: Modifier = Modifier) {
                     modifier = Modifier
                         .size(48.dp)
                         .clip(CircleShape)
-                        .background(Color(0xFF1F242C)),
+                        .background(tokens.Sunken),
                     contentAlignment = Alignment.Center
                 ) {
                     OrbitDefaultAvatar(
@@ -95,7 +95,9 @@ fun EmptyVoicePanel(modifier: Modifier = Modifier) {
 
             Text(
                 "No one else is here",
-                color = Color.White.copy(alpha = 0.5f),
+                // Was Color.White at 50% over a hard-coded dark panel; now it
+                // comes from the token set so it reads in the Light theme too.
+                color = tokens.Text_Muted,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Medium
             )

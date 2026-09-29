@@ -29,6 +29,7 @@ import androidx.compose.material.icons.automirrored.filled.*
 import ui.screen.chat.*
 import androidx.compose.ui.unit.sp
 import ui.icons.*
+import ui.components.OrbitSearchField
 import ui.theme.*
 import repository.*
 
@@ -270,7 +271,7 @@ fun CompactServerList(
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(servers) { server ->
+            items(servers, key = { it.id }, contentType = { "server" }) { server ->
                 val isSelected = server.id == selectedServerId
                 CompactServerChip(
                     server = server,
@@ -397,22 +398,11 @@ fun CompactSearchPane(channels: List<OrbitChannel>, onChannelClick: (String) -> 
         }
         HorizontalDivider(color = tokens.Separator.copy(alpha = 0.3f))
 
-        OutlinedTextField(
+        OrbitSearchField(
             value = query,
             onValueChange = { query = it },
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            placeholder = { Text("Search channels...", color = tokens.Text_Muted) },
-            leadingIcon = {
-                Icon(Icons.Default.Search, contentDescription = null, tint = tokens.Text_Muted)
-            },
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = tokens.Accent,
-                unfocusedBorderColor = tokens.Separator,
-                cursorColor = tokens.Accent,
-                focusedTextColor = tokens.Text_White,
-                unfocusedTextColor = tokens.Text_White
-            ),
-            singleLine = true
+            placeholder = "Search channels...",
+            modifier = Modifier.fillMaxWidth().padding(16.dp)
         )
 
         if (filtered.isEmpty()) {
@@ -434,7 +424,7 @@ fun CompactSearchPane(channels: List<OrbitChannel>, onChannelClick: (String) -> 
             }
         } else {
             androidx.compose.foundation.lazy.LazyColumn(modifier = Modifier.weight(1f)) {
-                items(filtered) { ch ->
+                items(filtered, key = { it.id }, contentType = { "channel" }) { ch ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()

@@ -10,6 +10,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicInteger
 
 object LiveKitNativeMediaSession : NativeMediaEventSink {
     private const val CONNECT_TIMEOUT_MS = 15_000L
@@ -21,8 +23,38 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
     private val bridge = OrbitLiveKitNativeBridge()
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    private var sessionId: Long = 0L
-    private var epoch: Long = 0L
+    // Volatile for the same reason as the deferreds below: onNativeEvent runs on
+    // a native dispatch thread and gates on these two, so without a
+    // happens-before edge it could read a stale epoch and drop a legitimate
+    // Connected / AudioPublished / VideoPublished event -- which the awaiting
+    // connect coroutine then reports as a 15 s CONNECT_TIMEOUT on a healthy join.
+    // A JNI call does not establish a JMM edge.
+    @Volatile private var sessionId: Long = 0L
+    @Volatile private var epoch: Long = 0L
+
+    /**
+     * Bumps [epoch] and returns the new value.
+     *
+     * `epoch += 1` is a non-atomic read-modify-write on a Long, and it is
+     * reached from two coroutines (the connect path and the reconnect path), so
+     * a lost update gave two connects the same epoch -- which breaks both the
+     * stale-event filter in onNativeEvent and the store's epoch guard.
+     *
+     * The fix is [MonotonicEpoch], which keeps the store inside the monitor. The
+     * previous version here did not: `.also { epoch = it }` ran after the lock was
+     * released, so two threads both read 5, both computed 6, and both stored 6.
+     * That made the read atomic and left the write unprotected.
+     */
+    private val epochAllocator = MonotonicEpoch(epoch)
+    private val epochLock = Any()
+    private fun nextEpoch(): Long {
+        val value = epochAllocator.next()
+        // Mirror to the volatile field the native event filter and the frame
+        // stores read. Those read it without a lock, which is sound precisely
+        // because the value only ever increases.
+        epoch = value
+        return value
+    }
 
     // LiveKit identities currently speaking (remote side), pushed from the
     // native mixer's per-participant RMS metering. Change-only + throttled.
@@ -31,18 +63,32 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
 
     // Screen-share publish slot (Part F): armed while the user is sharing;
     // actual native publish happens lazily on first frame with its real dimensions.
-    private var screenShareArmed = false
-    private var screenShareWidth = 0
-    private var screenShareHeight = 0
-    private var screenShareFps = 30
-    private var screenShareMaxBitrateBps = 0
+    //
+    // All volatile: these are written from the EDT (arm/disarm) and from
+    // disconnect, but read from the WebRTC capture thread inside
+    // pushScreenShareFrame. Without a happens-before edge the capture thread
+    // could never observe screenShareArmed = true (the share silently never
+    // publishes) or could keep seeing true after a disarm.
+    @Volatile private var screenShareArmed = false
+    @Volatile private var screenShareWidth = 0
+    @Volatile private var screenShareHeight = 0
+    @Volatile private var screenShareFps = 30
+    @Volatile private var screenShareMaxBitrateBps = 0
     @Volatile private var screenShareFirstFrameLogged = false
-    private var connectedDeferred: CompletableDeferred<NativeResult<Unit>>? = null
-    private var audioPublishedDeferred: CompletableDeferred<NativeResult<Unit>>? = null
-    private var videoPublishedDeferred: CompletableDeferred<NativeResult<Unit>>? = null
-    private var mediaReadyDeferred: CompletableDeferred<NativeResult<Unit>>? = null
-    private var reconnectAllowed: Boolean = true
-    private var refreshJob: Job? = null
+    // Guards the (screenShareWidth, screenShareHeight) read-modify-write in the
+    // republish decision, which runs on the capture thread while the EDT can
+    // zero both.
+    private val screenShareSlotLock = Any()
+    // onNativeEvent completes these from the native dispatch threads while the
+    // connect coroutine awaits them on the EDT. Without a happens-before edge the
+    // EDT can read a stale null ("Missing deferred for connectLiveKit") or miss a
+    // completion and time out a healthy join.
+    @Volatile private var connectedDeferred: CompletableDeferred<NativeResult<Unit>>? = null
+    @Volatile private var audioPublishedDeferred: CompletableDeferred<NativeResult<Unit>>? = null
+    @Volatile private var videoPublishedDeferred: CompletableDeferred<NativeResult<Unit>>? = null
+    @Volatile private var mediaReadyDeferred: CompletableDeferred<NativeResult<Unit>>? = null
+    @Volatile private var reconnectAllowed: Boolean = true
+    @Volatile private var refreshJob: Job? = null
     private var lastAuthResponse: LiveKitAuthResponse? = null
     private var lastVideoPolicy: JoinVideoPolicy = JoinVideoPolicy.AudioOnly
     @Volatile private var lastVideoAllowed: Boolean = false
@@ -64,25 +110,82 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
 
     // H1: bounded mid-call resume. Fires after a successful refreshAndReconnect so
     // the owner (CallManager) can restore UI stage + re-affirm MatrixRTC membership.
-    private var reconnectAttempts = 0
+    // Incremented from the reconnect coroutine and reset from the EDT's disconnect
+    // path, so it needs to be atomic rather than a plain Int.
+    private val reconnectAttempts = AtomicInteger(0)
     var onReconnected: (() -> Unit)? = null
 
     // BUG-B fix: periodic reader rescan so remote video/screen-share tracks whose
     // subscription completed outside the event-driven startup windows still get
     // a frame reader (idempotent on the native side).
-    private var remoteVideoRescanJob: Job? = null
+    @Volatile private var remoteVideoRescanJob: Job? = null
+
+    /**
+     * Handle on the loopback-duck probe launched by [applyLoopbackDuckIfNeeded].
+     *
+     * It polls for up to 2 seconds, so it must be cancellable: leaving it running
+     * let it re-enable ducking after `unpublishScreenShareAudio` had turned it off,
+     * silently muting all playback for the rest of the call.
+     */
+    @Volatile private var loopbackDuckJob: Job? = null
+
+    // Guards the readinessCache reference AND makes read-modify-write of it atomic.
+    //
+    // `readinessCache` is a 12-field immutable object, and nearly every call site
+    // reads it FIELD BY FIELD to build the next value:
+    //
+    //     updateReadiness(
+    //         state = readinessCache.state,
+    //         connected = readinessCache.connected,
+    //         ... // 10 more
+    //     )
+    //
+    // `updateReadiness` then replaces the whole object. Four thread classes write
+    // it — the native dispatch thread (onNativeEvent), the Dispatchers.IO
+    // reconnect coroutine, the video capture thread (handleVideoCaptureFailure)
+    // and the EDT. So between a call site's first `readinessCache.state` read and
+    // its final store, another writer can have swapped the reference, and the
+    // site then assembles a value out of fields from TWO DIFFERENT snapshots. A
+    // `Connected` event, which forces audioPublished/acceptingAudioFrames false,
+    // landing inside that window gets clobbered by the stale values.
+    //
+    // `@Volatile` does not help: it makes each individual reference read atomic,
+    // which is exactly the wrong granularity — the unit that matters is the whole
+    // object.
+    //
+    // Writers should therefore use [mutateReadiness], which performs the read
+    // and the write in ONE critical section. See the callers of
+    // [handleNativeEvent] and [handleVideoCaptureFailure].
+    private val readinessLock = Any()
 
     @Volatile
     private var readinessCache = emptyReadiness()
 
+    /** A single consistent view. Never read the field repeatedly across statements. */
+    private fun readinessSnapshot(): NativeMediaReadiness =
+        synchronized(readinessLock) { readinessCache }
+
+    /**
+     * Read-modify-write the readiness in one critical section.
+     *
+     * This is the ONLY correct way to derive a new readiness from the current one.
+     * Passing `old.copy(...)` rather than spelling out every field matters for the
+     * reason above: the transform runs against a snapshot that cannot move.
+     */
+    private inline fun mutateReadiness(transform: (NativeMediaReadiness) -> NativeMediaReadiness) {
+        synchronized(readinessLock) {
+            readinessCache = transform(readinessCache)
+        }
+    }
+
     val isConnected: Boolean
-        get() = readinessCache.connected
+        get() = readinessSnapshot().connected
 
     val isAudioPublished: Boolean
-        get() = readinessCache.audioPublished
+        get() = readinessSnapshot().audioPublished
 
     val isAcceptingAudioFrames: Boolean
-        get() = readinessCache.acceptingAudioFrames && LiveKitNativeAudioBridge.acceptingFrames
+        get() = readinessSnapshot().acceptingAudioFrames && LiveKitNativeAudioBridge.acceptingFrames
 
     suspend fun connectAndPublish(
         authResponse: LiveKitAuthResponse,
@@ -148,7 +251,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             println("DEBUG [LiveKitNativeMediaSession] native session created: $sessionId")
         }
 
-        epoch += 1
+        nextEpoch()
         // Native side resets the share slot on room reset; force lazy re-publish at this epoch.
         screenShareWidth = 0
         screenShareHeight = 0
@@ -182,9 +285,14 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         run {
             val e2eeApply = bridge.configureE2EE(sessionId, e2eeArmed)
             if (e2eeApply.ok) {
+                e2eeArmConfirmed = true
                 println("DEBUG [LiveKitNativeMediaSession] e2ee pre-connect armed=$e2eeArmed")
             } else {
-                println("WARN [LiveKitNativeMediaSession] e2ee pre-connect arm failed: ${e2eeApply.error?.message}")
+                e2eeArmConfirmed = false
+                println(
+                    "ERROR [LiveKitNativeMediaSession] e2ee pre-connect arm FAILED " +
+                        "code=${e2eeApply.error?.code} message=${e2eeApply.error?.message ?: "<none>"}"
+                )
             }
         }
 
@@ -376,11 +484,27 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
     // full-device: our own playback would be re-transmitted in an endless loop.
     // Ducking playback keeps loop gain below unity so echoes decay instead.
     private fun applyLoopbackDuckIfNeeded() {
-        scope.launch {
+        // Hold a handle so the poller can be cancelled.
+        //
+        // This launched into a process-global scope and was never cancellable. If
+        // the user stopped sharing inside the 2-second window, `unpublishScreen-
+        // ShareAudio` set the duck flag FALSE and then this still-running poller
+        // reached its `2 -> setLoopbackDuckEnabled(true)` arm -- leaving all Orbit
+        // playback at 30% for the rest of the call, with no UI indication and
+        // nothing in the log to explain it.
+        loopbackDuckJob?.cancel()
+        loopbackDuckJob = scope.launch {
             repeat(20) {
                 delay(100)
                 when (bridge.shareLoopbackMode()) {
                     2 -> {
+                        // Stop sharing while we are still polling? Do not duck.
+                        // The loopback mode is the source of truth and it has
+                        // already been torn down, so re-enabling would be wrong.
+                        if (!screenShareArmed) {
+                            println("DEBUG [LiveKitNativeMediaSession] share audio stopped while probing loopback; not ducking")
+                            return@launch
+                        }
                         LiveKitNativeAudioPlayer.setLoopbackDuckEnabled(true)
                         println("WARN [LiveKitNativeMediaSession] share-audio loopback captured full device; ducking own playback to limit echo (Windows 11 24H2+ enables clean exclusion)")
                         return@launch
@@ -393,6 +517,10 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
 
     fun unpublishScreenShareAudio() {
         if (sessionId == 0L) return
+        // Cancel the probe BEFORE clearing the flag, so it cannot re-assert ducking
+        // after this line has turned it off.
+        loopbackDuckJob?.cancel()
+        loopbackDuckJob = null
         val result = bridge.unpublishScreenShareAudio(sessionId, epoch)
         LiveKitNativeAudioPlayer.setLoopbackDuckEnabled(false)
         ShareAudioAec.reset()
@@ -409,27 +537,52 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             screenShareFirstFrameLogged = true
             println("DEBUG [LiveKitNativeMediaSession] first share frame received ${width}x${height} (armed)")
         }
-        if (width != screenShareWidth || height != screenShareHeight) {
-            if (screenShareWidth != 0) {
-                runCatching { bridge.unpublishScreenShare(sessionId, epoch) }
+        // The dimension pair is a read-modify-write shared with the EDT, which
+        // can zero both on connect/disconnect. Checked and updated under one lock
+        // so a concurrent reset cannot leave the slot stuck "published" or cause
+        // a republish loop.
+        synchronized(screenShareSlotLock) {
+            if (width != screenShareWidth || height != screenShareHeight) {
+                if (screenShareWidth != 0) {
+                    runCatching { bridge.unpublishScreenShare(sessionId, epoch) }
+                }
+                val publish = bridge.publishScreenShare(sessionId, epoch, width, height, screenShareFps, screenShareMaxBitrateBps)
+                if (!publish.ok) {
+                    println("ERROR [LiveKitNativeMediaSession] screenshare publish failed: ${publish.error?.message}")
+                    return false
+                }
+                screenShareWidth = width
+                screenShareHeight = height
+                println("DEBUG [LiveKitNativeMediaSession] screenshare publishing ${width}x${height} fps=$screenShareFps")
             }
-            val publish = bridge.publishScreenShare(sessionId, epoch, width, height, screenShareFps, screenShareMaxBitrateBps)
-            if (!publish.ok) {
-                println("ERROR [LiveKitNativeMediaSession] screenshare publish failed: ${publish.error?.message}")
-                return false
-            }
-            screenShareWidth = width
-            screenShareHeight = height
-            println("DEBUG [LiveKitNativeMediaSession] screenshare publishing ${width}x${height} fps=$screenShareFps")
         }
         val chromaStride = (width + 1) / 2
         val push = bridge.pushScreenShareFrame(sessionId, epoch, buffer, width, height, 5, width, chromaStride, chromaStride, timestampNs, rotation)
         if (!push.ok) {
             // Force republish with fresh dimensions on the next frame (e.g. window resized).
-            screenShareWidth = 0
-            screenShareHeight = 0
+            synchronized(screenShareSlotLock) {
+                screenShareWidth = 0
+                screenShareHeight = 0
+            }
         }
         return push.ok
+    }
+
+    /**
+     * Releases the native session for good, so a new account starts clean.
+     *
+     * [disconnect] ends the call and stops the local devices, but the native
+     * session object (and its E2EE key map and per-participant gains) outlives
+     * it. On logout nothing released that: the OS recording indicator could stay
+     * on and the next login inherited the previous account's native state.
+     */
+    fun releaseNativeSession() {
+        disconnect(userInitiated = true)
+        if (sessionId != 0L) {
+            runCatching { bridge.destroySession(sessionId) }
+                .onFailure { println("WARN [LiveKitNativeMediaSession] destroySession failed: ${it.message}") }
+            sessionId = 0L
+        }
     }
 
     fun disconnect(userInitiated: Boolean) {
@@ -437,7 +590,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         // otherwise a give-up disconnect could race the owner with a token-refresh
         // reconnect (H1).
         reconnectAllowed = false
-        reconnectAttempts = 0
+        reconnectAttempts.set(0)
         if (userInitiated) {
             desiredAudioMuted = false
         }
@@ -502,11 +655,34 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         e2eeArmed = enabled
         val result = bridge.configureE2EE(sessionId, enabled)
         if (result.ok) {
-            println("DEBUG [LiveKitNativeMediaSession] e2ee media armed=$enabled session=$sessionId")
+            e2eeArmConfirmed = true
+            println(
+                "DEBUG [LiveKitNativeMediaSession] e2ee media armed=$enabled session=$sessionId " +
+                    "(live=${sessionId != 0L})"
+            )
         } else {
-            println("WARN [LiveKitNativeMediaSession] configureE2EE($enabled) failed: ${result.error?.message}")
+            // Previously this only logged a warning and the caller went on to
+            // print "native E2EE media armed" anyway, so a failed arming looked
+            // like a successful one in the log while the media went out
+            // unencrypted in an encrypted room.
+            e2eeArmConfirmed = false
+            println(
+                "ERROR [LiveKitNativeMediaSession] configureE2EE($enabled) FAILED " +
+                    "code=${result.error?.code} message=${result.error?.message ?: "<no message>"}; " +
+                    "media will NOT be encrypted for this call"
+            )
         }
     }
+
+    /**
+     * Whether native E2EE arming is actually in effect.
+     *
+     * Read by [isNativeE2eeArmed] so the UI can refuse to present a call as
+     * secure when the native side did not accept the configuration.
+     */
+    @Volatile private var e2eeArmConfirmed = false
+
+    fun isNativeE2eeArmed(): Boolean = e2eeArmed && e2eeArmConfirmed
 
     /** Feeds a per-participant media key into the native KeyProvider slot [identity]. */
     fun deliverParticipantKey(identity: String, key: ByteArray, keyIndex: Int): Boolean {
@@ -532,20 +708,21 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             is NativeMediaEvent.Connected -> {
                 println("DEBUG [LiveKitNativeMediaSession] native connected")
                 CallMediaKeyExchangeManager.rearmOwnKey()
-                updateReadiness(
-                    state = NativeMediaState.LiveKitConnected,
-                    connected = true,
-                    audioPublished = false,
-                    videoPublished = false,
-                    acceptingAudioFrames = false,
-                    acceptingVideoFrames = false,
-                    cameraRequested = readinessCache.cameraRequested,
-                    cameraRequired = readinessCache.cameraRequired,
-                    cameraState = readinessCache.cameraState,
-                    joinedAsAudioOnlyFallback = readinessCache.joinedAsAudioOnlyFallback,
-                    tokenRefreshScheduled = readinessCache.tokenRefreshScheduled,
-                    lastError = null
-                )
+                // Atomic derive, not read-then-write: this runs on the native
+                // dispatch thread and races the reconnect coroutine, which can
+                // replace the readiness entirely between a field read and the
+                // store.
+                mutateReadiness { old ->
+                    old.copy(
+                        state = NativeMediaState.LiveKitConnected,
+                        connected = true,
+                        audioPublished = false,
+                        videoPublished = false,
+                        acceptingAudioFrames = false,
+                        acceptingVideoFrames = false,
+                        lastError = null
+                    )
+                }
                 connectedDeferred?.complete(NativeResult.success(Unit))
             }
 
@@ -560,39 +737,34 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             is NativeMediaEvent.AudioPublished -> {
                 println("DEBUG [LiveKitNativeMediaSession] audio published")
                 CallMediaKeyExchangeManager.rearmOwnKey()
-                updateReadiness(
-                    state = NativeMediaState.AudioPublished,
-                    connected = true,
-                    audioPublished = true,
-                    videoPublished = false,
-                    acceptingAudioFrames = LiveKitNativeAudioBridge.acceptingFrames,
-                    acceptingVideoFrames = false,
-                    cameraRequested = readinessCache.cameraRequested,
-                    cameraRequired = readinessCache.cameraRequired,
-                    cameraState = readinessCache.cameraState,
-                    joinedAsAudioOnlyFallback = readinessCache.joinedAsAudioOnlyFallback,
-                    tokenRefreshScheduled = readinessCache.tokenRefreshScheduled,
-                    lastError = null
-                )
+                mutateReadiness { old ->
+                    old.copy(
+                        state = NativeMediaState.AudioPublished,
+                        connected = true,
+                        audioPublished = true,
+                        videoPublished = false,
+                        acceptingAudioFrames = LiveKitNativeAudioBridge.acceptingFrames,
+                        acceptingVideoFrames = false,
+                        lastError = null
+                    )
+                }
                 audioPublishedDeferred?.complete(NativeResult.success(Unit))
             }
 
             is NativeMediaEvent.VideoPublished -> {
                 println("DEBUG [LiveKitNativeMediaSession] video published")
-                updateReadiness(
-                    state = NativeMediaState.VideoPublished,
-                    connected = true,
-                    audioPublished = readinessCache.audioPublished,
-                    videoPublished = true,
-                    acceptingAudioFrames = readinessCache.acceptingAudioFrames,
-                    acceptingVideoFrames = true,
-                    cameraRequested = true,
-                    cameraRequired = readinessCache.cameraRequired,
-                    cameraState = CameraPublishState.Published,
-                    joinedAsAudioOnlyFallback = false,
-                    tokenRefreshScheduled = readinessCache.tokenRefreshScheduled,
-                    lastError = null
-                )
+                mutateReadiness { old ->
+                    old.copy(
+                        state = NativeMediaState.VideoPublished,
+                        connected = true,
+                        videoPublished = true,
+                        acceptingVideoFrames = true,
+                        cameraRequested = true,
+                        cameraState = CameraPublishState.Published,
+                        joinedAsAudioOnlyFallback = false,
+                        lastError = null
+                    )
+                }
                 videoPublishedDeferred?.complete(NativeResult.success(Unit))
             }
 
@@ -615,7 +787,21 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             }
 
             is NativeMediaEvent.ActiveSpeakersChanged -> {
-                _activeSpeakers.value = event.speakers.toSet()
+                // Transition-only logging. The meter is throttled to 150 ms and
+                // change-only natively, so a per-event line is a per-frame-class
+                // line; worse, with NO line at all here, a ring that never lit up
+                // was indistinguishable from "the native event never fires".
+                // Logging the transitions makes the feed observable and shows the
+                // exact token shape the mixer is publishing.
+                val previous = _activeSpeakers.value
+                val speakers = event.speakers.toSet()
+                _activeSpeakers.value = speakers
+                if (previous != speakers) {
+                    util.OrbitLog.d(
+                        "LiveKitNativeMediaSession",
+                        "active speakers ${if (speakers.isEmpty()) "cleared" else speakers.toString()}"
+                    )
+                }
             }
         }
     }
@@ -760,15 +946,22 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
     // audio-only by default; the UI "Turn On Camera" toggle routes here instead
     // of the P2P engine (which has no sender in group mode). Republish-safe: the
     // C++ side unpublishes any previous camera track before creating a new one.
-    suspend fun enableCamera(): NativeResult<Unit> = cameraToggleMutex.withLock {
+    //
+    // withContext(Dispatchers.IO): the body enumerates capture devices, creates
+    // a PeerConnectionFactory and starts the source -- hundreds of ms. The
+    // caller is CallManager on rememberCoroutineScope(), i.e. the EDT, so the
+    // enumeration the connect path was fixed to offload was still freezing the
+    // UI the moment a user turned their camera on.
+    suspend fun enableCamera(): NativeResult<Unit> = withContext(Dispatchers.IO) {
+        cameraToggleMutex.withLock {
         if (sessionId == 0L || !readinessCache.connected) {
-            return NativeResult.failure(unknownError("No connected native media session", "enableCamera"))
+            return@withContext NativeResult.failure(unknownError("No connected native media session", "enableCamera"))
         }
         if (!LiveKitFeatureFlags.videoPublish) {
-            return NativeResult.failure(unknownError("Video publishing is disabled", "enableCamera"))
+            return@withContext NativeResult.failure(unknownError("Video publishing is disabled", "enableCamera"))
         }
         if (!lastVideoAllowed) {
-            return NativeResult.failure(
+            return@withContext NativeResult.failure(
                 NativeError(
                     code = NativeErrorCode.PUBLISH_VIDEO_FAILED,
                     message = "Camera publishing is not allowed by LiveKit grants",
@@ -778,7 +971,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             )
         }
         if (readinessCache.videoPublished && cameraPushEnabled) {
-            return NativeResult.success(Unit)
+            return@withContext NativeResult.success(Unit)
         }
 
         println("DEBUG [LiveKitNativeMediaSession] mid-call camera enable started")
@@ -802,7 +995,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         if (!opened.ok || config == null) {
             runCatching { LiveKitNativeVideoCapture.stopAndJoin() }
             updateCameraFallback(cameraStateFromVideoError(opened.error), joinedAsAudioOnlyFallback = false)
-            return NativeResult.failure(opened.error ?: unknownError("Camera capture failed to open", "openVideoCapture"))
+            return@withContext NativeResult.failure(opened.error ?: unknownError("Camera capture failed to open", "openVideoCapture"))
         }
 
         videoPublishedDeferred = CompletableDeferred()
@@ -818,7 +1011,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         if (!publish.ok) {
             runCatching { LiveKitNativeVideoCapture.stopAndJoin() }
             updateCameraFallback(CameraPublishState.Failed, joinedAsAudioOnlyFallback = false)
-            return NativeResult.failure(publish.error ?: unknownError("Native video publish failed", "nativePublishVideo"))
+            return@withContext NativeResult.failure(publish.error ?: unknownError("Native video publish failed", "nativePublishVideo"))
         }
         publishedCameraWidth = config.width
         publishedCameraHeight = config.height
@@ -828,7 +1021,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         if (!videoPublished.ok) {
             runCatching { LiveKitNativeVideoCapture.stopAndJoin() }
             updateCameraFallback(CameraPublishState.Failed, joinedAsAudioOnlyFallback = false)
-            return NativeResult.failure(videoPublished.error ?: unknownError("Native video publish timed out", "enableCamera"))
+            return@withContext NativeResult.failure(videoPublished.error ?: unknownError("Native video publish timed out", "enableCamera"))
         }
 
         // Arm before attaching the push target (see handleOptionalVideoPublish).
@@ -840,7 +1033,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             cameraPushEnabled = false
             runCatching { LiveKitNativeVideoCapture.stopAndJoin() }
             updateCameraFallback(CameraPublishState.Failed, joinedAsAudioOnlyFallback = false)
-            return NativeResult.failure(framePush.error ?: unknownError("Video frame push failed to start", "enableVideoFramePush"))
+            return@withContext NativeResult.failure(framePush.error ?: unknownError("Video frame push failed to start", "enableVideoFramePush"))
         }
 
         // disableCamera() mutes the published track; a fresh republish creates an
@@ -848,6 +1041,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         bridge.setVideoMuted(sessionId, epoch, false)
         println("DEBUG [LiveKitNativeMediaSession] mid-call camera enabled ${config.width}x${config.height} fps=${config.fps}")
         NativeResult.success(Unit)
+        }
     }
 
     fun disableCamera() {
@@ -912,6 +1106,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         }
 
         LiveKitRemoteVideoFrameStore.clear("$reason-start")
+        LiveKitRemoteVideoFrameStore.beginSession(sessionId, epoch)
         val result = bridge.setRemoteVideoSink(LiveKitNativeRemoteVideoRenderer)
         if (result.ok) {
             println("DEBUG [LiveKitNativeMediaSession] remote video render sink enabled reason=$reason")
@@ -988,9 +1183,9 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
     private suspend fun refreshAndReconnect(fetcher: suspend () -> LiveKitAuthResponse) {
         if (!reconnectAllowed) return
 
-        reconnectAttempts += 1
-        if (reconnectAttempts > MAX_CONSECUTIVE_RECONNECTS) {
-            println("ERROR [LiveKitNativeMediaSession] giving up after $reconnectAttempts consecutive reconnect attempts")
+        val attempts = reconnectAttempts.incrementAndGet()
+        if (attempts > MAX_CONSECUTIVE_RECONNECTS) {
+            println("ERROR [LiveKitNativeMediaSession] giving up after $attempts consecutive reconnect attempts")
             reconnectAllowed = false
             handleNativeError(
                 NativeError(
@@ -1003,7 +1198,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             return
         }
 
-        println("DEBUG [LiveKitNativeMediaSession] token refresh started (attempt $reconnectAttempts)")
+        println("DEBUG [LiveKitNativeMediaSession] token refresh started (attempt $attempts)")
         println("DEBUG [LiveKitNativeMediaSession] mute state before reconnect: $desiredAudioMuted")
         updateNativeState(NativeMediaState.Reconnecting)
         runCatching { LiveKitNativeVideoCapture.stopAndJoin() }
@@ -1038,7 +1233,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         }
         lastVideoAllowed = grantCheck.value.videoAllowed
 
-        epoch += 1
+        nextEpoch()
         configureRemoteVideoSink("reconnect")
         connectedDeferred = CompletableDeferred()
         audioPublishedDeferred = CompletableDeferred()
@@ -1123,7 +1318,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         scheduleTokenRefresh(tokenResult.value)
         startRemoteVideoRescan()
         clearCompletedDeferreds()
-        reconnectAttempts = 0
+        reconnectAttempts.set(0)
         runCatching { onReconnected?.invoke() }
             .onFailure { println("WARN [LiveKitNativeMediaSession] onReconnected listener failed: ${it.message}") }
     }
@@ -1174,22 +1369,27 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         tokenRefreshScheduled: Boolean,
         lastError: NativeError?
     ) {
-        readinessCache = NativeMediaReadiness(
-            sessionId = sessionId,
-            epoch = epoch,
-            state = state,
-            connected = connected,
-            audioPublished = audioPublished,
-            videoPublished = videoPublished,
-            acceptingAudioFrames = acceptingAudioFrames,
-            acceptingVideoFrames = acceptingVideoFrames,
-            cameraRequested = cameraRequested,
-            cameraRequired = cameraRequired,
-            cameraState = cameraState,
-            joinedAsAudioOnlyFallback = joinedAsAudioOnlyFallback,
-            tokenRefreshScheduled = tokenRefreshScheduled,
-            lastError = lastError
-        )
+        // Store under the lock. The sessionId/epoch arguments are read here, so
+        // without it they could be torn against each other AND against the
+        // readiness object they are being stamped onto.
+        synchronized(readinessLock) {
+            readinessCache = NativeMediaReadiness(
+                sessionId = sessionId,
+                epoch = epoch,
+                state = state,
+                connected = connected,
+                audioPublished = audioPublished,
+                videoPublished = videoPublished,
+                acceptingAudioFrames = acceptingAudioFrames,
+                acceptingVideoFrames = acceptingVideoFrames,
+                cameraRequested = cameraRequested,
+                cameraRequired = cameraRequired,
+                cameraState = cameraState,
+                joinedAsAudioOnlyFallback = joinedAsAudioOnlyFallback,
+                tokenRefreshScheduled = tokenRefreshScheduled,
+                lastError = lastError
+            )
+        }
     }
 
     private fun clearCompletedDeferreds() {
@@ -1258,20 +1458,19 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
 
     private fun handleVideoCaptureFailure(error: NativeError) {
         println("WARN [LiveKitNativeMediaSession] video capture failed after publish: ${error.code} ${error.message}")
-        updateReadiness(
-            state = readinessCache.state,
-            connected = readinessCache.connected,
-            audioPublished = readinessCache.audioPublished,
-            videoPublished = false,
-            acceptingAudioFrames = readinessCache.acceptingAudioFrames,
-            acceptingVideoFrames = false,
-            cameraRequested = readinessCache.cameraRequested,
-            cameraRequired = readinessCache.cameraRequired,
-            cameraState = cameraStateFromVideoError(error),
-            joinedAsAudioOnlyFallback = !readinessCache.cameraRequired,
-            tokenRefreshScheduled = readinessCache.tokenRefreshScheduled,
-            lastError = error
-        )
+        // This is the one the audit called out: the video capture thread derives
+        // from the readiness while the native dispatch thread may be writing it.
+        // Read and write in one critical section, or a `Connected` landing between
+        // them gets reverted to `connected = false` by these stale values.
+        mutateReadiness { old ->
+            old.copy(
+                videoPublished = false,
+                acceptingVideoFrames = false,
+                cameraState = cameraStateFromVideoError(error),
+                joinedAsAudioOnlyFallback = !old.cameraRequired,
+                lastError = error
+            )
+        }
     }
 
     private fun handlePlaybackFailure(error: NativeError) {
@@ -1279,20 +1478,17 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
     }
 
     private fun updateReadinessWithError(state: NativeMediaState, error: NativeError) {
-        updateReadiness(
-            state = state,
-            connected = readinessCache.connected,
-            audioPublished = readinessCache.audioPublished,
-            videoPublished = readinessCache.videoPublished,
-            acceptingAudioFrames = false,
-            acceptingVideoFrames = false,
-            cameraRequested = readinessCache.cameraRequested,
-            cameraRequired = readinessCache.cameraRequired,
-            cameraState = readinessCache.cameraState,
-            joinedAsAudioOnlyFallback = readinessCache.joinedAsAudioOnlyFallback,
-            tokenRefreshScheduled = readinessCache.tokenRefreshScheduled,
-            lastError = error
-        )
+        // Reached from the native dispatch thread AND the reconnect coroutine, both
+        // of which can be writing the readiness concurrently — so this derives
+        // under the lock rather than reading a dozen fields and storing.
+        mutateReadiness { old ->
+            old.copy(
+                state = state,
+                acceptingAudioFrames = false,
+                acceptingVideoFrames = false,
+                lastError = error
+            )
+        }
     }
 
     private fun unknownError(message: String, operation: String): NativeError =

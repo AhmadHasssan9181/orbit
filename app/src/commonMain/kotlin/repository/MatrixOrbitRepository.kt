@@ -24,7 +24,6 @@ import de.connect2x.trixnity.client.verification
 import de.connect2x.trixnity.clientserverapi.model.media.Media
 import de.connect2x.trixnity.clientserverapi.model.room.CreateRoom
 import de.connect2x.trixnity.clientserverapi.model.room.GetEvents.Direction
-import de.connect2x.trixnity.clientserverapi.model.user.ProfileField
 import de.connect2x.trixnity.clientserverapi.model.user.avatarUrl
 import de.connect2x.trixnity.clientserverapi.model.user.displayName
 import de.connect2x.trixnity.core.model.EventId
@@ -33,9 +32,6 @@ import de.connect2x.trixnity.core.model.UserId
 import de.connect2x.trixnity.core.model.events.EventType
 import de.connect2x.trixnity.core.model.events.ClientEvent.RoomEvent
 import de.connect2x.trixnity.core.model.events.UnknownEventContent
-import de.connect2x.trixnity.core.model.events.m.call.CallEventContent
-import de.connect2x.trixnity.core.model.events.m.call.Purpose
-import de.connect2x.trixnity.core.model.events.m.call.StreamMetadata
 import de.connect2x.trixnity.core.model.events.m.ReactionEventContent
 import de.connect2x.trixnity.core.model.events.m.RelatesTo
 import de.connect2x.trixnity.core.model.events.m.room.AudioInfo
@@ -114,13 +110,6 @@ import util.getRoomDatabaseBuilder
 import util.performSsoLogin
 import kotlin.time.Duration.Companion.seconds
 
-import ui.screen.auth.*
-import ui.screen.settings.*
-import ui.screen.drawer.*
-import ui.screen.server.*
-import ui.screen.call.*
-import ui.screen.media.*
-import ui.screen.main.*
 
 
 
@@ -145,8 +134,29 @@ class MatrixOrbitRepository private constructor(
     fun setAccessToken(token: String) { context.accessToken = token }
     fun setUserId(id: String) { context.userId = id }
 
+    /**
+     * Releases this repository's HTTP client, scope and Trixnity client.
+     *
+     * A MatrixOrbitRepository is built BEFORE the login attempt (LoginScreen
+     * constructs it and only then calls login/loginWithSso), so a wrong
+     * password, a wrong homeserver or an abandoned SSO round-trip each used to
+     * leave behind an HttpClient with its own selector thread plus a live
+     * supervisor job. Callers must invoke this on a failed login.
+     */
+    fun close() {
+        val client = context.trixnityClient
+        context.trixnityClient = null
+        runCatching { client?.close() }
+            .onFailure { println("WARN [MatrixOrbitRepository] closing Trixnity client failed: ${it.message}") }
+        context.close()
+    }
+
     companion object {
         operator fun invoke(homeserverUrl: String = "https://matrix.org"): MatrixOrbitRepository {
+            // Validated and normalised here, at the single point where the URL is
+            // consumed: a missing scheme defaults to https and anything but
+            // http/https is rejected, so the long-lived access token is never put
+            // on the wire against an unvalidated origin.
             val context = MatrixContext(homeserverUrl)
             val auth = MatrixAuthRepository(context)
             val spaces = MatrixSpacesRepository(context)
@@ -159,4 +169,3 @@ class MatrixOrbitRepository private constructor(
         }
     }
 }
-

@@ -53,6 +53,12 @@ import ui.theme.rememberCosmicTokens
  * theme and in every custom theme. This routes through the token set and adds
  * the two things a desktop menu needs: a labelled section header and a
  * keyboard-friendly item shape.
+ *
+ * The container keeps its hairline. A menu is a floating surface rather than a
+ * grouping card, and in the light theme `Elevated` is the same white as the
+ * page behind it, so the outline is the only thing separating them -- the same
+ * reasoning that keeps the switch's track outlined. Items were already quiet at
+ * rest; only hover gives them a surface.
  */
 @Composable
 fun OrbitMenu(
@@ -235,21 +241,7 @@ fun OrbitMenuSwitch(
     }
 }
 
-/** Menu row with a trailing check, for single-select menus. */
-@Composable
-fun OrbitMenuCheck(
-    label: String,
-    checked: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    icon: ImageVector? = null
-) {
-    OrbitMenuItem(
-        label = label,
-        onClick = onClick,
-        modifier = modifier,
-        icon = icon,
-        selected = checked,
-        trailingText = if (checked) "✓" else null
-    )
-}
+// `OrbitMenuCheck` used to live here: a menu row with a trailing check, for
+// single-select menus. Zero call sites -- every single-select menu in the app
+// uses `OrbitMenuItem(selected = true)` directly, which already carries the
+// check.

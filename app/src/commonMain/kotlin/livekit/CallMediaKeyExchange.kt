@@ -86,6 +86,9 @@ class CallMediaKeyExchange(
     @Volatile private var nudgesFired = 0
     @Volatile private var lastNudgeMs = 0L
     @Volatile private var settleNudgeFired = false
+    // Last ghost count reported by nudgeMissingPeers, so the (otherwise
+    // identical) line is emitted only when the number actually moves.
+    @Volatile private var lastLoggedGhostCount = -1
 
     // Per-device timestamp of the last reply-on-receive resend (rate/loop guard).
     private val lastReplyToDeviceMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
@@ -573,6 +576,23 @@ class CallMediaKeyExchange(
      */
     private fun maybeReplyWithOwnKey(sender: String, claimedDevice: String) {
         val identity = CallMediaKeys.participantIdentity(sender, claimedDevice)
+
+        // Rate limit -- and FINALLY USE IT.
+        //
+        // `REPLY_ON_RECEIVE_MIN_INTERVAL_MS` and `lastReplyToDeviceMs` have both
+        // existed since this path was written, and neither was ever read: every
+        // received key event produced an immediate resend plus a /keys/query. The
+        // KDoc above argued loop safety purely from the peer's OutdatedKeyFilter,
+        // which is a property of the OTHER implementation, not a local guarantee.
+        // If a peer ever echoes our key back to us -- which a buggy or
+        // older client can -- this is the loop, and it is a Matrix room event
+        // each.
+        val nowMs = System.currentTimeMillis()
+        val previous = lastReplyToDeviceMs.put(identity, nowMs) ?: 0L
+        if (nowMs - previous < REPLY_ON_RECEIVE_MIN_INTERVAL_MS) {
+            return
+        }
+
         deliveredIndex.invalidate(identity)
         scope.launch {
             if (stopped) return@launch
@@ -608,9 +628,19 @@ class CallMediaKeyExchange(
             val live = livekitIds.isEmpty() || identity in livekitIds
             live && identity !in receivedPeerIdentities
         }.also { missing ->
-            if (missing.size < targets.size && livekitIds.isNotEmpty()) {
+            val ghostCount = targets.size - missing.size
+            // Only when the ghost count CHANGES. This runs on every nudge tick
+            // (8 s) and every settle/latecomer pass, so an unchanged count means
+            // an unchanged, already-reported situation — logging it again is pure
+            // noise that buried the lines that actually explain a failure (it
+            // repeated hundreds of times per call and pushed the real nudge and
+            // distribution lines off screen). A change in the count is new
+            // information and still gets logged, at the same DEBUG level as
+            // before.
+            if (ghostCount > 0 && livekitIds.isNotEmpty() && ghostCount != lastLoggedGhostCount) {
+                lastLoggedGhostCount = ghostCount
                 println(
-                    "DEBUG [CallMediaKeyExchange] nudge scope: ${targets.size - missing.size} roster " +
+                    "DEBUG [CallMediaKeyExchange] nudge scope: $ghostCount of ${targets.size} roster " +
                         "device(s) not present in the LiveKit room — excluded as ghosts"
                 )
             }
@@ -822,6 +852,22 @@ class CallMediaKeyExchange(
 object CallMediaKeyExchangeManager {
     @Volatile private var active: CallMediaKeyExchange? = null
 
+    /**
+     * Swapped-out instance, kept alive until it has actually stopped.
+     *
+     * `start()` used to be `stop(); ...; active = exchange`, non-atomically. Two
+     * concurrent starts could both pass `stop()` and then race the assignment, so
+     * the loser's exchange was never stopped: its watcher coroutines, its
+     * `decrypter.subscribe` handle and its `client.api.sync.subscribe` handle all
+     * leaked for the process lifetime -- each quietly nudging membership and
+     * answering /keys/query for a call that no longer existed.
+     *
+     * The `retired` list is drained by [stop], which is the only safe place to
+     * cancel something that was live a moment ago.
+     */
+    private val lock = Any()
+    private val retired = mutableListOf<CallMediaKeyExchange>()
+
     fun start(
         client: MatrixClient,
         scope: kotlinx.coroutines.CoroutineScope,
@@ -832,7 +878,6 @@ object CallMediaKeyExchangeManager {
         devicesFlow: Flow<Set<CallDevice>>,
         nudgeMembership: (suspend () -> Unit)? = null
     ): Boolean {
-        stop()
         val exchange = CallMediaKeyExchange(
             client = client,
             scope = scope,
@@ -843,14 +888,38 @@ object CallMediaKeyExchangeManager {
             devicesFlow = devicesFlow,
             nudgeMembership = nudgeMembership
         )
-        active = exchange
+        synchronized(lock) {
+            // Retire rather than discard, so a concurrent start's loser is still
+            // stopped -- just not synchronously inside start().
+            active?.let { retired.add(it) }
+            active = exchange
+        }
         exchange.start()
+        // Drain outside the lock: stop() cancels coroutines and can take a moment,
+        // and holding a monitor across that is how you get the next deadlock.
+        drainRetired()
         return true
     }
 
     fun stop() {
-        active?.stop()
-        active = null
+        synchronized(lock) {
+            active?.let { retired.add(it) }
+            active = null
+        }
+        drainRetired()
+    }
+
+    private fun drainRetired() {
+        val pending = synchronized(lock) {
+            if (retired.isEmpty()) return
+            val copy = retired.toList()
+            retired.clear()
+            copy
+        }
+        for (exchange in pending) {
+            runCatching { exchange.stop() }
+                .onFailure { println("WARN [CallMediaKeyExchangeManager] retiring a superseded exchange failed: ${it.message}") }
+        }
     }
 
     /** Stamp of the active exchange's last self-nudge; 0 when no call is live. */

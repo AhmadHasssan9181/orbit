@@ -6,7 +6,15 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 
 object WebrtcNativeDepsLoader {
-    private var loaded = false
+    // load() is reachable from four+ independent entry points (audio bridge init,
+    // media session, P2P factory, group screen-share factory), so the guard must
+    // be atomic AND must only be set once the work succeeded. Two threads racing
+    // here each create a temp dir and System.load() a SECOND copy of livekit.dll /
+    // orbit_livekit_*.dll / the webrtc DLL: two copies means two sets of C++
+    // globals, so one copy's session is invisible to the other and the
+    // UnsatisfiedLinkError is swallowed.
+    private val loadLock = Object()
+    @Volatile private var loaded = false
 
     // VC++ runtime DLLs that are already loaded by the JVM process.
     // Loading a second (different-version) copy causes DllMain init failures
@@ -22,7 +30,29 @@ object WebrtcNativeDepsLoader {
 
     fun load() {
         if (loaded) return
-        loaded = true
+        // Concurrent callers WAIT here for the first load instead of returning
+        // early and racing it.
+        synchronized(loadLock) {
+            if (loaded) return
+            // Only now, and only on success: a failed extraction must stay
+            // retryable instead of leaving `loaded` set with nothing actually
+            // loaded. loadInternal previously swallowed its own exception, so
+            // `loaded = true` ran on every path and one transient failure
+            // (temp dir blocked by AV, disk full) poisoned the loader for the
+            // whole JVM lifetime -- every later native call threw
+            // UnsatisfiedLinkError with two println lines as the only evidence.
+            if (loadInternal()) {
+                loaded = true
+            } else {
+                System.err.println(
+                    "WARN [WebrtcNativeDepsLoader] native dependency load failed; will retry on next call"
+                )
+            }
+        }
+    }
+
+    /** @return true only if the dependency directory was extracted successfully. */
+    private fun loadInternal(): Boolean {
         try {
             val dlls = listOf(
                 "msvcp140.dll",
@@ -106,9 +136,10 @@ object WebrtcNativeDepsLoader {
                     System.err.println("DEBUG: Failed to load $dll: ${e.message}")
                 }
             }
-            
+            return true
         } catch (e: Exception) {
-            println("DEBUG: Failed to extract WebRTC dependencies: ${e.message}")
+            System.err.println("WARN: Failed to extract WebRTC dependencies: ${e.message}")
+            return false
         }
     }
 }

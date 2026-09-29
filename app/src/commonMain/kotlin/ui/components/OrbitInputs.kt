@@ -12,7 +12,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -40,6 +43,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.state.ToggleableState
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.toggleableState
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -62,6 +69,14 @@ import ui.theme.rememberCosmicTokens
  * and a 56dp minimum height inside our rounded 34dp rows, so every input in
  * the app was visually taller than the button sitting next to it. This is a
  * borderless field that the caller frames.
+ *
+ * ## Why the frame is focus-only
+ *
+ * A permanent outline is what made input-heavy screens look like forms
+ * stapled together: the field drew a box, and so did the card it sat in. The
+ * field keeps its background -- that is what makes it read as something you
+ * can type into -- but the outline arrives with the caret and leaves when it
+ * goes, so at rest there is exactly one edge per input instead of two.
  */
 @Composable
 fun OrbitTextField(
@@ -79,25 +94,31 @@ fun OrbitTextField(
     keyboardType: KeyboardType = KeyboardType.Text,
     imeAction: ImeAction = ImeAction.Done,
     onImeAction: (() -> Unit)? = null,
-    textStyle: TextStyle? = null,
-    onFocusChanged: ((Boolean) -> Unit)? = null
+    textStyle: TextStyle? = null
 ) {
     val t = rememberCosmicTokens()
     val interaction = rememberOrbitInteraction()
     val focused by interaction.focusSource.collectIsFocusedAsState()
-    val cursorColor = remember { SolidColor(t.Accent) }
+    // Keyed on the accent: unkeyed, the caret kept the previous theme's colour
+    // after a theme switch because the SolidColor was never recomputed.
+    val cursorColor = remember(t.Accent) { SolidColor(t.Accent) }
 
     val frame by animateColorAsState(
         targetValue = when {
-            !enabled -> t.Separator
+            // Transparent at rest, in every state. The old `else -> t.Separator`
+            // drew a permanent hairline around every field on screen, which is
+            // most of the visible edge count in the settings panes and the login
+            // form. Disabled loses the ring too: a field you cannot type in has
+            // nothing to focus, and its greyed-out text already says so.
+            !enabled -> Color.Transparent
             focused -> t.Accent
-            else -> t.Separator
+            else -> Color.Transparent
         },
         animationSpec = OrbitMotion.SnappyColor,
         label = "fieldFrame"
     )
     val frameWidth by animateFloatAsState(
-        targetValue = if (focused) 1.5f else 1f,
+        targetValue = if (focused && enabled) 1.5f else 0f,
         animationSpec = OrbitMotion.Snappy,
         label = "fieldFrameWidth"
     )
@@ -110,6 +131,8 @@ fun OrbitTextField(
             .defaultMinSize(minHeight = 34.dp)
             .clip(OrbitRadius.mdShape)
             .background(t.Input_Bg)
+            // 0.dp when unfocused, so the resting field is a filled shape with no
+            // edge at all -- the fill is the affordance.
             .border(frameWidth.dp, frame, OrbitRadius.mdShape)
             .padding(horizontal = OrbitSpace.sm, vertical = OrbitSpace.xs),
         contentAlignment = Alignment.CenterStart
@@ -203,6 +226,21 @@ fun OrbitSearchField(
 /**
  * Segmented control. Replaces the row of Material `FilterChip`s that used to
  * mark the selected option with a colour change and nothing else.
+ *
+ * [fillWidth] exists because of a concrete, ugly failure. A `Row` measures its
+ * non-weighted children against the FULL incoming width, and only then divides
+ * what is left among `weight(1f)` children. This control's inner Row was
+ * `fillMaxWidth()`, so inside a `PrefCard` -- which lays out
+ * `Heading(weight 1f)` beside `content()` -- the control claimed every pixel and
+ * the heading was measured at zero. A `Text` at zero-ish width wraps one glyph per
+ * line, so the Appearance pane rendered "App Theme" vertically as A-p-p-T-h-e-m-e
+ * with the description one letter per line below it. Ten segments do not fit in a
+ * 600dp card, and `weight(1f)` per segment made each narrower than its own label,
+ * which is how a chip that said "Cyberpunk" ended up showing "Cybe".
+ *
+ * So: segments are sized by their content, the row scrolls when it overflows
+ * rather than crushing its labels, and callers that genuinely want the control to
+ * span the space can still say so.
  */
 @Composable
 fun <T> OrbitSegmentedControl(
@@ -211,17 +249,28 @@ fun <T> OrbitSegmentedControl(
     onSelect: (T) -> Unit,
     modifier: Modifier = Modifier,
     label: (T) -> String,
-    height: Dp = 32.dp
+    height: Dp = 32.dp,
+    fillWidth: Boolean = true
 ) {
     val t = rememberCosmicTokens()
     Box(
         modifier = modifier
             .clip(OrbitRadius.smShape)
+            // The sunken track stays -- it is what makes the control read as one
+            // group rather than a row of loose labels -- but the 1dp ring around
+            // it is gone. This control almost always lives inside a PrefCard, and
+            // a bordered control inside a bordered card is the box-in-a-box the
+            // whole app is trying to shed. Selected segments are marked by their
+            // fill, so no information is lost.
             .background(t.Sunken)
-            .border(1.dp, t.Separator, OrbitRadius.smShape)
             .padding(2.dp)
     ) {
-        Row(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .then(if (fillWidth) Modifier.fillMaxWidth() else Modifier)
+                .horizontalScroll(rememberScrollState()),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             options.forEach { option ->
                 val isSelected = option == selected
                 val interaction = rememberOrbitInteraction()
@@ -246,7 +295,10 @@ fun <T> OrbitSegmentedControl(
                 )
                 Box(
                     modifier = Modifier
-                        .weight(1f)
+                        // Content width, floored at a legible minimum, instead of
+                        // weight(1f). A segment can now never be narrower than the
+                        // word inside it.
+                        .widthIn(min = 56.dp)
                         .height(height)
                         .clip(OrbitRadius.xsShape)
                         .background(bg)
@@ -261,8 +313,10 @@ fun <T> OrbitSegmentedControl(
                             fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
                             fontSize = 12.sp
                         ),
+                        // No ellipsis: if it still does not fit, scrolling shows the
+                        // whole word, which beats showing "Cybe".
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        softWrap = false
                     )
                 }
             }
@@ -270,7 +324,16 @@ fun <T> OrbitSegmentedControl(
     }
 }
 
-/** Switch, sized and coloured to match the rest of the app. */
+/**
+ * Switch, sized and coloured to match the rest of the app.
+ *
+ * This is the one control whose resting outline is kept. The unchecked track is
+ * `t.Sunken`, which in the light theme is the *same value* as the `t.CardBg` of
+ * the `PrefCard` it sits in, so without the hairline an off switch inside a
+ * settings card would be an invisible 40x22 hole. The ring is load-bearing here
+ * rather than decorative, which is exactly the test the borderless pass applies
+ * everywhere else.
+ */
 @Composable
 fun OrbitSwitch(
     checked: Boolean,
@@ -320,6 +383,12 @@ fun OrbitSwitch(
                 CircleShape
             )
             .hoverable(interaction.hoverSource, enabled)
+            // toggleableState/stateDescription: without them a screen reader
+            // announces a switch that never says whether it is on.
+            .semantics {
+                stateDescription = if (checked) "On" else "Off"
+                toggleableState = if (checked) ToggleableState.On else ToggleableState.Off
+            }
             .orbitClickable(interaction, enabled, Role.Switch, onClick = { onCheckedChange(!checked) })
     ) {
         Box(

@@ -33,9 +33,6 @@ import de.connect2x.trixnity.core.model.UserId
 import de.connect2x.trixnity.core.model.events.EventType
 import de.connect2x.trixnity.core.model.events.ClientEvent.RoomEvent
 import de.connect2x.trixnity.core.model.events.UnknownEventContent
-import de.connect2x.trixnity.core.model.events.m.call.CallEventContent
-import de.connect2x.trixnity.core.model.events.m.call.Purpose
-import de.connect2x.trixnity.core.model.events.m.call.StreamMetadata
 import de.connect2x.trixnity.core.model.events.m.ReactionEventContent
 import de.connect2x.trixnity.core.model.events.m.RelatesTo
 import de.connect2x.trixnity.core.model.events.m.room.AudioInfo
@@ -114,13 +111,6 @@ import util.getRoomDatabaseBuilder
 import util.performSsoLogin
 import kotlin.time.Duration.Companion.seconds
 
-import ui.screen.auth.*
-import ui.screen.settings.*
-import ui.screen.drawer.*
-import ui.screen.server.*
-import ui.screen.call.*
-import ui.screen.media.*
-import ui.screen.main.*
 
 
 
@@ -153,6 +143,25 @@ class MatrixUsersRepository(private val context: MatrixContext) : OrbitUsersRepo
         return context.fetchUserProfile(userId)
     }
 
+    /**
+     * Uploads an image and returns its mxc:// URL, but does NOT set any profile
+     * field. The banner lives in Orbit's own `im.orbit.profile_extras` account
+     * data, so routing it through uploadAvatar would clobber the real avatar.
+     */
+    override suspend fun uploadBanner(imageBytes: ByteArray): Result<String> {
+        return try {
+            val trixnity = context.trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
+            val mxcUrl = trixnity.media.uploadMedia(
+                trixnity.media.prepareUploadMedia(kotlinx.coroutines.flow.flowOf(imageBytes), ContentType.Image.PNG)
+            ).getOrThrow()
+            Result.success(mxcUrl)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     override suspend fun setPresence(status: UserStatus) {
         try {
             val trixnity = context.trixnityClient ?: return
@@ -179,9 +188,12 @@ class MatrixUsersRepository(private val context: MatrixContext) : OrbitUsersRepo
     }
 
     override suspend fun setTyping(roomId: String, isTyping: Boolean) {
-        context.trixnityClient?.api?.room?.setTyping(
+        // A safe call immediately followed by `!!` NPEs if the client is nulled
+        // concurrently by logout.
+        val trixnity = context.trixnityClient ?: return
+        trixnity.api.room.setTyping(
             RoomId(roomId),
-            context.trixnityClient!!.userId,
+            trixnity.userId,
             isTyping,
             30_000
         )
@@ -261,46 +273,57 @@ class MatrixUsersRepository(private val context: MatrixContext) : OrbitUsersRepo
             if (maxSettable != null && level > maxSettable) {
                 return Result.failure(IllegalStateException("Insufficient permission to set power level $level"))
             }
-            val content = fetchPowerLevelsContent(roomId)
-            val newContent = content.copy(users = content.users + (UserId(userId) to level))
-            trixnity.api.room.sendStateEvent(RoomId(roomId), newContent, "").getOrThrow()
+            // Round-trip the RAW m.room.power_levels object and patch only the
+            // "users" map, then PUT it as JSON. sendStateEvent takes a typed
+            // StateEventContent, and reconstructing that type dropped every field
+            // this client does not model, so extensions another client or the
+            // server had added vanished from the room on the first moderation
+            // action.
+            val patched = patchPowerLevelsUsers(roomId, UserId(userId), level)
+                ?: return Result.failure(IllegalStateException("Could not read m.room.power_levels for $roomId"))
+            val response = context.httpClient.put(context.fullUrl("/rooms/$roomId/state/m.room.power_levels")) {
+                header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
+                contentType(ContentType.Application.Json)
+                // Sent as raw JSON text so the unmodelled extension fields are
+                // forwarded byte-for-byte instead of being re-serialised.
+                setBody(patched.toString())
+            }
+            runCatching { response.bodyAsText() }
+            if (response.status.value !in 200..299) {
+                return Result.failure(IllegalStateException("Failed to set power level: HTTP ${response.status.value}"))
+            }
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
-    // Read-modify-write source for m.room.power_levels. Missing event → all-defaults
-    // content so a first write still preserves spec defaults.
-    private suspend fun fetchPowerLevelsContent(roomId: String): PowerLevelsEventContent {
+    /**
+     * Reads the RAW m.room.power_levels object, sets `users[userId] = level` and
+     * returns it unchanged otherwise. `null` when the event could not be read, so
+     * the caller fails instead of PUTting a reconstructed event that would drop
+     * every field this client does not model.
+     */
+    private suspend fun patchPowerLevelsUsers(roomId: String, userId: UserId, level: Long): JsonObject? {
         return try {
             val response = context.httpClient.get(context.fullUrl("/rooms/$roomId/state/m.room.power_levels")) {
                 header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
             }
-            if (response.status.value !in 200..299) return PowerLevelsEventContent()
+            if (response.status.value !in 200..299) {
+                runCatching { response.bodyAsText() }
+                println("WARN [MatrixUsersRepository] power-levels read failed for $roomId status=${response.status.value}")
+                return null
+            }
             val obj = Json.parseToJsonElement(response.bodyAsText()).jsonObject
-            fun longAt(key: String, default: Long): Long = obj[key]?.jsonPrimitive?.longOrNull ?: default
-            val users = obj["users"]?.jsonObject?.mapValues { it.value.jsonPrimitive.longOrNull ?: 0L } ?: emptyMap()
-            val events = obj["events"]?.jsonObject?.mapKeys {
-                EventType(UnknownEventContent::class, it.key)
-            }?.mapValues { it.value.jsonPrimitive.longOrNull ?: 0L } ?: emptyMap()
-            val notifications = obj["notifications"]?.jsonObject?.mapValues { it.value.jsonPrimitive.longOrNull ?: 0L } ?: emptyMap()
-            PowerLevelsEventContent(
-                ban = longAt("ban", PowerLevelsEventContent.BAN_DEFAULT),
-                events = events,
-                eventsDefault = longAt("events_default", PowerLevelsEventContent.EVENTS_DEFAULT),
-                invite = longAt("invite", PowerLevelsEventContent.INVITE_DEFAULT),
-                kick = longAt("kick", PowerLevelsEventContent.KICK_DEFAULT),
-                redact = longAt("redact", PowerLevelsEventContent.REDACT_DEFAULT),
-                stateDefault = longAt("state_default", PowerLevelsEventContent.STATE_DEFAULT),
-                users = users.mapKeys { UserId(it.key) },
-                usersDefault = longAt("users_default", PowerLevelsEventContent.USERS_DEFAULT),
-                notifications = notifications,
-                externalUrl = obj["external_url"]?.jsonPrimitive?.content ?: ""
-            )
+            val users = (obj["users"] as? JsonObject) ?: JsonObject(emptyMap())
+            obj.toMutableMap().apply {
+                put("users", JsonObject(users + (userId.full to JsonPrimitive(level))))
+            }.let { JsonObject(it) }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
-            PowerLevelsEventContent()
+            println("WARN [MatrixUsersRepository] power-levels read threw for $roomId: ${e.message}")
+            null
         }
     }
 }
-

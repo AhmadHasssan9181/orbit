@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.FlipCameraAndroid
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.HeadsetOff
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -124,120 +125,156 @@ fun CallControlsBar(
     ) {
         Row(
             modifier = Modifier
-                .background(t.Elevated)
-                .border(1.dp, t.SeparatorStrong, RoundedCornerShape(26.dp))
-                .padding(horizontal = OrbitSpace.sm, vertical = OrbitSpace.sm),
-            horizontalArrangement = Arrangement.spacedBy(OrbitSpace.xs),
+                .background(t.ElevatedAlt)
+                // The bar keeps its ring: it floats over a video stage and the
+                // outline is what stops the controls bleeding into the frame.
+                .border(1.dp, t.Separator, RoundedCornerShape(26.dp))
+                .padding(horizontal = OrbitSpace.xs, vertical = OrbitSpace.xs),
+            // Grouping is expressed as GAPS, not drawn separator lines.
+            //
+            // Discord separates control groups with whitespace. Orbit drew a
+            // vertical rule between each group, which put three competing vertical
+            // lines inside a rounded bar and made it read as a toolbar from a
+            // different app. Whitespace also survives theme changes: a rule has to
+            // be recoloured, a gap does not.
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // ── Media ──────────────────────────────────────────────
-            CallControlButton(
-                icon = if (isVideoEnabled) OrbitIcons.Video else OrbitIcons.VideoOff,
-                tooltip = if (isVideoEnabled) "Turn off camera" else "Turn on camera",
-                onClick = { callManager.toggleVideo(!isVideoEnabled) }
-            )
-
-            // ── Mic, with its own device picker ────────────────────
-            Box {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+            // ── Media group: camera + mic, each a joined pair ────
+            // Discord renders each of these as ONE control split into a main
+            // button and a chevron, with a hairline between the halves. Orbit had
+            // the chevron on the mic only, attached via a separate rounded shape
+            // that did not line up with the circular button next to it, so the pair
+            // read as two unrelated controls.
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    // Sunken pill, no ring: these groups sit inside the bar, which
+                    // already has one. Three nested outlines (bar, group, button)
+                    // is the shape the whole app is trying to lose, and the sunken
+                    // fill is what marks a joined pair.
+                    .background(t.Sunken),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                CallControlButton(
+                    icon = if (isVideoEnabled) OrbitIcons.Video else OrbitIcons.VideoOff,
+                    tooltip = if (isVideoEnabled) "Turn off camera" else "Turn on camera",
+                    // Camera off is a state the user must be able to see at a
+                    // glance for the same reason muted mic is.
+                    danger = !isVideoEnabled,
+                    onClick = { callManager.toggleVideo(!isVideoEnabled) },
+                    modifier = Modifier.padding(horizontal = 2.dp)
+                )
+                ControlDivider()
+                CallControlButton(
+                    icon = if (!isMuted) OrbitIcons.Mic else OrbitIcons.MicOff,
+                    tooltip = if (isMuted) "Unmute" else "Mute",
+                    danger = isMuted,
+                    onClick = { callManager.toggleMute(!isMuted) }
+                )
+                Box {
                     CallControlButton(
-                        icon = if (!isMuted) OrbitIcons.Mic else OrbitIcons.MicOff,
-                        tooltip = if (isMuted) "Unmute" else "Mute",
-                        active = !isMuted,
-                        onClick = { callManager.toggleMute(!isMuted) }
+                        icon = Icons.Default.KeyboardArrowDown,
+                        tooltip = "Choose audio input",
+                        iconSize = 14.dp,
+                        onClick = { showAudioDeviceMenu = true },
+                        modifier = Modifier.padding(end = 2.dp)
                     )
-                    Box(
-                        modifier = Modifier
-                            .size(width = 18.dp, height = 34.dp)
-                            .clip(RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp))
-                            .background(t.Sunken)
-                            .hoverable(remember { MutableInteractionSource() })
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null
-                            ) { showAudioDeviceMenu = true },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            Icons.Default.KeyboardArrowUp,
-                            contentDescription = "Choose audio input",
-                            tint = t.Text_Subtle,
-                            modifier = Modifier.size(13.dp)
+                    AudioDeviceMenu(
+                        callManager = callManager,
+                        expanded = showAudioDeviceMenu,
+                        onDismiss = { showAudioDeviceMenu = false }
+                    )
+                }
+            }
+
+            // ── Listen group ───────────────────────────────────────
+            if (showDeafen) {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(t.Sunken),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CallControlButton(
+                        icon = if (isDeafened) Icons.Default.HeadsetOff else Icons.Default.Headphones,
+                        tooltip = if (isDeafened) "Undeafen" else "Deafen",
+                        danger = isDeafened,
+                        onClick = onToggleDeafen,
+                        modifier = Modifier.padding(start = 2.dp, end = 2.dp)
+                    )
+                }
+            }
+
+            // ── Share group ────────────────────────────────────────
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(t.Sunken),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                CallControlButton(
+                    icon = if (isScreenSharing) OrbitIcons.ScreenShareOff else OrbitIcons.ScreenShare,
+                    tooltip = if (isScreenSharing) "Stop sharing" else "Share screen",
+                    active = isScreenSharing,
+                    activeTint = t.Success,
+                    onClick = onScreenShareClick,
+                    modifier = Modifier.padding(horizontal = 2.dp)
+                )
+            }
+
+            // ── Utility group ──────────────────────────────────────
+            val myHandRaised by callManager.isMyHandRaised.collectAsState()
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(t.Sunken),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                CallControlButton(
+                    icon = Icons.Default.PanTool,
+                    tooltip = if (myHandRaised) "Lower hand" else "Raise hand",
+                    active = myHandRaised,
+                    activeTint = t.Warning,
+                    onClick = { callManager.toggleRaiseHand() },
+                    modifier = Modifier.padding(start = 2.dp)
+                )
+                ControlDivider()
+                CallControlButton(
+                    icon = if (layoutMode == CallLayoutMode.Grid) Icons.Default.GridView else Icons.Default.CropFree,
+                    tooltip = if (layoutMode == CallLayoutMode.Grid) "Focus mode" else "Grid mode",
+                    active = layoutMode == CallLayoutMode.Focus,
+                    onClick = onLayoutModeToggle,
+                    modifier = Modifier.padding(horizontal = 2.dp)
+                )
+                if (onSoundboardToggle != null) {
+                    ControlDivider()
+                    CallControlButton(
+                        icon = Icons.Default.MusicNote,
+                        tooltip = "Soundboard",
+                        active = showSoundboard,
+                        onClick = { onSoundboardToggle() },
+                        modifier = Modifier.padding(horizontal = 2.dp)
+                    )
+                }
+                if (showMoreOptions) {
+                    ControlDivider()
+                    Box {
+                        CallControlButton(
+                            icon = Icons.Default.MoreHoriz,
+                            tooltip = "Audio and video options",
+                            active = moreOptionsExpanded,
+                            onClick = { moreOptionsExpanded = !moreOptionsExpanded },
+                            modifier = Modifier.padding(start = 2.dp, end = 2.dp)
+                        )
+                        MoreOptionsMenu(
+                            callManager = callManager,
+                            expanded = moreOptionsExpanded,
+                            onDismiss = { moreOptionsExpanded = false }
                         )
                     }
                 }
-                AudioDeviceMenu(
-                    callManager = callManager,
-                    expanded = showAudioDeviceMenu,
-                    onDismiss = { showAudioDeviceMenu = false }
-                )
             }
-
-            if (showDeafen) {
-                CallControlButton(
-                    icon = if (isDeafened) Icons.Default.HeadsetOff else Icons.Default.Headphones,
-                    tooltip = if (isDeafened) "Undeafen" else "Deafen",
-                    active = !isDeafened,
-                    onClick = onToggleDeafen
-                )
-            }
-
-            ControlSeparator()
-
-            // ── Share ──────────────────────────────────────────────
-            CallControlButton(
-                icon = if (isScreenSharing) OrbitIcons.ScreenShareOff else OrbitIcons.ScreenShare,
-                tooltip = if (isScreenSharing) "Stop sharing" else "Share screen",
-                active = isScreenSharing,
-                activeTint = t.Success,
-                onClick = onScreenShareClick
-            )
-
-            ControlSeparator()
-
-            // ── Utility ────────────────────────────────────────────
-            val myHandRaised by callManager.isMyHandRaised.collectAsState()
-            CallControlButton(
-                icon = Icons.Default.PanTool,
-                tooltip = if (myHandRaised) "Lower hand" else "Raise hand",
-                active = myHandRaised,
-                activeTint = t.Warning,
-                onClick = { callManager.toggleRaiseHand() }
-            )
-
-            CallControlButton(
-                icon = if (layoutMode == CallLayoutMode.Grid) Icons.Default.GridView else Icons.Default.CropFree,
-                tooltip = if (layoutMode == CallLayoutMode.Grid) "Focus mode" else "Grid mode",
-                active = layoutMode == CallLayoutMode.Focus,
-                onClick = onLayoutModeToggle
-            )
-
-            if (onSoundboardToggle != null) {
-                CallControlButton(
-                    icon = Icons.Default.MusicNote,
-                    tooltip = "Soundboard",
-                    active = showSoundboard,
-                    onClick = { onSoundboardToggle() }
-                )
-            }
-
-            if (showMoreOptions) {
-                Box {
-                    CallControlButton(
-                        icon = Icons.Default.MoreHoriz,
-                        tooltip = "Audio and video options",
-                        active = moreOptionsExpanded,
-                        onClick = { moreOptionsExpanded = !moreOptionsExpanded }
-                    )
-                    MoreOptionsMenu(
-                        callManager = callManager,
-                        expanded = moreOptionsExpanded,
-                        onDismiss = { moreOptionsExpanded = false }
-                    )
-                }
-            }
-
-            ControlSeparator()
 
             // ── Hang up ────────────────────────────────────────────
             val endInteraction = remember { MutableInteractionSource() }
@@ -371,6 +408,26 @@ fun ControlSeparator() {
 }
 
 /**
+ * Hairline between the halves of a JOINED control pair (mic, then its chevron).
+ *
+ * Not the same job as [ControlSeparator], which spaces whole groups of controls.
+ * The distinction is load-bearing: a rule INSIDE a pill splits one control into
+ * two, which is exactly Discord's affordance for "the main half does one thing,
+ * the chevron opens a menu". A rule BETWEEN groups claims the two groups belong
+ * together. Using the wrong one of the two is how a control bar ends up looking
+ * like a spreadsheet.
+ */
+@Composable
+fun ControlDivider() {
+    Box(
+        modifier = Modifier
+            .width(1.dp)
+            .height(22.dp)
+            .background(rememberCosmicTokens().Separator)
+    )
+}
+
+/**
  * One call control. Neutral at rest, accent-tinted when engaged, and it grows
  * a little on hover — the entire vocabulary of the call bar in one composable.
  */
@@ -383,7 +440,18 @@ fun CallControlButton(
     active: Boolean = false,
     activeTint: Color? = null,
     size: Dp = 42.dp,
-    iconSize: Dp = 20.dp
+    iconSize: Dp = 20.dp,
+    /**
+     * Renders as a "this is off and you should know it" control: red fill, white
+     * icon.
+     *
+     * Discord colours a muted mic RED rather than just dimming the glyph, because
+     * dimming is how a control that is merely idle looks -- and muted-vs-idle is
+     * exactly the distinction someone on a call most needs to make at a glance.
+     * This was previously carried as `active = !isMuted`, which inverted the
+     * meaning: unmuted rendered as the "highlighted" state and muted as idle.
+     */
+    danger: Boolean = false
 ) {
     val t = rememberCosmicTokens()
     val interaction = remember { MutableInteractionSource() }
@@ -393,15 +461,21 @@ fun CallControlButton(
 
     val bg by animateColorAsState(
         targetValue = when {
+            danger -> t.Danger
             active -> accent.copy(alpha = 0.18f)
             hovered -> t.CardBgHover
-            else -> t.Sunken
+            // Discord's resting button is a mid grey, not the sunken well colour.
+            // On a dark stage a well-coloured button is invisible, which is why the
+            // bar read as a row of floating icons rather than a control bar.
+            else -> t.Elevated
         },
         animationSpec = OrbitMotion.SnappyColor,
         label = "callBtnBg"
     )
     val tint by animateColorAsState(
         targetValue = when {
+            // White on red: a red glyph on a red fill disappears.
+            danger -> Color.White
             active -> accent
             hovered -> t.Text_White
             else -> t.Text_Secondary

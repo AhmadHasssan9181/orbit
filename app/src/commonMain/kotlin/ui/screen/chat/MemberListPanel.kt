@@ -27,9 +27,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -78,12 +80,45 @@ internal fun MemberListPanel(
     ownUserId: String? = null,
     onKickUser: ((String) -> Unit)? = null,
     onBanUser: ((String) -> Unit)? = null,
-    onSetPowerLevel: ((String, Long) -> Unit)? = null
+    onSetPowerLevel: ((String, Long) -> Unit)? = null,
+    onSelectUser: ((OrbitUser) -> Unit)? = null,
+    /**
+     * Non-null while a call is LIVE in this room. The panel then answers "who is
+     * in the call", not "who is in the room": the room roster is a static
+     * membership list that is empty in DMs and unchanged for the whole call, so
+     * a 2-person call rendered `Members 0` next to a live call surface. This
+     * list is already reconciled against the LiveKit room, so it cannot show a
+     * ghost. The header count below reads from the SAME list the rows render,
+     * which is what keeps the badge and the list from disagreeing.
+     */
+    liveCallMembers: List<OrbitUser>? = null
 ) {
     val t = rememberCosmicTokens()
-    val allUsers = members
-    val rolesActive = memberRoles.values.any { it.powerLevel > 0 }
+    val allUsers = liveCallMembers ?: members
     val listState = rememberLazyListState()
+
+    // derivedStateOf, NOT remember(members, memberRoles) { ... }: callers hand us
+    // collections that are frequently SnapshotStateMap / SnapshotStateList
+    // instances, and those implement Map/List WITHOUT overriding equals, so
+    // `remember` keys on REFERENCE IDENTITY — a fresh-but-equal map re-ran the
+    // block on every parent recomposition, and a map mutated IN PLACE never
+    // re-ran it at all. rememberUpdatedState parks the current inputs in a real
+    // MutableState, so reading them inside the derivedStateOf block is a genuine
+    // snapshot read: it re-evaluates on content change and notifies downstream
+    // only when the resulting List actually differs (which also removes the
+    // per-recomposition allocation the three filter/sortedBy passes made).
+    val currentUsers by rememberUpdatedState(allUsers)
+    val currentRoles by rememberUpdatedState(memberRoles)
+    val showRoleSectionsState = remember {
+        derivedStateOf { currentRoles.values.any { it.powerLevel > 0 } }
+    }
+    val sectionsState = remember {
+        derivedStateOf {
+            buildMemberSections(currentUsers, currentRoles, showRoleSectionsState.value)
+        }
+    }
+    val showRoleSections by showRoleSectionsState
+    val sections by sectionsState
 
     Column(
         modifier = Modifier
@@ -94,7 +129,12 @@ internal fun MemberListPanel(
     ) {
         SidePanelHeader(
             icon = ui.icons.OrbitIcons.Members,
-            title = "Members",
+            // "In call" while a call is live, because the list below is the call
+            // roster and not the room membership. A "Members" header over a
+            // participant list is how a 2-person call ended up reading "Members 0".
+            title = if (liveCallMembers != null) "In call" else "Members",
+            // Counted from the SAME list the rows render, so the badge can never
+            // disagree with what is on screen.
             count = allUsers.size
         )
         androidx.compose.material3.HorizontalDivider(color = t.Separator, thickness = 1.dp)
@@ -111,60 +151,62 @@ internal fun MemberListPanel(
                 ),
                 verticalArrangement = Arrangement.spacedBy(1.dp)
             ) {
-                if (rolesActive) {
-                    val admins = allUsers.filter { (memberRoles[it.id]?.powerLevel ?: 0L) >= 100L }
-                        .sortedBy { presenceRank(it.status) }
-                    val mods = allUsers.filter {
-                        val pl = memberRoles[it.id]?.powerLevel ?: 0L
-                        pl in 50..99
-                    }.sortedBy { presenceRank(it.status) }
-                    val plainMembers = allUsers.filter { (memberRoles[it.id]?.powerLevel ?: 0L) < 50L }
-                        .sortedBy { presenceRank(it.status) }
-
-                    if (admins.isNotEmpty()) {
-                        item(key = "section-admin") { MemberSectionLabel("Admins", admins.size) }
-                        items(admins, key = { it.id }) {
-                            MemberItem(it, observePresence, memberRoles[it.id], ownUserId, onKickUser, onBanUser, onSetPowerLevel)
-                        }
+                sections.forEach { section ->
+                    item(key = "section-${section.key}", contentType = "header") {
+                        MemberSectionLabel(section.label, section.users.size)
                     }
-                    if (mods.isNotEmpty()) {
-                        item(key = "section-mods") { MemberSectionLabel("Moderators", mods.size) }
-                        items(mods, key = { it.id }) {
-                            MemberItem(it, observePresence, memberRoles[it.id], ownUserId, onKickUser, onBanUser, onSetPowerLevel)
-                        }
-                    }
-                    if (plainMembers.isNotEmpty()) {
-                        item(key = "section-members") { MemberSectionLabel("Members", plainMembers.size) }
-                        items(plainMembers, key = { it.id }) {
-                            MemberItem(it, observePresence, memberRoles[it.id], ownUserId, onKickUser, onBanUser, onSetPowerLevel)
-                        }
-                    }
-                } else {
-                    val online = allUsers.filter { it.status == UserStatus.ONLINE }
-                    val idle = allUsers.filter { it.status == UserStatus.IDLE }
-                    val dnd = allUsers.filter { it.status == UserStatus.DO_NOT_DISTURB }
-                    val offline = allUsers.filter { it.status == UserStatus.OFFLINE }
-
-                    if (online.isNotEmpty()) {
-                        item(key = "s-online") { MemberSectionLabel("Online", online.size) }
-                        items(online, key = { it.id }) { MemberItem(it, observePresence) }
-                    }
-                    if (idle.isNotEmpty()) {
-                        item(key = "s-idle") { MemberSectionLabel("Idle", idle.size) }
-                        items(idle, key = { it.id }) { MemberItem(it, observePresence) }
-                    }
-                    if (dnd.isNotEmpty()) {
-                        item(key = "s-dnd") { MemberSectionLabel("Do not disturb", dnd.size) }
-                        items(dnd, key = { it.id }) { MemberItem(it, observePresence) }
-                    }
-                    if (offline.isNotEmpty()) {
-                        item(key = "s-offline") { MemberSectionLabel("Offline", offline.size) }
-                        items(offline, key = { it.id }) { MemberItem(it, observePresence) }
+                    items(section.users, key = { it.id }, contentType = { "member" }) { user ->
+                        MemberItem(
+                            user,
+                            observePresence,
+                            if (showRoleSections) currentRoles[user.id] else null,
+                            ownUserId,
+                            onKickUser,
+                            onBanUser,
+                            onSetPowerLevel,
+                            onSelectUser
+                        )
                     }
                 }
             }
             OrbitScrollbar(listState = listState, modifier = Modifier.align(Alignment.CenterEnd))
         }
+    }
+}
+
+/** One heading plus its rows. Built once per roster/role change, not per frame. */
+private class MemberSection(val key: String, val label: String, val users: List<OrbitUser>)
+
+private fun buildMemberSections(
+    members: List<OrbitUser>,
+    memberRoles: Map<String, MemberRoleInfo>,
+    showRoleSections: Boolean
+): List<MemberSection> {
+    if (showRoleSections) {
+        val admins = members.filter { (memberRoles[it.id]?.powerLevel ?: 0L) >= 100L }
+            .sortedBy { presenceRank(it.status) }
+        val mods = members.filter {
+            val pl = memberRoles[it.id]?.powerLevel ?: 0L
+            pl in 50..99
+        }.sortedBy { presenceRank(it.status) }
+        val plainMembers = members.filter { (memberRoles[it.id]?.powerLevel ?: 0L) < 50L }
+            .sortedBy { presenceRank(it.status) }
+        return buildList {
+            if (admins.isNotEmpty()) add(MemberSection("admin", "Admins", admins))
+            if (mods.isNotEmpty()) add(MemberSection("mods", "Moderators", mods))
+            if (plainMembers.isNotEmpty()) add(MemberSection("members", "Members", plainMembers))
+        }
+    }
+
+    val online = members.filter { it.status == UserStatus.ONLINE }
+    val idle = members.filter { it.status == UserStatus.IDLE }
+    val dnd = members.filter { it.status == UserStatus.DO_NOT_DISTURB }
+    val offline = members.filter { it.status == UserStatus.OFFLINE }
+    return buildList {
+        if (online.isNotEmpty()) add(MemberSection("s-online", "Online", online))
+        if (idle.isNotEmpty()) add(MemberSection("s-idle", "Idle", idle))
+        if (dnd.isNotEmpty()) add(MemberSection("s-dnd", "Do not disturb", dnd))
+        if (offline.isNotEmpty()) add(MemberSection("s-offline", "Offline", offline))
     }
 }
 
@@ -247,7 +289,8 @@ private fun MemberItem(
     ownUserId: String? = null,
     onKickUser: ((String) -> Unit)? = null,
     onBanUser: ((String) -> Unit)? = null,
-    onSetPowerLevel: ((String, Long) -> Unit)? = null
+    onSetPowerLevel: ((String, Long) -> Unit)? = null,
+    onSelectUser: ((OrbitUser) -> Unit)? = null
 ) {
     val t = rememberCosmicTokens()
     val liveStatus = rememberLiveStatus(user, observePresence)
@@ -284,7 +327,9 @@ private fun MemberItem(
 
     OrbitListRow(
         title = user.displayName,
-        onClick = {},
+        // Was `onClick = {}`: every row looked strongly interactive and did
+        // nothing. Now the row is only clickable when there is a profile to open.
+        onClick = onSelectUser?.let { open -> { open(user) } },
         height = 40.dp,
         showSelectionBar = false,
         role = null,

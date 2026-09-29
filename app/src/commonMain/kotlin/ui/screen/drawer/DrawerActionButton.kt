@@ -26,32 +26,15 @@ import ui.model.OrbitServer
 import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
 
-/**
- * A prominent action inside the channel drawer ("Invite People", "Roles").
- *
- * These used to be full-width buttons with a permanently coloured icon, which
- * put four equally-loud rows directly under the server name and flattened the
- * hierarchy of the whole drawer.
- */
-@Composable
-internal fun DrawerActionButton(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    text: String,
-    accent: Boolean,
-    onClick: () -> Unit
-) {
-    val t = rememberCosmicTokens()
-    OrbitListRow(
-        title = text,
-        onClick = onClick,
-        height = 32.dp,
-        horizontalPadding = OrbitSpace.sm,
-        accentColor = if (accent) t.Accent else null,
-        selected = false,
-        showSelectionBar = false,
-        leading = OrbitRowLeading(icon = icon)
-    )
-}
+// `DrawerActionButton` used to live in this file: a prominent full-width row for
+// "Invite People" / "Roles & permissions" / "Create a room", drawn straight under
+// the server name. It went unused when those three were moved out of the drawer --
+// Invite now hangs off the server name and Create off the last category header,
+// matching Discord -- which is the change that gave the sidebar its room list
+// back.
+//
+// `InviteDialog` below IS still live (`ChannelDrawer` calls it); only the row
+// helper was dead.
 
 @Composable
 internal fun InviteDialog(server: OrbitServer, onDismiss: () -> Unit) {

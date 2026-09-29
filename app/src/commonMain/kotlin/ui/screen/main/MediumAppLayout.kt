@@ -57,8 +57,6 @@ fun MediumLayout(
 ) {
     val tokens = rememberCosmicTokens()
     val selectedServer = servers.find { it.id == selectedServerId }
-    val isLiteMode = LocalIsLiteMode.current
-    var selectedWhatsAppTab by remember { mutableStateOf("Chats") }
 
     val categories = remember(channels) {
         channels.mapNotNull { it.categoryId }.distinct()
@@ -74,8 +72,6 @@ fun MediumLayout(
             selectedServerId = selectedServerId,
             onServerClick = onServerClick,
             onAddServerClick = onAddServer,
-            selectedWhatsAppTab = selectedWhatsAppTab,
-            onWhatsAppTabClick = { selectedWhatsAppTab = it },
             unreadByServer = unreadByServer,
             modifier = Modifier.width(64.dp).fillMaxHeight()
         )
@@ -95,8 +91,7 @@ fun MediumLayout(
                 onChannelClick = onChannelClick,
                 onOpenSettings = onOpenSettings,
                 onCreateRoomClick = onCreateRoom,
-                onOpenRolesClick = onOpenRoles,
-                selectedWhatsAppTab = if (isLiteMode) selectedWhatsAppTab else ""
+                onOpenRolesClick = onOpenRoles
             )
         }
 

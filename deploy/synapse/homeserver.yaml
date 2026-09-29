@@ -1,0 +1,103 @@
+# Synapse config for a small, private, call-capable server.
+#
+# This is the annotations that matter, layered on top of the config the
+# container generates on first run. The generated file is at ./data/homeserver.yaml
+# after the first `docker compose up`; merge these keys into it (or set the
+# matching SYNAPSE_* environment variables in docker-compose.yml).
+
+# ── Identity ────────────────────────────────────────────────────────────────
+# Must match SERVER_NAME in .env. With Tailscale, use the MagicDNS name.
+server_name: matrix.example.com
+
+# ── Public-facing addresses ─────────────────────────────────────────────────
+# What clients should be told to use. Behind a reverse proxy this is your
+# public origin, NOT localhost.
+public_baseurl: "https://matrix.example.com/"
+
+# ── Listeners ───────────────────────────────────────────────────────────────
+# Defined via SYNAPSE_LISTENERS in docker-compose.yml so the ports, the
+# x_forwarded handling, and the openid resource stay in one place.
+#
+# The `openid` resource on the federation listener is NOT optional for calls:
+# lk-jwt-service uses it to validate the user's OpenID token before issuing a
+# LiveKit access token. Without it, calls fail at token exchange.
+
+# ── Registration ────────────────────────────────────────────────────────────
+# Start closed. Create the first admin by hand:
+#   docker compose exec synapse register_new_matrix_user -u alice -p 'pw' -a
+#
+# Then, for a small private group, a registration token is the sane default —
+# it is not an open server, and Orbit will ask for the token when the server
+# demands one.
+enable_registration: true
+registration_requires_token: true
+registration_shared_secret: "<matches .env>"
+# Synapse's own docs call open registration a known spam vector. If you do turn
+# it off, be aware it is reachable by anyone on the internet.
+
+# ── Federation ──────────────────────────────────────────────────────────────
+# For a purely private server, no federated peers:
+#   federation_domain_whitelist: []
+# ...and you can then drop the 8448 listener from docker-compose.yml entirely.
+# The trade-off is that nobody outside your server can invite you to their
+# rooms, and you cannot invite them.
+#
+# federation_domain_whitelist: []
+
+# ── MatrixRTC / calls ───────────────────────────────────────────────────────
+# Three experimental features are required. Without them Synapse rejects the
+# m.call.* / MSC3401 state events and no call ever forms.
+experimental_features:
+  msc3266_enabled: true     # MSC3401 / MatrixRTC state events
+  msc4143_enabled: true     # the rtc_foci well-known key Orbit reads
+  msc4222_enabled: true     # newer MatrixRTC transport plumbing
+
+# Delayed events back the call-membership lifecycle. Without a raised budget,
+# membership PUTs are rejected and peers never see each other join.
+max_event_delay_duration: "24h"
+
+rc_message:
+  per_second: 10
+  burst_count: 5000
+
+rc_delayed_event_mgmt:
+  per_second: 10
+  burst_count: 5000
+
+# Tell clients where the SFU is. Orbit reads this from
+# /.well-known/matrix/client on the ORIGIN ROOT (not the base URL).
+#
+# Either publish it here, or serve the file from your reverse proxy. See
+# ../README.md, "Wiring the call stack into Synapse".
+extra_well_known_client_content:
+  "org.matrix.msc4143.rtc_foci":
+    - type: livekit
+      livekit_service_url: "https://livekit.example.com"
+
+# ── Encryption ─────────────────────────────────────────────────────────────
+# Required. Orbit's calls are E2EE; a server without this cannot carry them.
+enable_encryption: true
+
+# ── Media ──────────────────────────────────────────────────────────────────
+# The 100MB default is fine for images but will reject most video Orbit sends
+# during a screen share.
+max_upload_size: 200M
+media_store_path: "/data/media"
+media_repository:
+  backend: "file"
+  file_system_folder: "/data/media"
+
+# ── Logging ─────────────────────────────────────────────────────────────────
+log_config: "/data/log.config"
+
+# ── TURN ────────────────────────────────────────────────────────────────────
+# Orbit also asks the homeserver for TURN servers. If you run coturn (the
+# compose file in the parent directory does), advertise it here so clients get
+# a relay even when direct connections fail:
+#
+# turn_uris:
+#   - "turn:livekit.example.com:3478?transport=udp"
+#   - "turn:livekit.example.com:3478?transport=tcp"
+#   - "turns:livekit.example.com:5349"
+# turn_shared_secret: "<matches deploy/coturn/turnserver.conf static-auth-secret>"
+# turn_allow_guests: true

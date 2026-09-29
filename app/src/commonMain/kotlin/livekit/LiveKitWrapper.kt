@@ -19,6 +19,14 @@ expect fun setLiveKitReconnectedListener(listener: (() -> Unit)?)
 
 expect fun disconnectFromLiveKit(userInitiated: Boolean)
 
+/**
+ * Disconnects AND releases the native session, so the next account starts with
+ * no inherited state. Distinct from [disconnectFromLiveKit], which ends the
+ * call but leaves the native session (and its E2EE key map and per-participant
+ * gains) alive.
+ */
+expect fun releaseNativeLiveKitSession()
+
 // Deafen: mute mixed playback output while keeping the mic publishing
 expect fun setLiveKitPlaybackMuted(muted: Boolean)
 

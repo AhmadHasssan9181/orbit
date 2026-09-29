@@ -2,46 +2,7 @@ package ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-import ui.screen.auth.*
-import ui.screen.settings.*
-import ui.screen.drawer.*
-import ui.screen.server.*
-import ui.screen.call.*
-import ui.screen.media.*
-import ui.screen.main.*
 
-
-data class OverridableColourScheme(
-    val primary: Int? = null,
-    val onPrimary: Int? = null,
-    val primaryContainer: Int? = null,
-    val onPrimaryContainer: Int? = null,
-    val inversePrimary: Int? = null,
-    val secondary: Int? = null,
-    val onSecondary: Int? = null,
-    val secondaryContainer: Int? = null,
-    val onSecondaryContainer: Int? = null,
-    val tertiary: Int? = null,
-    val onTertiary: Int? = null,
-    val tertiaryContainer: Int? = null,
-    val onTertiaryContainer: Int? = null,
-    val background: Int? = null,
-    val onBackground: Int? = null,
-    val surface: Int? = null,
-    val onSurface: Int? = null,
-    val surfaceVariant: Int? = null,
-    val onSurfaceVariant: Int? = null,
-    val surfaceTint: Int? = null,
-    val inverseSurface: Int? = null,
-    val inverseOnSurface: Int? = null,
-    val error: Int? = null,
-    val onError: Int? = null,
-    val errorContainer: Int? = null,
-    val onErrorContainer: Int? = null,
-    val outline: Int? = null,
-    val outlineVariant: Int? = null,
-    val scrim: Int? = null
-)
 
 /**
  * Material colour roles for both schemes.
@@ -129,8 +90,8 @@ object Colour {
     val SurfaceContainerHighestDark = Ink650  // popovers, menus, hover
 }
 
-val Color_GradientStart = Iris600
-val Color_GradientMid = Iris400
-val Color_SuccessGreen = Sage500
-val Color_WarningAmber = Amber500
-val Color_DNDRed = Rust500
+// The five `Color_*` aliases that used to sit here (GradientStart, GradientMid,
+// SuccessGreen, WarningAmber, DNDRed) were removed: zero references anywhere in
+// app/src. They were leftovers from an earlier Element-derived palette, and every
+// call site had migrated to the `*Dark`/`*Light` roles in `object Colour` or to the
+// semantic tokens.

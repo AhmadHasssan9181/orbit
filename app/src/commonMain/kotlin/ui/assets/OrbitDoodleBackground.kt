@@ -17,7 +17,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.unit.dp
 import ui.theme.LocalActiveTheme
-import ui.theme.LocalIsLiteMode
 import ui.theme.Theme
 
 /**
@@ -50,7 +49,10 @@ enum class OrbitDoodleWallpaper(
     Dark04("dark-04", "Moss", Color(0xFF141A17), Color(0xFF7BA05B)),
 
     Light01("light-01", "Sand", Color(0xFFFAFBFC), Color(0xFFC08A5E)),
-    Light02("light-02", "Paper", Color(0xFFFFFFFF), Color(0xFFB4BCC9)),
+    // Not patterned: this is the Light theme's auto default, so a pattern here
+    // was drawn behind every message of every light-theme room — contradicting
+    // the "default draws no pattern" rule this file states at the top.
+    Light02("light-02", "Paper", Color(0xFFFFFFFF), Color(0xFFB4BCC9), patterned = false),
     Light03("light-03", "Clay", Color(0xFFF7F8FA), Color(0xFFBF6A60)),
     Light04("light-04", "Ice", Color(0xFFFAFBFC), Color(0xFF5C87C4)),
 
@@ -72,6 +74,12 @@ enum class OrbitDoodleWallpaper(
 
 val OrbitDoodleWallpaperOptions: List<String> = listOf("Auto") + OrbitDoodleWallpaper.entries.map { it.label }
 
+/** True when this wallpaper's canvas is light, so it only suits a light theme. */
+fun orbitDoodleWallpaperIsLight(id: String): Boolean =
+    OrbitDoodleWallpaper.entries.firstOrNull { it.id == id }?.background?.let {
+        (0.299f * it.red + 0.587f * it.green + 0.114f * it.blue) > 0.5f
+    } ?: false
+
 fun orbitDoodleWallpaperLabelForId(id: String): String {
     if (id == "auto") return "Auto"
     return OrbitDoodleWallpaper.entries.firstOrNull { it.id == id }?.label ?: "Auto"
@@ -89,7 +97,7 @@ private fun resolvedOrbitDoodleWallpaper(selectedId: String): OrbitDoodleWallpap
     return when (LocalActiveTheme.current) {
         Theme.Light -> OrbitDoodleWallpaper.Light02
         Theme.Amoled -> OrbitDoodleWallpaper.Amoled01
-        else -> if (LocalIsLiteMode.current) OrbitDoodleWallpaper.Dark02 else OrbitDoodleWallpaper.Plain
+        else -> OrbitDoodleWallpaper.Plain
     }
 }
 

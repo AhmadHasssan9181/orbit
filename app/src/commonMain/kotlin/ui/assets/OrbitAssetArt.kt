@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -157,7 +158,9 @@ fun OrbitDefaultAvatar(
         }
         Text(
             text = initialsFor(label),
-            color = Color.White,
+            // Bare Color.White over the seed circle: unreadable when the seed
+            // colour is light. Picked from the circle's own luminance instead.
+            color = if (accent.luminance() > 0.55f) Color(0xFF14161B) else Color.White,
             textAlign = TextAlign.Center,
             style = MaterialTheme.typography.labelMedium.copy(
                 fontWeight = FontWeight.ExtraBold,

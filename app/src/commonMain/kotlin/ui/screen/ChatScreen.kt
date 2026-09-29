@@ -16,6 +16,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -47,11 +48,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import ui.components.OrbitEmptyState
 import ui.components.OrbitIconButton
 import ui.components.OrbitScrollbar
 import ui.components.OrbitSearchField
+import ui.icons.OrbitIcons
 import ui.layout.LocalWindowSizeClass
 import ui.model.ChannelType
 import ui.model.OrbitChannel
@@ -102,6 +105,16 @@ fun ChatScreen(
     onDeleteMessage: ((String) -> Unit)? = null,
     onTogglePin: ((String) -> Unit)? = null,
     onSendReply: ((String, String) -> Unit)? = null,
+    /**
+     * Called with the original text when a send fails, so the composer can put
+     * it back.
+     *
+     * Needed because [MessageInputBar] clears itself synchronously the moment
+     * `onSend` fires, and `onSend` launches a coroutine — so the field cannot
+     * wait for an outcome. Without a way to push the text back, a send that
+     * fails to reach the homeserver destroys the message outright.
+     */
+    onSendFailed: ((String) -> Unit)? = null,
     memberRoles: Map<String, repository.MemberRoleInfo> = emptyMap(),
     onKickUser: ((String) -> Unit)? = null,
     onBanUser: ((String) -> Unit)? = null,
@@ -119,32 +132,125 @@ fun ChatScreen(
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val reduceMotion = ui.theme.LocalReduceMotion.current
 
-    val callState by (callManager?.callState?.collectAsState(initial = webrtc.CallState.IDLE)
-        ?: remember { mutableStateOf(webrtc.CallState.IDLE) })
-    val isGroupCall by (callManager?.isGroupCall?.collectAsState(initial = false)
-        ?: remember { mutableStateOf(false) })
-    val activeRoomId by (callManager?.activeRoomIdFlow?.collectAsState(initial = null)
-        ?: remember { mutableStateOf<String?>(null) })
+    // Each of these used to be `callManager?.x?.collectAsState(...) ?:
+    // remember { mutableStateOf(...) }`, which changes the number of remembered
+    // slots whenever callManager flips between null and non-null. Hoisting the
+    // flow into a single remember keeps the slot count fixed.
+    val callStateFlow = remember(callManager) {
+        callManager?.callState ?: flowOf(webrtc.CallState.IDLE)
+    }
+    val isGroupCallFlow = remember(callManager) {
+        callManager?.isGroupCall ?: flowOf(false)
+    }
+    val activeRoomIdFlow = remember(callManager) {
+        callManager?.activeRoomIdFlow ?: flowOf<String?>(null)
+    }
+    val callState by callStateFlow.collectAsState(initial = webrtc.CallState.IDLE)
+    val isGroupCall by isGroupCallFlow.collectAsState(initial = false)
+    val activeRoomId by activeRoomIdFlow.collectAsState(initial = null)
+    // Reconciled (LiveKit ∩ Matrix) participant roster for the panel. Collected
+    // here — rather than inside MemberListPanel — so the null-vs-empty decision
+    // ("is a call live?" vs "is the call empty?") stays at the one place that
+    // already knows both.
+    val displayCallMembersFlow = remember(callManager) {
+        callManager?.displayCallMembers ?: flowOf(emptyList())
+    }
+    val liveCallRoster by displayCallMembersFlow.collectAsState(emptyList())
+    // Whether the user has pushed the call aside to read the room. Owned by
+    // CallManager so the drawer's room row and its Voice row can both reach it
+    // without this screen having to expose an event up to the layout.
+    val callSurfaceCollapsedFlow = remember(callManager) {
+        callManager?.callSurfaceCollapsed ?: flowOf(false)
+    }
+    val callSurfaceCollapsed by callSurfaceCollapsedFlow.collectAsState(initial = false)
     val isCallActiveInRoom = (activeRoomId == channel.id || activeRoomId == channel.matrixRoomId) &&
         callState != webrtc.CallState.IDLE &&
         callState != webrtc.CallState.ENDED
-    val showVoiceChannelUi = channel.type == ChannelType.VOICE && windowSize.isExpanded
+    // True only when THIS room is the one in the call. A call elsewhere must not
+    // displace the room you are reading.
+    //
+    // Hoisted to function scope because it drives BOTH columns now: the main
+    // column decides whether the call surface renders, and the side-panel `when`
+    // needs the same predicate to decide whether the panel holds the timeline.
+    // It was previously computed *inside* the main column, where the side panel
+    // could not see it.
+    val callHere = isCallActiveInRoom && isGroupCall && callManager != null
+    // Whether the call gets the main column to itself and the timeline moves
+    // into the side panel, or the two stack in one column.
+    //
+    // The panel is a fixed 380dp, so below ~600dp the call would be left with
+    // less than the drawer and neither would be usable; on a phone-width window
+    // they stack instead. The Members and Pins panels gate on `isExpanded` for
+    // the same reason -- but a call cannot, because unlike them you cannot do
+    // without it while it is live. Hence `isMediumOrLarger`, not the stricter
+    // test.
+    //
+    // `callSurfaceCollapsed` is the user's choice to read the room instead. The
+    // call stays live either way; it just moves to the status pill, which is
+    // where it was before this layout existed.
+    val callOwnsMainColumn =
+        callHere && windowSize.isMediumOrLarger && !callSurfaceCollapsed
+    // A room opens as a ROOM.
+    //
+    // This used to be `channel.type == ChannelType.VOICE && windowSize.isExpanded`,
+    // so opening a room that happened to be typed VOICE skipped the timeline
+    // entirely and rendered `VoiceChannelScreen` instead. Combined with
+    // join-on-open, clicking a room in the drawer dropped you straight into a
+    // call: two rooms called "General" and "general", both typed VOICE, both
+    // unreachable as chat. Reported with screenshots, twice.
+    //
+    // The type is not a reason to hide a room's messages. A Matrix room has a
+    // timeline whether or not it also has call state, and Element shows you the
+    // timeline first and offers the call. So: the call surface takes over only
+    // when you are actually in a call, and joining is always a deliberate act.
+    val showVoiceChannelUi = false
 
-    var pendingGroupJoinCallId by remember(channel.id) { mutableStateOf<String?>(null) }
+    // `pendingGroupJoinCallId` used to live here, guarding the in-room "join call"
+    // banner against a double click. The banner is gone -- the drawer's `Voice` row
+    // is the only entry point to a call now -- so the guard went with it. Leaving it
+    // behind would have been a `var` written in one place and cleared in another
+    // with no reader in between.
     var searchActive by remember(channel.id) { mutableStateOf(false) }
     var searchQuery by remember(channel.id) { mutableStateOf("") }
     var pinsActive by remember(channel.id) { mutableStateOf(false) }
     var replyingTo by remember(channel.id) { mutableStateOf<OrbitMessage?>(null) }
+    // Set by the screen above when a send fails, so the composer can hand the
+    // message back instead of the user losing it. Keyed on channel so a draft
+    // from #general cannot appear in #random.
+    var failedDraft by remember(channel.id) { mutableStateOf<String?>(null) }
+    // The header's Members button drives this; the panel itself is still gated
+    // on the user setting and the window being wide enough to show it.
+    var memberPanelOpen by remember(channel.id) { mutableStateOf(true) }
+    val memberPanelAvailable = ui.theme.LocalShowMemberList.current && windowSize.isExpanded
+    // Opened by tapping a row in the member list. Kept separate from
+    // `directProfile` (which only exists for DMs) so a group-room member can be
+    // inspected without pretending they are the room.
+    var memberProfile by remember(channel.id) { mutableStateOf<OrbitUser?>(null) }
+    val shownProfile = memberProfile ?: directProfile
+    // Null when the layout or the setting means there is no panel to show, so the
+    // header hides the Members button instead of toggling invisible state.
+    val memberPanelToggle: (() -> Unit)? = if (memberPanelAvailable) {
+        {
+            // Clear a selected member when the button is pressed.
+            //
+            // This button used to toggle `memberPanelOpen` and nothing else, but
+            // a non-null `memberProfile` outranks it in the panel switch below —
+            // so pressing it while a profile was open appeared to do nothing at
+            // all. That is one of the two ways the panel became a one-way door;
+            // it is also the affordance people reach for first, so it has to
+            // work.
+            if (memberProfile != null) memberProfile = null
+            memberPanelOpen = !memberPanelOpen
+        }
+    } else {
+        null
+    }
 
     val displayMessages = if (searchActive && searchQuery.isNotBlank()) {
         val q = searchQuery.trim()
         messages.filter { it.body.contains(q, ignoreCase = true) || it.username.contains(q, ignoreCase = true) }
     } else {
         messages
-    }
-
-    androidx.compose.runtime.LaunchedEffect(callState, activeRoomId) {
-        if (callState != webrtc.CallState.CONNECTING) pendingGroupJoinCallId = null
     }
 
     Row(
@@ -164,6 +270,8 @@ fun ChatScreen(
                     onToggleSearch = { searchActive = !searchActive },
                     pinsActive = pinsActive,
                     onTogglePins = { pinsActive = !pinsActive },
+                    memberListActive = memberPanelOpen,
+                    onToggleMemberList = memberPanelToggle,
                     notifMode = notifMode,
                     onCycleNotificationMode = onCycleNotificationMode
                 )
@@ -194,130 +302,90 @@ fun ChatScreen(
                 }
 
                 if (showVoiceChannelUi) {
-                    VoiceChannelScreen(
-                        callManager = callManager!!,
-                        matrixRepository = repository as repository.MatrixOrbitRepository,
-                        channel = channel,
-                        modifier = Modifier.weight(1f).fillMaxWidth()
-                    )
-                } else if (isCallActiveInRoom && isGroupCall && callManager != null) {
-                    LiveKitGroupCallSurface(
-                        callManager = callManager,
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
-                        remoteFallbackName = channel.name
-                    )
-                } else {
-                    if (activeGroupCallUrl != null) {
-                        GroupCallBanner(
-                            url = activeGroupCallUrl,
-                            roomId = channel.id,
-                            onJoinCall = { url ->
-                                val matrixRepository = repository as? repository.MatrixOrbitRepository
-                                if (matrixRepository == null) {
-                                    println("ERROR [ChatScreen] Cannot join MatrixRTC call inside Orbit; missing Matrix repository for $url")
-                                } else if (pendingGroupJoinCallId != null || callState == webrtc.CallState.CONNECTING) {
-                                    println("DEBUG [ChatScreen] Ignoring duplicate MatrixRTC join click")
-                                } else {
-                                    pendingGroupJoinCallId = "resolving"
-                                    scope.launch {
-                                        try {
-                                            val resolved = matrixRepository.resolveGroupCallJoinTarget(channel.matrixRoomId)
-                                            val parsed = parseGroupCallJoinTarget(
-                                                url = url,
-                                                fallbackLiveKitUrl = matrixRepository.context.effectiveLiveKitServiceUrl()
-                                            )
-                                            val callId = resolved.callId ?: parsed.callId
-                                            val livekitUrl = resolved.serviceUrl ?: parsed.livekitUrl
-                                            if (livekitUrl.isNullOrBlank()) {
-                                                println("ERROR [ChatScreen] No LiveKit URL available for $url")
-                                                return@launch
-                                            }
-                                            pendingGroupJoinCallId = callId
-                                            callManager?.joinGroupCall(channel.matrixRoomId, callId, false, livekitUrl) {
-                                                matrixRepository.fetchLiveKitToken(channel.matrixRoomId, callId, livekitUrl)
-                                            }
-                                        } finally {
-                                            if (pendingGroupJoinCallId == "resolving") pendingGroupJoinCallId = null
-                                        }
-                                    }
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth().padding(OrbitSpace.lg),
-                            enabled = pendingGroupJoinCallId == null && callState != webrtc.CallState.CONNECTING,
-                            joining = pendingGroupJoinCallId != null || callState == webrtc.CallState.CONNECTING
+                    // `repository` is nullable and may be a non-Matrix
+                    // implementation; the previous `as MatrixOrbitRepository`
+                    // plus `callManager!!` crashed the whole room on open.
+                    val voiceCallManager = callManager
+                    val matrixRepository = repository as? repository.MatrixOrbitRepository
+                    if (voiceCallManager != null && matrixRepository != null) {
+                        VoiceChannelScreen(
+                            callManager = voiceCallManager,
+                            matrixRepository = matrixRepository,
+                            channel = channel,
+                            modifier = Modifier.weight(1f).fillMaxWidth()
                         )
+                    } else {
+                        VoiceChannelUnavailable()
                     }
-
-                    Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                        MessageList(
-                            messages = displayMessages,
-                            currentUser = currentUser,
-                            isLoading = isLoadingMessages,
-                            modifier = Modifier.fillMaxSize(),
-                            firstUnreadId = firstUnreadId,
-                            onSeen = onSeen,
-                            onReact = onReact,
-                            onEditMessage = onEditMessage,
-                            onDeleteMessage = onDeleteMessage,
-                            onTogglePin = onTogglePin,
-                            onReply = { id -> replyingTo = messages.firstOrNull { it.id == id } }
-                        )
-
-                        // Typing indicator: a small, quiet, self-clearing pill.
-                        if (typingUsers.isNotEmpty()) {
-                            val typingNames = typingUsers.map { id ->
-                                members.firstOrNull { it.id == id || id.startsWith(it.id) }?.displayName
-                                    ?.takeIf { it.isNotBlank() }
-                                    ?: id.substringBefore(':').ifBlank { id }
-                            }
-                            val typingText = when {
-                                typingNames.size == 1 -> "${typingNames[0]} is typing…"
-                                typingNames.size == 2 -> "${typingNames[0]} and ${typingNames[1]} are typing…"
-                                else -> "Several people are typing…"
-                            }
-                            Box(
+                } else {
+                    // Chat in the main column, and a live call takes it over.
+                    //
+                    // Three layouts have been tried here across two days — call
+                    // stacked above chat at 55/45, then call in the side panel with
+                    // chat in the main column. This is the third and it is the
+                    // one that holds: a call is the thing you look at while you are
+                    // in it, and the timeline is the thing you glance at, so the
+                    // call gets the wide centre and the timeline keeps a readable
+                    // column on the right.
+                    Column(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        // Only when a call is live IN THIS ROOM. A call elsewhere
+                        // must not displace the room you are reading.
+                        if (callHere) {
+                            LiveKitGroupCallSurface(
+                                callManager = callManager!!,
+                                // Full height when the timeline is not underneath.
+                                // When the window is too narrow to give the chat its
+                                // own panel, the two stack and the call takes 55% --
+                                // see `callOwnsMainColumn`.
                                 modifier = Modifier
-                                    .align(Alignment.BottomStart)
-                                    .padding(start = OrbitSpace.lg, bottom = OrbitSpace.sm)
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .clip(OrbitRadius.pillShape)
-                                        .background(t.Elevated)
-                                        .padding(horizontal = OrbitSpace.md, vertical = 5.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(OrbitSpace.sm)
-                                ) {
-                                    TypingDots()
-                                    Text(
-                                        text = typingText,
-                                        style = MaterialTheme.typography.labelSmall.copy(
-                                            color = t.Text_Muted,
-                                            fontSize = 11.sp
-                                        ),
-                                        maxLines = 1
-                                    )
+                                    .weight(if (callOwnsMainColumn) 1f else 0.55f)
+                                    .fillMaxWidth(),
+                                remoteFallbackName = channel.name
+                            )
+                        }
+
+                        // The timeline. Suppressed when the call has the main column
+                        // to itself, because then it is rendered in the side panel
+                        // instead -- not skipped, moved. Exactly one copy of the
+                        // timeline is composed at any moment.
+                        if (!callOwnsMainColumn) {
+                            ChatTimeline(
+                                modifier = Modifier.weight(1f),
+                                channel = channel,
+                                displayMessages = displayMessages,
+                                messages = messages,
+                                members = members,
+                                currentUser = currentUser,
+                                typingUsers = typingUsers,
+                                isLoadingMessages = isLoadingMessages,
+                                firstUnreadId = firstUnreadId,
+                                directProfile = directProfile,
+                                replyingTo = replyingTo,
+                                failedDraft = failedDraft,
+                                onSeen = onSeen,
+                                onReact = onReact,
+                                onEditMessage = onEditMessage,
+                                onDeleteMessage = onDeleteMessage,
+                                onTogglePin = onTogglePin,
+                                onSend = onSend,
+                                onSendReply = onSendReply,
+                                onSendAttachment = onSendAttachment,
+                                onTyping = onTyping,
+                                onReply = { id -> replyingTo = messages.firstOrNull { it.id == id } },
+                                onCancelReply = { replyingTo = null },
+                                onDraftRestored = { failedDraft = null },
+                                onMentionUser = { userId ->
+                                    // Resolve the mention to a real member where we can;
+                                    // otherwise there is no profile to open.
+                                    members.firstOrNull {
+                                        it.id == userId ||
+                                            it.id.endsWith(userId) ||
+                                            userId.endsWith(it.id)
+                                    }?.let { memberProfile = it }
                                 }
-                            }
+                            )
                         }
                     }
-
-                    MessageInputBar(
-                        placeholder = directProfile?.let { "Message @${it.displayName}" } ?: "Message #${channel.name}",
-                        onSend = { body ->
-                            val target = replyingTo
-                            if (target != null && onSendReply != null) {
-                                onSendReply(target.id, body)
-                                replyingTo = null
-                            } else {
-                                onSend(body)
-                            }
-                        },
-                        onSendAttachment = onSendAttachment,
-                        onTyping = onTyping,
-                        onCancelReply = { replyingTo = null },
-                        replyPreview = replyingTo?.let { ReplyPreview(it.username, it.body) }
-                    )
                 }
             }
 
@@ -325,9 +393,18 @@ fun ChatScreen(
             if (!showVoiceChannelUi) {
                 AnimatedContent(
                     targetState = when {
-                        directProfile != null && windowSize.isExpanded -> 0
+                        // A live call displaces the side panel to hold the chat.
+                        //
+                        // This is the one case where the panel slot is not
+                        // optional. Members, pins and a profile are all things you
+                        // open deliberately and can close again; the timeline
+                        // during a call is not a thing you open, and putting it
+                        // behind a Members toggle means the conversation is
+                        // unreachable for exactly as long as the call lasts.
+                        callOwnsMainColumn -> 3
+                        shownProfile != null && windowSize.isExpanded -> 0
                         pinsActive -> 1
-                        ui.theme.LocalShowMemberList.current && windowSize.isExpanded -> 2
+                        memberPanelAvailable && memberPanelOpen -> 2
                         else -> -1
                     },
                     transitionSpec = {
@@ -352,7 +429,18 @@ fun ChatScreen(
                     label = "sidePanel"
                 ) { panel ->
                     when (panel) {
-                        0 -> directProfile?.let { DirectProfilePanel(it) }
+                        // Call buttons need a ROOM id, not a user id, so they are
+                        // only offered when this profile really is a DM.
+                        0 -> shownProfile?.let {
+                            DirectProfilePanel(
+                                user = it,
+                                callRoomId = if (directProfile != null) channel.id else null,
+                                // A DM profile is the room itself, so there is
+                                // nothing to go "back" to — only a member-list
+                                // profile can be dismissed.
+                                onClose = if (directProfile != null) null else { { memberProfile = null } }
+                            )
+                        }
                         1 -> PinnedMessagesPanel(
                             pinned = messages.filter { it.isPinned },
                             canUnpin = onTogglePin != null,
@@ -365,13 +453,258 @@ fun ChatScreen(
                             ownUserId = currentUser?.id,
                             onKickUser = onKickUser,
                             onBanUser = onBanUser,
-                            onSetPowerLevel = onSetPowerLevel
+                            onSetPowerLevel = onSetPowerLevel,
+                            onSelectUser = { memberProfile = it },
+                            // While a call is live in this room the panel is "who is
+                            // in the call". Passing the room roster instead is what
+                            // made a live 2-person call read `Members 0`: the room
+                            // list is empty in DMs and static for the whole call.
+                            //
+                            // Unreachable while `callHere` — branch 3 holds the
+                            // slot then — but kept correct so the panel is right
+                            // the moment the call ends.
+                            liveCallMembers = if (isCallActiveInRoom && isGroupCall) {
+                                liveCallRoster
+                            } else {
+                                null
+                            }
                         )
+                        // The room's timeline, in the panel, while the call owns
+                        // the main column. Same composable as the main column's —
+                        // one definition, two placements, so the two can never
+                        // drift apart in behaviour.
+                        3 -> ChatSidePanel(
+                            channel = channel,
+                            liveCallRosterSize = liveCallRoster.size,
+                            modifier = Modifier.width(OrbitMetrics.callChatPanelWidth)
+                        ) {
+                            ChatTimeline(
+                                modifier = Modifier.weight(1f),
+                                channel = channel,
+                                displayMessages = displayMessages,
+                                messages = messages,
+                                members = members,
+                                currentUser = currentUser,
+                                typingUsers = typingUsers,
+                                isLoadingMessages = isLoadingMessages,
+                                firstUnreadId = firstUnreadId,
+                                directProfile = directProfile,
+                                replyingTo = replyingTo,
+                                failedDraft = failedDraft,
+                                onSeen = onSeen,
+                                onReact = onReact,
+                                onEditMessage = onEditMessage,
+                                onDeleteMessage = onDeleteMessage,
+                                onTogglePin = onTogglePin,
+                                onSend = onSend,
+                                onSendReply = onSendReply,
+                                onSendAttachment = onSendAttachment,
+                                onTyping = onTyping,
+                                onReply = { id -> replyingTo = messages.firstOrNull { it.id == id } },
+                                onCancelReply = { replyingTo = null },
+                                onDraftRestored = { failedDraft = null },
+                                onMentionUser = { userId ->
+                                    members.firstOrNull {
+                                        it.id == userId ||
+                                            it.id.endsWith(userId) ||
+                                            userId.endsWith(it.id)
+                                    }?.let { memberProfile = it }
+                                }
+                            )
+                        }
                         else -> Box(Modifier.fillMaxSize())
                     }
                 }
             }
         }
+    }
+}
+
+/**
+ * The room's message timeline, composer and typing pill.
+ *
+ * ## Why this is a top-level composable and not inline
+ *
+ * It renders in two places: the main column when no call is live, and the
+ * side panel when a call has the main column. That means the body had to be
+ * lifted out of the column.
+ *
+ * The first two attempts at this lift declared the composable **inside** the
+ * `else` branch of the layout `if`. A declaration inside a branch is scoped to
+ * that branch, so the side-panel call site could not see it — the second
+ * attempt failed to compile, and the fix that shipped alongside it was a
+ * placeholder rather than a working layout. Declaring it at file level, as it
+ * is here, means there is exactly one definition and it is in scope everywhere
+ * in the file. If you are moving this, keep it at file level.
+ *
+ * ## One copy at a time
+ *
+ * The caller must render this in at most one place per composition. The main
+ * column and the side panel are gated on opposite sides of the same
+ * `callOwnsMainColumn` predicate, so exactly one is composed. Two live copies
+ * would mean two `LazyColumn`s over one message list and two composers fighting
+ * over one draft.
+ */
+@Composable
+private fun ChatTimeline(
+    channel: OrbitChannel,
+    displayMessages: List<OrbitMessage>,
+    messages: List<OrbitMessage>,
+    members: List<OrbitUser>,
+    currentUser: OrbitUser?,
+    typingUsers: List<String>,
+    isLoadingMessages: Boolean,
+    firstUnreadId: String?,
+    directProfile: OrbitUser?,
+    replyingTo: OrbitMessage?,
+    failedDraft: String?,
+    onSeen: (String) -> Unit,
+    onReact: ((String, String) -> Unit)?,
+    onEditMessage: ((String, String) -> Unit)?,
+    onDeleteMessage: ((String) -> Unit)?,
+    onTogglePin: ((String) -> Unit)?,
+    onSend: (String) -> Unit,
+    onSendReply: ((String, String) -> Unit)?,
+    onSendAttachment: ((ByteArray, String, String) -> Unit)?,
+    onTyping: (Boolean) -> Unit,
+    onReply: (String) -> Unit,
+    onCancelReply: () -> Unit,
+    onDraftRestored: () -> Unit,
+    onMentionUser: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val t = rememberCosmicTokens()
+    Column(modifier = modifier.fillMaxWidth()) {
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            MessageList(
+                messages = displayMessages,
+                currentUser = currentUser,
+                isLoading = isLoadingMessages,
+                modifier = Modifier.fillMaxSize(),
+                firstUnreadId = firstUnreadId,
+                onSeen = onSeen,
+                onReact = onReact,
+                onEditMessage = onEditMessage,
+                onDeleteMessage = onDeleteMessage,
+                onTogglePin = onTogglePin,
+                onReply = onReply,
+                onMentionUser = onMentionUser
+            )
+
+            // Typing indicator: a small, quiet, self-clearing pill.
+            if (typingUsers.isNotEmpty()) {
+                val typingNames = typingUsers.map { id ->
+                    members.firstOrNull { it.id == id || id.startsWith(it.id) }?.displayName
+                        ?.takeIf { it.isNotBlank() }
+                        ?: id.substringBefore(':').ifBlank { id }
+                }
+                val typingText = when {
+                    typingNames.size == 1 -> "${typingNames[0]} is typing…"
+                    typingNames.size == 2 -> "${typingNames[0]} and ${typingNames[1]} are typing…"
+                    else -> "Several people are typing…"
+                }
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(start = OrbitSpace.lg, bottom = OrbitSpace.sm)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .clip(OrbitRadius.pillShape)
+                            .background(t.Elevated)
+                            .padding(horizontal = OrbitSpace.md, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(OrbitSpace.sm)
+                    ) {
+                        TypingDots()
+                        Text(
+                            text = typingText,
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = t.Text_Muted,
+                                fontSize = 11.sp
+                            ),
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+        }
+
+        MessageInputBar(
+            channelId = channel.id,
+            placeholder = directProfile?.let { "Message @${it.displayName}" } ?: "Message #${channel.name}",
+            onSend = { body ->
+                val target = replyingTo
+                if (target != null && onSendReply != null) {
+                    onSendReply(target.id, body)
+                    onCancelReply()
+                } else {
+                    onSend(body)
+                }
+            },
+            onSendAttachment = onSendAttachment,
+            onTyping = onTyping,
+            onCancelReply = onCancelReply,
+            replyPreview = replyingTo?.let { ReplyPreview(it.username, it.body) },
+            // A failed send must put the message back. See
+            // MessageInputBar.draftToRestore.
+            draftToRestore = failedDraft,
+            onDraftRestored = onDraftRestored
+        )
+    }
+}
+
+/**
+ * The timeline in the side panel, for while a call owns the main column.
+ *
+ * Chrome matches the other panels so the slot slides between them rather than
+ * restacking, and the header states what the window is currently prioritising:
+ * the call is in the middle, this is the conversation you keep alongside it.
+ */
+@Composable
+private fun ChatSidePanel(
+    channel: OrbitChannel,
+    liveCallRosterSize: Int,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    val t = rememberCosmicTokens()
+    Column(
+        modifier = modifier
+            .fillMaxHeight()
+            .background(t.Members_Bg)
+            .border(1.dp, t.Separator)
+    ) {
+        SidePanelHeader(
+            icon = OrbitIcons.TextChannel,
+            title = "#${channel.name}",
+            // The participant count belongs to the call, and the call is not in
+            // this panel any more. Showing it here would be answering a question
+            // the user is not looking at.
+            count = null,
+            subtitle = if (liveCallRosterSize > 0) "$liveCallRosterSize in call" else null
+        )
+        HorizontalDivider(color = t.Separator, thickness = 1.dp)
+        content()
+    }
+}
+
+/**
+ * Shown instead of the voice surface when the call stack is not wired up. The
+ * previous code reached for `callManager!!` and a hard cast, so opening a voice
+ * room in a non-Matrix session took the whole window down.
+ */
+@Composable
+private fun VoiceChannelUnavailable() {
+    val t = rememberCosmicTokens()
+    // fillMaxSize, not weight: this is a sibling of the voice panel rather than
+    // a child of a Row/Column, so there is no parent weight to take.
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text(
+            text = "Voice is unavailable in this session",
+            style = MaterialTheme.typography.bodyMedium.copy(color = t.Text_Muted),
+            modifier = Modifier.padding(OrbitSpace.lg)
+        )
     }
 }
 
@@ -500,6 +833,7 @@ internal fun SidePanelHeader(
     title: String,
     count: Int? = null,
     modifier: Modifier = Modifier,
+    subtitle: String? = null,
     trailing: (@Composable () -> Unit)? = null
 ) {
     val t = rememberCosmicTokens()
@@ -539,26 +873,23 @@ internal fun SidePanelHeader(
                 )
             }
         }
+        if (subtitle != null) {
+            // Sits after the title, before the flexible spacer, so a panel with
+            // both a count badge and a subtitle reads "Members · 12 · 3 in call"
+            // rather than putting the subtitle at the far edge of the panel.
+            Spacer(Modifier.width(OrbitSpace.sm))
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    color = t.Text_Subtle,
+                    fontSize = 11.sp
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
         Spacer(Modifier.weight(1f))
         if (trailing != null) trailing()
     }
 }
 
-private data class GroupCallJoinTarget(
-    val callId: String,
-    val livekitUrl: String?
-)
-
-private fun parseGroupCallJoinTarget(url: String, fallbackLiveKitUrl: String?): GroupCallJoinTarget {
-    if (url.startsWith("matrix-call://")) {
-        val urlContent = url.substringAfter("://")
-        val callId = urlContent.substringAfterLast("/", urlContent).ifBlank { "m.call" }
-        return GroupCallJoinTarget(callId = callId, livekitUrl = fallbackLiveKitUrl)
-    }
-
-    val callId = url.substringAfter("?callId=", missingDelimiterValue = "m.call")
-        .substringBefore("&")
-        .ifBlank { "m.call" }
-    val livekitUrl = url.substringBefore("?").ifBlank { fallbackLiveKitUrl }
-    return GroupCallJoinTarget(callId = callId, livekitUrl = livekitUrl)
-}

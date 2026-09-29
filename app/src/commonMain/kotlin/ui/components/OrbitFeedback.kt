@@ -112,57 +112,6 @@ fun OrbitMessageSkeleton(
     }
 }
 
-/** Generic centred loading state with a quiet label. */
-@Composable
-fun OrbitLoadingState(
-    label: String? = null,
-    modifier: Modifier = Modifier
-) {
-    val t = rememberCosmicTokens()
-    val reduce = LocalReduceMotion.current
-    val transition = rememberInfiniteTransition(label = "loader")
-    val sweep by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1100, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "loaderSweep"
-    )
-    Column(
-        modifier = modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Box(
-            modifier = Modifier
-                .size(28.dp)
-                .clip(CircleShape)
-                .background(
-                    Brush.sweepGradient(
-                        listOf(
-                            t.Accent.copy(alpha = 0f),
-                            t.Accent,
-                            t.Accent.copy(alpha = 0f)
-                        ),
-                        center = androidx.compose.ui.geometry.Offset(
-                            300f + sweep * 200f,
-                            300f
-                        )
-                    )
-                )
-        )
-        if (label != null) {
-            Spacer(Modifier.height(OrbitSpace.md))
-            Text(
-                text = label,
-                style = MaterialTheme.typography.bodySmall.copy(color = t.Text_Subtle, fontSize = 12.5.sp),
-                textAlign = TextAlign.Center
-            )
-        }
-    }
-}
 
 /**
  * Empty / zero state.

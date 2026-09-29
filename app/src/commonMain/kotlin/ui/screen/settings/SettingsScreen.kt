@@ -8,6 +8,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -27,13 +29,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import ui.components.OrbitListRow
+import ui.components.OrbitNotices
+import ui.components.OrbitNotices.onFailureOrNotify
 import ui.components.OrbitRowLeading
+import ui.components.OrbitTextField
 import ui.icons.OrbitIcons
 import ui.model.OrbitUser
 import repository.SettingsManager
 import repository.OrbitRepository
-import ui.theme.LocalIsLiteMode
-import ui.theme.LocalOnLiteModeChange
 import ui.theme.OrbitRadius
 import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
@@ -214,10 +217,14 @@ fun SettingsScreen(
                 contentAlignment = Alignment.TopCenter
             ) {
                 // Cap the measure: settings text at 2560px wide is unreadable.
+                // The column has no scroll of its own, so Voice & Video (~600dp
+                // of cards) and the extras panes (~450dp) ran off the bottom of
+                // the window with no way to reach the last rows.
                 Column(
                     modifier = Modifier
                         .widthIn(max = 720.dp)
                         .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
                         .padding(horizontal = OrbitSpace.xxxl, vertical = OrbitSpace.xxl)
                 ) {
                     when (selectedCategory) {
@@ -226,16 +233,13 @@ fun SettingsScreen(
 
                         SettingsCategory.Appearance -> {
                             settingsItem { ThemeSelectorCard() }
-                            settingsItem { LiteModeCard() }
                             settingsItem { FontSizeCard(settingsManager) }
                             settingsItem { AppearanceExtrasPane(settingsManager) }
                         }
                         SettingsCategory.Accessibility -> {
-                            settingsItem { ReduceMotionCard(settingsManager) }
                             settingsItem { AccessibilityExtrasPane(settingsManager) }
                         }
                         SettingsCategory.Chat -> {
-                            settingsItem { MessageDensityCard(settingsManager) }
                             settingsItem { ChatSettingsPane(settingsManager) }
                         }
                         SettingsCategory.VoiceVideo -> {
@@ -244,7 +248,9 @@ fun SettingsScreen(
                         SettingsCategory.Windows -> settingsItem { WindowsSettingsPane(settingsManager) }
 
                         SettingsCategory.Logout -> {}
-                        else -> settingsItem { PlaceholderPane(selectedCategory.title) }
+                        // No `else -> Unit`: a new SettingsCategory would render a
+                        // blank pane with no compiler complaint. Exhaustive `when`
+                        // over the enum makes the compiler flag it instead.
                     }
                 }
             }
@@ -266,37 +272,6 @@ private fun settingsIconFor(cat: SettingsCategory): androidx.compose.ui.graphics
     SettingsCategory.Chat -> Icons.Default.Chat
     SettingsCategory.Windows -> Icons.Default.DesktopWindows
     SettingsCategory.Logout -> Icons.Default.Logout
-}
-// - Placeholder Pane
-
-@Composable
-private fun PlaceholderPane(title: String) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(CardBg)
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Icon(
-            imageVector = Icons.Default.Construction,
-            contentDescription = null,
-            tint = Accent,
-            modifier = Modifier.size(48.dp).padding(bottom = 16.dp)
-        )
-        Text(
-            text = "$title coming soon",
-            style = MaterialTheme.typography.titleMedium.copy(color = Text_White, fontWeight = FontWeight.Bold)
-        )
-        Spacer(Modifier.height(8.dp))
-        Text(
-            text = "We are working hard to bring you these detailed configuration options very soon.",
-            style = MaterialTheme.typography.bodyMedium.copy(color = Text_Muted),
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-        )
-    }
 }
 
 // - My Account Pane
@@ -332,8 +307,17 @@ private fun MyAccountPane(repository: OrbitRepository) {
                         coroutineScope.launch {
                             val bytes = util.pickImageFile()
                             if (bytes != null) {
+                                // Both of these refreshed `user` unconditionally,
+                                // so a failed avatar upload or name change
+                                // re-read the server, got the *unchanged* user
+                                // back, and showed the old value as though the
+                                // save had worked. Refresh only on success.
                                 repository.uploadAvatar(bytes)
-                                user = repository.getCurrentUser() // refresh
+                                    .onFailureOrNotify("Avatar upload", "Settings")
+                                    .onSuccess {
+                                        user = repository.getCurrentUser()
+                                        OrbitNotices.info("Avatar updated", "Settings")
+                                    }
                             }
                         }
                     },
@@ -356,25 +340,27 @@ private fun MyAccountPane(repository: OrbitRepository) {
             // Name Info
             Column(modifier = Modifier.weight(1f)) {
                 if (isEditingName) {
-                    OutlinedTextField(
+                    OrbitTextField(
                         value = newName,
                         onValueChange = { newName = it },
+                        placeholder = "Display name",
                         singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = Bg,
-                            unfocusedContainerColor = Bg,
-                            focusedTextColor = Text_White,
-                            unfocusedTextColor = Text_White
-                        ),
                         modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
                     )
                     Row {
                         Button(
                             onClick = {
                                 coroutineScope.launch {
+                                    // The dialog used to close and the old name
+                                    // stay on screen after a failed save, which
+                                    // reads as "it didn't take" rather than "it
+                                    // errored". Keep it open and say why.
                                     repository.updateDisplayName(newName)
-                                    user = repository.getCurrentUser()
-                                    isEditingName = false
+                                        .onFailureOrNotify("Display name", "Settings")
+                                        .onSuccess {
+                                            user = repository.getCurrentUser()
+                                            isEditingName = false
+                                        }
                                 }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = Accent)
@@ -413,17 +399,6 @@ private fun MyAccountPane(repository: OrbitRepository) {
 
 
 
-
-@Composable private fun MessageDensityCard(settingsManager: SettingsManager) {
-    val selected by settingsManager.messageDensity.collectAsState("Comfortable")
-    PrefCard("Message Density", "How messages are visually spaced") {
-        ChipGroup(
-            options = listOf("Compact", "Comfortable", "Cozy"),
-            selected = selected,
-            onSelect = { settingsManager.setMessageDensity(it) }
-        )
-    }
-}
 
 @Composable private fun FontSizeCard(settingsManager: SettingsManager) {
     val fontSize by settingsManager.fontSize.collectAsState(50f)
@@ -487,58 +462,33 @@ private fun MyAccountPane(repository: OrbitRepository) {
     }
 }
 
-@Composable private fun MentionsOnlyCard(settingsManager: SettingsManager) {
-    val on by settingsManager.mentionsOnly.collectAsState(true)
-    PrefCard("Mentions Only", "Only get notified when you're @mentioned") {
-        CosmicSwitch(checked = on, onCheckedChange = { settingsManager.setMentionsOnly(it) })
-    }
-}
-
-@Composable private fun SoundPickerCard(settingsManager: SettingsManager) {
-    val selected by settingsManager.notificationSound.collectAsState("Chime")
-    PrefCard("Notification Sound", "Sound played when you receive a notification") {
-        ChipGroup(
-            options = listOf("None", "Default", "Chime", "Bell"),
-            selected = selected,
-            onSelect = { settingsManager.setNotificationSound(it) }
-        )
-    }
-}
+/** Human label for a theme, from the enum name so new values need no wiring. */
+private fun themeLabel(theme: ui.theme.Theme): String =
+    theme.name.replaceFirstChar { it.uppercase() }
 
 @Composable private fun ThemeSelectorCard() {
     val activeTheme = ui.theme.LocalActiveTheme.current
     val onThemeChange = ui.theme.LocalOnThemeChange.current
     
-    val themeMap = mapOf(
-        "Default" to ui.theme.Theme.Default,
-        "Light" to ui.theme.Theme.Light,
-        "Amoled" to ui.theme.Theme.Amoled,
-        "Ocean" to ui.theme.Theme.Ocean,
-        "Forest" to ui.theme.Theme.Forest,
-        "Sunset" to ui.theme.Theme.Sunset,
-        "Cyberpunk" to ui.theme.Theme.Cyberpunk
-    )
-    
-    val selectedLabel = themeMap.entries.find { it.value == activeTheme }?.key ?: "Default"
+    // Derived from the enum rather than hand-listed: a hand list went stale and
+    // left Graphite and Slate unselectable, so a user persisted on one of them
+    // saw "Default" highlighted while the app rendered their actual theme.
+    // M3Dynamic is excluded because getColorScheme has no arm for it and
+    // systemSupportsDynamicColors() returns false, so selecting it would render
+    // nothing.
+    val selectableThemes = ui.theme.Theme.entries.filter { it != ui.theme.Theme.M3Dynamic }
 
-    PrefCard("App Theme", "Choose your visual theme") {
+    val selectedLabel = themeLabel(activeTheme)
+
+    // Vertical, so the ten chips get the card's full width instead of sharing a
+    // Row with the heading. Wide controls belong under their label, not beside it.
+    PrefCard("App Theme", "Choose your visual theme", vertical = true) {
         ChipGroup(
-            options = themeMap.keys.toList(),
+            options = selectableThemes.map { themeLabel(it) },
             selected = selectedLabel,
             onSelect = { label ->
-                themeMap[label]?.let { onThemeChange(it) }
+                selectableThemes.firstOrNull { themeLabel(it) == label }?.let { onThemeChange(it) }
             }
-        )
-    }
-}
-
-@Composable private fun LiteModeCard() {
-    val isLite = LocalIsLiteMode.current
-    val onLiteChange = LocalOnLiteModeChange.current
-    PrefCard("Lite Mode", "Switch to a clean messenger-style interface") {
-        CosmicSwitch(
-            checked = isLite,
-            onCheckedChange = onLiteChange
         )
     }
 }

@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -41,6 +40,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
@@ -88,12 +88,13 @@ fun Modifier.orbitClickable(
     interaction: OrbitInteraction,
     enabled: Boolean = true,
     role: Role? = Role.Button,
+    onClickLabel: String? = null,
     onClick: () -> Unit
 ): Modifier = this.clickable(
     interactionSource = interaction.pressSource,
     indication = null,
     enabled = enabled,
-    onClickLabel = null,
+    onClickLabel = onClickLabel,
     role = role,
     onClick = onClick
 )
@@ -117,16 +118,16 @@ class OrbitRowLeading(
     val custom: (@Composable () -> Unit)? = null
 )
 
-@Immutable
-class OrbitRowTrailing(
-    val slot: (@Composable RowScope.() -> Unit)? = null
-)
+
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun OrbitListRow(
     title: String,
-    onClick: () -> Unit,
+    // Nullable: passing `{}` made every row look interactive while doing
+    // nothing (see the member list). With null the row renders no click
+    // semantics and no clickable modifier at all.
+    onClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     selected: Boolean = false,
     selectedColor: Color? = null,
@@ -141,10 +142,15 @@ fun OrbitListRow(
     showSelectionBar: Boolean = true,
     shape: Shape = OrbitRadius.smShape,
     role: Role? = Role.Button,
+    onClickLabel: String? = null,
     onLongClick: (() -> Unit)? = null
 ) {
     val t = rememberCosmicTokens()
     val interaction = rememberOrbitInteraction()
+    // A row with no click and no long-click is not interactive, so it must not
+    // light up on hover either: the hover tint and the selection bar are the
+    // affordance, and animating them made a read-only row look pressable.
+    val isInteractive = onClick != null || onLongClick != null
     val hovered by interaction.hoverSource.collectIsHoveredAsState()
     val pressed by interaction.pressSource.collectIsPressedAsState()
     val focused by interaction.focusSource.collectIsFocusedAsState()
@@ -156,7 +162,7 @@ fun OrbitListRow(
         targetValue = when {
             !enabled -> Color.Transparent
             pressed -> t.Pressed
-            hovered -> if (selected) t.AccentGhostStrong else t.ChannelHover_Bg
+            hovered && isInteractive -> if (selected) t.AccentGhostStrong else t.ChannelHover_Bg
             else -> restBackground
         },
         animationSpec = OrbitMotion.SnappyColor,
@@ -165,7 +171,10 @@ fun OrbitListRow(
     val barHeight by animateDpAsState(
         targetValue = when {
             selected -> height - 12.dp
-            hovered -> 10.dp
+            // The hover bar is the row's "you can click this" affordance, so a
+            // non-interactive row (onClick == null) must not grow it either,
+            // only the pressed/selected states apply.
+            hovered && isInteractive -> 10.dp
             else -> 0.dp
         },
         animationSpec = OrbitMotion.SnappyDp,
@@ -195,25 +204,29 @@ fun OrbitListRow(
             .height(height)
             .clip(shape)
             .background(bg)
-            .border(if (focused && enabled) 1.5.dp else 1.dp, t.FocusRing, shape)
-            .hoverable(interaction.hoverSource, enabled)
+            // Focus-only, as the file's own docstring says. The old `else 1.dp`
+            // kept drawing a 1dp outline in a 55%-alpha accent, so every channel,
+            // DM, member, settings and participant row looked permanently boxed.
+            .border(if (focused && enabled) 1.5.dp else 0.dp, t.FocusRing, shape)
+            .hoverable(interaction.hoverSource, enabled && isInteractive)
             .scale(interaction.pressScale())
             .then(
-                if (onLongClick != null) {
-                    Modifier.combinedClickable(
+                when {
+                    onClick == null -> Modifier
+                    onLongClick != null -> Modifier.combinedClickable(
                         interactionSource = interaction.pressSource,
                         indication = null,
                         enabled = enabled,
-                        onClickLabel = null,
+                        onClickLabel = onClickLabel,
                         role = role,
                         onLongClick = onLongClick,
                         onClick = onClick
                     )
-                } else {
-                    Modifier.orbitClickable(
+                    else -> Modifier.orbitClickable(
                         interaction = interaction,
                         enabled = enabled,
                         role = role,
+                        onClickLabel = onClickLabel,
                         onClick = onClick
                     )
                 }
@@ -294,8 +307,10 @@ fun OrbitListRow(
                 }
             }
 
+            // No spacer before `trailing`: the title column already takes
+            // weight(1f), so a second weighted child split the leftover space
+            // 50/50 and truncated the title at half the row width.
             if (trailing != null) {
-                Spacer(Modifier.weight(1f))
                 trailing.invoke(this)
             }
         }
@@ -335,39 +350,27 @@ fun OrbitCountBadge(
     }
 }
 
-/** Solid or tinted pill for short status words ("LIVE", "BETA", "NEW"). */
-@Composable
-fun OrbitPill(
-    text: String,
-    color: Color,
-    modifier: Modifier = Modifier,
-    icon: ImageVector? = null,
-    filled: Boolean = false
-) {
-    val fg = if (filled) onColorFor(color) else color
-    Row(
-        modifier = modifier
-            .clip(CircleShape)
-            .background(if (filled) color else color.copy(alpha = 0.16f))
-            .padding(horizontal = 7.dp, vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(3.dp)
-    ) {
-        if (icon != null) Icon(icon, null, tint = fg, modifier = Modifier.size(11.dp))
-        Text(
-            text = text.uppercase(),
-            style = MaterialTheme.typography.labelSmall.copy(
-                color = fg,
-                fontWeight = FontWeight.Bold,
-                fontSize = 9.5.sp,
-                letterSpacing = 0.6.sp,
-                lineHeight = 12.sp
-            ),
-            maxLines = 1
-        )
-    }
-}
+// `OrbitPill` used to live here: a solid/tinted pill for short status words
+// ("LIVE", "BETA", "NEW"). Zero call sites. `OrbitCountBadge` and the inline
+// status pills in the channel rows cover both jobs, so it was a second way to
+// draw the same thing with no consumers -- and a third one to pick between.
+//
+// `onColorFor`, immediately below, stays: it is what picks black-or-white text for
+// a filled surface by perceived luminance, and it is still live.
 
 /** Picks black or white text for a filled pill, by perceived luminance. */
-fun onColorFor(background: Color): Color =
-    if (background.luminance() > 0.55f) Color(0xFF14161B) else Color.White
+fun onColorFor(background: Color): Color = onColorForWash(background, 1f)
+
+/**
+ * [onColorFor] for a colour drawn at [alpha] over the surface beneath it.
+ *
+ * The opaque threshold is wrong for a translucent wash: a 45 %-alpha accent over
+ * a near-white light-theme surface composites to a LIGHT lavender whose raw
+ * accent luminance is still low, so the opaque check returns white and lands at
+ * ~1.8:1 -- white on lavender, the exact bug the mention pill was being fixed
+ * for. Compositing first is what makes the decision correct.
+ */
+fun onColorForWash(background: Color, alpha: Float, over: Color = Color.White): Color {
+    val composited = lerp(over, background, alpha.coerceIn(0f, 1f))
+    return if (composited.luminance() > 0.45f) Color(0xFF14161B) else Color.White
+}

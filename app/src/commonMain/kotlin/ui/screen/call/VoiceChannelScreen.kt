@@ -26,6 +26,52 @@ import ui.model.OrbitChannel
 import ui.screen.call.CallLayoutMode
 import ui.screen.call.ScreenShareDialog
 
+/**
+ * Join (or start) the MatrixRTC call in [roomId] and connect [callManager] to it.
+ *
+ * Extracted from the "Connect to Voice" button so that **clicking the voice
+ * channel in the drawer joins immediately**, Discord-style, without a second
+ * click and without the two paths drifting apart.
+ *
+ * Returns null on success, or a message describing what went wrong. It does not
+ * throw: the caller is a click handler, and an uncaught exception there just
+ * logs.
+ */
+suspend fun joinVoiceChannel(
+    callManager: CallManager,
+    matrixRepository: MatrixOrbitRepository,
+    roomId: String,
+    trigger: String
+): String? {
+    return try {
+        util.OrbitLog.d("VoiceChannelScreen", "join requested trigger=$trigger room=$roomId")
+        // Re-decide here rather than trusting the "Loading" value the drawer may
+        // be showing: a stale LOADING made this start a second call definition
+        // in a room that already had one.
+        var resolved = matrixRepository.resolveGroupCallJoinTarget(roomId)
+        if (!resolved.exists) {
+            matrixRepository.startGroupCall(roomId, "m.call")
+            resolved = matrixRepository.resolveGroupCallJoinTarget(roomId)
+        }
+        val livekitUrl = resolved.serviceUrl
+            ?: matrixRepository.context.effectiveLiveKitServiceUrl()
+        val callId = resolved.callId ?: "m.call"
+        util.OrbitLog.d(
+            "VoiceChannelScreen",
+            "JoinFocus callId=$callId sfu=$livekitUrl source=${resolved.source ?: "creator"}"
+        )
+        callManager.joinGroupCall(roomId, callId, false, livekitUrl) {
+            matrixRepository.fetchLiveKitToken(roomId, callId, livekitUrl)
+        }
+        null
+    } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        util.OrbitLog.e("VoiceChannelScreen", "join failed: ${e.message}")
+        e.message ?: "Could not join the call"
+    }
+}
+
 @Composable
 fun VoiceChannelScreen(
     callManager: CallManager,
@@ -38,9 +84,10 @@ fun VoiceChannelScreen(
             val callState by callManager.callState.collectAsState()
             val scope = rememberCoroutineScope()
             val activeRoomId by callManager.activeRoomIdFlow.collectAsState()
-            // A connected call in a DIFFERENT channel must not render here — the
-            // global floating pill owns that case; duplicating it per-channel
-            // produced multiple floating bars at once.
+            // A connected call in a DIFFERENT channel must not render here. The
+            // floating pill used to own that case; the pill is gone, so this
+            // screen simply shows its own join affordance and the active call
+            // lives wherever the user is actually looking.
             val isActiveCallInThisRoom = activeRoomId == channel.matrixRoomId || activeRoomId == channel.id
             val activeGroupCallUrl by matrixRepository.observeActiveGroupCall(channel.matrixRoomId).collectAsState("LOADING")
             var pendingVoiceJoin by remember(channel.id) { mutableStateOf(false) }
@@ -50,6 +97,22 @@ fun VoiceChannelScreen(
                     pendingVoiceJoin = false
                 }
             }
+
+            // Auto-join on arrival is GONE.
+            //
+            // It was added to match Discord's click-a-voice-channel-to-join, and
+            // it was wrong here for the same reason the Text/Voice split was
+            // wrong: it assumed opening a room and entering a call are the same
+            // act. In Discord they are different channels, so clicking one does
+            // not open the other's conversation.
+            //
+            // In Matrix they are the SAME room. So joining on click meant you
+            // could never read a room that also had a call in it — clicking
+            // "General" dropped you into a call and its chat was unreachable.
+            // Reported with two screenshots, one per room, both landing in a
+            // call grid.
+            //
+            // Joining is now always an explicit press of "Connect to Voice".
 
             if (callState == CallState.IDLE || callState == CallState.ENDED || !isActiveCallInThisRoom) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -64,30 +127,18 @@ fun VoiceChannelScreen(
                             Button(
                                 onClick = {
                                     if (pendingVoiceJoin || callState == CallState.CONNECTING) {
-                                        println("DEBUG [VoiceChannelScreen] Ignoring duplicate voice join click")
+                                        util.OrbitLog.d("VoiceChannelScreen", "Ignoring duplicate voice join click")
                                     } else {
                                         pendingVoiceJoin = true
                                         scope.launch {
-                                            try {
-                                                println("DEBUG [VoiceChannelScreen] User clicked Connect to Voice")
-                                                var resolved = matrixRepository.resolveGroupCallJoinTarget(channel.matrixRoomId)
-                                                if (!resolved.exists) {
-                                                    // Fresh creator decision (no stale LOADING race): publish our definition
-                                                    matrixRepository.startGroupCall(channel.matrixRoomId, "m.call")
-                                                    resolved = matrixRepository.resolveGroupCallJoinTarget(channel.matrixRoomId)
-                                                }
-                                                val livekitUrl = resolved.serviceUrl
-                                                    ?: matrixRepository.context.effectiveLiveKitServiceUrl()
-                                                val callId = resolved.callId ?: "m.call"
-                                                println(
-                                                    "DEBUG [VoiceChannelScreen] JoinFocus callId=$callId sfu=$livekitUrl source=${resolved.source ?: "creator"}"
-                                                )
-                                                callManager.joinGroupCall(channel.matrixRoomId, callId, false, livekitUrl) {
-                                                    matrixRepository.fetchLiveKitToken(channel.matrixRoomId, callId, livekitUrl)
-                                                }
-                                            } catch (e: Exception) {
+                                            val error = joinVoiceChannel(
+                                                callManager, matrixRepository, channel.matrixRoomId, "connect-button"
+                                            )
+                                            if (error != null) {
                                                 pendingVoiceJoin = false
-                                                println("ERROR [VoiceChannelScreen] Uncaught exception during join: ${e.message}")
+                                                ui.components.OrbitNotices.error(
+                                                    "Could not join ${channel.name}: $error", "VoiceJoin"
+                                                )
                                             }
                                         }
                                     }

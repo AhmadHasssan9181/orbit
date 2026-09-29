@@ -25,7 +25,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ui.assets.OrbitBrandMark
-import ui.components.OrbitLoadingState
 import ui.theme.LocalReduceMotion
 import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens

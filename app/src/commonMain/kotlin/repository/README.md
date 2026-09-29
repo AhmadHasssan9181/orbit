@@ -835,24 +835,72 @@ When adding new repository methods, prefer:
 
 ## Current gaps and risks
 
-These are not necessarily bugs in every use case, but they are important to know:
+Verified against the source on 2026-09-29. Everything that used to be listed here but
+no longer applies was removed rather than left to mislead a reader — see the list of
+corrections at the bottom of this section.
 
-- `getSpaceHierarchy()` is not implemented.
-- `joinSpace(roomIdOrAlias)` says it accepts aliases, but it currently wraps the input as
-  `RoomId`; Matrix aliases may fail until alias-specific handling is added.
-- `fromToken` in `getMessagesForChannel()` is unused, so there is no true pagination token support.
-- `observeCallEvents()` exposes `_callEvents`, but the sync loop does not currently emit parsed call events into it.
-- `observeActiveGroupCall()` is not implemented.
-- `DeviceVerificationManager` is mostly stubbed and not the main verification implementation.
-- `editMessage()` and `deleteMessage()` infer room ID from event ID, which is not reliable for Matrix.
-- `sendFileMessage()` and `sendAudioMessage()` use a hardcoded timestamp for local echo.
-- Registration handles only a simple response with `access_token`; it does not implement Matrix UIAA registration stages such as captcha, terms, email, or dummy auth flows.
-- Access tokens are stored through plain platform settings, not encrypted storage.
-- Logout clears `CredentialManager` but does not clear Trixnity's Room database or media cache.
-- Voice channels are inferred from room names instead of Matrix state.
-- Room topics are written when creating channels but not currently read back into `OrbitChannel`.
-- `registerPusher()` does not inspect the HTTP response or report errors.
-- Some methods catch all exceptions and return empty data, which can make UI failures hard to diagnose.
+Still true, roughly in order of how likely they are to bite:
+
+- **Failed sends destroy the message.** `sendMessage()` returns `Result`, but the
+  composer clears its input on the success path only in some call sites, and several
+  discard the `Result` entirely. A message that fails to send leaves no retry and no
+  error. This is the single most user-visible defect left in the repository layer.
+- **Channel topics are never read from room state.** `m.room.topic` is written when
+  creating a channel but never parsed on the way in. `OrbitChannel.topic` is only
+  populated for DMs (from the last message's preview text) and for channels this app
+  created itself. A channel someone else made shows a blank topic.
+- **Voice channels are inferred from the room name**, not from Matrix state.
+  `MatrixContext.channelTypeFor` returns `VOICE` if the name contains "voice". A room
+  named `voice-chat-announcements` is a voice channel; a voice channel named anything
+  else is a text channel. There is no `m.call` capability check and no voice-channel
+  state event.
+- **There is no way to *start* a device verification.** `VerificationOverlay` renders
+  whatever Trixnity's `activeDeviceVerification` reports, including accepting an
+  incoming request and completing SAS — so reacting to a verification works. Nothing
+  in the UI ever calls `verification.requestVerification()`, so the user can verify
+  when asked but can never initiate. (The old `DeviceVerificationManager` that looked
+  like it filled this role was deleted: nothing constructed it and all three of its
+  methods only printed a warning.)
+- **`joinSpace(roomIdOrAlias)` wraps the input as `RoomId`**, so a `#alias` fails.
+  Matrix aliases need to be resolved or passed through as-is.
+- **Registration only handles a single-step response** carrying `access_token`. It
+  does not implement the UIAA stages a homeserver can demand: `m.login.dummy`,
+  terms, email, captcha, or `m.login.registration_token`.
+- **Access tokens live in plain platform settings**, not encrypted storage. Anything
+  that can read the user's config directory can read the token.
+- **Logout closes the Trixnity client but does not purge on-disk data.** The crypto
+  store, room database and downloaded media cache survive a logout, so a shared
+  machine keeps the previous account's cached content. There is no
+  `deleteRecursively` on the cache path anywhere in the codebase.
+- **`registerPusher()` reports failure to nobody.** It now inspects the status and logs
+  a warning, but it still returns `Unit`, so a caller cannot tell whether push is
+  actually working.
+- **Several methods catch every exception and return an empty list or null.** That is
+  the right call for an optional read and the wrong call for a required one, because
+  the UI cannot distinguish "no data" from "the network is down". Anything the user
+  explicitly asked for should surface as `Result.failure`.
+
+### Corrections to this list
+
+These were listed before and are no longer true — they are recorded here so nobody
+re-adds them from memory:
+
+- `getSpaceHierarchy()` **is** implemented (a real `/_matrix/client/v1/hierarchy` call).
+  It simply has no caller.
+- `fromToken` in `getMessagesForChannel()` **is** used, and correctly: it is parsed as
+  the cursor `EventId` and the cursor event is dropped from the result. The remaining
+  gap is that the UI never supplies a token, so history still stops at 50 messages.
+- `observeActiveGroupCall()` **is** implemented and wired to `VoiceChannelScreen` and
+  `OrbitApp`.
+- `observeCallEvents()` / `_callEvents` no longer exist. The symbol was removed; call
+  state is driven by `CallStateResolver` plus the `m.call.member` collector instead.
+- `editMessage()` and `deleteMessage()` **take an explicit `roomId`** now. Neither
+  infers the room from the event ID any more.
+- `sendFileMessage()` / `sendAudioMessage()` **return the transaction ID** and no
+  longer stamp a hardcoded timestamp.
+- Logout **now stops sync, then closes the Trixnity client**, then tears down our own
+  scope and HTTP client, in that order. It previously leaked a supervisor job and a CIO
+  selector thread per login cycle and kept 401-storming the server.
 
 ## Adding or changing repository behavior
 

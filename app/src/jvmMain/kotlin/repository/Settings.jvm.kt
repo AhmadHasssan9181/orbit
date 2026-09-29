@@ -28,7 +28,9 @@ actual fun createCredentialSettings(): Settings {
         override fun clear() = prefs.keys().forEach { prefs.remove(it) }
     }
     return object : Settings {
-        private val encryptedKeys = setOf("accessToken", "syncToken")
+        // tenorApiKey is a third-party API secret the user pastes into Settings;
+        // it belongs here, not in plaintext preferences.
+        private val encryptedKeys = setOf("accessToken", "syncToken", "tenorApiKey")
 
         override fun getStringOrNull(key: String): String? {
             val raw = plain.getStringOrNull(key) ?: return null

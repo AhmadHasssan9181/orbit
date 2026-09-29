@@ -24,7 +24,6 @@ import de.connect2x.trixnity.client.verification
 import de.connect2x.trixnity.clientserverapi.model.media.Media
 import de.connect2x.trixnity.clientserverapi.model.room.CreateRoom
 import de.connect2x.trixnity.clientserverapi.model.room.GetEvents.Direction
-import de.connect2x.trixnity.clientserverapi.model.user.ProfileField
 import de.connect2x.trixnity.clientserverapi.model.user.avatarUrl
 import de.connect2x.trixnity.clientserverapi.model.user.displayName
 import de.connect2x.trixnity.core.model.EventId
@@ -33,9 +32,6 @@ import de.connect2x.trixnity.core.model.UserId
 import de.connect2x.trixnity.core.model.events.EventType
 import de.connect2x.trixnity.core.model.events.ClientEvent.RoomEvent
 import de.connect2x.trixnity.core.model.events.UnknownEventContent
-import de.connect2x.trixnity.core.model.events.m.call.CallEventContent
-import de.connect2x.trixnity.core.model.events.m.call.Purpose
-import de.connect2x.trixnity.core.model.events.m.call.StreamMetadata
 import de.connect2x.trixnity.core.model.events.m.ReactionEventContent
 import de.connect2x.trixnity.core.model.events.m.RelatesTo
 import de.connect2x.trixnity.core.model.events.m.room.AudioInfo
@@ -65,10 +61,17 @@ import io.ktor.http.Url
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.utils.io.ByteReadChannel
-import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -114,15 +117,120 @@ import util.getRoomDatabaseBuilder
 import util.performSsoLogin
 import kotlin.time.Duration.Companion.seconds
 
-import ui.screen.auth.*
-import ui.screen.settings.*
-import ui.screen.drawer.*
-import ui.screen.server.*
-import ui.screen.call.*
-import ui.screen.media.*
-import ui.screen.main.*
 
 class MatrixSpacesRepository(private val context: MatrixContext) : OrbitSpacesRepository {
+
+    /**
+     * Space-ness per room, with a TTL.
+     *
+     * A room only becomes a space if its create-event says so or it has child
+     * events, and neither changes often, so re-asking the server on every sync
+     * burst was pure waste. Entries are per room id and bounded by the number of
+     * joined rooms, which the app already holds in memory anyway.
+     */
+    private val spaceProbeCache =
+        java.util.concurrent.ConcurrentHashMap<String, Pair<Boolean, Long>>()
+
+    private suspend fun concurrentSpaces(
+        allRooms: List<de.connect2x.trixnity.client.store.Room>,
+        trixnity: de.connect2x.trixnity.client.MatrixClient?
+    ): List<de.connect2x.trixnity.client.store.Room> {
+        val now = System.currentTimeMillis()
+        val stale = allRooms.filter { room ->
+            val cached = spaceProbeCache[room.roomId.full]
+            cached == null || now - cached.second > SPACE_PROBE_TTL_MS
+        }
+        if (trixnity != null && stale.isNotEmpty()) {
+            // Concurrent, and capped: a 500-room account is 500 probes, and
+            // firing them all at once would itself trip the rate limiter.
+            val limit = SPACE_PROBE_CONCURRENCY
+            stale.chunked(limit).forEach { batch ->
+                coroutineScope {
+                    batch.map { room ->
+                        async {
+                            val explicit = room.createEventContent?.type ==
+                                CreateEventContent.RoomType.Space ||
+                                room.createEventContent?.type?.toString()
+                                    ?.contains("space", ignoreCase = true) == true
+
+                            // CancellationException IS an Exception, so the
+                            // runCatching below swallows it and reports false.
+                            // getSpaces() is driven by collectLatest, so it is
+                            // cancelled on nearly every sync emission -- writing
+                            // that false into the cache would mis-classify the
+                            // room as "not a space" for the whole TTL. So only
+                            // cache a verdict we actually earned.
+                            val isSpace: Boolean = if (explicit) {
+                                true
+                            } else {
+                                currentCoroutineContext().ensureActive()
+                                runCatching {
+                                    trixnity.room.getAllState(room.roomId, ChildEventContent::class)
+                                        .first().isNotEmpty()
+                                }.getOrDefault(false)
+                            }
+
+                            // BUG, and it hid the entire Spaces feature.
+                            //
+                            // This used to be `if (!explicit) { cache… }`, on the
+                            // reasoning that an explicit room needed no probe and
+                            // therefore no cache entry. But `spaceProbeCache` is
+                            // the ONLY source of truth for the line below:
+                            //
+                            //     return allRooms.filter { spaceProbeCache[…]?.first == true }
+                            //
+                            // So every room that declared itself a space — the
+                            // cheap, unambiguous, spec-blessed case, and the only
+                            // case matrix.org produces — was never cached and
+                            // therefore never returned.
+                            //
+                            // The visible effect: `spaces` came back empty, so the
+                            // server rail fell through to the synthetic "Rooms"
+                            // bucket, and `getChannelsForSpace("rooms")` — which
+                            // returns only rooms belonging to NO space — rendered
+                            // a flat, shuffled list. Three rooms all named
+                            // "General" with no structure to disambiguate them,
+                            // a fabricated "Voice Channels" section, and clicking
+                            // one row landing on another.
+                            //
+                            // Verified against Element on the same account: four
+                            // spaces exist (rail shows N, H, S, T) and
+                            // `saaaasas` is a "Private space · 2 members"
+                            // containing General and Random. All four were
+                            // invisible here.
+                            //
+                            // The explicit check costs nothing, so there is no
+                            // reason to skip caching it.
+                            spaceProbeCache[room.roomId.full] = isSpace to System.currentTimeMillis()
+                        }
+                    }.awaitAll()
+                }
+            }
+        } else if (trixnity == null) {
+            // No client: fall back to the explicit type only.
+            stale.forEach { room ->
+                val explicit = room.createEventContent?.type == CreateEventContent.RoomType.Space ||
+                    room.createEventContent?.type?.toString()?.contains("space", ignoreCase = true) == true
+                spaceProbeCache[room.roomId.full] = explicit to System.currentTimeMillis()
+            }
+        }
+        val resolved = allRooms.filter { spaceProbeCache[it.roomId.full]?.first == true }
+        // "No spaces found" was indistinguishable from "the probe failed" and
+        // from "the verdict was never cached" — which is exactly how the bug
+        // above stayed invisible for a whole test cycle. This line makes the
+        // count and the names visible on every load.
+        util.OrbitLog.d(
+            "Spaces",
+            "rooms=${allRooms.size} spaces=${resolved.size} " +
+                "names=[${resolved.joinToString { context.roomDisplayName(it) }}]"
+        )
+        return resolved
+    }
+
+    private companion object {
+        const val SPACE_PROBE_TTL_MS = 5 * 60_000L
+        const val SPACE_PROBE_CONCURRENCY = 8
+    }
 
     override suspend fun getSpaces(): List<OrbitServer> {
         val allRooms = context.getAllRoomsSnapshot()
@@ -132,19 +240,19 @@ class MatrixSpacesRepository(private val context: MatrixContext) : OrbitSpacesRe
         val trixnity = context.trixnityClient
 
         // 1. Identify Spaces
-        val spaces = allRooms.filter { room ->
-            val typeStr = room.createEventContent?.type?.toString()
-            var isSpace = room.createEventContent?.type == CreateEventContent.RoomType.Space || 
-                          typeStr?.contains("space", ignoreCase=true) == true
-            if (!isSpace && trixnity != null) {
-                try {
-                    // Check for child events if type is not explicit
-                    val children = trixnity.room.getAllState(room.roomId, ChildEventContent::class).first()
-                    if (children.isNotEmpty()) isSpace = true
-                } catch(e: Exception) {}
-            }
-            isSpace
-        }
+        //
+        // The per-room /state probe is the expensive part: it ran for EVERY
+        // joined room whose create-event type does not literally say "space",
+        // and getSpaces() is called from the sync collector on every emission
+        // of the room list. On a 500-room account that is 500 /state requests
+        // per sync burst, which is what gets an account rate-limited.
+        //
+        // Two changes:
+        //  - the probe is concurrent rather than serial, so wall-clock is one
+        //    round-trip rather than N;
+        //  - the verdict is cached per room and re-probed on a TTL, so a steady
+        //    sync stream does not re-probe an unchanged room at all.
+        val spaces = concurrentSpaces(allRooms, trixnity)
         
         // 2. Map DMs and Categorize Flat Rooms
         val dms = mutableListOf<de.connect2x.trixnity.client.store.Room>()

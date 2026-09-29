@@ -69,10 +69,14 @@ kotlin {
             dependencies {
                 implementation(compose.desktop.currentOs)
                 implementation("io.ktor:ktor-client-okhttp:3.0.1")
-                // using project(":webrtc-java-lib")
+
+                // `api` so the JNI library's classes and its protobuf/sqlite
+                // transitives are first-class runtime dependencies. With
+                // `implementation` they only reached the MSI because
+                // includeAllModules happened to sweep them in.
+                api(project(":webrtc-java-lib"))
 
                 // JNA for WASAPI Audio Loopback
-                implementation(project(":webrtc-java-lib"))
                 implementation("net.java.dev.jna:jna:5.14.0")
                 implementation("net.java.dev.jna:jna-platform:5.14.0")
                 
@@ -91,7 +95,13 @@ dependencies {
     add("kspJvm", "androidx.room:room-compiler:2.7.0-alpha11")
 }
 
-val orbitAudioJvmArgs = listOf(
+// Debug overrides for the orbit.* flags the app reads via System.getProperty.
+// Deliberately NOT read from System.getProperty here: in a build script that
+// reads the Gradle daemon's properties, not the packaged app's, so the flags
+// were silently absent from the shipped .cfg and only ever worked when an IDE
+// happened to pass them to a dev `run`. Project properties are explicit, so
+// `-Porbit.apm.enabled=false` now reliably reaches the packaged app.
+val orbitDebugFlagNames = listOf(
     "orbit.audio.testTone",
     "orbit.audio.testToneStereo",
     "orbit.audio.inputDeviceName",
@@ -115,8 +125,10 @@ val orbitAudioJvmArgs = listOf(
     "orbit.video.updateMembershipAfterPublish",
     "orbit.video.membershipMode",
     "orbit.video.remoteRender"
-).mapNotNull { propertyName ->
-    System.getProperty(propertyName)
+)
+
+val orbitAudioJvmArgs = orbitDebugFlagNames.mapNotNull { propertyName ->
+    (findProperty(propertyName) as String?)
         ?.takeIf { it.isNotBlank() }
         ?.let { "-D$propertyName=$it" }
 }
@@ -154,13 +166,10 @@ compose.desktop {
     }
 }
 
-tasks.withType<JavaExec>().configureEach {
-    // Video calls generate hundreds of MB/s of short-lived frame buffers; without
-    // a cap the default max heap (1/4 of physical RAM) lets RSS balloon past 15 GB
-    // before G1 collects. The live set is well under 1 GB.
-    jvmArgs("-Xmx2048m")
-    jvmArgs(orbitAudioJvmArgs)
-}
+// The heap cap and --add-opens live on compose.desktop.application.jvmArgs
+// above, which is what the packaged .cfg is generated from. A blanket
+// `tasks.withType<JavaExec>` also caught KSP/Room helper tasks and applied
+// -Xmx2048m twice to the compose `run` task.
 
 room {
     schemaDirectory("$projectDir/schemas")
@@ -168,27 +177,56 @@ room {
 
 // Custom task to compile the C++ JNI bridge for the JVM target
 tasks.register("compileJniBridge") {
+    // Declared so Gradle can skip the (slow) native rebuild when nothing changed.
+    // Without this the task ran on every invocation, including :app:jvmTest.
+    inputs.dir(file("src/jvmMain/cpp")).withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.file(rootProject.file("gradle/wrapper/gradle-wrapper.properties"))
+    outputs.dir(layout.buildDirectory.dir("jniOut"))
+
     doLast {
         val cppDir = file("src/jvmMain/cpp")
         val buildDir = file("build/jni")
-        buildDir.deleteRecursively()
-        buildDir.mkdirs()
-        
-        val targetDir = file("src/jvmMain/resources/webrtc-deps")
-        targetDir.mkdirs()
-        val audioDllExists = targetDir.resolve("orbit_livekit_audio.dll").exists()
-        val videoDllExists = targetDir.resolve("orbit_livekit_video.dll").exists()
 
-        var vsBat = listOf(
-            file("D:/vs studio/VC/Auxiliary/Build/vcvars64.bat"),
-            file("D:/vs studio/Common7/Tools/VsDevCmd.bat"),
-            file("D:/Visual Studio/VC/Auxiliary/Build/vcvars64.bat"),
-            file("D:/Microsoft Visual Studio/VC/Auxiliary/Build/vcvars64.bat"),
+        // No deleteRecursively() here: the LiveKit SDK is extracted under
+        // build/jni and wiping it forced an 11 MB re-download on every build.
+        buildDir.mkdirs()
+
+        val targetDir = file("build/jniOut")
+        targetDir.mkdirs()
+        val checkedInDeps = file("src/jvmMain/resources/webrtc-deps")
+        val audioDllExists = targetDir.resolve("orbit_livekit_audio.dll").exists() ||
+            checkedInDeps.resolve("orbit_livekit_audio.dll").exists()
+        val videoDllExists = targetDir.resolve("orbit_livekit_video.dll").exists() ||
+            checkedInDeps.resolve("orbit_livekit_video.dll").exists()
+
+        // vswhere.exe is the supported way to locate a VS install; it reads the
+        // real registry state instead of us hard-coding one developer's paths.
+        val vsWhere = file("C:/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe")
+        val vsBatFromVsWhere: File? = if (vsWhere.exists()) {
+            runCatching {
+                val installPath = ProcessBuilder(
+                    vsWhere.absolutePath, "-latest", "-products", "*",
+                    "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                    "-property", "installationPath"
+                ).redirectErrorStream(true).start().let { proc ->
+                    val out = proc.inputStream.bufferedReader().use { it.readText() }.trim()
+                    proc.waitFor()
+                    out
+                }
+                if (installPath.isBlank()) null
+                else file("$installPath/VC/Auxiliary/Build/vcvars64.bat").takeIf { it.exists() }
+            }.getOrNull()
+        } else {
+            null
+        }
+
+        // Standard install locations as a fallback when vswhere is unavailable.
+        var vsBat: File? = (listOfNotNull(vsBatFromVsWhere) + listOf(
             file("C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Auxiliary/Build/vcvars64.bat"),
             file("C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Auxiliary/Build/vcvars64.bat"),
             file("C:/Program Files/Microsoft Visual Studio/2022/Professional/VC/Auxiliary/Build/vcvars64.bat"),
             file("C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Auxiliary/Build/vcvars64.bat")
-        ).firstOrNull { it.exists() }
+        )).firstOrNull { it.exists() }
 
         if (vsBat == null && System.getProperty("os.name").lowercase().contains("windows")) {
             runCatching {
@@ -216,12 +254,28 @@ tasks.register("compileJniBridge") {
                 }
             }
         } catch (e: Exception) {
-            if (audioDllExists && videoDllExists) {
-                println("WARN: [compileJniBridge] Native C++ build failed (${e.message}). Using existing prebuilt DLLs in resources.")
+            // Falling back to the checked-in DLLs silently shipped stale native
+            // code (a broken toolchain looked like a successful build). Require
+            // an explicit opt-in so a real toolchain failure stops the build.
+            val allowFallback = (findProperty("orbit.allowPrebuiltNativeFallback") as String?)?.toBoolean() == true
+            if (allowFallback && audioDllExists && videoDllExists) {
+                logger.warn(
+                    "[compileJniBridge] Native C++ build FAILED (${e.message}). " +
+                        "Falling back to the checked-in prebuilt DLLs in resources " +
+                        "(-Porbit.allowPrebuiltNativeFallback=true). These are STALE by definition - " +
+                        "rebuild them before shipping."
+                )
                 return@doLast
-            } else {
-                throw GradleException("Failed to compile C++ JNI bridge and no prebuilt DLLs found in resources: ${e.message}", e)
             }
+            throw GradleException(
+                "Failed to compile the C++ JNI bridge: ${e.message}\n" +
+                    (if (audioDllExists && videoDllExists)
+                        "Prebuilt DLLs exist in resources. Re-run with -Porbit.allowPrebuiltNativeFallback=true " +
+                            "to use them, but they will be stale."
+                        else
+                            "No prebuilt DLLs found in src/jvmMain/resources/webrtc-deps."),
+                e
+            )
         }
         
         fun copyBuiltDll(dllName: String) {
@@ -243,16 +297,7 @@ tasks.register("compileJniBridge") {
         file("build/jni/_deps/livekit-sdk").walkTopDown()
             .filter { it.isFile && it.extension.equals("dll", ignoreCase = true) }
             .forEach { sdkDll ->
-                val targetDll = targetDir.resolve(sdkDll.name)
-                try {
-                    sdkDll.copyTo(targetDll, overwrite = true)
-                } catch (existing: FileAlreadyExistsException) {
-                    if (targetDll.exists() && targetDll.length() == sdkDll.length()) {
-                        println("Skipping unchanged LiveKit SDK DLL already in resources: ${sdkDll.name}")
-                    } else {
-                        throw existing
-                    }
-                }
+                sdkDll.copyTo(targetDir.resolve(sdkDll.name), overwrite = true)
             }
     }
 }
@@ -298,7 +343,14 @@ tasks.register("runLiveKitTonePublisher") {
     }
 }
 
-// Ensure JNI bridge is compiled before running or assembling
-tasks.named("jvmProcessResources") {
+// Ensure JNI bridge is compiled before running or assembling. The freshly built
+// DLLs are merged in here rather than written into src/jvmMain/resources, so a
+// build no longer dirties the working tree or mutates its own input snapshot.
+tasks.named<ProcessResources>("jvmProcessResources") {
     dependsOn("compileJniBridge")
+    from(layout.buildDirectory.dir("jniOut")) { into("webrtc-deps") }
+    // The checked-in DLLs are still present as a prebuilt fallback, so the same
+    // names can arrive from both sources. INCLUDE means the freshly compiled
+    // copy (added last) wins, which is the whole point of building it.
+    duplicatesStrategy = DuplicatesStrategy.INCLUDE
 }

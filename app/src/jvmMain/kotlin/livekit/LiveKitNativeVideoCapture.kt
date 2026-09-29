@@ -192,6 +192,15 @@ object LiveKitNativeVideoCapture {
         return NativeResult.success(Unit)
     }
 
+    /**
+     * Stops capture and disposes the native objects.
+     *
+     * Deliberately synchronous: the call sites interleave this with follow-up
+     * publish/disarm logic that must observe the capture already gone, so
+     * hopping to a background dispatcher here would break that ordering. The
+     * EDT cost is handled one level up -- CallManager runs this off the Compose
+     * dispatcher, rather than by making this fire-and-forget.
+     */
     fun stopAndJoin() {
         val capture = activeCapture
         activeCapture = null
@@ -410,7 +419,9 @@ object LiveKitNativeVideoCapture {
             runCatching { track.setEnabled(false) }
             runCatching { source.stop() }
                 .onFailure { println("WARN [VideoPublish] camera stop failed: ${it.message}") }
-            runCatching { Thread.sleep(250L) }
+            // No settle sleep here: removeSink + setEnabled(false) + source.stop()
+            // already quiesce the capturer, and stop() runs on the Compose/EDT
+            // thread (CallManager), so sleeping it froze the window for 250 ms.
             runCatching { track.dispose() }
                 .onFailure { println("WARN [VideoPublish] video track dispose failed: ${it.message}") }
             runCatching { source.dispose() }
@@ -420,22 +431,52 @@ object LiveKitNativeVideoCapture {
             println("DEBUG [VideoPublish] capture stopped")
         }
 
-        private fun packRgba(buffer: I420Buffer): ByteArray {
+        // Direct memory is not reclaimed promptly: a fresh ~3 MB direct buffer
+        // per frame makes Bits.reserveMemory force full System.gc() runs, which
+        // show up as UI freezes and audio underruns. So the PUSH path
+        // (packI420) reuses one direct buffer per capture instance and rewrites
+        // it each frame. The lock guards that reuse (a camera mode change can
+        // resize mid-frame); the native push still copies the bytes before
+        // returning.
+        //
+        // packRgba below is the LOCAL PREVIEW path and is NOT covered by that:
+        // its result escapes into LiveKitNativeVideoFrameStore and then into the
+        // UI, so it cannot be a reused buffer -- it allocates width*height*4 per
+        // call. It is throttled to roughly one frame in three on the producer
+        // side rather than being pooled, because pooling would need a hand-off
+        // protocol to prove the UI is done with the array.
+        private val packLock = Any()
+        private var packedDirect: ByteBuffer? = null
+        private var packedDirectBytes = 0
+        private var lumaScratch = ByteArray(0)
+        private var chromaScratchU = ByteArray(0)
+        private var chromaScratchV = ByteArray(0)
+        private var rowScratch = ByteArray(0)
+
+        private fun packRgba(buffer: I420Buffer): ByteArray = synchronized(packLock) {
             val width = buffer.width
             val height = buffer.height
             val out = ByteArray(width * height * 4)
             val yPlane = buffer.dataY
             val uPlane = buffer.dataU
             val vPlane = buffer.dataV
+            val chromaWidth = (width + 1) / 2
+            ensureScratch(width, chromaWidth)
             var outputIndex = 0
             for (row in 0 until height) {
                 val yRow = row * buffer.strideY
                 val uvRow = (row / 2) * buffer.strideU
                 val vvRow = (row / 2) * buffer.strideV
+                // Copy each plane row in one bulk get instead of indexing the
+                // plane per byte: the plane may be padded (stride > width) or
+                // direct, and this loop is the capture thread's hot path.
+                val yBytes = readPlaneRow(yPlane, yRow, width, lumaScratch)
+                val uBytes = readPlaneRow(uPlane, uvRow, chromaWidth, chromaScratchU)
+                val vBytes = readPlaneRow(vPlane, vvRow, chromaWidth, chromaScratchV)
                 for (column in 0 until width) {
-                    val y = yPlane.get(yRow + column).toInt() and 0xFF
-                    val u = uPlane.get(uvRow + (column / 2)).toInt() and 0xFF
-                    val v = vPlane.get(vvRow + (column / 2)).toInt() and 0xFF
+                    val y = yBytes[column].toInt() and 0xFF
+                    val u = uBytes[column / 2].toInt() and 0xFF
+                    val v = vBytes[column / 2].toInt() and 0xFF
                     val c = y - 16
                     val d = u - 128
                     val e = v - 128
@@ -449,24 +490,66 @@ object LiveKitNativeVideoCapture {
                     outputIndex += 4
                 }
             }
-            return out
+            out
         }
 
         private fun clampRgb(value: Int): Int =
             value.coerceIn(0, 255)
 
-        private fun packI420(buffer: I420Buffer): PackedI420Frame {
+        private fun packI420(buffer: I420Buffer): PackedI420Frame = synchronized(packLock) {
             val width = buffer.width
             val height = buffer.height
             val chromaWidth = (width + 1) / 2
             val chromaHeight = (height + 1) / 2
             val bytes = width * height + chromaWidth * chromaHeight * 2
-            val packed = ByteBuffer.allocateDirect(bytes)
+            // Only reuse an exactly sized buffer: the native side validates the
+            // capacity against the tight-plane size (w*h + cw*ch*2) it expects.
+            val existing = packedDirect
+            val packed = if (existing != null && packedDirectBytes == bytes) {
+                existing
+            } else {
+                ByteBuffer.allocateDirect(bytes).also {
+                    packedDirect = it
+                    packedDirectBytes = bytes
+                }
+            }
+            ensureScratch(width, chromaWidth)
+            packed.clear()
             copyPlane(buffer.dataY, packed, height, width, buffer.strideY)
             copyPlane(buffer.dataU, packed, chromaHeight, chromaWidth, buffer.strideU)
             copyPlane(buffer.dataV, packed, chromaHeight, chromaWidth, buffer.strideV)
             packed.flip()
-            return PackedI420Frame(packed, bytes)
+            PackedI420Frame(packed, bytes)
+        }
+
+        private fun ensureScratch(width: Int, chromaWidth: Int) {
+            if (lumaScratch.size < width) {
+                lumaScratch = ByteArray(width)
+            }
+            if (chromaScratchU.size < chromaWidth) {
+                chromaScratchU = ByteArray(chromaWidth)
+            }
+            if (chromaScratchV.size < chromaWidth) {
+                chromaScratchV = ByteArray(chromaWidth)
+            }
+            val rowWidth = maxOf(width, chromaWidth)
+            if (rowScratch.size < rowWidth) {
+                rowScratch = ByteArray(rowWidth)
+            }
+        }
+
+        private fun readPlaneRow(
+            plane: ByteBuffer,
+            rowStart: Int,
+            columns: Int,
+            target: ByteArray
+        ): ByteArray {
+            val view = plane.duplicate()
+            view.rewind()
+            view.position(rowStart)
+            view.limit(rowStart + columns)
+            view.get(target, 0, columns)
+            return target
         }
 
         private fun copyPlane(
@@ -477,11 +560,15 @@ object LiveKitNativeVideoCapture {
             stride: Int
         ) {
             val view = source.duplicate()
+            val scratch = rowScratch
             for (row in 0 until rows) {
                 val rowStart = row * stride
-                for (column in 0 until columns) {
-                    destination.put(view.get(rowStart + column))
-                }
+                val rowView = view.duplicate()
+                rowView.rewind()
+                rowView.position(rowStart)
+                rowView.limit(rowStart + columns)
+                rowView.get(scratch, 0, columns)
+                destination.put(scratch, 0, columns)
             }
         }
     }

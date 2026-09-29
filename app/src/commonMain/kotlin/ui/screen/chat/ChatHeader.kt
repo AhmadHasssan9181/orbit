@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsOff
@@ -27,9 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -39,9 +36,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ui.components.OrbitIconButton
-import ui.components.OrbitMenu
-import ui.components.OrbitMenuDivider
-import ui.components.OrbitMenuItem
 import ui.icons.OrbitIcons
 import ui.layout.LocalWindowSizeClass
 import ui.model.ChannelType
@@ -72,6 +66,8 @@ internal fun ChatHeader(
     onToggleSearch: () -> Unit = {},
     pinsActive: Boolean = false,
     onTogglePins: () -> Unit = {},
+    memberListActive: Boolean = false,
+    onToggleMemberList: (() -> Unit)? = null,
     notifMode: String = "ALL",
     onCycleNotificationMode: (() -> Unit)? = null
 ) {
@@ -80,7 +76,6 @@ internal fun ChatHeader(
     val compact = windowSize.isCompact
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
-    var showMore by remember { mutableStateOf(false) }
 
     val barBg by animateColorAsState(
         targetValue = if (hovered) t.Header_Bg.copy(alpha = 0.98f) else t.Header_Bg,
@@ -115,25 +110,8 @@ internal fun ChatHeader(
                 Spacer(Modifier.width(OrbitSpace.xs))
             }
 
-            val isLiteMode = ui.theme.LocalIsLiteMode.current
             when {
                 directProfile != null -> SmallUserAvatar(directProfile, size = 30.dp)
-                isLiteMode -> Box(
-                    modifier = Modifier
-                        .size(30.dp)
-                        .clip(CircleShape)
-                        .background(t.AccentGhost),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = channel.name.take(2).uppercase(),
-                        style = MaterialTheme.typography.labelMedium.copy(
-                            fontWeight = FontWeight.SemiBold,
-                            color = t.Accent,
-                            fontSize = 12.sp
-                        )
-                    )
-                }
                 else -> Box(
                     modifier = Modifier
                         .size(30.dp)
@@ -244,22 +222,19 @@ internal fun ChatHeader(
                 size = 32.dp,
                 iconSize = 16.dp
             )
-            OrbitIconButton(
-                icon = OrbitIcons.Members,
-                contentDescription = "Members",
-                onClick = { },
-                tooltip = "Members",
-                size = 32.dp,
-                iconSize = 16.dp
-            )
-            OrbitIconButton(
-                icon = Icons.Default.MoreHoriz,
-                contentDescription = "Room options",
-                onClick = { showMore = !showMore },
-                tooltip = "More",
-                size = 32.dp,
-                iconSize = 16.dp
-            )
+            // Hidden when the layout has no member panel to show, rather than
+            // offering a button that toggles state nobody can see.
+            if (onToggleMemberList != null) {
+                OrbitIconButton(
+                    icon = OrbitIcons.Members,
+                    contentDescription = "Members",
+                    onClick = onToggleMemberList,
+                    active = memberListActive,
+                    tooltip = "Members",
+                    size = 32.dp,
+                    iconSize = 16.dp
+                )
+            }
         }
     }
 }
