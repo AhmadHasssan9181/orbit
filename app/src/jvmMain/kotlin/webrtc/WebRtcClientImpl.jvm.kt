@@ -208,6 +208,68 @@ class JvmWebRtcClient : WebRtcClient {
 
     /** One SDP dump per call, so renegotiation does not bury it. */
     private var _haveLoggedRemoteVideoSections = false
+
+    /**
+     * The sender for the call's single video m-line, or null to add one.
+     *
+     * Matrix 1:1 negotiates ONE video m-line per participant. A camera and a screen
+     * share are not two streams -- they are the same stream carrying different
+     * content, and one replaces the other. Run 47 shows the peer side of that
+     * plainly: their offer for a shared screen is a single `m=video` with a
+     * bare-UUID msid and no screen-share marker anywhere, because there is only
+     * ever one video stream to label.
+     *
+     * So `addTrack` is the wrong call whenever a video m-line already exists, even
+     * though the null check around it reads as if it were the careful one. It asks
+     * for a SECOND m-line that the peer never negotiated, and setLocalDescription
+     * then fails outright:
+     *
+     *   Failed to set local video description recv parameters for m-section with mid='1'
+     *
+     * Run 48 hit that three times, and it is not cosmetic. A failed offer means the
+     * renegotiation is never sent, so the track on the wire never changes: Element
+     * saw no video from Orbit at all, while the UI drew a share tile for a share
+     * that had not been published. The capture guard was also engaged by then, so
+     * Orbit had blanked itself out of every capture on the strength of a
+     * negotiation that never happened.
+     *
+     * Reusing the transceiver's own sender is the Unified Plan answer and the one
+     * Element is already using, since it cannot do otherwise either.
+     */
+    /** True for a transceiver carrying video, and false rather than throwing on a null track. */
+    private fun isVideoTransceiver(transceiver: RTCRtpTransceiver): Boolean =
+        try {
+            transceiver.receiver?.track?.kind == "video"
+        } catch (e: Throwable) {
+            false
+        }
+
+    private fun videoSenderFor(pConn: RTCPeerConnection): RTCRtpSender? {
+        localVideoSender?.let { return it }
+
+        val reused = runCatching {
+            val transceivers: Array<RTCRtpTransceiver>? = pConn.transceivers
+            transceivers?.filterNotNull()?.firstOrNull { isVideoTransceiver(it) }?.sender
+        }.getOrNull()
+
+        if (reused != null) {
+            println("DEBUG: [WebRTC] reusing negotiated video m-line instead of adding one")
+            return reused
+        }
+
+        println("DEBUG: [WebRTC] no video m-line to reuse; adding one")
+        return pConn.addTrack(currentVideoTrackForNewSender(), listOf("mediaStream"))
+    }
+
+    /**
+     * The track to put on a newly added video sender.
+     *
+     * Only reached when there is genuinely no video m-line, which in a 1:1 means
+     * we have nothing to send yet. Null is a valid answer and is left to the
+     * caller to handle, because adding a null track throws inside WebRTC.
+     */
+    private fun currentVideoTrackForNewSender(): MediaStreamTrack? =
+        localVideoTrack ?: screenVideoTrack
     private var selectedCamera: String = "Default"
 
     private var localRenderer: DesktopVideoRenderer? = DesktopVideoRenderer(mirror = true)
@@ -811,10 +873,8 @@ class JvmWebRtcClient : WebRtcClient {
                     livekit.LiveKitNativeMediaSession.armScreenSharePublish(fps, 0)
                 } else {
                     val pConn = peerConnection ?: return
-                    if (localVideoSender != null) {
-                        localVideoSender?.replaceTrack(screenTrack)
-                    } else {
-                        localVideoSender = pConn.addTrack(screenTrack, listOf("mediaStream"))
+                    localVideoSender = videoSenderFor(pConn)?.also { sender ->
+                        sender.replaceTrack(screenTrack)
                     }
                     localVideoTrack = screenTrack
                     localRenderer?.isScreenShare = true
