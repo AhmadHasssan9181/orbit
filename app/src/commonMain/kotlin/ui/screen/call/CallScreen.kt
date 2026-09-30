@@ -739,6 +739,30 @@ private val soundEffects = listOf(
     SoundEffect("🦆", "Quack"),
 )
 
+/**
+ * The soundboard.
+ *
+ * ## Why the grid is replaced by an explanation on a 1:1
+ *
+ * Soundboard effects are rendered locally and queued on a bus that
+ * `LiveKitNativeAudioCapture` folds into each outgoing mic frame, which is how
+ * everybody in a call hears them. That mixer is the **LiveKit** capture path.
+ *
+ * A 1:1 that arrives through legacy WebRTC signalling takes a completely
+ * different capture path, which runs inside the prebuilt `webrtc-java-orbit`
+ * native audio device module. There is no JVM-side seam to add samples to it --
+ * `AudioSink.onRecordedData` is an observer rather than an injector, and
+ * `HeadlessAudioDeviceModule` is a stub with no push method in this binding.
+ *
+ * So on a 1:1 the panel used to play the effect straight into the speakers. The
+ * person you were calling heard nothing, which reads as the feature being broken
+ * rather than as it not applying here.
+ *
+ * The button is kept and the panel now SAYS so. Hiding it outright was the other
+ * option and is worse: a control that vanishes is a question nobody can answer,
+ * while one that explains itself is an answer. The panel is the right place
+ * because that is where somebody has already decided they want this.
+ */
 @Composable
 fun SoundboardPanel(
     callManager: CallManager,
@@ -749,6 +773,11 @@ fun SoundboardPanel(
     var effectVolume by remember { mutableStateOf(1f) }
     val customSounds by soundboardCustomSounds().collectAsState()
     var uploadError by remember { mutableStateOf<String?>(null) }
+
+    // A 1:1 ringing in through legacy signalling cannot carry the bus. Every call
+    // Orbit STARTS is a LiveKit group call regardless of how many people are in it,
+    // so this is true only for incoming 1:1s.
+    val isGroupCall by callManager.isGroupCall.collectAsState(false)
 
     val launchSoundPicker = rememberFilePickerLauncher { bytes, filename, _ ->
         val error = soundboardAddCustomSound(filename, bytes)
@@ -783,6 +812,40 @@ fun SoundboardPanel(
             }
 
             Spacer(Modifier.height(12.dp))
+
+            if (!isGroupCall) {
+                // Say what is true instead of playing a sound only you can hear.
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(
+                        Icons.Default.VolumeOff,
+                        null,
+                        tint = Color.White.copy(alpha = 0.35f),
+                        modifier = Modifier.size(28.dp)
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "Not available in a 1:1",
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Sounds need to travel to the other person, and this call's audio goes " +
+                            "through a path that cannot carry them. Start a call from the room " +
+                            "instead, or join one that is already running.",
+                        color = Color.White.copy(alpha = 0.55f),
+                        fontSize = 12.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+                return@Surface
+            }
 
             LazyVerticalGrid(
                 columns = GridCells.Fixed(4),
