@@ -18,6 +18,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -211,13 +212,18 @@ fun CallGrid(
                     }
                 }
             } else {
-                // 2x2 or 2xN grid
-                val rows = nodes.chunked(2)
+                // 2x2 or 2xN grid, CAPPED by [gridRowsFor].
+                //
+                // Discord's answer to a crowded call is the right one: show what
+                // fits, and say how many are not shown. The overflow tile is
+                // clickable nowhere on purpose -- it is a count, not a control, and
+                // pretending otherwise would be the same lie as a dead button.
+                val (visibleRows, hiddenCount) = gridRowsFor(nodes)
                 Column(
                     modifier = modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    rows.forEach { rowNodes ->
+                    visibleRows.forEach { rowNodes ->
                         Row(
                             modifier = Modifier.weight(1f).fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -231,11 +237,66 @@ fun CallGrid(
                             }
                         }
                     }
+                    if (hiddenCount > 0) {
+                        Row(
+                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(tokens.Sunken)
+                                    .border(1.dp, tokens.Separator, RoundedCornerShape(8.dp)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "+$hiddenCount",
+                                    color = Color.White.copy(alpha = 0.7f),
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
                 }
             }
         }
     }
     }
+}
+
+/**
+ * How many rows of tiles the 2-column grid may lay out.
+ *
+ * Four rows is eight faces, which is the point past which a grid tile stops being
+ * a face and starts being a thumbnail -- and past which every tile in the column is
+ * small enough that a muted-mic badge or a raised hand is unreadable anyway.
+ */
+internal const val CALL_GRID_MAX_ROWS = 4
+
+/**
+ * Splits [nodes] into the rows the grid will actually draw, and counts the ones it
+ * will not.
+ *
+ * Extracted from the composable, and taking a plain list, so the cap can be pinned
+ * by a test instead of asserted by eye. Before this existed the grid was
+ * `nodes.chunked(2)` with every row at `weight(1f)` and no limit at all: ten
+ * participants meant five rows each taking a fifth of the height. Nothing spilled
+ * off-screen -- it was worse than that, because each tile shrank to a sliver while
+ * still being composed and still being handed frames, so a busy call looked broken
+ * rather than crowded.
+ */
+internal fun <T> gridRowsFor(
+    nodes: List<T>,
+    columns: Int = 2,
+    maxRows: Int = CALL_GRID_MAX_ROWS
+): Pair<List<List<T>>, Int> {
+    if (columns < 1) return emptyList<List<T>>() to nodes.size
+    val visible = nodes.chunked(columns).take(maxRows)
+    return visible to (nodes.size - visible.sumOf { it.size })
 }
 
 /**

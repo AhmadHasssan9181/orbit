@@ -71,6 +71,19 @@ enum class CallLayoutMode { Grid, Focus }
 fun CallScreen(
     callManager: CallManager,
     callerName: String = "Friend",
+    /**
+     * The other person's avatar, already converted to an http(s) URL by the
+     * repository that resolved it.
+     *
+     * This screen is the P2P surface and previously had no way to receive it: the
+     * two tiles were built from [callerName] plus a hard-coded red, so every 1:1
+     * call showed a red circle with a letter in it no matter what picture the
+     * other person had set. The group surface has had avatar resolution for a
+     * while; this is the same idea brought across, not a new mechanism.
+     */
+    callerAvatarUrl: String? = null,
+    /** Our own avatar, same story and same source. */
+    myAvatarUrl: String? = null,
     onStartScreenShare: () -> Unit = {},
     isEmbedded: Boolean = false,
     modifier: Modifier = Modifier
@@ -301,12 +314,25 @@ fun CallScreen(
             }
 
             if (remoteRenderer != null && hasRemoteStream) {
-                nodes.add(RenderNode("remote", callerName, remoteRenderer, isScreenShare = false, avatarColor = 0xFFD65A54.toInt()))
+                nodes.add(
+                    RenderNode(
+                        "remote",
+                        callerName,
+                        remoteRenderer,
+                        isScreenShare = false,
+                        avatarUrl = callerAvatarUrl,
+                        // Seeded from the person, not a fixed red: every 1:1 tile in
+                        // every 1:1 call used to be the same red, and a colour
+                        // derived from the name means the tile still looks
+                        // deliberate when they have set no picture.
+                        avatarColor = identityColor(callerName)
+                    )
+                )
             }
             if (isVideoEnabled && !isScreenSharing) {
-                nodes.add(RenderNode("local", "You", localRenderer, isScreenShare = false, isMuted = isMuted, isDeafened = isDeafened, isHandRaised = isMyHandRaised))
+                nodes.add(RenderNode("local", "You", localRenderer, isScreenShare = false, isMuted = isMuted, isDeafened = isDeafened, isHandRaised = isMyHandRaised, avatarUrl = myAvatarUrl))
             } else if (!isScreenSharing) {
-                nodes.add(RenderNode("local", "You", null, isScreenShare = false, isMuted = isMuted, isDeafened = isDeafened, isHandRaised = isMyHandRaised))
+                nodes.add(RenderNode("local", "You", null, isScreenShare = false, isMuted = isMuted, isDeafened = isDeafened, isHandRaised = isMyHandRaised, avatarUrl = myAvatarUrl))
             }
 
             Box(
