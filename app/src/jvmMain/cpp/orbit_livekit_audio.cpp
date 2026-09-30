@@ -219,6 +219,51 @@ std::unordered_set<std::string> g_forcedSubscribes;
 // the set of tracks in the room actually changes. The rescan runs on a timer for
 // the whole call; a per-tick dump would bury everything else.
 std::string g_remotePublicationInventory;
+std::string g_lastDelegateCounts;
+
+// How many track-lifecycle delegate callbacks the SDK actually delivered, and how
+// many arrived carrying no publication at all.
+//
+// Run 22 produced a publication that the 2 s rescan could see in
+// participant->trackPublications() while NO log line claimed onTrackPublished had
+// run for it -- and that was not evidence of anything, because every diagnostic on
+// that path returns early on a null publication. So "the SDK never delivered the
+// event" and "the SDK delivered an empty event" were the same log, and the first
+// real screen share Orbit lost is unaccounted for.
+//
+// The rescan reading the publication proves the SDK knows about it; only these
+// counters say whether the event path ran. Reported with the inventory so it costs
+// no extra line.
+std::mutex g_delegateEventMutex;
+long long g_delegatePublished = 0;
+long long g_delegateUnpublished = 0;
+long long g_delegateSubscribed = 0;
+long long g_delegateNullPublication = 0;
+
+void noteDelegateEvent(const char* name, const std::shared_ptr<livekit::TrackPublication>& publication) {
+    std::lock_guard<std::mutex> lock(g_delegateEventMutex);
+    if (std::strcmp(name, "onTrackPublished") == 0) {
+        g_delegatePublished += 1;
+    } else if (std::strcmp(name, "onTrackUnpublished") == 0) {
+        g_delegateUnpublished += 1;
+    } else {
+        g_delegateSubscribed += 1;
+    }
+    if (publication == nullptr) {
+        g_delegateNullPublication += 1;
+        std::cout << "WARN [OrbitLiveKitAudio] " << name
+                  << " arrived with a NULL publication; the rescan is the only way this track becomes visible"
+                  << std::endl;
+    }
+}
+
+std::string delegateEventCounts() {
+    std::lock_guard<std::mutex> lock(g_delegateEventMutex);
+    return "pub=" + std::to_string(g_delegatePublished) +
+           " sub=" + std::to_string(g_delegateSubscribed) +
+           " unpub=" + std::to_string(g_delegateUnpublished) +
+           " nullPub=" + std::to_string(g_delegateNullPublication);
+}
 
 constexpr jint kSampleRate = 48000;
 constexpr jint kChannels = 1;
@@ -3349,6 +3394,17 @@ public:
             return;
         }
         SessionLock lock;
+        // Counted before anything can filter it out. Run 22 lost a screen share
+        // whose publication Orbit could see by polling but for which NO log line
+        // anywhere claimed onTrackPublished had fired -- and that was
+        // unfalsifiable, because logRemoteVideoPublicationDetected returns
+        // immediately on a null publication, so "the event never arrived" and
+        // "the event arrived carrying nothing" printed identically.
+        //
+        // The rescan sees the publication in participant->trackPublications()
+        // either way, so the publication existing proves nothing about the
+        // event. Only a counter distinguishes them.
+        noteDelegateEvent("onTrackPublished", event.publication);
         if (event.participant != nullptr) {
             const std::string identity = event.participant->identity();
             const std::string sid = event.participant->sid();
@@ -3411,6 +3467,7 @@ public:
             return;
         }
         SessionLock lock;
+        noteDelegateEvent("onTrackUnpublished", event.publication);
         if (event.publication != nullptr) {
             // A publication can be withdrawn before it ever carried a track, and
             // that is not a shape the reader log can express: no reader, no track
@@ -3458,6 +3515,7 @@ public:
             return;
         }
         SessionLock lock;
+        noteDelegateEvent("onTrackSubscribed", event.publication);
         if (event.participant != nullptr) {
             const std::string identity = event.participant->identity();
             const std::string sid = event.participant->sid();
@@ -4118,6 +4176,14 @@ void resetRoomLocked() {
         g_forcedSubscribes.clear();
     }
     g_remotePublicationInventory.clear();
+    g_lastDelegateCounts.clear();
+    {
+        std::lock_guard<std::mutex> lock(g_delegateEventMutex);
+        g_delegatePublished = 0;
+        g_delegateUnpublished = 0;
+        g_delegateSubscribed = 0;
+        g_delegateNullPublication = 0;
+    }
     if (g_videoSource != nullptr || g_videoTrack != nullptr || g_videoPublished || g_acceptingVideoFrames) {
         std::cout << "DEBUG [VideoPublish] stop requested reason=room-reset" << std::endl;
     }
@@ -7080,8 +7146,20 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeRescanRemoteVideoTracks(JNIEnv*, jclass
     }
     if (inventory != g_remotePublicationInventory) {
         g_remotePublicationInventory = inventory;
-        std::cout << "DEBUG [OrbitLiveKitAudio] remote publication inventory:"
+        std::cout << "DEBUG [OrbitLiveKitAudio] remote publication inventory "
+                  << delegateEventCounts() << ":"
                   << (inventory.empty() ? " <empty>" : inventory) << std::endl;
+    } else {
+        // Unchanged inventory can still mean new events, so the counters are
+        // reported on their own schedule rather than only on a change. This is the
+        // line that would have caught run 22: an inventory that never changed
+        // while a publication sat in it, trackless and unsubscribed, for as long
+        // as the sender kept it up.
+        const std::string counts = delegateEventCounts();
+        if (counts != g_lastDelegateCounts) {
+            g_lastDelegateCounts = counts;
+            std::cout << "DEBUG [OrbitLiveKitAudio] delegate events " << counts << std::endl;
+        }
     }
     if (startedVideo > 0 || startedAudio > 0) {
         std::cout << "DEBUG [OrbitLiveKitAudio] rescan recovered missing readers video="
