@@ -125,11 +125,52 @@ import kotlin.time.Duration.Companion.seconds
 
 class MatrixMessagesRepository(val context: MatrixContext) : OrbitMessagesRepository {
 
-    override suspend fun getMessagesForChannel(channelId: String, limit: Int, fromToken: String?): List<OrbitMessage> {
-        val trixnity = context.trixnityClient ?: return emptyList()
+    /**
+ * Messages for [channelId], served from the on-disk cache when it is usable and
+ * refreshed from the network.
+ *
+ * ## Why this reads a cache at all
+ *
+ * `getTimelineEvents` is a network call. Every room open paid a round trip and a
+ * spinner before showing anything, and a room that could not be reached -- the
+ * tunnel is down, the wifi dropped, the server is having a bad day -- rendered as
+ * an empty room, which is indistinguishable from an empty conversation.
+ *
+ * ## What the cache is allowed to do
+ *
+ * Serve the FIRST page only. A scrollback page is anchored to an event id and has
+ * to come from the server, because that is the only thing that knows what sits
+ * before it. Reading it from cache would show the wrong boundary.
+ *
+ * Return stale-but-real messages rather than an empty room when the refresh fails.
+ * That is the whole point of the cache and the reason it is worth having: a cached
+ * room is wrong in a way the user can see and correct, an empty room is wrong in a
+ * way they cannot.
+ *
+ * ## What it is not allowed to do
+ *
+ * Slow the first paint down, or invent messages. The cache is consulted before the
+ * network call and the network call still happens; a room that has never been
+ * opened behaves exactly as it did before any of this existed.
+ */
+override suspend fun getMessagesForChannel(channelId: String, limit: Int, fromToken: String?): List<OrbitMessage> {
+        val cache = util.messageCache()
+        val cached = if (fromToken == null) cache.read(channelId).map { it.toMessage() } else emptyList()
+
+        val trixnity = context.trixnityClient
+        if (trixnity == null) {
+            // No session. Cached messages are still real messages and still belong
+            // on screen; this is the offline path.
+            return cached
+        }
+
         return try {
-            val lastEventId = fromToken?.let { EventId(it) } ?: trixnity.room.getById(RoomId(channelId)).first()?.lastEventId
-            if (lastEventId == null) return emptyList()
+            val lastEventId = fromToken?.let { EventId(it) }
+                ?: trixnity.room.getById(RoomId(channelId)).first()?.lastEventId
+            if (lastEventId == null) {
+                cache.write(channelId, cached.map { ui.model.CachedMessage.of(it) })
+                return cached
+            }
 
             val events = mutableListOf<OrbitMessage>()
             val flow = trixnity.room.getTimelineEvents(
@@ -152,21 +193,62 @@ class MatrixMessagesRepository(val context: MatrixContext) : OrbitMessagesReposi
                     }
                 }
             }
-            if (events.isEmpty() && fromToken == null) {
-                // Nothing came back within the bound. Return an empty list rather
-                // than pretending, so the UI shows its empty state.
-                return emptyList()
-            }
             val pinnedIds = awaitPinnedEventIds(channelId)
             // Edits and replies supersede their targets; the aggregation pass then
             // folds reactions into whatever message actually renders.
             val resolved = applyEdits(events.reversed())
-            aggregateReactions(resolved).map { it.copy(isPinned = it.id in pinnedIds) }
+            val fresh = aggregateReactions(resolved).map { it.copy(isPinned = it.id in pinnedIds) }
+
+            if (fromToken == null) {
+                // Replace rather than merge: this fetch is the authoritative view of
+                // the latest page, and merging would pin a message that was since
+                // deleted or edited-out server-side into the cache forever.
+                cache.write(channelId, fresh.map { ui.model.CachedMessage.of(it) })
+                fresh
+            } else {
+                // A scrollback page goes INTO the cache but is not returned from
+                // it, so the room keeps its full depth across restarts.
+                cache.merge(channelId, fresh.map { ui.model.CachedMessage.of(it) })
+                fresh
+            }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            emptyList()
+            // The refresh failed. Whatever was cached is better than an empty room,
+            // and this is the branch that makes the cache worth having.
+            if (cached.isNotEmpty()) {
+                util.OrbitLog.w(
+                    "MatrixMessagesRepository",
+                    "getMessagesForChannel($channelId) failed, serving ${cached.size} cached"
+                )
+                cached
+            } else {
+                emptyList()
+            }
         }
+    }
+
+    /**
+     * Cached messages for a room, without touching the network.
+     *
+     * Separate from [getMessagesForChannel] on purpose: this is what a UI calls to
+     * paint something immediately, before it has decided whether to refresh. Folding
+     * it into the suspend function would mean the caller could not get at the cache
+     * until the network call had already finished or timed out, which is the delay
+     * this exists to remove.
+     */
+    fun cachedMessages(channelId: String): List<OrbitMessage> =
+        util.messageCache().read(channelId).map { it.toMessage() }
+
+    /**
+     * Records freshly-synced messages in the cache.
+     *
+     * Called from the sync path so a message arrives on disk as it arrives on
+     * screen, rather than only becoming cached the next time the room is opened.
+     */
+    fun cacheSynced(channelId: String, messages: List<OrbitMessage>) {
+        if (messages.isEmpty()) return
+        util.messageCache().merge(channelId, messages.map { ui.model.CachedMessage.of(it) })
     }
 
     /**

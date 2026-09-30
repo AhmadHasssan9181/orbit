@@ -452,6 +452,15 @@ class MatrixSyncRepository(
                         }
                         liveFlow.tryEmit(listOf(orbitMessage))
                         context.globalMessageArrivals.tryEmit(roomId to orbitMessage)
+                        // On disk as it arrives on screen.
+                        //
+                        // Without this, a message only reached the cache the next
+                        // time the room was OPENED, so the win the cache exists for
+                        // -- a room that opens instantly -- only ever applied to
+                        // rooms you happened to revisit. Writing here means the last
+                        // few hundred messages of every room are on disk from the
+                        // moment they arrive.
+                        messagesRepository.cacheSynced(roomId, listOf(orbitMessage))
                     }
                 }
             }

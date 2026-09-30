@@ -131,6 +131,11 @@ class MatrixAuthRepository(private val context: MatrixContext) : OrbitAuthReposi
         runCatching { client?.close() }
             .onFailure { println("WARN [MatrixAuthRepository] closing Trixnity client failed: ${it.message}") }
         CredentialManager.clear()
+        // Cached messages are readable with no session at all, which is what makes
+        // them useful when the network is down -- and is exactly why they have to
+        // go when the session does. Otherwise logging out and logging in as someone
+        // else shows the previous account's recent messages.
+        util.messageCache().clearAll()
         context.close()
         context.authStatusFlow.value = AuthStatus.Unauthenticated
     }
