@@ -49,6 +49,24 @@ interface WebRtcClient {
     fun setMirrorVideo(enabled: Boolean)
     
     fun getDesktopSources(): List<DesktopSourceModel>
+
+    /**
+     * Build the screen-share factory and enumerate desktop sources ahead of time.
+     *
+     * Both are one-time costs that otherwise land on the click that starts a
+     * share: a `PeerConnectionFactory` initialises the whole WebRTC native stack,
+     * and the enumeration walks every monitor and window through COM. Measured
+     * together on a machine running a 10 ms-deadline audio mixer, they cost a
+     * clear ~1 second of audio dropout at the start of every share.
+     *
+     * Calling this when the call connects moves that cost into the join, which
+     * already takes seconds and has spare CPU.
+     *
+     * Must stay a pure optimisation: implementations are expected to do the work
+     * lazily anyway if this is never called, and to swallow any failure. Nothing
+     * here may become a prerequisite for sharing.
+     */
+    fun prewarmScreenShare() {}
     
     fun getAudioInputDevices(): List<String>
     fun getAudioOutputDevices(): List<String>

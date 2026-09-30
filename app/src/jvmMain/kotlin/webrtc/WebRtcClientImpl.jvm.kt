@@ -45,6 +45,39 @@ import kotlinx.coroutines.flow.StateFlow
 import repository.TurnServer
 import kotlin.math.abs
 
+/**
+ * How long a desktop-source enumeration stays valid.
+ *
+ * Long enough that the share picker and the share that follows it share one
+ * enumeration -- they are seconds apart at most, and those two were the most
+ * expensive moments on the share-start path. Short enough that a window opened a
+ * couple of minutes later still shows up in the picker.
+ */
+private const val DESKTOP_SOURCE_CACHE_TTL_MS = 120_000L
+
+/**
+ * Resolves a chosen source id to the (id, isWindow) the capture source needs,
+ * from a previously enumerated list instead of enumerating again.
+ *
+ * Returns null for every case the caller must fall back to a fresh enumeration
+ * for -- a cold cache, no id, an unknown id, an id that is not a number. That is
+ * deliberate and is the important part of the contract: **this function never
+ * guesses.** Picking the wrong source would share somebody's window to the whole
+ * call, so "I do not know" has to be a real, reachable answer, and the caller's
+ * fallback is a correct enumeration rather than nothing.
+ */
+internal fun resolveDesktopSource(
+    sources: List<DesktopSourceModel>?,
+    sourceId: String?
+): Pair<Long, Boolean>? {
+    val list = sources ?: return null
+    val wanted = sourceId?.trim().orEmpty()
+    if (wanted.isEmpty()) return null
+    val match = list.firstOrNull { it.id == wanted } ?: return null
+    val id = match.id.toLongOrNull() ?: return null
+    return id to match.isWindow
+}
+
 class JvmWebRtcClient : WebRtcClient {
     private val _onIceCandidate = MutableSharedFlow<IceCandidateModel>(extraBufferCapacity = 10)
     override val onIceCandidate: SharedFlow<IceCandidateModel> = _onIceCandidate
@@ -350,6 +383,53 @@ class JvmWebRtcClient : WebRtcClient {
 
     private var shareCaptureFactory: PeerConnectionFactory? = null
 
+    /**
+     * Reused by [trackSharedWindow] for the life of a share.
+     *
+     * Constructing a WindowCapturer registers desktop-capture callbacks with the
+     * OS; the per-tick version built and disposed one every two seconds while a
+     * share was running. One instance, disposed when the tracker stops.
+     */
+    @Volatile
+    private var shareWindowCapturer: dev.onvoid.webrtc.media.video.desktop.WindowCapturer? = null
+
+    /**
+     * Desktop sources, enumerated once and reused.
+     *
+     * ## Why this is cached
+     *
+     * `ScreenCapturer` and `WindowCapturer` each walk every monitor and every
+     * top-level window through COM on Windows. That is not a cheap query, and it
+     * used to happen four times in this file:
+     *
+     *   1. `getDesktopSources`, to populate the share picker
+     *   2. `startScreenShare`, to turn the chosen id back into a capturable one
+     *   3. `trackSharedWindow`, every two seconds, for the whole share
+     *   4. `trackSharedWindow`, again on its own validation pass
+     *
+     * Items 1 and 2 happen back to back, separated only by the user clicking a
+     * source, and between them a whole `PeerConnectionFactory` is constructed.
+     * Measured symptom: a clear ~1 second audio dropout the instant sharing
+     * starts, then normal audio. The mixer has a 10 ms deadline and the share
+     * path was taking the whole machine for a second to do nothing useful.
+     *
+     * ## Why a TTL rather than "until the call ends"
+     *
+     * A window opened after the first enumeration would not appear in the picker.
+     * The TTL is the refresh: long enough that the picker and the share that
+     * follows it share one enumeration, short enough that a window opened a couple
+     * of minutes later still shows up. There is deliberately no manual invalidation
+     * hook -- it would be a public method with no caller, which is the shape this
+     * file has been cleaned of all session.
+     */
+    private var cachedDesktopSources: List<DesktopSourceModel>? = null
+    private var cachedDesktopSourcesAt: Long = 0L
+
+    private fun cachedSources(nowMs: Long, ttlMs: Long): List<DesktopSourceModel>? {
+        val list = cachedDesktopSources ?: return null
+        return if (nowMs - cachedDesktopSourcesAt < ttlMs) list else null
+    }
+
     // Group calls run the native C++ engine and never build the P2P factory, but
     // startScreenShare needs a factory purely to pump local capture frames into
     // the native share sink. Create a lightweight audio-less one on first use.
@@ -511,19 +591,49 @@ class JvmWebRtcClient : WebRtcClient {
                 println("WARN [WebRTC] startScreenShare aborted: P2P mode with no peer connection")
                 return
             }
+            // Warm the factory and the source list off the critical path when we can.
+            // See prewarmScreenShare() for why this is not the whole story.
+            prewarmScreenShare()
             val f = obtainShareFactory()
 
-            val screenCapturer = ScreenCapturer()
-            val windowCapturer = dev.onvoid.webrtc.media.video.desktop.WindowCapturer()
-            val screenSources = screenCapturer.desktopSources
-            val windowSources = windowCapturer.desktopSources
-            
-            val sSource = screenSources.find { it.id.toString() == sourceId }
-            val wSource = windowSources.find { it.id.toString() == sourceId }
-            
-            val isWindow = wSource != null
-            val finalSourceId = wSource?.id ?: sSource?.id ?: screenSources.firstOrNull()?.id
-            
+            // Resolve from the cache the share picker already populated. This used
+            // to construct a ScreenCapturer AND a WindowCapturer and enumerate both
+            // a second time, moments after the picker had enumerated them once --
+            // two full COM walks of every monitor and window on a machine running a
+            // 10 ms-deadline audio mixer, and the audible symptom was a ~1s dropout
+            // the instant sharing started.
+            var isWindow = false
+            var finalSourceId: Long? = null
+            val t0 = System.currentTimeMillis()
+            resolveShareSource(sourceId)?.let { (id, window) ->
+                finalSourceId = id
+                isWindow = window
+            }
+            if (finalSourceId == null) {
+                // Cache miss. Enumerate, as before, and repopulate. Kept so this is
+                // a speed-up and never a new way for sharing to fail.
+                val screenCapturer = ScreenCapturer()
+                val windowCapturer = dev.onvoid.webrtc.media.video.desktop.WindowCapturer()
+                val screenSources = screenCapturer.desktopSources
+                val windowSources = windowCapturer.desktopSources
+                val sSource = screenSources.find { it.id.toString() == sourceId }
+                val wSource = windowSources.find { it.id.toString() == sourceId }
+                isWindow = wSource != null
+                finalSourceId = wSource?.id ?: sSource?.id ?: screenSources.firstOrNull()?.id
+                cachedDesktopSources = screenSources.map {
+                    DesktopSourceModel(it.id.toString(), it.title ?: "Screen ${it.id}", false)
+                } + windowSources.map {
+                    DesktopSourceModel(it.id.toString(), it.title ?: "Window ${it.id}", true)
+                }
+                cachedDesktopSourcesAt = System.currentTimeMillis()
+                screenCapturer.dispose()
+                windowCapturer.dispose()
+            }
+            println(
+                "DEBUG [WebRTC] share source resolved id=$finalSourceId isWindow=$isWindow " +
+                    "in ${System.currentTimeMillis() - t0}ms (cached=${cachedDesktopSources != null})"
+            )
+
             if (finalSourceId != null) {
                 // If already screen sharing, stop old one
                 if (screenVideoTrack != null) {
@@ -594,27 +704,71 @@ class JvmWebRtcClient : WebRtcClient {
                     trackSharedWindow(finalSourceId)
                 }
             } else {
-                println("WARN [WebRTC] screen share aborted: no desktop/window source matched sourceId=$sourceId (screens=${screenSources.size} windows=${windowSources.size})")
+                println("WARN [WebRTC] screen share aborted: no desktop/window source matched sourceId=$sourceId")
             }
-            
-            screenCapturer.dispose()
-            windowCapturer.dispose()
+
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
+
+    /**
+     * Builds the share `PeerConnectionFactory` and enumerates desktop sources
+     * ahead of time, so pressing Share does not pay for either.
+     *
+     * ## Why this exists
+     *
+     * Both are one-time costs that used to land on the click. `PeerConnectionFactory`
+     * initialises the whole WebRTC native stack, and the desktop enumeration walks
+     * every monitor and window through COM. On a machine running a 10 ms-deadline
+     * audio mixer the pair cost a clear ~1 second of dropout at the start of every
+     * share.
+     *
+     * ## Why call it rather than rely on the cache alone
+     *
+     * A call join already takes seconds and has spare CPU -- 8s once the microphone
+     * probe was cached. Moving the cost there costs nothing the user is waiting on,
+     * and by the time anyone clicks Share the factory is already warm. Without
+     * this the very first share of a call still pays the construction, because the
+     * cache is only ever populated by the picker.
+     *
+     * Safe to call repeatedly and from any thread: it is a no-op once both exist.
+     * Failures are logged and swallowed, because the real path still builds them on
+     * demand -- this is strictly an optimisation and must never be able to break a
+     * share that would otherwise have worked.
+     */
+    override fun prewarmScreenShare() {
+        val t0 = System.currentTimeMillis()
+        runCatching { obtainShareFactory() }
+            .onFailure { println("DEBUG [WebRTC] share factory prewarm failed: ${it.message}") }
+        runCatching { getDesktopSources() }
+            .onFailure { println("DEBUG [WebRTC] desktop source prewarm failed: ${it.message}") }
+        println("DEBUG [WebRTC] screen share prewarmed in ${System.currentTimeMillis() - t0}ms")
     }
 
     private fun trackSharedWindow(sourceId: Long) {
         shareWindowTrackingJob?.cancel()
         shareWindowTrackingJob = CoroutineScope(Dispatchers.IO).launch {
             while (isActive) {
-                kotlinx.coroutines.delay(2000)
+                kotlinx.coroutines.delay(10_000)
                 if (!_isScreenSharing.value) break
+                // One capturer for the life of the tracker, not one per tick.
+                //
+                // This used to construct a WindowCapturer, enumerate every window
+                // on the system, and dispose it -- every two seconds, for as long
+                // as the share was running, on the same machine as the audio
+                // mixer. Constructing the capturer registers OS callbacks, which
+                // is the expensive half; the enumeration on an existing capturer
+                // is comparatively cheap. Ten seconds instead of two is the other
+                // half: a window that closed can stay shared for a few seconds
+                // longer, which is harmless, in exchange for a fifth of the
+                // periodic spike.
                 val stillExists = runCatching {
-                    val windowCapturer = dev.onvoid.webrtc.media.video.desktop.WindowCapturer()
-                    val exists = windowCapturer.desktopSources.any { it.id == sourceId }
-                    windowCapturer.dispose()
-                    exists
+                    val capturer = shareWindowCapturer ?: run {
+                        dev.onvoid.webrtc.media.video.desktop.WindowCapturer()
+                            .also { shareWindowCapturer = it }
+                    }
+                    capturer.desktopSources.any { it.id == sourceId }
                 }.getOrDefault(true)
                 if (!stillExists) {
                     println("DEBUG [WebRTC] shared window closed or gone; stopping screen share")
@@ -622,6 +776,10 @@ class JvmWebRtcClient : WebRtcClient {
                     break
                 }
             }
+            // One capturer for the tracker, so it is disposed exactly once --
+            // including on the `break` above and on cancellation.
+            runCatching { shareWindowCapturer?.dispose() }
+            shareWindowCapturer = null
         }
     }
 
@@ -936,6 +1094,11 @@ class JvmWebRtcClient : WebRtcClient {
     }
 
     override fun getDesktopSources(): List<DesktopSourceModel> {
+        val now = System.currentTimeMillis()
+        cachedSources(now, DESKTOP_SOURCE_CACHE_TTL_MS)?.let {
+            println("DEBUG [WebRTC] desktop sources from cache n=${it.size}")
+            return it
+        }
         val screenCapturer = ScreenCapturer()
         // ScreenCapturer only enumerates monitors; windows come from WindowCapturer
         // below, so no title-based kind guessing is needed.
@@ -944,16 +1107,33 @@ class JvmWebRtcClient : WebRtcClient {
             DesktopSourceModel(it.id.toString(), title, false)
         }
         screenCapturer.dispose()
-        
+
         val windowCapturer = dev.onvoid.webrtc.media.video.desktop.WindowCapturer()
         val windowSources = windowCapturer.desktopSources.map {
             val title = it.title ?: "Window ${it.id}"
             DesktopSourceModel(it.id.toString(), title, true)
         }
         windowCapturer.dispose()
-        
-        return sources + windowSources
+
+        val all = sources + windowSources
+        val elapsed = System.currentTimeMillis() - now
+        println("DEBUG [WebRTC] desktop sources enumerated n=${all.size} in ${elapsed}ms")
+        cachedDesktopSources = all
+        cachedDesktopSourcesAt = now
+        return all
     }
+
+    /**
+     * Resolves a chosen source id to the (id, isWindow) pair the capture source
+     * needs, using the cache rather than enumerating again.
+     *
+     * Returns null when the id is unknown or the enumeration has never run, and
+     * the caller then falls back to enumerating -- which keeps this a
+     * performance change and not a correctness one. A cache miss must never mean
+     * "cannot share".
+     */
+    private fun resolveShareSource(sourceId: String?): Pair<Long, Boolean>? =
+        resolveDesktopSource(cachedDesktopSources, sourceId)
 
     private fun rebuildMicAudioTrack() {
         try {

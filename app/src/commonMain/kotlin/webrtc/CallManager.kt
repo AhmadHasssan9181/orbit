@@ -901,6 +901,24 @@ class CallManager(
             }
         }
         isLocalVideoEnabled.value = value.videoPublished
+
+        // The call is up. Build the screen-share factory and enumerate desktop
+        // sources NOW, so the first Share click does not pay for either.
+        //
+        // Both are one-time initialisations that used to land on the click: a
+        // PeerConnectionFactory spins up the whole WebRTC native stack, and the
+        // enumeration walks every monitor and window through COM. Measured on this
+        // machine, together they cost a clear ~1 second of audio dropout at the
+        // start of every share -- the mixer has a 10 ms deadline and the share
+        // path was taking the whole box for a second to do nothing useful.
+        //
+        // Safe here: the join already took seconds and the user is not yet
+        // interacting with anything. Failures are swallowed inside the call, and
+        // the share path builds both on demand regardless, so this can only ever
+        // make sharing start sooner.
+        runCatching { webRtcClient.prewarmScreenShare() }
+            .onFailure { println("WARN [CallManager] screen share prewarm failed: ${it.message}") }
+
         isVideoCall.value = isVideoCall.value || value.videoPublished
         val membershipMode = livekit.LiveKitFeatureFlags.videoMembershipMode
         val membershipModeAllowsVideo = membershipMode == "intent-video" ||
