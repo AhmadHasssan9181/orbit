@@ -72,14 +72,38 @@ internal fun formatTimestampCompact(ts: Instant): String {
     }
 }
 
-private fun formatDate(date: LocalDate, pattern: String): String {
+/**
+ * Every date pattern [formatDate] can render, in the order the settings card
+ * offers them.
+ *
+ * This is the single source of truth on purpose. The picker used to be a
+ * hand-typed `listOf(...)` in the settings pane while the patterns lived in a
+ * private `when` here, so the two could only ever agree by accident: add a branch
+ * down here and the new format was unselectable, remove one and the picker offered
+ * a choice that silently produced DD/MM/YYYY. An unrecognised pattern is not an
+ * error -- it falls back -- which is exactly what makes the drift invisible.
+ *
+ * DD/MM/YYYY is not in this list of `when` branches because it IS the fallback,
+ * and it is listed here because it is a real choice a user can make. [DATE_FORMATS]
+ * is what the picker shows; [formatDate] is what renders it.
+ */
+internal val DATE_FORMATS = listOf("DD/MM/YYYY", "MM/DD/YYYY", "YYYY-MM-DD", "D MMM YYYY")
+
+internal fun formatDate(date: LocalDate, pattern: String): String {
     val d = date.dayOfMonth.toString().padStart(2, '0')
     val m = date.monthNumber.toString().padStart(2, '0')
     val y = date.year.toString()
+    // `LocalDate.month.name` is the enum constant -- MARCH, SEPTEMBER -- so the
+    // old `name.take(3)` produced "07 MAR 2026". Nobody had ever seen it, because
+    // "D MMM YYYY" was one of the branches of a setting that could not be selected
+    // from anywhere: the date-format setting had a reader and no writer, so the
+    // only reachable value was the fallback and this branch was unreachable code.
+    // Turning the setting on is what exposed it. Title case, not upper.
+    val monthAbbr = date.month.name.take(3).lowercase().replaceFirstChar { it.uppercase() }
     return when (pattern.uppercase()) {
         "MM/DD/YYYY" -> "$m/$d/$y"
         "YYYY-MM-DD" -> "$y-$m-$d"
-        "D MMM YYYY" -> "$d ${date.month.name.take(3)} $y"
+        "D MMM YYYY" -> "$d $monthAbbr $y"
         else -> "$d/$m/$y"
     }
 }

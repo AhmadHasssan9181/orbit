@@ -54,14 +54,15 @@ import ui.screen.main.*
 enum class SettingsCategory(val title: String, val group: String) {
     // User Settings
     // (Fabricated panes removed: perks, family centre, connections, authorised apps,
-    // keybinds, language, activity/games, notifications and advanced were pure
-    // mock-ups with no backing engine - hidden until they actually work.)
+    // keybinds, language and activity/games were pure mock-ups with no backing
+    // engine - hidden until they actually work.)
     MyAccount("My Account", "USER SETTINGS"),
     Profiles("Profiles", "USER SETTINGS"),
 
     // App Settings
     Appearance("Appearance", "APP SETTINGS"),
     Accessibility("Accessibility", "APP SETTINGS"),
+    Notifications("Notifications", "APP SETTINGS"),
     VoiceVideo("Voice & Video", "APP SETTINGS"),
     Chat("Chat", "APP SETTINGS"),
     Windows("Windows Settings", "APP SETTINGS"),
@@ -239,6 +240,9 @@ fun SettingsScreen(
                         SettingsCategory.Accessibility -> {
                             settingsItem { AccessibilityExtrasPane(settingsManager) }
                         }
+                        SettingsCategory.Notifications -> {
+                            settingsItem { NotificationsPane(settingsManager) }
+                        }
                         SettingsCategory.Chat -> {
                             settingsItem { ChatSettingsPane(settingsManager) }
                         }
@@ -268,6 +272,7 @@ private fun settingsIconFor(cat: SettingsCategory): androidx.compose.ui.graphics
     SettingsCategory.Profiles -> Icons.Default.Face
     SettingsCategory.Appearance -> Icons.Default.Palette
     SettingsCategory.Accessibility -> Icons.Default.Accessibility
+    SettingsCategory.Notifications -> Icons.Default.Notifications
     SettingsCategory.VoiceVideo -> Icons.Default.Videocam
     SettingsCategory.Chat -> Icons.Default.Chat
     SettingsCategory.Windows -> Icons.Default.DesktopWindows
