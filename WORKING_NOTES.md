@@ -610,30 +610,33 @@ was verified with a reference count (or a compile) before cutting.
 
 ## 6. Known-unimplemented
 
-Honest list, re-verified against the code on 2026-09-30 rather than trusted
-from an earlier pass. Two items that used to be here are gone
-(`switchCamera()` has no definition anywhere in `app/src`; the roster
-reconciliation and the join-call banner are fixed and deleted respectively).
-Everything below is confirmed still open by reading the code or a run log.
+Honest list. **Every row below was re-checked against the code on 2026-09-30, in
+this pass, and not taken from the earlier version of this file.** That mattered:
+two of the previous entries were wrong. One said the banner was "parsed and
+rendered nowhere" when only *half* of that was true. One listed
+`callRenderThumbnail` / `callFlagDirectChatForRoom` as being called into APIs that
+do not exist — they are not called anywhere, so there is nothing left to fix.
+
+The fixed entries are struck through rather than deleted, with what was actually
+wrong, because "it was broken and here is why" is the part worth keeping.
 
 ### Costs the user something today
 
-| Thing | State | Evidence |
-|---|---|---|
-| ~~**Video heap**~~ | **Fixed for remote video, see §4.** The reader forwarded every frame at full size: 1920x1080 RGBA is 8.29 MB, the SFU pushed 28.8 fps, so ~237 MB/s of JNI `byte[]`, amplified ~4x by the UI into a `BufferedImage` raster and a Skia `Bitmap`. Now averaged down to a 1280 px long edge in native and capped at 20 fps | run 19, `vid.remote n=79 mb=624` in one 5 s window; `seq 60 -> 120 in 2080 ms` |
-| **Key-exchange convergence sweep never gives up** | `convergence sweep: resending key index=N to 1 underdelivered device(s) ([@nfak_ism:matrix.org:ZVK65HTOZW])` every 3s for the whole call, then `deferring 1 device(s) without stored keys` — the same device, immediately after deferring it. The loop has no attempt cap or backoff | run 14, every run |
-| **Avatars in 1:1** | The local "You" tile and the whole P2P path never resolve `avatarUrl`, so 1:1s fall back to a seed colour next to group tiles | read 2026-09-30 |
-| **Chat history stops at 50** | The repository's `fromToken` is correct; the UI never supplies one, so there is no scrollback | read 2026-09-30 |
-| **Room topic is never read back** | `createRoom` writes `m.room.topic`, and no code path parses it back into `OrbitChannel.topic`. `ChatHeader` renders the subtitle correctly and it is always blank | grep: `topic =` appears only on the create path |
-| **`raise_hand` does nothing** | `sendCallEvent` is a `when` over trixnity's *closed* `CallEventContent` — only `m.call.invite/answer/negotiate/candidates/hangup`. `io.orbit.raise_hand` is not a case, so the button logs `Unknown call event type` and stops | `MatrixCallsRepository.sendCallEvent` |
-| **`OrbitVideoEngine.injectVideoProcessor`** | No implementation in any shipped DLL (verified: sibling symbols are present). Also why the virtual background is inert | DLL symbol check |
-| **`OrbitAudioDeviceModule.setAttenuationStrength`** | Same. Also why **Ducking Strength is inert in group calls** | DLL symbol check |
-| No way to *start* device verification | `VerificationOverlay` handles an incoming request and SAS completion correctly, but nothing ever calls `verification.requestVerification()`. You can verify when asked; you can never ask | read 2026-09-30 |
-| `CallGrid` tile overflow | Tiles stack unbounded past the grid | read 2026-09-30 |
-| Reconnect watchdog | `GroupCallConnectionTracker.Reconnecting` has no timeout, so a dead socket reconnects forever | read 2026-09-30 |
-| Soundboard in 1:1 | Local-monitor only. In a group call it is broadcast; in a P2P call you hear yourself | read 2026-09-30 |
-| Banner URL | Parsed and then rendered nowhere | read 2026-09-30 |
-| `callRenderThumbnail` / `callFlagDirectChatForRoom` | Called from `WebRtcEffects` into `trixnity` APIs that don't exist | read 2026-09-30 |
+| Thing | State |
+|---|---|
+| ~~**Video heap**~~ | **Fixed for remote video, see §4.** The reader forwarded every frame at full size: 1920x1080 RGBA is 8.29 MB, the SFU pushed 28.8 fps, so ~237 MB/s of JNI `byte[]`, amplified ~4x by the UI. Now averaged to a 1280 px long edge in native and capped at 20 fps |
+| ~~**Key-exchange convergence sweep never gives up**~~ | **Fixed.** 4 attempts, 30s backoff, `exhaustedDevices` excluded |
+| ~~**Avatars in 1:1**~~ | **Fixed, in three separate places** — see §13. The group "You" tile read `profileForIdentity(selfId)` but nothing ever requested a profile for our own identity, so it could only return null; the P2P surface had no parameter to receive one; and the fallback colour was a hard-coded red in one surface and a six-entry palette in the other |
+| ~~**Chat history stops at 50**~~ | **Fixed.** `loadOlderMessages` in `OrbitApp` |
+| ~~**Room topic is never read back**~~ | **Fixed.** `MatrixRoomTopics` |
+| ~~**`raise_hand` does nothing**~~ | **Fixed.** Sent via a raw `PUT /rooms/{id}/send/{type}/{txnId}`, since `sendCallEvent` is a `when` over trixnity's *closed* `CallEventContent` |
+| ~~**No way to *start* device verification**~~ | **Fixed.** `VerificationOverlay` was already complete including `OwnRequest`; the only missing thing was the call that begins one. Now `Settings > My Account > Verify another device`, SAS only |
+| ~~**`CallGrid` tile overflow**~~ | **Fixed.** Capped at 4 rows / 8 faces with a "+N" tile. It never overflowed — each tile just took an ever-smaller share of the height |
+| ~~**Reconnect watchdog**~~ | **Fixed.** `Reconnecting` had no deadline at all. Now 90s. Adding it exposed a second bug: `stageEnteredAtMs` was never stamped on that transition, so the deadline would have fired on every network blip |
+| ~~**Banner URL**~~ | **Fixed — and the note was half wrong.** `m.room.banner` was never read, which left `ServerHeader`'s complete banner layout running on a field nobody assigned. The *profile* banner was fine and is still fine; what was wrong there is in §13 |
+| **`OrbitVideoEngine.injectVideoProcessor`** | No implementation in the shipped DLL, which is why the virtual background is inert. **Re-verified by test on every run** — `NativeSymbolAvailabilityTest` fails if the symbol ever appears, and says what to do then |
+| **`OrbitAudioDeviceModule.setAttenuationStrength`** | Same. Also why **Ducking Strength is inert**. Same test, same guard |
+| Soundboard in 1:1 | Local-monitor only. In a group call the mixer bus is folded into the outgoing mic frames; on P2P there is no JVM-side mic tap and the only transmission path is the fork-ADM system-audio loopback, which is off by default. **This is a feature gap, not a defect** — sending it on P2P means a WebRTC audio track carrying the bus, which is the LiveKit machinery the P2P path does not have |
 
 ### Not fixable in this codebase
 
@@ -782,13 +785,21 @@ should carry information.
 
 ## 8. Git state
 
-Everything is staged, nothing is committed, nothing is pushed. That is
-deliberate: the index is what made the `Set-Content` corruption recoverable.
+**This section was written when nothing was committed and is out of date. Read the
+current state from `git log` and `git status`; the history is the record.**
 
-Be careful with `git add -A` here. The repo tracks ~1,900 committed `.class`
-files under `webrtc-java-lib/build/` (pre-existing, unrelated to any change here)
-plus some root-level scratch files that `.gitignore` does not cover because they
-were committed *before* the ignore rules existed.
+What it described at the time: everything staged, nothing committed, nothing
+pushed, deliberately — the index was what made a `Set-Content` corruption
+recoverable.
+
+`git add -A` at the repo root is still unsafe. The repo tracks ~1,900 committed
+`.class` files under `webrtc-java-lib/build/` (pre-existing, unrelated to any change
+here) plus some root-level scratch files that `.gitignore` does not cover because
+they were committed *before* the ignore rules existed. Use the narrower form:
+
+```
+git add -A -- app/src deploy *.md *.gradle* gradle .gitignore
+```
 
 Deleted in this work and staged as deletions: `Color.kt`, `WhatsAppDrawer.kt`,
 `SettingsPerksPanes.kt`, `SplashScreen.kt`, `TestStats.kt`, `BottomNavBar.kt`,
@@ -873,8 +884,25 @@ Not redone:
 
 (The channel-header topic line is **not** on this list — `ChatHeader` does render
 `channel.topic` as a subtitle when it is non-blank. It is always blank because
-`m.room.topic` is written on create and never parsed back. That is a repository
-gap, not a UI gap; it is in §6.)
+`m.room.topic` is written on create and never parsed back. That was a repository
+gap, not a UI gap; it was fixed in §13.)
+
+Done in this pass, and worth listing here because they were on the §6 list and read
+as UI gaps:
+
+- **Call tiles show real avatars**, in a 1:1 and in a group. Three separate causes —
+  see §13.1.
+- **The call grid stops shrinking itself away.** Capped at eight faces with a "+N"
+  tile for the rest.
+- **A settings Notifications pane exists.** It was deleted once as a mock-up; it
+  is back because those four switches now have setters and honoured readers.
+- **Clock format and date format are selectable** in Appearance, after being
+  permanently 12-hour and DD/MM/YYYY since they were written.
+- **A self-hosted SFU URL is settable** in Voice & Video > Advanced, with the
+  scheme validated, after being permanently blank.
+- **A stuck screen share shows a spinner** from the moment the publication is
+  announced, not from the first frame, and offers a reconnect if it never arrives.
+- **You can start a device verification**, not only accept one.
 
 ---
 
@@ -1038,3 +1066,155 @@ Being explicit, because "it compiles" is not "it works".
   playback. It ducks to 0.3 to limit the echo and the AEC unlocks again almost
   immediately, so it is a mitigation, not a fix. Process loopback is unavailable
   on this Windows build; there is no code-side answer beyond the duck.
+
+---
+
+## 13. The known-unimplemented list, worked through
+
+Six commits against the §6 backlog. The theme that keeps repeating is worth
+stating once: **the bug was almost never where the symptom appeared.** Four of
+these looked like one thing and were two or three.
+
+### 13.1 Avatars: three bugs wearing one costume
+
+The report was "1:1 calls show a seed colour". Reading the code found three
+unrelated causes, and fixing any one of them would have changed nothing visible:
+
+1. The group "You" tile called `profileForIdentity(selfId)`, but
+   `requestProfilesFor` was only ever fed *remote* participants and track owners.
+   Nothing requested a profile for our own identity, so that lookup could only
+   return null. Our own tile was a circle with "Y" in it in every group call,
+   permanently. The usual reason a tile lacks an avatar — we never saw the peer
+   publish a member event — does not apply to us at all.
+2. `CallScreen`, the P2P surface, had no parameter to receive an avatar. It built
+   its two tiles from a name and one hard-coded red.
+3. The fallback colour was a six-entry palette in the group surface and a single
+   constant in the P2P one. Fixed one, left the identical one beside it — which
+   is the exact pattern that produced §5's removals in the first place. Both now
+   come from one palette in `CallTileIdentity.kt`.
+
+The peer's avatar comes from `resolveDmContacts`, **not** from the channel's
+`avatarUrl`. For a non-DM room that field is the *room's* picture, and putting it
+on a person's face tile would be a different kind of wrong.
+
+### 13.2 The reconnect watchdog had two bugs, and the test found the second
+
+`Reconnecting` fell through to the `else` branch of `evaluateDeadlines`, which
+returns `None` unconditionally — so a dead socket advertised "Reconnecting…" while
+the reconnect loop kept firing and the token kept refreshing, forever.
+
+Adding the deadline alone would have shipped **worse than the original**.
+`stageEnteredAtMs` is stamped on every forward stage transition *except* this one,
+so the deadline would have been measured from the original join: the instant a call
+dropped, elapsed time was already past 90s and every transient network blip would
+have become a failed call. The first run of the new tests failed with
+`expected None but was GiveUp` at 85s, which is what exposed it.
+
+And the stamp must be on the *transition only*. The readiness callback arrives
+repeatedly while a reconnect is in flight; re-stamping each time would reset the
+clock forever and the deadline would never be reached.
+
+Each half is independently pinned: reverting the deadline fails one test, reverting
+the stamp fails two more.
+
+### 13.3 Seven settings with a reader and no writer
+
+Not missing *controls* — missing **setters**. Each is read by real code and
+honours the value correctly, so the app behaved as though it were configurable
+while the only reachable value was the default, forever. No way to turn the
+ringtone off. No way to ask for a 24-hour clock. No way to point Orbit at your own
+SFU.
+
+Auditing the whole file afterwards rather than fixing the seven I was handed found
+two more — `spellcheck` and `alwaysOnTop` — where the *reader* did not exist
+either. Both deleted. The class is now empty: **zero settings with a reader and no
+writer, and every reader has a UI control.**
+
+Two bugs surfaced while building the controls:
+
+- **`"D MMM YYYY"` rendered as `07 MAR 2026`.** `LocalDate.month.name` is the enum
+  constant. That branch has always been wrong and nobody had seen it, because the
+  setting that selects it could not be selected from anywhere. Turning the setting
+  on is what exposed it.
+- **`trimEnd('/')` turns a typed `https://` into `https:`.** Caught by a test on
+  the SFU validator I had just written. The trailing-slash trim now stops at the
+  scheme boundary.
+
+The date picker reads its options from `DATE_FORMATS` beside the renderer instead
+of a hand-typed list in the settings pane. `formatDate` has no `else -> error`, so
+a pattern with no arm behind it is not a crash — it is a control that takes a tap
+and does nothing.
+
+### 13.4 The banner: the note was half wrong
+
+§6 said "Banner URL: parsed and rendered nowhere". Checking rather than fixing
+first showed that was two separate claims, one true and one false.
+
+**True:** `m.room.banner` — the standard Matrix room banner that Element and
+everyone else sets — was never read. The consequence was not a missing feature but
+dead code: `ServerHeader` carries a complete banner layout behind
+`hasBanner = server.bannerUrl != null`, and `OrbitServer.bannerUrl` was never
+assigned anywhere. Reviewed, paid for, never once executed.
+
+It now reads from the same cached `GET /rooms/{id}/state` the voice probe and the
+room topic already read, so it is the third feature on one response and adds no
+request. Nineteen tests, mostly about not throwing: the state array is untrusted
+input and the `jsonObject` assertion in `isVoiceRoom` already threw a real crash
+that took the whole drawer down.
+
+One of those tests caught a live defect in the new code: `convertMxcUrl` is a
+pass-through for anything that is not an mxc URI, so a malformed banner came
+straight back out and went to Coil, which cannot load it and fails *silently* —
+a blank rectangle indistinguishable from a room with no banner, and therefore never
+reported by anyone.
+
+**False:** the profile banner saved and previewed correctly all along. What was
+wrong there was different — it demanded a pasted URL, and the comment said no
+upload was wired up "because reusing `uploadAvatar` would overwrite the avatar".
+That reason was stale: `uploadBanner` exists precisely to avoid it, and had no
+caller in the entire app. There is now an Upload button, and `uploadBanner` returns
+the *converted* http URL rather than the raw mxc, because the value goes straight
+into Coil and Coil cannot read `mxc://`. The caption now says the banner is shown at
+the top of that page and not yet displayed to other people.
+
+### 13.5 Claims that were checked once and left as fact
+
+`injectVideoProcessor` (virtual background) and `setAttenuationStrength` (Ducking
+Strength) were recorded as "no implementation in any shipped DLL". True when
+someone ran it, true today — the scan finds 222 `Java_dev_onvoid` exports and both
+symbols absent — but a claim nobody re-runs is a guess with a date on it.
+`NativeSymbolAvailabilityTest` now reads the shipped binary on every test run and
+fails if either symbol appears, with a message saying what to do when it does. It
+carries a positive control asserting it is scanning the DLL that actually gets
+loaded, and it fails loudly if the resource is not on the classpath: a check that
+cannot see anything must not report that it confirmed something.
+
+`callRenderThumbnail` / `callFlagDirectChatForRoom` were listed as "called into
+APIs that don't exist". They are not called anywhere. Entry deleted rather than left
+to be re-derived.
+
+### 13.6 The grid was never overflowing
+
+`nodes.chunked(2)`, every row at `weight(1f)`, no limit. Ten participants meant five
+rows each taking a fifth of the height — which is why this read as a minor cosmetic
+issue for as long as it did. Nothing spilled off-screen; every tile just shrank to
+a sliver while still being composed and still being handed frames. A busy call
+looked broken rather than crowded.
+
+Now capped at four rows. The slicing is extracted as `gridRowsFor` and pinned by
+eight tests, because a cap that only exists inside a composable is a cap nobody will
+notice being widened.
+
+---
+
+## 14. Still open after this pass
+
+- **Message caching.** Deferred by you, and it is a feature rather than a bug.
+- **Soundboard in 1:1.** A feature gap, not a defect — see §6.
+- **The 58 `readinessCache` derive sites.** Unchanged; §6 covers why.
+- **`ActivateAudioInterfaceAsync failed hr=0x8000000e`** — process loopback is
+  unavailable on this Windows build, so share audio captures Orbit's own playback.
+  Ducking to 0.3 limits the echo; it is a mitigation, not a fix, and there is no
+  code-side answer.
+- **The outbound-share starvation fix is still unverified by a run.** Committed,
+  never executed — see §12.
