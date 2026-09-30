@@ -22,6 +22,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ui.theme.CosmicTokens
@@ -93,38 +94,70 @@ fun CallGrid(
         // Index rather than getOrNull: clampedPage is coerceIn(0, lastIndex), and
         // this branch is only reached with a non-empty list, so it cannot miss.
         val featured = screenShareNodes[clampedPage]
-        Column(
+        val gap = 12.dp
+        val stripHeight = CALL_SHARE_STRIP_HEIGHT
+        BoxWithConstraints(
             modifier = modifier
                 .fillMaxSize()
-                .background(tokens.Sunken),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .background(tokens.Sunken)
         ) {
-            ShareSpotlightBox(
-                node = featured,
-                shareCount = screenShareNodes.size,
-                selectedPage = clampedPage,
-                onPageChange = { sharePage = it },
-                tokens = tokens,
-                callManager = callManager,
-                isPinned = featured.id == pinnedNodeId,
-                onPinToggle = onPinToggle,
-                modifier = Modifier.weight(2.5f).fillMaxWidth()
-            )
-            Row(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            // The share is a true 16:9 box, as large as the space above the strip
+            // allows, centred in whatever is left over.
+            //
+            // It used to be `weight(2.5f).fillMaxWidth()`, and that is what made it
+            // look wrong rather than merely imperfect. A weighted height ignores
+            // the shape of the thing being shown: in a 1920x1080 window that weight
+            // hands the share 1896x653, which is 2.9:1. A 16:9 screen inside a 2.9:1
+            // box is drawn 1161px wide with a 367px black bar down each side, so
+            // two thirds of the panel was empty and the strip below it had been
+            // given a third of the window. Sizing the panel to the content's own
+            // aspect is the fix; no weight ratio can express it, because the right
+            // ratio changes with the window.
+            val panel = sharePanelSizeIn(maxWidth, maxHeight - stripHeight - gap)
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(gap)
             ) {
-                stripOrderFor(nonShareNodes, pinnedNodeId) { it.id }
-                    .forEach { node ->
-                        VideoNodeCard(
-                            node,
-                            tokens,
-                            callManager = callManager,
-                            isPinned = node.id == pinnedNodeId,
-                            onPinToggle = onPinToggle,
-                            modifier = Modifier.weight(1f).fillMaxHeight()
-                        )
-                    }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    ShareSpotlightBox(
+                        node = featured,
+                        shareCount = screenShareNodes.size,
+                        selectedPage = clampedPage,
+                        onPageChange = { sharePage = it },
+                        tokens = tokens,
+                        callManager = callManager,
+                        isPinned = featured.id == pinnedNodeId,
+                        onPinToggle = onPinToggle,
+                        modifier = Modifier
+                            .width(panel.width)
+                            .height(panel.height)
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(stripHeight),
+                    horizontalArrangement = Arrangement.spacedBy(gap)
+                ) {
+                    stripOrderFor(nonShareNodes, pinnedNodeId) { it.id }
+                        .forEach { node ->
+                            VideoNodeCard(
+                                node,
+                                tokens,
+                                callManager = callManager,
+                                isPinned = node.id == pinnedNodeId,
+                                onPinToggle = onPinToggle,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                            )
+                        }
+                }
             }
         }
         return
@@ -335,6 +368,43 @@ internal fun <T> stripOrderFor(
 ): List<T> {
     if (pinnedNodeId == null) return faces
     return faces.filter { id(it) == pinnedNodeId } + faces.filter { id(it) != pinnedNodeId }
+}
+
+/** Height of the participant strip that sits under a shared screen. */
+internal val CALL_SHARE_STRIP_HEIGHT = 132.dp
+
+/** The aspect a shared screen is presented at. */
+internal const val CALL_SHARE_ASPECT = 16f / 9f
+
+internal data class SharePanelSize(val width: Dp, val height: Dp)
+
+/**
+ * The largest box of the given aspect ratio that fits in the space available.
+ *
+ * A shared screen is 16:9 and the panel it is drawn in has to be 16:9 too, or the
+ * renderer letterboxes it and the panel ends up mostly black. This picks whichever
+ * of width-first or height-first still fits, which is the only two answers there
+ * are.
+ *
+ * Extracted and tested because the alternative -- expressing the shape as a
+ * `weight()` -- cannot express it at all. A weight is a fraction of the window and
+ * the correct fraction changes with the window's shape, so the same 2.5f that looks
+ * right on a 16:10 laptop turns a 1080p window into a letterboxed strip.
+ */
+internal fun sharePanelSizeIn(
+    availableWidth: Dp,
+    availableHeight: Dp,
+    aspect: Float = CALL_SHARE_ASPECT
+): SharePanelSize {
+    if (availableWidth <= 0.dp || availableHeight <= 0.dp || aspect <= 0f) {
+        return SharePanelSize(0.dp, 0.dp)
+    }
+    val heightIfFullWidth = availableWidth / aspect
+    return if (heightIfFullWidth <= availableHeight) {
+        SharePanelSize(availableWidth, heightIfFullWidth)
+    } else {
+        SharePanelSize(availableHeight * aspect, availableHeight)
+    }
 }
 
 /**
