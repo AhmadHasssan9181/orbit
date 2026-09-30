@@ -66,6 +66,14 @@ class CallMediaKeyExchange(
     private var settleNudgeJob: Job? = null
     private val pendingRetryDevices = java.util.Collections.synchronizedSet(mutableSetOf<CallDevice>())
     private val directQueriedUsers = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    // Per-device attempt counter for the olm key re-query, and the last time each
+    // user was queried. Bounded and backed off -- see the retry watcher.
+    private val keyFetchAttempts = java.util.Collections.synchronizedMap(mutableMapOf<String, Int>())
+    private val lastKeyFetchMs = java.util.Collections.synchronizedMap(mutableMapOf<String, Long>())
+    // Devices abandoned because they have no published keys. Recorded so a later
+    // sweep can exclude them instead of re-deriving the same conclusion every
+    // 2.5 seconds.
+    private val exhaustedDevices = java.util.Collections.synchronizedSet(mutableSetOf<String>())
     private val keyStore: KeyStore? =
         runCatching { client.di.get<KeyStore>(KeyStore::class) }.getOrNull()
             .also { if (it == null) println("ERROR [CallMediaKeyExchange] KeyStore unavailable in DI") }
@@ -327,6 +335,15 @@ class CallMediaKeyExchange(
                     }
                 }
                 val underdelivered = candidates.filterKeys { id ->
+                    // A device we have already given up on stays given up on.
+                    //
+                    // Without this the sweep re-derives "underdelivered" for an
+                    // unencryptable device every 2.5s for the whole call, logs it,
+                    // hands it to `distribute`, which defers it straight back into
+                    // `pendingRetryDevices`, and the retry watcher then
+                    // re-partitions it -- all to reach the same answer, several
+                    // times per cycle, for the length of the call.
+                    if (id in exhaustedDevices) return@filterKeys false
                     deliveredIndex.isUnderdelivered(id, keyIndex)
                 }
                 if (underdelivered.isEmpty()) continue
@@ -348,9 +365,69 @@ class CallMediaKeyExchange(
                 if (stopped) break
                 val snapshot = pendingRetryDevices.toList()
                 if (snapshot.isEmpty()) continue
-                val unqueried = snapshot.map { it.userId }.distinct().filter { directQueriedUsers.add(it) }
-                if (unqueried.isNotEmpty()) fetchAndStorePeerDeviceKeys(unqueried)
-                val ready = snapshot.filter { dev ->
+                val now = nowMs()
+                // Give up on a device that has been asked for repeatedly and has
+                // never published a key.
+                //
+                // The convergence sweeper is a doorman, not a queue: it re-sends to
+                // anything whose CONFIRMED delivery index lags the ring, and a
+                // device we cannot encrypt to is never marked delivered. So a peer
+                // that has no published olm keys -- a stale MatrixRTC membership
+                // record for a device that logged out months ago, or an identity
+                // the server will never answer for -- is re-attempted on EVERY
+                // sweep, for the entire call, forever.
+                //
+                // A live run showed exactly that, every 10 s, all call:
+                //
+                //   convergence sweep: resending key index=0 to 1
+                //     underdelivered device(s) ([@nfak_ism:matrix.org:ZVK65HTOZW])
+                //   deferring 1 device(s) without stored keys:
+                //     [@nfak_ism:matrix.org:ZVK65HTOZW]
+                //
+                // -- the same device, deferred immediately after being retried.
+                //
+                // Worse, the key query that could fix it was one-shot:
+                // `directQueriedUsers.add(it)` returns false on the second call, so
+                // each user's device keys were fetched exactly once for the whole
+                // call. If that query missed, nothing ever re-asked.
+                val (exhausted, stillTrying) = snapshot.partition { dev ->
+                    val id = CallMediaKeys.participantIdentity(dev.userId, dev.deviceId)
+                    val attempts = (keyFetchAttempts[id] ?: 0) + 1
+                    keyFetchAttempts[id] = attempts
+                    attempts > KEY_FETCH_MAX_ATTEMPTS
+                }
+                if (exhausted.isNotEmpty()) {
+                    pendingRetryDevices.removeAll(exhausted.toSet())
+                    exhausted.forEach { dev ->
+                        exhaustedDevices.add(
+                            CallMediaKeys.participantIdentity(dev.userId, dev.deviceId)
+                        )
+                    }
+                    println(
+                        "WARN [CallMediaKeyExchange] giving up on ${exhausted.size} device(s) " +
+                            "with no published olm keys after $KEY_FETCH_MAX_ATTEMPTS queries: " +
+                            "${exhausted.map { "${it.userId}:${it.deviceId}" }}. " +
+                            "This is a stale MatrixRTC membership record, not a live peer; " +
+                            "they are excluded from key exchange for the rest of this call."
+                    )
+                }
+                val live = stillTrying
+                if (live.isEmpty()) continue
+
+                // Re-query, with backoff, instead of once per user per call.
+                //
+                // A device CAN publish its keys after we first asked -- it may have
+                // been mid-login, or its identity keys may have just rotated -- so
+                // one attempt is too few. Bounded and spaced, so this cannot become
+                // the server-hammering loop the delivery-failure path avoids.
+                val dueForQuery = live.map { it.userId }.distinct().filter { userId ->
+                    val last = lastKeyFetchMs[userId] ?: 0L
+                    if (last != 0L && now - last < KEY_FETCH_RETRY_INTERVAL_MS) return@filter false
+                    lastKeyFetchMs[userId] = now
+                    true
+                }
+                if (dueForQuery.isNotEmpty()) fetchAndStorePeerDeviceKeys(dueForQuery)
+                val ready = live.filter { dev ->
                     runCatching { olmStore?.getDeviceKeys(UserId(dev.userId)) }
                         .getOrNull()?.containsKey(dev.deviceId) == true
                 }
@@ -845,6 +922,21 @@ class CallMediaKeyExchange(
         // long enough to rescue a peer whose membership event flickered out,
         // short enough that long-gone devices stop receiving new indexes.
         const val SWEEP_DEVICE_TTL_MS = 600_000L
+
+        // How many times we will re-query one device's olm keys before deciding
+        // it is not a live peer. See the retry watcher.
+        //
+        // 4 queries, 30s apart, is ~2 minutes of a call. Long enough to cover a
+        // device that was mid-login or had just rotated its identity keys, short
+        // enough that a genuinely dead device stops costing requests inside the
+        // first few minutes of any call.
+        const val KEY_FETCH_MAX_ATTEMPTS = 4
+
+        // Spacing between those re-queries, per user. Matches the spirit of
+        // DEVICE_KEY_REFRESH_MIN_INTERVAL_MS above but tighter, because this path
+        // only runs while the device is actively undeliverable and the whole
+        // point of the cap is to converge rather than to poll forever.
+        const val KEY_FETCH_RETRY_INTERVAL_MS = 30_000L
     }
 }
 
