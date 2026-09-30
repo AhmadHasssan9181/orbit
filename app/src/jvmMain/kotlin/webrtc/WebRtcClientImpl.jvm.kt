@@ -586,6 +586,22 @@ class JvmWebRtcClient : WebRtcClient {
     override fun startScreenShare(data: Any?) {
         val sourceId = data as? String
         println("DEBUG [WebRTC] startScreenShare invoked sourceId=$sourceId isGroupCall=$isGroupCall factory=${factory != null} peerConnection=${peerConnection != null}")
+
+        // Take Orbit out of its own capture BEFORE the first frame is produced.
+        //
+        // Sharing Orbit's screen used to produce an infinite mirror: the capture
+        // picked up this window, the window showed the capture as a live preview,
+        // and the preview was captured again -- each generation smaller than the
+        // last. What the other person saw was that tunnel, not their screen.
+        //
+        // Engaged first so the very first published frame is already clean. A frame
+        // or two of mirror at the start would still be visible to them.
+        //
+        // Unconditional rather than only-when-sharing-our-own-screen: it cannot be
+        // known from here whether the chosen source is this monitor, and excluding
+        // a window that is not being shared costs nothing.
+        util.SelfCaptureGuard.engage()
+
         try {
             if (!isGroupCall && peerConnection == null) {
                 println("WARN [WebRTC] startScreenShare aborted: P2P mode with no peer connection")
@@ -786,6 +802,12 @@ class JvmWebRtcClient : WebRtcClient {
     override fun stopScreenShare() {
         shareWindowTrackingJob?.cancel()
         shareWindowTrackingJob = null
+        // Put the window back into captures. This is not optional tidiness: the
+        // affinity flag persists on the window until it is changed, so a share that
+        // stopped without reaching here -- a crash, a hangup, a failed unpublish --
+        // would leave Orbit invisible to every screenshot and screen recorder for
+        // the rest of the session.
+        util.SelfCaptureGuard.release()
         try {
             if (isGroupCall && _isScreenSharing.value) {
                 println("DEBUG [WebRTC] Stopping screen share in Group Call (LiveKit)")
@@ -950,6 +972,12 @@ class JvmWebRtcClient : WebRtcClient {
     }
 
     override fun endCall() {
+        // Belt and braces with stopScreenShare: hanging up mid-share must also put
+        // the window back into captures, because the affinity flag survives
+        // everything else that can go wrong on the way out. A window left excluded
+        // is invisible to every screenshot and screen recorder for the session.
+        util.SelfCaptureGuard.release()
+
         // Every step is independently guarded, and ordered by how expensive it is
         // to skip.
         //

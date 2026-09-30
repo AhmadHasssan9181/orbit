@@ -57,6 +57,7 @@ import webrtc.DesktopSourceModel
 import kotlin.math.roundToInt
 
 import ui.screen.auth.*
+import ui.components.OrbitIconButton
 import ui.screen.settings.*
 import ui.screen.drawer.*
 import ui.screen.server.*
@@ -173,7 +174,26 @@ fun CallScreen(
     )
 
     // ── Minimized PiP View ──
-    if (isMinimized && !isEmbedded) {
+    //
+    // Gated on `isMinimized` ALONE, and this is a fix.
+    //
+    // It used to read `if (isMinimized && !isEmbedded)`, while the 1:1 surface in
+    // OrbitApp is always mounted with `isEmbedded = true`. So the minimize button
+    // set `isMinimized = true`, the PiP branch never ran, and the full-bleed
+    // surface kept drawing over the whole app. The button was a dead control: you
+    // could press it and nothing happened, and a 1:1 call was a full-screen modal
+    // with no way back to the app.
+    //
+    // `isEmbedded` was doing two unrelated jobs here. It means "don't draw your own
+    // corner card, because the host supplies one" -- which is why OrbitApp passes
+    // it -- and it was ALSO being read as "the host handles minimising", which is
+    // not true of any host. Only this branch cares, and it is the branch that was
+    // broken.
+    //
+    // Returning here rather than falling through matters as much as the condition:
+    // rendering both would draw the PiP on top of the full view, which is the bug
+    // in the other direction.
+    if (isMinimized) {
         var offsetX by remember { mutableStateOf(0f) }
         var offsetY by remember { mutableStateOf(0f) }
 
@@ -279,6 +299,27 @@ fun CallScreen(
                     contentDescription = "Expand",
                     tint = Color.White.copy(alpha = 0.8f),
                     modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(18.dp)
+                )
+
+                // Hang up, from the card.
+                //
+                // Unreachable until the gate above was fixed, so this is not a
+                // pre-existing gap -- it is one that became reachable the moment
+                // minimizing worked at all. A minimized call you cannot end from
+                // its own card is a dead end: the only route out is to expand it
+                // again, which undoes the thing you just did.
+                //
+                // It also has to beat the card's own click-to-restore, so it is a
+                // sibling rather than a child -- a nested clickable consumes the
+                // gesture and the card underneath would never see it.
+                OrbitIconButton(
+                    icon = OrbitIcons.CallEnd,
+                    contentDescription = "End call",
+                    onClick = { callManager.endCall() },
+                    danger = true,
+                    size = 32.dp,
+                    iconSize = 16.dp,
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)
                 )
             }
         }
