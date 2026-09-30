@@ -982,7 +982,20 @@ Being explicit, because "it compiles" is not "it works".
   `GET /rooms/{id}/state/{type}/{stateKey}` and keeps the full scan as the fallback
   when the single-event fetch cannot answer. The check itself is unchanged and
   still gates the join. **Corrected:** the measured saving is 430ms, not 1.7s.
-- **A screen share's VIDEO track does not recover where its AUDIO track does.**
+- **FIXED: a first screen share now attaches, at ~18 s, with no reconnect.**
+  Run 27: `publication trackless for 18s (attempt), renegotiating kind=video
+  subscribed=true`, then the track subscribed at 1920x1080 and the tile read
+  `screenshare/ZWDm4x=1280x720` for the rest of the call. Both audio and video, on
+  the FIRST share, without the stuck prompt or the auto-reconnect ever firing.
+  What actually fixed it was not the reconnect but the counter bug two commits
+  earlier: the tick counter sat behind `if (!subscribed && trackless)`, so the
+  first renegotiate subscribed the publication and froze the counter at 3, and
+  the 18 s attempt could never run. **The detail worth remembering: the 6 s
+  attempt fired with `subscribed=false` and did nothing; the 18 s attempt fired
+  with `subscribed=true` and worked.** The false->true cycle only helps once the
+  publication is already subscribed. The stuck prompt at 30 s and the automatic
+  reconnect are now a safety net for the case where all three attempts fail.
+- **A screen share's VIDEO track used not to recover where its AUDIO track did.**
   Run 25 is the cleanest evidence yet, and the renegotiate fix works -- partially.
   Both share publications arrived `=UNSUB/noTrack`; the rescan renegotiated both;
   the audio track went `sub/+track` within seconds and played, and the video track
