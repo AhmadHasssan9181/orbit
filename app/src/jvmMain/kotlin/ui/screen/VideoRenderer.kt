@@ -137,8 +137,9 @@ actual fun VideoRenderer(renderer: Any?, modifier: Modifier) {
                         modifier = Modifier
                             .fillMaxSize()
                             .graphicsLayer {
-                                scaleX = if (renderer.mirror && !renderer.isScreenShare) -1f else 1f
-                                scaleY = if (renderer.isScreenShare) -1f else 1f
+                                val (sx, sy) = videoMirrorScale(renderer.mirror, renderer.isScreenShare)
+                                scaleX = sx
+                                scaleY = sy
                             }
                     )
                 } else {
@@ -184,4 +185,32 @@ private fun LiveKitFrameRenderer(
             Text(fallbackText, color = Color.White)
         }
     }
+}
+
+/**
+ * How a video frame should be transformed before drawing: (scaleX, scaleY).
+ *
+ * Mirroring horizontally is correct for your OWN camera -- it behaves like a
+ * mirror rather than a video of you -- and wrong for a remote camera, which is
+ * another person who would then appear to be left-handed. It is also wrong for a
+ * screen share, which is not a person at all.
+ *
+ * ## Why scaleY is always 1
+ *
+ * This used to read `scaleY = if (isScreenShare) -1f else 1f`, which rendered
+ * every screen share in a 1:1 UPSIDE DOWN while group calls were perfectly fine.
+ *
+ * The tell was that the flip existed in exactly one renderer in the app. The
+ * LiveKit renderer that serves group calls has no flip at all, and both end up
+ * drawing a Compose `Image` from a decoded frame -- so there is no mechanism by
+ * which one path would need a vertical flip and the other would not. The working
+ * path is the proof that the data arrives the right way up.
+ *
+ * This is not a subtle orientation bug either. A shared window is text and UI, so
+ * a vertical flip renders as an obviously broken image, which is how it was
+ * reported.
+ */
+internal fun videoMirrorScale(mirror: Boolean, isScreenShare: Boolean): Pair<Float, Float> {
+    val scaleX = if (mirror && !isScreenShare) -1f else 1f
+    return scaleX to 1f
 }
