@@ -133,6 +133,7 @@ jmethodID g_remoteConnectionQualityMethod = nullptr;
 jmethodID g_remoteVideoTrackAddedMethod = nullptr;
 jmethodID g_remoteVideoFrameMethod = nullptr;
 jmethodID g_remoteVideoTrackStuckMethod = nullptr;
+jmethodID g_remoteVideoAnnouncedMethod = nullptr;
 jmethodID g_remoteVideoTrackRemovedMethod = nullptr;
 
 // Participant SIDs already announced through onRemoteParticipantConnected.
@@ -229,6 +230,11 @@ std::unordered_set<std::string> g_publicationsEverSeenWithTrack;
 
 // Consecutive rescan ticks a publication has been seen with no track attached.
 std::mutex g_tracklessTicksMutex;
+
+// Video publications already announced to the UI, so the once-per-publication
+// guarantee survives the rescan walking them on every tick.
+std::mutex g_announcedVideoMutex;
+std::unordered_set<std::string> g_announcedVideoPublications;
 std::unordered_map<std::string, int> g_tracklessTicks;
 
 // Consecutive trackless sightings (2 s apart) at which to make the SDK
@@ -2716,6 +2722,113 @@ std::string publicationTrackSid(const std::shared_ptr<livekit::TrackPublication>
 // nothing to stop. The point is to reach the UI, which is the only layer that can
 // offer the one recovery that works -- rebuilding the SFU session, which picks the
 // track up on the fresh connection.
+// Defined below; announced from the rescan, which runs long before any reader
+// exists for the track.
+void dispatchRemoteVideoAnnounced(
+    jlong sessionId,
+    jlong epoch,
+    const std::string& participantIdentity,
+    const std::string& trackSid,
+    const std::string& trackSource);
+
+// Tell the UI a remote video publication exists, at most once per publication.
+//
+// Called from the rescan for EVERY video publication, with or without a track,
+// because the rescan is the only thing that runs while a share is still waiting
+// to attach. The set is what makes it once-per-publication: the rescan walks every
+// publication on every 2 s tick.
+void announceRemoteVideoOnce(
+    const livekit::Participant* participant,
+    const std::shared_ptr<livekit::TrackPublication>& publication,
+    const std::shared_ptr<livekit::Track>& track) {
+    if (participant == nullptr || publication == nullptr) {
+        return;
+    }
+    if (publication->kind() != livekit::TrackKind::KIND_VIDEO) {
+        return;
+    }
+    const std::string publicationSid = publication->sid();
+    if (publicationSid.empty()) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_announcedVideoMutex);
+        if (!g_announcedVideoPublications.insert(publicationSid).second) {
+            return;
+        }
+    }
+    const std::string identity = participant->identity();
+    const std::string source = trackSourceLabel(publication->source());
+    std::cout << "DEBUG [OrbitLiveKitAudio] announcing remote video track " << source
+              << " publicationSid=" << publicationSid
+              << " trackPresent=" << (track != nullptr ? "true" : "false")
+              << " participantIdentity=" << identity << std::endl;
+    deferDispatchIfSessionLockHeld([identity, publicationSid, source] {
+        dispatchRemoteVideoAnnounced(
+            kRawSessionId,
+            g_rawEpochForCallbacks.load(std::memory_order_acquire),
+            identity,
+            publicationSid,
+            source);
+    });
+}
+
+// Announce a remote video publication to the UI, once per publication, whether or
+// not a track object exists behind it.
+//
+// This exists because the tile is built from `activeTracks`, and a track only
+// entered that map when its first FRAME arrived. A share that took 18 s to attach
+// therefore had no tile for those 18 s -- there was nothing to hang a spinner on,
+// and the tile appeared at the same moment as the picture, which made the spinner
+// unreachable rather than merely unused.
+void dispatchRemoteVideoAnnounced(
+    jlong sessionId,
+    jlong epoch,
+    const std::string& participantIdentity,
+    const std::string& trackSid,
+    const std::string& trackSource) {
+    if (callbacksStopped("remote-video-announced")) {
+        return;
+    }
+    jmethodID method = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_remoteVideoSinkMutex);
+        method = g_remoteVideoAnnouncedMethod;
+    }
+    if (method == nullptr) {
+        logCallbackSkipOnce("remote-video-announced", "sink missing");
+        return;
+    }
+    JNIEnv* env = nullptr;
+    bool attached = false;
+    if (!getJniEnv(&env, &attached, "remote-video-announced") || env == nullptr) {
+        return;
+    }
+    jobject sink = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_remoteVideoSinkMutex);
+        if (g_remoteVideoSink != nullptr) {
+            sink = env->NewLocalRef(g_remoteVideoSink);
+        }
+    }
+    if (sink != nullptr) {
+        jstring identityString = env->NewStringUTF(participantIdentity.c_str());
+        jstring trackSidString = env->NewStringUTF(trackSid.c_str());
+        jstring sourceString = env->NewStringUTF(trackSource.c_str());
+        env->CallVoidMethod(
+            sink, method, sessionId, epoch, identityString, trackSidString, sourceString);
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        if (identityString != nullptr) env->DeleteLocalRef(identityString);
+        if (trackSidString != nullptr) env->DeleteLocalRef(trackSidString);
+        if (sourceString != nullptr) env->DeleteLocalRef(sourceString);
+        env->DeleteLocalRef(sink);
+    }
+    releaseJniEnv(attached);
+}
+
 void dispatchRemoteVideoTrackStuck(
     jlong sessionId,
     jlong epoch,
@@ -4310,6 +4423,10 @@ void resetRoomLocked() {
         g_tracklessTicks.clear();
     }
     {
+        std::lock_guard<std::mutex> lock(g_announcedVideoMutex);
+        g_announcedVideoPublications.clear();
+    }
+    {
         std::lock_guard<std::mutex> lock(g_delegateEventMutex);
         g_delegatePublished = 0;
         g_delegateUnpublished = 0;
@@ -5772,12 +5889,19 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetRemoteVideoSink(JNIEnv* env, jclass,
         sinkClass,
         "onRemoteVideoTrackStuck",
         "(JJLjava/lang/String;Ljava/lang/String;)V");
+    // Fired for a publication with no track behind it as well, so the UI can put
+    // the tile on screen -- and its waiting state -- before there is any frame to
+    // draw. Without it a slow share had no tile at all until its first frame.
+    jmethodID announcedMethod = env->GetMethodID(
+        sinkClass,
+        "onRemoteVideoAnnounced",
+        "(JJLjava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
     env->DeleteLocalRef(sinkClass);
 
     if (partConnectedMethod == nullptr || partDisconnectedMethod == nullptr ||
         audioMuteMethod == nullptr || connQualityMethod == nullptr ||
         addedMethod == nullptr || frameMethod == nullptr || removedMethod == nullptr ||
-        stuckMethod == nullptr) {
+        stuckMethod == nullptr || announcedMethod == nullptr) {
         if (env->ExceptionCheck()) {
             env->ExceptionDescribe();
             env->ExceptionClear();
@@ -5802,6 +5926,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetRemoteVideoSink(JNIEnv* env, jclass,
         g_remoteVideoFrameMethod = frameMethod;
         g_remoteVideoTrackRemovedMethod = removedMethod;
         g_remoteVideoTrackStuckMethod = stuckMethod;
+        g_remoteVideoAnnouncedMethod = announcedMethod;
     }
 
     std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
@@ -7184,6 +7309,12 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeRescanRemoteVideoTracks(JNIEnv*, jclass
                 // a later inventory line is now the whole diagnosis.
                 (track != nullptr ? "/+track" : "/noTrack");
             if (track == nullptr) {
+                // Announce BEFORE the trackless handling, so the UI has a tile to
+                // put its waiting state on. This is the only path that can tell
+                // the app a share exists before a frame arrives; without it the
+                // tile appears at the same instant as the picture and there is
+                // nothing to show a spinner on.
+                announceRemoteVideoOnce(participant.get(), publication, nullptr);
                 // A publication with no track attached. This is the state that
                 // makes a screen share permanently invisible, and the 2 s rescan
                 // is the only thing that ever sees it, so it cannot be skipped.
@@ -7272,6 +7403,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeRescanRemoteVideoTracks(JNIEnv*, jclass
                 std::lock_guard<std::mutex> lock(g_tracklessTicksMutex);
                 g_tracklessTicks.erase(publication->sid());
             }
+            announceRemoteVideoOnce(participant.get(), publication, track);
             if (!publication->subscribed()) {
                 // auto_subscribe is on, so an unsubscribed publication means the
                 // auto-subscribe lost a race with the publish and nothing ever

@@ -106,6 +106,21 @@ object LiveKitNativeRemoteVideoRenderer : NativeRemoteVideoSink {
         LiveKitRemoteVideoFrameStore.trackStopped(participantIdentity, trackSid)
     }
 
+    override fun onRemoteVideoAnnounced(
+        sessionId: Long,
+        epoch: Long,
+        participantIdentity: String,
+        trackSid: String,
+        trackSource: String
+    ) {
+        println(
+            "DEBUG [LiveKitNativeRemoteVideoRenderer] remote video track announced " +
+                "sessionId=$sessionId epoch=$epoch participantIdentity=$participantIdentity " +
+                "trackSid=$trackSid trackSource=$trackSource"
+        )
+        LiveKitRemoteVideoFrameStore.trackAnnounced(participantIdentity, trackSid, trackSource)
+    }
+
     override fun onRemoteVideoTrackStuck(
         sessionId: Long,
         epoch: Long,
