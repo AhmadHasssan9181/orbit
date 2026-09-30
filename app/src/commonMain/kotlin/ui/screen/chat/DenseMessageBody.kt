@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.sp
 import ui.icons.OrbitIcons
 import ui.model.OrbitMessage
 import ui.theme.LocalShowTimestamps
+import ui.theme.OrbitSpace
 import ui.theme.OrbitMotion
 import ui.theme.rememberCosmicTokens
 
@@ -77,7 +78,7 @@ internal fun DenseMessageBody(
                 .offset(x = rowOffset)
                 .hoverable(interactionSource)
                 .background(rowBg)
-                .padding(start = 72.dp, end = 16.dp, top = 1.dp, bottom = 1.dp),
+                .padding(start = messageTextGutter, end = OrbitSpace.lg, top = 1.dp, bottom = 1.dp),
             verticalAlignment = Alignment.Top
         ) {
             // Fixed-width always-present slot: adding a Row child only while
