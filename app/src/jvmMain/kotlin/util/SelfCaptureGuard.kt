@@ -88,12 +88,12 @@ internal object SelfCaptureGuard {
                 // on failure, so a non-zero previous value is ambiguous. Treat a
                 // throw or an obvious non-zero previous value as "not applied" and
                 // fall back.
-                if (primary.toInt() == 0) {
+                if (primary.toInt() != 0) {
                     anySet = true
                 } else {
                     User32Ext.INSTANCE.SetWindowDisplayAffinity(hwnd, WinDef.DWORD(WDA_MONITOR))
                     anySet = true
-                    println("DEBUG [SelfCaptureGuard] EXCLUDEFROMCAPTURE unavailable, using MONITOR fallback")
+                    println("DEBUG [SelfCaptureGuard] EXCLUDEFROMCAPTURE rejected by the OS, using MONITOR fallback")
                 }
             }
             excluded = anySet
