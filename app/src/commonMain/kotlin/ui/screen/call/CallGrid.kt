@@ -66,6 +66,70 @@ fun CallGrid(
     val clampedPage = if (screenShareNodes.isEmpty()) 0 else sharePage.coerceIn(0, screenShareNodes.lastIndex)
     val spotlightShareNode = screenShareNodes.getOrNull(clampedPage)
 
+    // A screen share is featured ON TOP. Always.
+    //
+    // This used to depend on state, and that was the whole problem. In Grid mode
+    // a share went on top, which was right. In Focus mode it went on the LEFT
+    // with the other tiles stacked down the right-hand edge. A pin forced that
+    // same branch even while Grid mode was still selected, so pinning any tile
+    // at all silently reshaped the share as well.
+    //
+    // Side-by-side is the right shape for enlarging one person's face: they get
+    // the height, and the faces nobody is watching get a thin column beside
+    // them. It is the wrong shape for a document, a terminal or a game, because
+    // a 16:9 share spends its whole life fighting a tall thin box and never gets
+    // the full width of the window. Discord, Element, Zoom and Meet all put the
+    // share on top with the people in a strip underneath, and not one of them
+    // makes that depend on a layout toggle or on what somebody pinned.
+    //
+    // So this branch is chosen on the presence of a share, BEFORE layout mode and
+    // BEFORE the pin are consulted. Focus mode is left meaning exactly one thing:
+    // enlarge one face.
+    //
+    // The empty case is left alone on purpose. A share with nobody else in the
+    // call has no strip to lay out, and it falls through to the single-tile card
+    // further down, which is already a full-width panel.
+    if (screenShareNodes.isNotEmpty() && nonShareNodes.isNotEmpty()) {
+        // Index rather than getOrNull: clampedPage is coerceIn(0, lastIndex), and
+        // this branch is only reached with a non-empty list, so it cannot miss.
+        val featured = screenShareNodes[clampedPage]
+        Column(
+            modifier = modifier
+                .fillMaxSize()
+                .background(tokens.Sunken),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            ShareSpotlightBox(
+                node = featured,
+                shareCount = screenShareNodes.size,
+                selectedPage = clampedPage,
+                onPageChange = { sharePage = it },
+                tokens = tokens,
+                callManager = callManager,
+                isPinned = featured.id == pinnedNodeId,
+                onPinToggle = onPinToggle,
+                modifier = Modifier.weight(2.5f).fillMaxWidth()
+            )
+            Row(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                stripOrderFor(nonShareNodes, pinnedNodeId) { it.id }
+                    .forEach { node ->
+                        VideoNodeCard(
+                            node,
+                            tokens,
+                            callManager = callManager,
+                            isPinned = node.id == pinnedNodeId,
+                            onPinToggle = onPinToggle,
+                            modifier = Modifier.weight(1f).fillMaxHeight()
+                        )
+                    }
+            }
+        }
+        return
+    }
+
     // ── Focus Mode: spotlight one participant, thumbnails on side ──
     // A pinned tile forces the spotlight layout regardless of mode toggle;
     // pinned beats paged shares beats default remote pick.
@@ -145,121 +209,69 @@ fun CallGrid(
         }
 
         nodes.size == 2 -> {
-            if (screenShareNodes.isNotEmpty()) {
-                // Screen share gets more space (pager shifts between sharers;
-                // two simultaneous shares with no camera used to crash here).
-                Column(
-                    modifier = modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    ShareSpotlightBox(
-                        node = spotlightShareNode ?: nodes.first(),
-                        shareCount = screenShareNodes.size,
-                        selectedPage = clampedPage,
-                        onPageChange = { sharePage = it },
-                        tokens = tokens,
-                        callManager = callManager,
-                        isPinned = (spotlightShareNode ?: nodes.first()).id == pinnedNodeId,
-                        onPinToggle = onPinToggle,
-                        modifier = Modifier
-                            .weight(if (nonShareNodes.isEmpty()) 1f else 2.5f)
-                            .fillMaxWidth()
-                    )
-                    nonShareNodes.firstOrNull()?.let { other ->
-                        VideoNodeCard(other, tokens, callManager = callManager, isPinned = other.id == pinnedNodeId, onPinToggle = onPinToggle, modifier = Modifier.weight(1f).fillMaxWidth())
-                    }
-                }
-            } else {
-                // Equal side-by-side
-                Row(
-                    modifier = modifier.fillMaxSize(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    nodes.forEach { node ->
-                        VideoNodeCard(node, tokens, callManager = callManager, isPinned = node.id == pinnedNodeId, onPinToggle = onPinToggle, modifier = Modifier.weight(1f).fillMaxHeight())
-                    }
+            // Equal side-by-side. A share never reaches here -- it was laid out
+            // on top and returned from before this branch could be selected.
+            Row(
+                modifier = modifier.fillMaxSize(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                nodes.forEach { node ->
+                    VideoNodeCard(node, tokens, callManager = callManager, isPinned = node.id == pinnedNodeId, onPinToggle = onPinToggle, modifier = Modifier.weight(1f).fillMaxHeight())
                 }
             }
         }
 
         else -> {
-            if (screenShareNodes.isNotEmpty()) {
-                // Big screen share on top (paged), thumbnails below
-                Column(
-                    modifier = modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    ShareSpotlightBox(
-                        node = spotlightShareNode ?: nodes.first(),
-                        shareCount = screenShareNodes.size,
-                        selectedPage = clampedPage,
-                        onPageChange = { sharePage = it },
-                        tokens = tokens,
-                        callManager = callManager,
-                        isPinned = (spotlightShareNode ?: nodes.first()).id == pinnedNodeId,
-                        onPinToggle = onPinToggle,
-                        modifier = Modifier.weight(2.5f).fillMaxWidth()
-                    )
-                    if (nonShareNodes.isNotEmpty()) {
-                        Row(
-                            modifier = Modifier.weight(1f).fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            nonShareNodes.forEach { node ->
-                                VideoNodeCard(node, tokens, callManager = callManager, isPinned = node.id == pinnedNodeId, onPinToggle = onPinToggle, modifier = Modifier.weight(1f).fillMaxHeight())
-                            }
+            // 2x2 or 2xN grid, CAPPED by [gridRowsFor].
+            //
+            // Discord's answer to a crowded call is the right one: show what
+            // fits, and say how many are not shown. The overflow tile is
+            // clickable nowhere on purpose -- it is a count, not a control, and
+            // pretending otherwise would be the same lie as a dead button.
+            //
+            // Cameras only. A share was laid out on top and returned from long
+            // before this branch could be selected.
+            val (visibleRows, hiddenCount) = gridRowsFor(nodes)
+            Column(
+                modifier = modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                visibleRows.forEach { rowNodes ->
+                    Row(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        rowNodes.forEach { node ->
+                            VideoNodeCard(node, tokens, callManager = callManager, isPinned = node.id == pinnedNodeId, onPinToggle = onPinToggle, modifier = Modifier.weight(1f).fillMaxHeight())
+                        }
+                        // If odd number, add empty space
+                        if (rowNodes.size < 2) {
+                            Spacer(modifier = Modifier.weight(1f))
                         }
                     }
                 }
-            } else {
-                // 2x2 or 2xN grid, CAPPED by [gridRowsFor].
-                //
-                // Discord's answer to a crowded call is the right one: show what
-                // fits, and say how many are not shown. The overflow tile is
-                // clickable nowhere on purpose -- it is a count, not a control, and
-                // pretending otherwise would be the same lie as a dead button.
-                val (visibleRows, hiddenCount) = gridRowsFor(nodes)
-                Column(
-                    modifier = modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    visibleRows.forEach { rowNodes ->
-                        Row(
-                            modifier = Modifier.weight(1f).fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                if (hiddenCount > 0) {
+                    Row(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(tokens.Sunken)
+                                .border(1.dp, tokens.Separator, RoundedCornerShape(8.dp)),
+                            contentAlignment = Alignment.Center
                         ) {
-                            rowNodes.forEach { node ->
-                                VideoNodeCard(node, tokens, callManager = callManager, isPinned = node.id == pinnedNodeId, onPinToggle = onPinToggle, modifier = Modifier.weight(1f).fillMaxHeight())
-                            }
-                            // If odd number, add empty space
-                            if (rowNodes.size < 2) {
-                                Spacer(modifier = Modifier.weight(1f))
-                            }
+                            Text(
+                                "+$hiddenCount",
+                                color = Color.White.copy(alpha = 0.7f),
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
                         }
-                    }
-                    if (hiddenCount > 0) {
-                        Row(
-                            modifier = Modifier.weight(1f).fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxHeight()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(tokens.Sunken)
-                                    .border(1.dp, tokens.Separator, RoundedCornerShape(8.dp)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    "+$hiddenCount",
-                                    color = Color.White.copy(alpha = 0.7f),
-                                    fontSize = 20.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                            Spacer(modifier = Modifier.weight(1f))
-                        }
+                        Spacer(modifier = Modifier.weight(1f))
                     }
                 }
             }
@@ -297,6 +309,32 @@ internal fun <T> gridRowsFor(
     if (columns < 1) return emptyList<List<T>>() to nodes.size
     val visible = nodes.chunked(columns).take(maxRows)
     return visible to (nodes.size - visible.sumOf { it.size })
+}
+
+/**
+ * The order of the participant strip underneath a shared screen.
+ *
+ * A pin moves its tile to the FRONT of the strip. It does not move it into the
+ * featured panel, because while somebody is presenting, that panel is theirs.
+ *
+ * This is the other half of the same defect the on-top layout above fixes. The
+ * old code let any pin drag the whole call into the side-by-side layout, so the
+ * share lost the top of the window and half its width as a side effect of
+ * pinning a face. Pinning is still honoured -- the tile jumps the queue and
+ * keeps its marker -- but it can no longer take the presentation away from
+ * everyone else who is in the call.
+ *
+ * Extracted so the decision can be pinned by a test rather than eyeballed, on
+ * the grounds that it is the rule most likely to be quietly undone later by
+ * someone tidying the layout code.
+ */
+internal fun <T> stripOrderFor(
+    faces: List<T>,
+    pinnedNodeId: String?,
+    id: (T) -> String
+): List<T> {
+    if (pinnedNodeId == null) return faces
+    return faces.filter { id(it) == pinnedNodeId } + faces.filter { id(it) != pinnedNodeId }
 }
 
 /**
