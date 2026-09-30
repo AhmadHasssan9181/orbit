@@ -1346,8 +1346,32 @@ class CallManager(
                 teardownNativeMedia()
             }
         } else {
-            webRtcClient.stopLocalMedia()
-            scope.launch { webRtcClient.endCall() }
+            // Generation-guarded exactly as the group branch above is, and for the
+            // same reason.
+            //
+            // It was not guarded here at all. Hang up and immediately place
+            // another 1:1: startCall bumps the generation, but this teardown was
+            // already queued on the same single-threaded Compose dispatcher, so it
+            // was guaranteed to run FIRST -- closing the peer connection the new
+            // call was about to use. startLocalMedia then hit its
+            // `peerConnection ?: return`, so the new call had no audio track, no
+            // camera and no indication of why. A silent call with no error, from
+            // hanging up too quickly.
+            val teardownGeneration = callGeneration.get()
+            scope.launch {
+                if (callGeneration.get() != teardownGeneration) {
+                    println(
+                        "WARN [CallManager] 1:1 endCall teardown superseded by a newer call " +
+                            "(generation $teardownGeneration -> ${callGeneration.get()}); skipping peer teardown"
+                    )
+                    return@launch
+                }
+                // Was called synchronously on the caller, which is the AWT event
+                // thread on Compose Desktop. stopLocalMedia closes the audio device
+                // line and disposes tracks; teardownNativeMedia exists precisely
+                // because that work does not belong on this thread.
+                teardownNativeMedia()
+            }
             if (notifyRemote && currentRoom != null && currentCall != null) {
                 scope.launch { sendHangup?.invoke(currentRoom, currentCall) }
             }
