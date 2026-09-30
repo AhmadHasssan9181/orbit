@@ -79,21 +79,35 @@ internal object SelfCaptureGuard {
                 return false
             }
             var anySet = false
-            for (hwnd in hwnds) {
-                val primary = User32Ext.INSTANCE.SetWindowDisplayAffinity(
+            for ((hwnd, handleValue) in hwnds) {
+                val ok = User32Ext.INSTANCE.SetWindowDisplayAffinity(
                     hwnd,
                     WinDef.DWORD(WDA_EXCLUDEFROMCAPTURE)
                 )
-                // Zero is success for this call; it returns the PREVIOUS affinity
-                // on failure, so a non-zero previous value is ambiguous. Treat a
-                // throw or an obvious non-zero previous value as "not applied" and
-                // fall back.
-                if (primary.toInt() != 0) {
+                // Win32 returns BOOL: NON-ZERO is success.
+                //
+                // This had it inverted, so every window took the fallback branch on
+                // a machine where EXCLUDEFROMCAPTURE was available and working.
+                //
+                // With the check corrected the call now reports success on every
+                // window AND the mirror is still there. So "it returned TRUE" is not
+                // evidence that it did anything, and the window identity is logged
+                // because that is the thing worth knowing next: AWT can hand back
+                // helper windows alongside the real one, and setting an affinity on
+                // the wrong HWND returns TRUE and changes nothing.
+                println(
+                    "DEBUG [SelfCaptureGuard] hwnd=0x" + java.lang.Long.toHexString(handleValue) +
+                        " excludeFromCapture=" + (ok.toInt() != 0)
+                )
+                if (ok.toInt() != 0) {
                     anySet = true
                 } else {
-                    User32Ext.INSTANCE.SetWindowDisplayAffinity(hwnd, WinDef.DWORD(WDA_MONITOR))
-                    anySet = true
-                    println("DEBUG [SelfCaptureGuard] EXCLUDEFROMCAPTURE rejected by the OS, using MONITOR fallback")
+                    val fallbackOk = User32Ext.INSTANCE.SetWindowDisplayAffinity(
+                        hwnd,
+                        WinDef.DWORD(WDA_MONITOR)
+                    )
+                    anySet = fallbackOk.toInt() != 0
+                    println("DEBUG [SelfCaptureGuard] EXCLUDEFROMCAPTURE rejected, MONITOR fallback applied=$anySet")
                 }
             }
             excluded = anySet
@@ -111,7 +125,7 @@ internal object SelfCaptureGuard {
     fun release() {
         if (!excluded) return
         try {
-            ownWindowHandles().forEach { hwnd ->
+            ownWindowHandles().forEach { (hwnd, _) ->
                 User32Ext.INSTANCE.SetWindowDisplayAffinity(hwnd, WinDef.DWORD(WDA_NONE))
             }
         } catch (e: Throwable) {
@@ -130,18 +144,21 @@ internal object SelfCaptureGuard {
      * the moment somebody opened it. The picture-in-picture is excluded from the
      * classpath query below only because it does not exist as an AWT window.
      */
-    private fun ownWindowHandles(): List<WinDef.HWND> = try {
-        java.awt.Window.getWindows()
-            .filter { it.isShowing }
-            .mapNotNull { w ->
-                // A window that is not realised yet has a null peer, and handing that to
-                // user32 would be a call on HWND 0 -- which is the desktop, not a
-                // window. Filter it rather than let it through.
-                val ptr = Native.getWindowPointer(w) ?: return@mapNotNull null
-                if (Pointer.nativeValue(ptr) == 0L) null else WinDef.HWND(ptr)
-            }
-            .distinct()
-    } catch (e: Throwable) {
-        emptyList()
+    private fun ownWindowHandles(): List<Pair<WinDef.HWND, Long>> {
+        val out = ArrayList<Pair<WinDef.HWND, Long>>()
+        for (w in java.awt.Window.getWindows()) {
+            if (!w.isShowing) continue
+            // A window that is not realised yet has a null peer, and handing that to
+            // user32 is a call on HWND 0 -- the desktop, not a window.
+            val ptr: Pointer? = Native.getWindowPointer(w)
+            val value = if (ptr == null) 0L else Pointer.nativeValue(ptr)
+            if (value == 0L) continue
+            // The native pointer is carried through for the log line. AWT routinely
+            // hands back helper windows alongside the real one, and an affinity set
+            // on the wrong HWND returns TRUE and changes nothing at all -- so which
+            // window this actually found is the thing worth being able to see.
+            out.add(WinDef.HWND(ptr) to value)
+        }
+        return out.distinctBy { it.second }
     }
 }
