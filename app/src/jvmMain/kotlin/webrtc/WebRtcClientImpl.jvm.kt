@@ -43,6 +43,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import repository.TurnServer
+import repository.sdpMediaSections
 import repository.sdpScreenShareStreamIds
 import kotlin.math.abs
 
@@ -141,6 +142,39 @@ class JvmWebRtcClient : WebRtcClient {
      */
     private fun noteRemoteScreenShareTracks(sdp: String) {
         if (sdp.isBlank()) return
+
+        // The video sections, in full, the first time a remote description lands.
+        //
+        // Two runs have now ended at `fromSdp=false` with the answer still unknown,
+        // and the marker spelling is not something that can be guessed: run 45 used
+        // a UUID track with no hint at all. The sections are where the truth is --
+        // the msid lines, the attributes, the m-line order -- and none of it is
+        // visible from the outside.
+        //
+        // Session level only, and only for the first remote description of a call.
+        // Renegotiation repeats this, and a full SDP dump on every one of them
+        // would bury the lines that matter.
+        if (!_haveLoggedRemoteVideoSections && !_remoteScreenTrackIds.value.isNotEmpty()) {
+            val videoSections = sdpMediaSections(sdp)
+                .filter { it.firstOrNull()?.startsWith("m=video ") == true }
+            if (videoSections.isNotEmpty()) {
+                _haveLoggedRemoteVideoSections = true
+                println("DEBUG: [WebRTC] ===== REMOTE VIDEO SECTIONS (${videoSections.size}) =====")
+                videoSections.forEachIndexed { index, lines ->
+                    println("DEBUG: [WebRTC] --- video section $index ---")
+                    lines.forEach { line ->
+                        // Attributes only. The session-level block and the ice
+                        // candidates are noise here and bury the handful of lines
+                        // that identify a track.
+                        if (line.startsWith("a=") || line.startsWith("m=")) {
+                            println("DEBUG: [WebRTC]   $line")
+                        }
+                    }
+                }
+                println("DEBUG: [WebRTC] ===== END REMOTE VIDEO SECTIONS =====")
+            }
+        }
+
         val streamIds = sdpScreenShareStreamIds(sdp)
         if (streamIds.isEmpty()) return
         val trackIds = sdpVideoTrackIdsFor(sdp, streamIds)
@@ -171,6 +205,9 @@ class JvmWebRtcClient : WebRtcClient {
     override val isRemoteScreenSharing: StateFlow<Boolean> = _isRemoteScreenSharing
 
     private var selectedAudioOutput: String = "Default"
+
+    /** One SDP dump per call, so renegotiation does not bury it. */
+    private var _haveLoggedRemoteVideoSections = false
     private var selectedCamera: String = "Default"
 
     private var localRenderer: DesktopVideoRenderer? = DesktopVideoRenderer(mirror = true)
