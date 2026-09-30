@@ -208,9 +208,9 @@ one place.
 |-- webrtc-java-fork            Custom fork/reference source for desktop WebRTC work
 |-- trixnity-src                Local reference copy of Trixnity sources
 |-- trixnity_sources            Additional Trixnity reference sources
-|-- VIDEO_CALLING.md            Focused call-stack documentation
-|-- implementation_plan.md      Backend integration notes
-|-- todo.md                     Project roadmap notes
+
+|-- docs/planning/               Working notes and historical plans
+
 |-- Collection.svg              Source icon collection used for OrbitIcons
 |-- Create_a_memorable_modern_app_202605260126.jpeg
 |-- gradle/wrapper              Gradle wrapper
@@ -865,10 +865,10 @@ When debugging Element interoperability, confirm:
 
 | Document | Description |
 | --- | --- |
-| [`VIDEO_CALLING.md`](VIDEO_CALLING.md) | Focused Matrix/WebRTC call-stack documentation |
+
 | [`app/src/commonMain/kotlin/repository/README.md`](app/src/commonMain/kotlin/repository/README.md) | Repository, Matrix, and Trixnity implementation notes |
-| [`implementation_plan.md`](implementation_plan.md) | Backend integration notes and historical plan |
-| [`todo.md`](todo.md) | Project roadmap notes |
+| [`docs/planning/`](docs/planning) | Working notes, historical plans and call-stack references |
+
 
 ## Regards
 

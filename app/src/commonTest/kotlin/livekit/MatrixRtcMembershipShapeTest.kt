@@ -14,7 +14,7 @@ import kotlin.test.assertTrue
 /**
  * Freezes the MatrixRTC membership wire shapes Orbit publishes (E3).
  * The legacy Element-mirroring shape is the one that won interop — any diff here
- * must come with a re-test against a real Element client per ELEMENT_CALL_ENDPOINTS.md.
+ * must come with a re-test against a real Element client per docs/planning/ELEMENT_CALL_ENDPOINTS.md.
  */
 class MatrixRtcMembershipShapeTest {
 
