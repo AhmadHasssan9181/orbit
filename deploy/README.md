@@ -239,7 +239,7 @@ ordinary Matrix login, with a few self-host specifics it now handles:
 
 **Calls connect then everyone is deaf.** Usually E2EE media keys: a participant's
 key arrived while the key provider was not ready and was not installed. See
-`ESCAPE_FROM_HELL.md` §H8 — this is the single most intricate area of the
+`docs/planning/ESCAPE_FROM_HELL.md` §H8 — this is the single most intricate area of the
 codebase.
 
 **"Not supported on the transport" / no media at all.** The TURN relay is

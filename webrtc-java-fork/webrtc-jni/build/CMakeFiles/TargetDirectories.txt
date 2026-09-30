@@ -1,7 +1,0 @@
-D:/Onichat/webrtc-java-fork/webrtc-jni/build/CMakeFiles/webrtc-java-orbit.dir
-D:/Onichat/webrtc-java-fork/webrtc-jni/build/CMakeFiles/INSTALL.dir
-D:/Onichat/webrtc-java-fork/webrtc-jni/build/CMakeFiles/ALL_BUILD.dir
-D:/Onichat/webrtc-java-fork/webrtc-jni/build/CMakeFiles/ZERO_CHECK.dir
-D:/Onichat/webrtc-java-fork/webrtc-jni/build/dependencies/jni-voithos/CMakeFiles/jni-voithos.dir
-D:/Onichat/webrtc-java-fork/webrtc-jni/build/dependencies/jni-voithos/CMakeFiles/INSTALL.dir
-D:/Onichat/webrtc-java-fork/webrtc-jni/build/dependencies/jni-voithos/CMakeFiles/ALL_BUILD.dir

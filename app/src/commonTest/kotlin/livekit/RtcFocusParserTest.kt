@@ -37,7 +37,7 @@ class RtcFocusParserTest {
 
     @Test
     fun elementMembershipFlatContentResolvesLiveKit() {
-        // Shape per ELEMENT_CALL_ENDPOINTS.md 3.2: flat membership content with
+        // Shape per docs/planning/ELEMENT_CALL_ENDPOINTS.md 3.2: flat membership content with
         // focus_active + foci_preferred side by side.
         val content = obj(
             """

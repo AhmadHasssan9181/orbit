@@ -9,7 +9,7 @@ import kotlinx.serialization.json.put
 /**
  * Pure builders for the MatrixRTC membership event Orbit publishes to room state.
  * The Element-mirroring (legacy) output here is the shape that won interop — it is
- * frozen by MatrixRtcMembershipShapeTest against ELEMENT_CALL_ENDPOINTS.md.
+ * frozen by MatrixRtcMembershipShapeTest against docs/planning/ELEMENT_CALL_ENDPOINTS.md.
  * Change only together with an interop re-test against real Element clients.
  */
 object MatrixRtcMembershipContent {

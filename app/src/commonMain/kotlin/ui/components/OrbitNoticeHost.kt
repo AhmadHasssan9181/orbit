@@ -64,7 +64,7 @@ import ui.theme.rememberCosmicTokens
  *    before its children, so a full-size child paints over the border and the
  *    notice loses its edge. Here the notice draws its own background and the
  *    border is a sibling drawn on a wrapper, so ordering cannot hide it.
- * 3. **Notice text must not wrap to one glyph per line.** See `WORKING_NOTES.md`
+ * 3. **Notice text must not wrap to one glyph per line.** See `docs/planning/WORKING_NOTES.md`
  *    §2 — a starved `Text` wraps per character. The `Row` gives the text a
  *    weighted slot and the actions a fixed one, in that order, and the text slot
  *    carries a `widthIn(min = …)`.

@@ -38,3 +38,32 @@ test_*.cpp
 /fix_gif_crash.kt
 *.old2
 /build_baseline_test.log
+
+# CMake / Visual Studio build caches.
+#
+# `**/build/` above does not reach these, because the generated directories are
+# not always named "build" -- webrtc-jni uses build2, and orbit_audio_jni keeps a
+# parallel out/ tree. 166 of these were tracked, each carrying absolute paths from
+# whichever machine generated it, so every clone disagreed with the committed
+# cache. They are now untracked; this stops them coming back.
+CMakeCache.txt
+CMakeFiles/
+CMakeUserPresets.json
+LastTest.log
+LastTestsFailed.log
+Testing/
+*.sln
+*.vcxproj
+*.vcxproj.filters
+VSInheritEnvironments.txt
+TargetDirectories.txt
+VCTargetsPath.txt
+compile_commands.json
+
+# Stale editor/merge leftovers of a source file. *.old2 was already listed;
+# these are the other names the same mistake turns up under.
+*.old
+*.bak
+*.orig
+*.rej
+*~
