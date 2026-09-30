@@ -981,17 +981,36 @@ class JvmWebRtcClient : WebRtcClient {
             e.printStackTrace()
         }
     }
-    override fun getAudioInputDevices(): List<String> {
-        return runCatching {
-            dev.onvoid.webrtc.media.MediaDevices.getAudioCaptureDevices().map { it.getName() }
-        }.getOrDefault(listOf("Default"))
-    }
+    /**
+     * Audio device names for the settings pickers.
+     *
+     * These come from **JavaSound**, not from WebRTC's `MediaDevices`.
+     *
+     * They used to come from `MediaDevices.getAudioCaptureDevices()` /
+     * `getAudioRenderDevices()`, which is the wrong list. Orbit's group-call audio
+     * path does not use WebRTC's device layer at all: capture opens a
+     * `TargetDataLine` on a JavaSound mixer and playback opens a `SourceDataLine`
+     * on one. So the picker was offering names from one enumeration and the
+     * audio stack was substring-matching them against a completely different
+     * one.
+     *
+     * The two name spaces overlap but are not the same, and where they differ the
+     * selection silently did nothing. A real run picked
+     * `Speakers (NVIDIA Broadcast)` and got
+     *
+     *     WARN output device "Speakers (NVIDIA Broadcast)" matched no mixer,
+     *     using default
+     *
+     * -- a warning in a log, and no change to what the user heard. That is the
+     * whole of "changing output device doesn't really change it".
+     *
+     * Enumerating from the layer that actually opens the line makes every offered
+     * name resolve by construction. The device is genuinely different -- the user
+     * is choosing which `SourceDataLine` the mixer opens, not a WebRTC sink.
+     */
+    override fun getAudioInputDevices(): List<String> = livekit.LiveKitAudioDevices.inputNames()
 
-    override fun getAudioOutputDevices(): List<String> {
-        return runCatching {
-            dev.onvoid.webrtc.media.MediaDevices.getAudioRenderDevices().map { it.getName() }
-        }.getOrDefault(listOf("Default"))
-    }
+    override fun getAudioOutputDevices(): List<String> = livekit.LiveKitAudioDevices.outputNames()
 
     override fun getSelectedAudioInputDevice(): String? = selectedAudioInput
 

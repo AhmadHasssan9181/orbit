@@ -509,15 +509,51 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
         }
     }
 
+    /**
+     * Resolve the chosen output name to a mixer.
+     *
+     * Exact match first, substring only as a fallback. The names come from
+     * [LiveKitAudioDevices], which enumerates the same mixers this matches
+     * against, so an exact hit is the normal case and the substring path exists
+     * only for names that came from the environment/system property.
+     *
+     * The ordering is not cosmetic. These are substring matches over a list that
+     * legitimately contains "Speakers (2- USB Audio Device)", "FxSound Speakers
+     * (FxSound Audio Enhancer)" and "Speakers (NVIDIA Broadcast)" on one
+     * machine. Picking the *first* `contains` hit means a selection of
+     * "Speakers" can land on an audio enhancer, and the user hears the change on
+     * a different device than the one they chose.
+     *
+     * Falling back to the default is reported through [reportPlaybackError]
+     * rather than only to the console, because a device that silently does
+     * nothing is indistinguishable from one that worked.
+     */
     private fun resolveOutputMixer(info: DataLine.Info): Mixer.Info? {
         if (outputDeviceName.isBlank()) return null
-        return AudioSystem.getMixerInfo().firstOrNull { candidate ->
-            ("${candidate.name} ${candidate.description}").contains(outputDeviceName, ignoreCase = true) &&
-                runCatching { AudioSystem.getMixer(candidate).isLineSupported(info) }.getOrDefault(false)
-        } ?: run {
-            println("WARN [LiveKitNativeAudioPlayer] output device \"$outputDeviceName\" matched no mixer, using default")
-            null
+        val wanted = outputDeviceName.trim()
+        val supported = AudioSystem.getMixerInfo().filter { candidate ->
+            runCatching { AudioSystem.getMixer(candidate).isLineSupported(info) }.getOrDefault(false)
         }
+        val exact = supported.firstOrNull { it.name.equals(wanted, ignoreCase = true) }
+        if (exact != null) return exact
+        val substring = supported.filter { candidate ->
+            "${candidate.name} ${candidate.description}".contains(wanted, ignoreCase = true)
+        }
+        if (substring.isEmpty()) {
+            reportPlaybackError(
+                code = NativeErrorCode.AUDIO_DEVICE_UNAVAILABLE,
+                message = "Output device \"$wanted\" is no longer available; using the system default",
+            )
+            return null
+        }
+        if (substring.size > 1) {
+            util.OrbitLog.w(
+                "LiveKitNativeAudioPlayer",
+                "output device \"$wanted\" is ambiguous; matched ${substring.size} mixers " +
+                    "(${substring.map { it.name }}) and took the first",
+            )
+        }
+        return substring.first()
     }
 
     // Scales int16 little-endian PCM in place. Queue frames are private per loop

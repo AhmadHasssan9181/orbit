@@ -877,6 +877,10 @@ fun ChatScreenWithRepo(
     val scope = rememberCoroutineScope()
     var messages by remember(channel.id) { mutableStateOf<List<OrbitMessage>>(emptyList()) }
     var isLoading by remember(channel.id) { mutableStateOf(true) }
+    // Scrollback, keyed per room so switching rooms resets it rather than
+    // carrying "no more history" from a short room into a long one.
+    var isLoadingHistory by remember(channel.id) { mutableStateOf(false) }
+    var hasMoreHistory by remember(channel.id) { mutableStateOf(true) }
     var members by remember(channel.id) { mutableStateOf<List<OrbitUser>>(emptyList()) }
     var memberRoles by remember(channel.id) { mutableStateOf<Map<String, MemberRoleInfo>>(emptyMap()) }
     var rolesVersion by remember(channel.id) { mutableStateOf(0) }
@@ -946,16 +950,64 @@ fun ChatScreenWithRepo(
         isLoading = true
         try {
             currentUser = repository.getCurrentUser()
-            val loaded = repository.getMessagesForChannel(channel.id, limit = 50)
+            val loaded = repository.getMessagesForChannel(channel.id, limit = HISTORY_PAGE_SIZE)
             messages = loaded
+            // A short page means the server had nothing older to give. Remembering
+            // that stops the "load older" affordance from reappearing forever at
+            // the top of a room that simply has no more history.
+            hasMoreHistory = loaded.size >= HISTORY_PAGE_SIZE
             if (showMemberList || isDirectMessage) {
                 members = repository.getRoomMembers(channel.id)
             }
         } catch (e: Exception) {
             messages = emptyList()
             members = emptyList()
+            hasMoreHistory = false
         }
         isLoading = false
+    }
+
+    // Scrollback.
+    //
+    // The repository has always supported `fromToken` and it has always been
+    // correct -- it is the cursor event, and the query walks BACKWARDS from it.
+    // No caller ever passed one, so every room stopped at 50 messages and there
+    // was no way to reach anything older, in any room, ever.
+    //
+    // Merging is by event id with the loaded page PREPENDED. Prepending rather
+    // than replacing is the whole point: the live collector above owns the
+    // bottom of the list, and a plain assignment would throw away anything that
+    // arrived while the page was in flight.
+    val loadOlderMessages: suspend () -> Unit = {
+        val cursor = messages.firstOrNull()?.id
+        if (cursor == null || isLoadingHistory || !hasMoreHistory) {
+            util.OrbitLog.d("UI", "load-older ignored room=${channel.id} " +
+                "cursor=${cursor ?: "<none>"} loading=$isLoadingHistory more=$hasMoreHistory")
+        } else {
+            isLoadingHistory = true
+            try {
+                val older = repository.getMessagesForChannel(
+                    channelId = channel.id,
+                    limit = HISTORY_PAGE_SIZE,
+                    fromToken = cursor,
+                )
+                if (older.isEmpty()) {
+                    hasMoreHistory = false
+                } else {
+                    val known = messages.mapTo(HashSet()) { it.id }
+                    val fresh = older.filter { known.add(it.id) }
+                    messages = older + messages
+                    util.OrbitLog.d(
+                        "UI",
+                        "load-older room=${channel.id} fetched=${older.size} new=${fresh.size}"
+                    )
+                }
+            } catch (e: Exception) {
+                util.OrbitLog.e("UI", "load-older failed room=${channel.id}: ${e.message}")
+            } finally {
+                isLoadingHistory = false
+            }
+        }
     }
 
     // Roles load once per membership change; moderation actions bump rolesVersion
@@ -1030,6 +1082,7 @@ fun ChatScreenWithRepo(
         isLoadingMessages = isLoading,
         activeCall = activeCall,
         activeGroupCallUrl = activeGroupCallUrl,
+        onLoadOlder = loadOlderMessages,
         onSend = { body ->
             scope.launch {
                 val trimmed = body.trim()
@@ -1488,3 +1541,13 @@ private fun QuickSwitcherRow(
 }
 
 
+
+/**
+ * How many messages one page of history is.
+ *
+ * The repository default was 50 and every call site passed it explicitly, which
+ * is why the number was invisible as a decision. It is now named, and both the
+ * initial load and each "load older" page use it, so the page size is one value
+ * rather than eight copies of a literal.
+ */
+private const val HISTORY_PAGE_SIZE = 50

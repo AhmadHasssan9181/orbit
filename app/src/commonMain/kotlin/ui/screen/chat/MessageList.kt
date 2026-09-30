@@ -92,7 +92,17 @@ internal fun MessageList(
     onDeleteMessage: ((String) -> Unit)? = null,
     onTogglePin: ((String) -> Unit)? = null,
     onReply: ((String) -> Unit)? = null,
-    onMentionUser: ((String) -> Unit)? = null
+    onMentionUser: ((String) -> Unit)? = null,
+    /**
+     * Request one more page of history, older than what is loaded.
+     *
+     * Null disables scrollback. Called when the list reaches its top; the caller
+     * is expected to guard against repeat fires (in-flight flag, has-more flag)
+     * rather than relying on this to throttle, because a snapshotFlow on the
+     * first visible index really does fire repeatedly while the cursor sits at
+     * the top.
+     */
+    onLoadOlder: (suspend () -> Unit)? = null
 ) {
     val t = rememberCosmicTokens()
     val listState = rememberLazyListState()
@@ -166,6 +176,28 @@ internal fun MessageList(
                             currentOnSeen(newestId)
                         }
                     }
+                }
+            }
+    }
+
+    // Scrollback trigger.
+    //
+    // Reaching the top requests one more page. `onLoadOlder` is null wherever
+    // history is not paged, and the caller's own guards (loading flag, has-more
+    // flag) make repeat fires free, so firing on every index change at the top
+    // is safe and needs no debounce here.
+    //
+    // The `firstVisibleItemIndex <= LOAD_OLDER_TRIGGER` window is not a scroll
+    // position but an item COUNT, and rows include day separators, so a
+    // threshold of 2 is "within the first couple of rows". Small on purpose: a
+    // user who scrolls to the top expects more, and one wasted request that
+    // returns nothing is cheaper than a spinner that never appears.
+    val currentOnLoadOlder by rememberUpdatedState(onLoadOlder)
+    LaunchedEffect(listState, rows.size) {
+        snapshotFlow { listState.firstVisibleItemIndex }
+            .collect { index ->
+                if (index in 0..LOAD_OLDER_TRIGGER_ROWS && rows.isNotEmpty()) {
+                    currentOnLoadOlder?.invoke()
                 }
             }
     }
@@ -553,3 +585,14 @@ internal fun groupMessages(messages: List<OrbitMessage>): List<MessageGroup> {
     }
     return result
 }
+
+/**
+ * How close to the top of the list a scroll must get before another page of
+ * history is requested.
+ *
+ * A row COUNT, not a pixel offset, and `rows` includes day separators, so 2 means
+ * "within the first couple of rows". Deliberately eager: a user who has scrolled
+ * to the top is asking for more, and one request that returns nothing costs less
+ * than a spinner that never appears.
+ */
+private const val LOAD_OLDER_TRIGGER_ROWS = 2

@@ -180,6 +180,13 @@ class MatrixChannelsRepository(private val context: MatrixContext) : OrbitChanne
             if (shouldInclude) {
                 val rawName = context.roomDisplayName(room)
                 val roomId = room.roomId.full
+                // m.room.topic, read back from the state this room was already
+                // fetched for. See MatrixRoomTopics: `createRoom` writes the
+                // topic, `ChatHeader` renders `channel.topic`, and nothing in
+                // between ever parsed it, so the header subtitle was permanently
+                // blank. This adds no request -- `isVoiceRoom` has already pulled
+                // and cached this room's `m.state` by the time we get here.
+                val topic = context.roomTopics.topicOf(roomId)
                 // Voice typing is now decided by the room's OWN Matrix state, not
                 // by whether its name happens to contain "voice".
                 //
@@ -209,6 +216,7 @@ class MatrixChannelsRepository(private val context: MatrixContext) : OrbitChanne
                     categoryName = category?.let { categoryNames[it.categoryId] },
                     categoryPosition = category?.position ?: 0.0,
                     matrixRoomId = room.roomId.full,
+                    topic = topic,
                     activeCallUrl = context.globalActiveCalls.value[room.roomId.full]
                 ))
             }
