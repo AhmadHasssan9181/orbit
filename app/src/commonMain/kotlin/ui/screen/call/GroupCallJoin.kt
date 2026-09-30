@@ -96,7 +96,12 @@ suspend fun joinRoomGroupCall(
         ?.context
         ?.effectiveLiveKitServiceUrl()
 
+    // Timed because this is the part the user waits through before ANY of
+    // CallManager's own phases start, so it would otherwise be invisible in the
+    // JOIN-TIMING line that connectNativeGroupMedia prints.
+    val resolveStart = System.nanoTime()
     val resolved = repository.resolveGroupCallJoinTarget(roomId)
+    val resolveMs = (System.nanoTime() - resolveStart) / 1_000_000L
     val parsed = parseGroupCallJoinTarget(hintUrl, fallback)
     val callId = resolved.callId ?: parsed.callId
     val sfu = resolved.serviceUrl ?: parsed.livekitUrl
@@ -106,7 +111,14 @@ suspend fun joinRoomGroupCall(
         // No definition yet. Publish one so this client is the one that created
         // the call, which is what Element does when you press "Join" in a silent
         // room.
+        val start = System.nanoTime()
         repository.startGroupCall(roomId, callId)
+        util.OrbitLog.d(
+            "GroupCallJoin",
+            "JOIN-RESOLVE target=${resolveMs}ms publishDefinition=${(System.nanoTime() - start) / 1_000_000L}ms"
+        )
+    } else {
+        util.OrbitLog.d("GroupCallJoin", "JOIN-RESOLVE target=${resolveMs}ms (call already exists)")
     }
 
     manager.joinGroupCall(roomId, callId, isVideo, sfu) {
