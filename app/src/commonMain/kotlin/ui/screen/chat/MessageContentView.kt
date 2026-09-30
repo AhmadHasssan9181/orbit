@@ -531,16 +531,25 @@ private fun StickerCard(content: ui.model.MessageContent.Sticker) {
 @Composable
 private fun ReplyQuoteBlock(content: ui.model.MessageContent.Reply) {
     val tokens = rememberCosmicTokens()
-    Row(modifier = Modifier.fillMaxWidth()) {
+    // IntrinsicSize.Min so the accent bar can fill whatever height the quoted
+    // text actually needs. It was a fixed 36dp while the column beside it is two
+    // lines of body text -- taller than 36dp whenever the name or the preview
+    // wraps -- so the bar that is supposed to bracket the quote stopped partway
+    // down it and left the rest looking unattached.
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Min)
+    ) {
         Box(
             modifier = Modifier
                 .width(3.dp)
-                .height(36.dp)
+                .fillMaxHeight()
                 .clip(RoundedCornerShape(2.dp))
                 .background(tokens.Accent.copy(alpha = 0.7f))
         )
         Spacer(Modifier.width(8.dp))
-        Column {
+        Column(modifier = Modifier.weight(1f)) {
             // Display name, not the raw localpart: the rest of the app shows
             // names, and "@alice:matrix.org" in a quote read like a bug.
             val members = ui.theme.LocalRoomMembers.current

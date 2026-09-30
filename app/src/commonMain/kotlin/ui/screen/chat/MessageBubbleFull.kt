@@ -133,6 +133,9 @@ internal fun MessageBubbleFull(
         ) {
             MessageAvatar(message)
             Spacer(Modifier.width(OrbitSpace.md))
+            // The gutter this produces must equal `messageTextGutter`, or grouped
+            // follow-on lines stop lining up with the first line of the run. Both
+            // sides read the same constant now, so they cannot drift again.
 
             Column(
                 modifier = Modifier
@@ -507,7 +510,7 @@ private fun MessageAvatar(message: OrbitMessage) {
             contentDescription = member.displayName,
             contentScale = androidx.compose.ui.layout.ContentScale.Crop,
             modifier = Modifier
-                .size(36.dp)
+                .size(MessageAvatarSize)
                 .clip(androidx.compose.foundation.shape.CircleShape)
         )
     } else {
@@ -515,7 +518,7 @@ private fun MessageAvatar(message: OrbitMessage) {
             label = member?.displayName ?: message.username,
             seed = message.userId,
             color = member?.avatarColor?.let { Color(it) },
-            modifier = Modifier.size(36.dp)
+            modifier = Modifier.size(MessageAvatarSize)
         )
     }
 }
