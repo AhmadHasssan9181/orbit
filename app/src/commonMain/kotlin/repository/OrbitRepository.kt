@@ -116,6 +116,19 @@ data class MemberRoleInfo(
 interface OrbitUsersRepository {
     suspend fun updateDisplayName(name: String): Result<Unit>
     suspend fun uploadAvatar(imageBytes: ByteArray): Result<String>
+
+    /**
+     * Uploads [imageBytes] and returns a URL that can be handed to an image loader
+     * as-is -- http(s), never `mxc://`.
+     *
+     * That is not the same contract as [uploadAvatar], which returns the raw mxc URI
+     * because the avatar is written to a profile field the server converts for
+     * everyone else. The banner lives in this client's own account data, so nothing
+     * downstream converts it and the caller would be left holding something only the
+     * repository can read.
+     *
+     * Does not set any profile field. Callers store the returned URL themselves.
+     */
     suspend fun uploadBanner(imageBytes: ByteArray): Result<String>
     suspend fun getUserProfile(userId: String): OrbitUser?
     suspend fun setPresence(status: UserStatus)

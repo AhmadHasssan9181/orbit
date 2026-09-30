@@ -615,6 +615,49 @@ class MatrixContext(homeserverUrl: String) {
         }
     }
 
+    /**
+     * `m.room.banner` from the cached `m.state`, as an http(s) URL, or null.
+     *
+     * This is the standard Matrix room banner: Element, SchildiChat and every other
+     * client set it, and Orbit read none of it. That left [ui.model.OrbitServer.bannerUrl]
+     * permanently null while [ui.screen.server.ServerHeader] carried a complete,
+     * carefully-reviewed banner layout behind `hasBanner = server.bannerUrl != null`
+     * -- code that could never execute, reviewed and paid for and never once run.
+     *
+     * Costs nothing: the same cached `m.state` response [cachedRoomTopic] and
+     * [isVoiceRoom] already read. This is the third feature on one response.
+     *
+     * Non-suspending, like its siblings, because the drawer calls it while building
+     * a list; a room whose state has not been fetched yet yields null, which is the
+     * same value the field held before.
+     */
+    fun cachedRoomBanner(roomId: String): String? {
+        val events = roomStateCache[roomId]?.first ?: return null
+        // No log line for "absent": almost no room has a banner, so this would fill
+        // the log with one warning per room per minute. Only the conversion below,
+        // which means the room HAS a banner we cannot render, is worth a line.
+        val mxc = roomBannerMxcFrom(events) ?: return null
+        // The stored form is an mxc:// URI; Coil cannot load that, and the failure
+        // would be a silent empty header rather than an error. convertMxcUrl is the
+        // same conversion every other avatar on this path goes through.
+        val http = try {
+            convertMxcUrl(mxc)
+        } catch (e: Exception) {
+            util.OrbitLog.w("MatrixContext", "cachedRoomBanner bad url for $roomId: ${e.message}")
+            null
+        }
+        // convertMxcUrl is a pass-through for anything that is not mxc:// and not a
+        // download URL, so a malformed value comes straight back out. Handing that
+        // to Coil produces no error at all -- just a blank space where the banner
+        // should be, which is indistinguishable from "this room has no banner" and
+        // so is never reported. Anything not http(s) by this point is unusable.
+        if (http == null || !(http.startsWith("http://") || http.startsWith("https://"))) {
+            util.OrbitLog.w("MatrixContext", "cachedRoomBanner unusable url for $roomId")
+            return null
+        }
+        return http
+    }
+
     fun invalidateRoomState(roomId: String) {
         roomStateCache.remove(roomId)
         voiceRoomCache.remove(roomId)
