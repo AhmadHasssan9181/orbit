@@ -1295,6 +1295,86 @@ who can hear the audio beats any amount of log archaeology.
 
 ---
 
+## 13.8 Soundboard in a 1:1: not a bug, a wrong assumption about which calls exist
+
+The notes have carried "Soundboard in 1:1 — local-monitor only" as a feature gap
+for several sessions. Reading the code to build it showed the premise was wrong.
+
+**Every call Orbit STARTS is a LiveKit group call.** `CallManager.beginCall` sets
+`isGroupCall = true` (line 517) regardless of how many people are in it, and the
+LiveKit capture path is exactly where the soundboard bus is folded into outgoing
+audio (`LiveKitNativeAudioCapture.kt:721`). So a 1:1 that Orbit starts works
+perfectly — the bus, the SFU, the everybody-hears-it behaviour, all of it.
+
+The broken case is narrower: **a 1:1 that arrives through legacy WebRTC
+signalling.** That takes a completely different capture path, inside the prebuilt
+`webrtc-java-orbit` native audio device module.
+
+### Why it cannot be fixed in this repository
+
+| Route | Why not |
+|---|---|
+| Add a JNI symbol to the WebRTC DLL | `webrtc-java-lib/src` contains **zero** `.cc`/`.cpp` files. The DLL is a 21.7 MB prebuilt binary and there is no WebRTC C++ here to rebuild. The only buildable C++ is our own three files |
+| `HeadlessAudioDeviceModule` | Would be ideal — drive the mic from the JavaSound loop that already exists and mix the bus in exactly where group calls do. In this binding it is a **dead stub**: its only member is a private `initialize()`. No push method exists |
+| Mutate bytes in `AudioSink.onRecordedData` | It exists, and it is an **observer**, not an injector. WebRTC hands the sink a const pointer; changing the array would not change what is encoded |
+| Route 1:1s through MatrixRTC instead | Would work immediately — it is a group call with two people. But it is a **protocol change**: the call becomes visible to other clients as a different kind of call, interop with clients that only ring legacy 1:1 changes, and it changes the signalling Element uses. That is a product decision, not a fix |
+
+### What was done instead
+
+The panel now **says** it cannot work, rather than playing the effect into your own
+speakers while the other person hears nothing.
+
+Hiding the button outright was the alternative and is worse. A control that
+vanishes is a question with no answer available; one that explains itself is an
+answer, and the panel is where somebody has already decided they want the feature.
+The explanation names the fix that does exist — start the call from the room, or
+join one already running — because "not supported" without a next step is the same
+dead end in nicer words.
+
+**Not verified by a run.** This is a UI branch with no logic to assert on; it needs
+an incoming 1:1 and an eye on it.
+
+### 13.9 Message caching: built, and what it was actually missing
+
+Deferred twice. Worth recording that "there was no caching" understated it:
+
+`getMessagesForChannel` calls `trixnity.room.getTimelineEvents`, which is a
+network call to `/messages`, on **every room open**. Trixnity keeps its own SQLite
+store, but nothing ever read messages out of it. So every room cost a round trip
+and a spinner, and a room that could not be reached rendered as an **empty room** —
+which is indistinguishable from a conversation with nothing in it.
+
+- First page served from `~/.orbit/cache/rooms/`, written as messages arrive via
+  the sync path rather than only when a room is reopened.
+- A scrollback page still comes from the server — it is anchored to an event id,
+  and the server is the only thing that knows what sits before it. It is merged
+  *into* the cache so the room keeps its depth, but never served *from* it.
+- A failed refresh returns the cache. That is the whole point: a stale room is
+  wrong in a way you can see and correct; an empty room is wrong in a way you
+  cannot.
+- Cleared on logout. Cached messages are readable with no session at all, which is
+  what makes them useful when the network is down and exactly why they must not
+  outlive the account.
+
+JSON files rather than the SQLite already on the classpath: the existing database
+is Room plus the AndroidX bundled driver, shaped for an annotated DAO rather than
+hand-written SQL, and the cache is small, bounded, disposable and inspectable.
+Writes are write-then-rename so a crash mid-write leaves the previous good file.
+
+**The bug the round-trip test found on its first run.**
+`MessageContent.Unsupported` has a property named `type`, which is
+kotlinx.serialization's reserved class discriminator for sealed hierarchies, so it
+throws on serialisation. The cache write swallows exceptions — correctly, because
+losing a cache must never fail a room — so every message of that type would have
+quietly stopped the **entire room** from ever caching, with nothing anywhere
+saying so. It would have looked like a sync bug or a lost message. Fixed with
+`@SerialName("matrixEventType")`; the Kotlin property name is unchanged.
+
+Sixteen round-trip tests, one per content variant, including the two recursive ones
+where a mistake is hardest to spot: a `Reply` coming back as plain text would
+still render the right words while losing the quoted message and its accent bar.
+
+---
 ## 14. Still open after this pass
 
 - **A ~200 ms audio click at the start of every screen share.** Down from ~1 s;
@@ -1305,8 +1385,12 @@ who can hear the audio beats any amount of log archaeology.
   not appear to climb without bound, but it is higher than it should be.
 - **`VM attach current thread failed`** on the AWT thread at hangup, after cleanup
   has already completed twice. Cosmetic, and it happens on every run.
-- **Message caching.** Deferred by you, and it is a feature rather than a bug.
-- **Soundboard in 1:1.** A feature gap, not a defect — see §6.
+- **Message caching.** **Built.** Rooms are served from `~/.orbit/cache/rooms/`
+  and written as messages arrive; see §13.9. A failed refresh returns the cache
+  rather than an empty room.
+- **Soundboard in a legacy-signalling 1:1.** The panel now explains itself instead
+  of playing a sound only you can hear. The real fix needs native work this
+  repository cannot do. See §13.8.
 - **The 58 `readinessCache` derive sites.** Unchanged; §6 covers why.
 - **`ActivateAudioInterfaceAsync failed hr=0x8000000e`** — process loopback is
   unavailable on this Windows build, so share audio captures Orbit's own playback.
