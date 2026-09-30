@@ -52,6 +52,43 @@ experimental_features:
   msc4143_enabled: true     # the rtc_foci well-known key Orbit reads
   msc4222_enabled: true     # newer MatrixRTC transport plumbing
 
+# ── TURN, for 1:1 (P2P) calls ────────────────────────────────────────────────
+#
+# This block was missing entirely, and it matters more than it looks.
+#
+# MatrixRTC group calls do not go peer-to-peer. They are relayed through the
+# LiveKit SFU, which has its own `turn:` section in livekit.yaml pointing at
+# coturn. So a group call works with no TURN advertised here at all.
+#
+# A 1:1 call IS peer-to-peer. Without this block Synapse advertises zero TURN
+# servers, Orbit falls back to a single public Google STUN server, and the call
+# has to be established by STUN alone. STUN cannot traverse symmetric NAT or a
+# restrictive corporate firewall, so what a caller sees is "it connects, and
+# then there is no media" -- which is the exact symptom deploy/README.md already
+# documents a fix for while this block made sure of it.
+#
+# Every run log so far has shown `[WebRTC] ICE config has 0 server entries`.
+#
+# The three entries below are the same relay in three transports, in the order
+# clients should prefer them. UDP first because it is cheapest; TLS last because
+# it survives a firewall that blocks everything else.
+#
+# These credentials are NOT coturn's static-auth-secret. That secret is for
+# coturn's REST API, which is how LiveKit authenticates. Synapse's turn_servers
+# uses a plain shared username/password pair, so it needs its own values. Getting
+# that backwards is a common way to end up with a relay that appears configured
+# and rejects every allocation.
+turn_servers:
+  - uri: "turn:turn.example.com:3478?transport=udp"
+    username: "REPLACE_WITH_A_SHARED_USER"
+    password: "REPLACE_WITH_A_SHARED_PASSWORD"
+  - uri: "turn:turn.example.com:3478?transport=tcp"
+    username: "REPLACE_WITH_A_SHARED_USER"
+    password: "REPLACE_WITH_A_SHARED_PASSWORD"
+  - uri: "turns:turn.example.com:5349?transport=tcp"
+    username: "REPLACE_WITH_A_SHARED_USER"
+    password: "REPLACE_WITH_A_SHARED_PASSWORD"
+
 # Delayed events back the call-membership lifecycle. Without a raised budget,
 # membership PUTs are rejected and peers never see each other join.
 max_event_delay_duration: "24h"
