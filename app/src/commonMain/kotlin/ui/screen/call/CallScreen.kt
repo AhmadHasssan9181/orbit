@@ -1069,7 +1069,10 @@ fun ScreenShareDialog(
                                     .clickable {
                                         callManager.setStreamAudioEnabled(shareSystemAudio)
                                         shareSettings.setScreenShareQuality(shareQuality.lowercase())
-                                        shareSettings.setScreenShareFps(shareFps.coerceIn(5, 60))
+                                        // Capped to 30: publishing at 60 starves the
+                                        // audio mixer on this machine. See the
+                                        // Frame Rate card in Settings for the numbers.
+                                        shareSettings.setScreenShareFps(shareFps.coerceIn(5, 30))
                                         onSourceSelected(source)
                                     },
                                 colors = CardDefaults.cardColors(

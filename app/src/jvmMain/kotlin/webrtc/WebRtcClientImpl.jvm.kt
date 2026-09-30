@@ -532,8 +532,23 @@ class JvmWebRtcClient : WebRtcClient {
 
                 val shareSettings = repository.SettingsManager()
                 val quality = runCatching { shareSettings.screenShareQualitySync() }.getOrDefault("1080p")
+                // Ceiling is 30, not 60.
+                //
+                // Inbound video is already capped at 20 fps / 1280 px because a
+                // 1080p share at the sender's rate was pushing 237 MB/s through
+                // JNI and ~1 GB/s once the UI copied each frame. Publishing was
+                // left uncapped and had the same effect on the OTHER direction: at
+                // 60 fps and 1440p this machine was converting ~186 MB/s of I420
+                // while the audio mixer ran, and the mixer lost -- it went from
+                // `starved=10 qDepth=3360` to `starved=283 qDepth=480`, the
+                // playout buffer hit its 10 ms floor and the playback line started
+                // dropping chunks. Everyone else's voice stuttered the moment you
+                // shared your screen.
+                //
+                // A shared window gains nothing from 60 fps anyway: it is text and
+                // static UI, and 30 is what Discord and Element cap at.
                 val fps = runCatching { shareSettings.screenShareFpsSync() }.getOrDefault(30)
-                    .coerceIn(5, 60)
+                    .coerceIn(5, 30)
                 val (maxShareWidth, maxShareHeight) = when (quality.lowercase()) {
                     "720p" -> 1280 to 720
                     "1440p" -> 2560 to 1440

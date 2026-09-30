@@ -1034,13 +1034,49 @@ public:
         stop();
     }
 
+// Raise the calling thread's priority where the platform allows it.
+//
+// Best effort by design: every call site must keep working on a platform or a
+// scheduler where this does nothing, so failures are silent and the thread simply
+// runs at default priority as it always did.
+void raiseCurrentThreadPriority() {
+#if defined(_WIN32)
+    // TIME_CRITICAL is correct for the 10 ms mixer tick and safe for it, because
+    // the thread sleeps between ticks rather than spinning. Restored to normal on
+    // exit by the OS when the thread ends, so there is nothing to undo here.
+    if (SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL) == 0) {
+        // Fall back to the softer level rather than giving up: any boost beats none.
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
+    }
+#endif
+}
+
     void start() {
         bool expected = false;
         if (!running_.compare_exchange_strong(expected, true)) {
             return;
         }
 
-        worker_ = std::thread([this] { mixLoop(); });
+        worker_ = std::thread([this] {
+            // The mixer is the most time-critical thread in the process. It runs a
+            // 10 ms tick that must never be late, because lateness is audible as
+            // a dropout, and it is competing with threads that are not
+            // time-critical at all.
+            //
+            // Measured: while Orbit was publishing its own screen share, the mixer
+            // went from `starved=10 qDepth=3360` to `starved=283 qDepth=480` --
+            // the playout buffer collapsed to its 10 ms floor and the line started
+            // dropping chunks. A 1080p I420 share at 60 fps is 186 MB/s of frame
+            // conversion, and at default priority the scheduler was quite happy to
+            // let the mixer lose to it.
+            //
+            // THREAD_PRIORITY_TIME_CRITICAL rather than ABOVE_NORMAL because this
+            // is a 10 ms deadline, not a throughput problem, and because the
+            // alternative is the person on the other end hearing a glitch. The
+            // thread sleeps between ticks, so it is not burning the CPU.
+            raiseCurrentThreadPriority();
+            mixLoop();
+        });
     }
 
     void stop() {

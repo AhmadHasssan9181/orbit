@@ -1014,6 +1014,17 @@ Being explicit, because "it compiles" is not "it works".
   12000ms`, and the join went from `native=14290ms total=24676ms` on the first call
   to `native=1872ms total=8051ms` on the rejoin in the same session. 16.6 s saved,
   which is the whole of the probe plus the difference in SFU warm-up.
+- **FIXED (unverified): the outbound screen share was never given the budget the
+  inbound one got, and it starved call audio.** Inbound video is capped at 20 fps /
+  1280 px; publishing was not capped at all, and the stored setting was 60 fps at
+  1440p -- ~186 MB/s of I420 conversion on the same box as the mixer. Run 21
+  measured `starved` 10 -> 283 and `qDepth` 3360 -> 480 (the 10 ms floor) while
+  sharing, with playback dropping chunks. Two fixes: the publish ceiling is now 30
+  in all three places it can be set, and the mixer thread raises itself to
+  THREAD_PRIORITY_TIME_CRITICAL (falling back to ABOVE_NORMAL, and a no-op off
+  Windows) because it is the only thread in the process with a hard 10 ms
+  deadline. **Neither has been run yet** -- this is the next thing a run proves or
+  disproves.
 - **Sharing your own screen starves call audio.** Run 21, during Orbit's own
   outbound share: `starved` 10 -> 307, `drops` 8160 -> 11520, and playback
   `droppedOldest=183` with `play.arrived=582 play.played=489`. The mixer queue
