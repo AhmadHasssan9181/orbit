@@ -221,6 +221,36 @@ std::unordered_set<std::string> g_forcedSubscribes;
 std::string g_remotePublicationInventory;
 std::string g_lastDelegateCounts;
 
+// Publications observed WITH a track while alive, so the withdrawal handler can
+// tell a track that never existed from one the SDK has already torn down.
+std::mutex g_everHadTrackMutex;
+std::unordered_set<std::string> g_publicationsEverSeenWithTrack;
+
+// Consecutive rescan ticks a publication has been seen with no track attached.
+std::mutex g_tracklessTicksMutex;
+std::unordered_map<std::string, int> g_tracklessTicks;
+
+// After this many consecutive trackless sightings, stop waiting for the track to
+// materialise on its own and make the SDK renegotiate the subscription.
+//
+// WHY THIS EXISTS. Run 23 established that `onTrackPublished` in SDK 0.4.1 arrives
+// with a null publication EVERY time -- pub=5 nullPub=5, 100% -- so that event can
+// never tell Orbit a track exists. `onTrackSubscribed` does carry a real track, but
+// it only fires if the SDK subscribes us, and with auto_subscribe on it sometimes
+// does not. The 2 s rescan is therefore the ONLY route by which Orbit learns about
+// a track at all, and it was strictly passive: a publication with no track was
+// skipped, so a share that never got one was invisible and stayed invisible.
+//
+// `setSubscribed(false)` then `setSubscribed(true)` is the only re-negotiation the
+// SDK exposes for a remote publication (remote_track_publication.h declares nothing
+// else, and room.h has no resync). It is the same cycle the audio jitter-buffer
+// recovery already uses, so it is a known-good move on this SDK rather than a guess.
+//
+// Bounded three ways: only for tracks that have been trackless this long, only once
+// per publication, and only for publications still present. A track that has been
+// trackless for 6 s while its sender says it is sharing is not going to fix itself.
+constexpr int kTracklessTicksBeforeRenegotiate = 3;
+
 // How many track-lifecycle delegate callbacks the SDK actually delivered, and how
 // many arrived carrying no publication at all.
 //
@@ -3469,14 +3499,27 @@ public:
         SessionLock lock;
         noteDelegateEvent("onTrackUnpublished", event.publication);
         if (event.publication != nullptr) {
-            // A publication can be withdrawn before it ever carried a track, and
-            // that is not a shape the reader log can express: no reader, no track
-            // SID, no frame that never came. Run 22 lost a whole screen share this
-            // way and every line about it was technically correct.
-            // `trackPresent` is the one field that says whether the share was ever
-            // real.
-            if (event.publication->track() == nullptr) {
-                std::cout << "DEBUG [OrbitLiveKitAudio] publication withdrawn before carrying a track "
+            // CORRECTION. The previous version of this check asked
+            // `publication->track() == nullptr` here and logged "withdrawn before
+            // carrying a track". Run 23 showed that is a FALSE POSITIVE on every
+            // withdrawal: it fired for TR_VSw2s4NVU6Jwiy, a screen share that
+            // demonstrably worked (1920x1080, 120+ frames, visible). The SDK
+            // detaches the track from the publication as part of tearing it down,
+            // so at unpublish time the track is always already null and the
+            // condition is always true.
+            //
+            // Two rounds of diagnosis were spent reading that line as evidence
+            // about a share that had never worked. The question it was meant to
+            // answer -- "did this publication EVER have a track?" -- can only be
+            // answered from the rescan, which observes publications while they are
+            // alive, so that is where the record is kept.
+            bool everHadTrack = false;
+            {
+                std::lock_guard<std::mutex> lock(g_everHadTrackMutex);
+                everHadTrack = g_publicationsEverSeenWithTrack.count(event.publication->sid()) > 0;
+            }
+            if (!everHadTrack) {
+                std::cout << "DEBUG [OrbitLiveKitAudio] publication withdrawn and NEVER seen with a track "
                           << "source=" << trackSourceLabel(event.publication->source())
                           << " publicationSid=" << event.publication->sid()
                           << " kind=" << (event.publication->kind() == livekit::TrackKind::KIND_VIDEO ? "video" : "audio")
@@ -4177,6 +4220,14 @@ void resetRoomLocked() {
     }
     g_remotePublicationInventory.clear();
     g_lastDelegateCounts.clear();
+    {
+        std::lock_guard<std::mutex> lock(g_everHadTrackMutex);
+        g_publicationsEverSeenWithTrack.clear();
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_tracklessTicksMutex);
+        g_tracklessTicks.clear();
+    }
     {
         std::lock_guard<std::mutex> lock(g_delegateEventMutex);
         g_delegatePublished = 0;
@@ -7004,6 +7055,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeRescanRemoteVideoTracks(JNIEnv*, jclass
     }
     int startedVideo = 0;
     int forcedSubscribes = 0;
+    int renegotiatedSubscribes = 0;
     // Rebuilt every tick and compared against the previous one, so a line is
     // printed only on a real change to the tracks present in the room.
     std::string inventory;
@@ -7041,20 +7093,49 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeRescanRemoteVideoTracks(JNIEnv*, jclass
                 // a later inventory line is now the whole diagnosis.
                 (track != nullptr ? "/+track" : "/noTrack");
             if (!publication->subscribed() && track == nullptr) {
-                // A publication with no track attached. There is nothing to
-                // subscribe to, so the force-subscribe path below is skipped on
-                // purpose -- and recording that here is the point, because run 22
-                // force-subscribed exactly this state and the share still showed
-                // nothing.
+                // A publication with no track attached, and nothing subscribed.
+                // This is the state that makes a screen share permanently
+                // invisible, and the 2 s rescan is the only thing that ever sees
+                // it, so it cannot just be skipped.
                 //
-                // What run 22 could not tell us is whether that call was harmless
-                // or whether subscribing to a trackless publication is what kept
-                // the track from ever appearing. Both readings fit the log: the
-                // publication may have been born dead, or Orbit may have wedged it
-                // by poking it too early. Not poking it removes the second
-                // possibility, and the inventory's /+track marker answers the
-                // first on the next run.
+                // Record that it is trackless, and once it has stayed that way long
+                // enough, make the SDK renegotiate rather than waiting forever for
+                // a track that is not coming.
+                int tracklessTicks = 0;
+                {
+                    std::lock_guard<std::mutex> lock(g_tracklessTicksMutex);
+                    tracklessTicks = ++g_tracklessTicks[publication->sid()];
+                }
+                if (tracklessTicks == kTracklessTicksBeforeRenegotiate) {
+                    std::cout << "DEBUG [OrbitLiveKitAudio] publication trackless for "
+                              << (tracklessTicks * 2) << "s, renegotiating subscription "
+                              << "kind=" << (publication->kind() == livekit::TrackKind::KIND_VIDEO ? "video" : "audio")
+                              << " source=" << trackSourceLabel(publication->source())
+                              << " publicationSid=" << publication->sid()
+                              << " participantIdentity=" << participant->identity()
+                              << std::endl;
+                    try {
+                        publication->setSubscribed(false);
+                        publication->setSubscribed(true);
+                        renegotiatedSubscribes += 1;
+                    } catch (const std::exception& error) {
+                        std::cerr << "WARN [OrbitLiveKitAudio] renegotiate threw publicationSid="
+                                  << publication->sid() << " message=" << error.what() << std::endl;
+                    } catch (...) {
+                        std::cerr << "WARN [OrbitLiveKitAudio] renegotiate threw publicationSid="
+                                  << publication->sid() << " message=unknown" << std::endl;
+                    }
+                }
                 continue;
+            }
+            if (track != nullptr) {
+                std::lock_guard<std::mutex> lock(g_everHadTrackMutex);
+                g_publicationsEverSeenWithTrack.insert(publication->sid());
+            }
+            {
+                // Seen with a track, so stop counting it as trackless.
+                std::lock_guard<std::mutex> lock(g_tracklessTicksMutex);
+                g_tracklessTicks.erase(publication->sid());
             }
             if (!publication->subscribed()) {
                 // auto_subscribe is on, so an unsubscribed publication means the
@@ -7168,6 +7249,10 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeRescanRemoteVideoTracks(JNIEnv*, jclass
     if (forcedSubscribes > 0) {
         std::cout << "DEBUG [OrbitLiveKitAudio] rescan forced subscribe count="
                   << forcedSubscribes << std::endl;
+    }
+    if (renegotiatedSubscribes > 0) {
+        std::cout << "DEBUG [OrbitLiveKitAudio] rescan renegotiated trackless publications count="
+                  << renegotiatedSubscribes << std::endl;
     }
     return kStatusOk;
 }
