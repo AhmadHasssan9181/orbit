@@ -1594,6 +1594,19 @@ class CallManager(
                     },
                     onError = {
                         println("ERROR: [WebRTC] Failed to create offer for screen share: $it")
+                        // Roll the share back, because it never went out.
+                        //
+                        // Run 48 failed this offer three times and nothing
+                        // noticed: isScreenSharing stayed true, the grid carried on
+                        // drawing a share tile for a share nobody could receive,
+                        // and the capture guard had already blanked Orbit out of
+                        // every capture on the strength of a negotiation that
+                        // never happened. The peer saw nothing; we showed
+                        // ourselves a share.
+                        scope.launch {
+                            webRtcClient.stopScreenShare()
+                            _isScreenSharing.value = false
+                        }
                     }
                 )
             }
