@@ -1205,16 +1205,114 @@ Now capped at four rows. The slicing is extracted as `gridRowsFor` and pinned by
 eight tests, because a cap that only exists inside a composable is a cap nobody will
 notice being widened.
 
+### 13.7 The screen-share dropout: partially fixed, and the rest is measured
+
+This one took three runs to get right, and the reason it took three runs is worth
+recording, because **two of the three conclusions I drew from the counters were
+wrong.**
+
+**What the counters said, and what the user heard.** Runs 28 and 29 both showed
+`starved` climbing to 98–607 and `qDepth` pinned at 480 the instant a share
+started — the exact signature of the original bug. The user said: *"a slight drop
+the moment I started streaming, then it seemingly was fine."*
+
+That one sentence changed the target twice:
+
+- Everything *after* the first few seconds was a counter artifact nobody could
+  hear. `qDepth` sits at 480 for the rest of a call and it does not sound bad.
+- So the defect was never "sharing is expensive". It was "one second at share
+  start".
+
+**Wrong turn 1 — the peer's mute.** Run 29 looked like "Element muted, so the
+empty mixer starved". The user said *"actually I muted from Element"*, which was
+true, and I accepted it. Reading the whole log rather than an excerpt then showed
+the ordering that matters: the mixer collapse is timestamped at `ts=...461963` and
+the mute sits between that and `ts=...466952`, with `recv` still climbing (422 →
+648) through it. The collapse preceded the mute by half a second, with audio
+flowing. **The mute was a reaction, not the cause.**
+
+**Wrong turn 2 — frame rate and resolution.** I capped the publish at 30 fps and
+predicted resolution was the cause. Run 30 tested it directly, 1440p against 720p:
+
+| Share | Frames | Queue overflow |
+|---|---|---|
+| A | 1920×1080, 3.11 MB | yes |
+| B | 1280×720, 1.38 MB | yes |
+| C | 1920×1080, 3.11 MB | yes |
+
+Bandwidth dropped as expected and the overflow was identical. Resolution is not
+the cause. The 30 fps cap is kept — it is correct on its own merits — but it did
+not fix this.
+
+**What was actually there.** Desktop enumeration happened **four** times in
+`WebRtcClientImpl.jvm.kt`: to fill the share picker, again in `startScreenShare`
+moments later, and then twice more inside `trackSharedWindow` — the last of which
+built and disposed a `WindowCapturer` **every two seconds for the whole share**.
+Each of those walks every monitor and every top-level window through COM.
+
+Measured after the fix:
+
+```
+desktop sources enumerated n=9 in 52ms    ← once, at call connect
+screen share prewarmed in 182ms           ← at call connect
+desktop sources from cache  ×4            ← picker and click: no enumeration
+share source resolved id=0 in 0ms         ← the click itself
+```
+
+The button went from about a second of COM walking to **0 ms**.
+
+**And it was still not the cause.** The collapse survived the fix intact:
+`starved` 2 → 86, `qDepth` 2880 → 480, `pushMaxMs` 64 → 207 at the same instant.
+So the duplicate enumeration was real waste worth deleting — twice over, given the
+2-second poller — but it was not the mixer.
+
+**What is left, and it is small.** The gap between the first two share frames,
+every share, both measured runs:
+
+| Share | #1 → #2 | #2 → #3 | #3 → #4 |
+|---|---:|---:|---:|
+| 1 | **196 ms** | 45 ms | 42 ms |
+| 2 | **239 ms** | 42 ms | 42 ms |
+
+A ~200 ms stall after the first frame, then a normal ~22 fps cadence. That is the
+shape of a video encoder building itself on the first frame it has to encode, and
+it is very likely where the 207 ms of scheduling delay lands. **There is no log
+line for encoder initialisation anywhere in the codebase**, so this is a hypothesis
+with a measurement attached, not a diagnosis. The user's verdict after the fix:
+*"theres still a lil well anyways its not that big of an issue"* — a small residual
+click, down from a clear one-second dropout.
+
+Also noted: heap reached **345 MB** during a share at 1440p, against a 2 GB cap.
+
+### The lesson worth keeping
+
+Three runs, three hypotheses, and the counters pointed at a plausible story each
+time. What actually settled it was the user describing a sound, and one of the
+three things I was confident about turned out to be the peer's microphone being
+muted by hand. **A counter that moves when something bad happens is not evidence
+that the thing you are looking for caused it** — and a symptom report from someone
+who can hear the audio beats any amount of log archaeology.
+
 ---
 
 ## 14. Still open after this pass
 
+- **A ~200 ms audio click at the start of every screen share.** Down from ~1 s;
+  see §13.7. Suspected video-encoder startup, **not instrumented**. The honest next
+  step is a timing log around encoder creation in the share publish path, not
+  another guess.
+- **Heap reaches ~345 MB while sharing at 1440p.** Under the 2 GB cap, and it does
+  not appear to climb without bound, but it is higher than it should be.
+- **`VM attach current thread failed`** on the AWT thread at hangup, after cleanup
+  has already completed twice. Cosmetic, and it happens on every run.
 - **Message caching.** Deferred by you, and it is a feature rather than a bug.
 - **Soundboard in 1:1.** A feature gap, not a defect — see §6.
 - **The 58 `readinessCache` derive sites.** Unchanged; §6 covers why.
 - **`ActivateAudioInterfaceAsync failed hr=0x8000000e`** — process loopback is
   unavailable on this Windows build, so share audio captures Orbit's own playback.
   Ducking to 0.3 limits the echo; it is a mitigation, not a fix, and there is no
-  code-side answer.
-- **The outbound-share starvation fix is still unverified by a run.** Committed,
-  never executed — see §12.
+  code-side answer. It also means a share *with* audio captures Orbit's own
+  playback back, which is a feedback loop that no setting can currently prevent.
+- **The outbound-share starvation fix has now been run, three times, and is only
+  partly fixed.** See §13.7 for the measurements, the two wrong turns, and what is
+  still outstanding. Read that section rather than §12 on this.
