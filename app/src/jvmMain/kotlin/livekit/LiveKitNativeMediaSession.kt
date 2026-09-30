@@ -447,7 +447,13 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
     }
 
     fun armScreenSharePublish(fps: Int, maxBitrateBps: Int) {
-        screenShareFps = fps.coerceIn(1, 60)
+        // 30, not 60. This is the last of three places the ceiling is applied
+        // (settings UI, WebRtcClientImpl, here) so a stale stored value or a
+        // direct caller cannot publish faster than the machine can carry. At 60
+        // and 1440p this box was converting ~186 MB/s of I420 while the audio
+        // mixer ran a 10 ms tick, and the mixer lost: `starved=10 qDepth=3360`
+        // became `starved=283 qDepth=480` with playback dropping chunks.
+        screenShareFps = fps.coerceIn(1, 30)
         screenShareMaxBitrateBps = maxBitrateBps
         screenShareWidth = 0
         screenShareHeight = 0
