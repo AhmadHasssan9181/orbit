@@ -104,6 +104,22 @@ class GroupCallConnectionTracker(
             }
             NativeMediaState.Reconnecting -> {
                 if (current.stage != GroupCallStage.Failed) {
+                    // Stamp the stage-entry time ON THE TRANSITION ONLY, which every
+                    // other forward stage already does and this one did not.
+                    //
+                    // Two things follow from that, and both matter:
+                    //  * without the stamp, stageEnteredAtMs still held the value
+                    //    from the original join, so any deadline measured from it
+                    //    would fire instantly the moment a call dropped. Adding
+                    //    RECONNECT_TIMEOUT_MS without this line would have turned
+                    //    every transient network blip into a failed call.
+                    //  * it must not stamp on every poll. This readiness callback
+                    //    arrives repeatedly while the reconnect is in flight, and
+                    //    re-stamping each time would reset the clock forever, so
+                    //    the deadline would never be reached at all.
+                    if (current.stage != GroupCallStage.Reconnecting) {
+                        stageEnteredAtMs = nowMs()
+                    }
                     _connection.value = current.copy(stage = GroupCallStage.Reconnecting)
                 }
             }
@@ -205,6 +221,19 @@ class GroupCallConnectionTracker(
                     _connection.value = current.copy(stage = GroupCallStage.InCall)
                     TrackerDecision.None
                 } else TrackerDecision.None
+            GroupCallStage.Reconnecting ->
+                // Reconnecting used to fall through to `else`, which had no
+                // deadline at all. Every other stage on the ladder is bounded, so a
+                // socket that dies and never comes back left the tracker
+                // advertising "Reconnecting…" indefinitely: the reconnect loop kept
+                // firing, the token kept refreshing, and nothing ever told the user
+                // their call was not coming back.
+                //
+                // Long, because a transient network drop is the common case and
+                // giving up on a call that would have recovered a minute later is
+                // worse than waiting. Bounded, because an unbounded wait is not a
+                // recovery strategy.
+                if (elapsedHere > RECONNECT_TIMEOUT_MS) TrackerDecision.GiveUp else TrackerDecision.None
             else -> TrackerDecision.None
         }
     }
@@ -282,6 +311,16 @@ class GroupCallConnectionTracker(
         const val REMOTE_MEDIA_SOFT_WARN_MS = 15_000L
         const val SOLO_ROOM_SETTLE_MS = 10_000L
         const val MAX_CONNECT_ATTEMPTS = 2
+
+        // How long a mid-call reconnect may run before the call is declared lost.
+        //
+        // Generous, because the overwhelmingly common cause is a transient network
+        // drop and a call that would have come back is worth far more than a fast
+        // failure. Finite, because the alternative -- which is what this replaced,
+        // since Reconnecting fell through to a branch with no deadline -- is a dead
+        // socket reconnecting forever while the UI sits on "Reconnecting…" with no
+        // way to learn that nothing is coming back.
+        const val RECONNECT_TIMEOUT_MS = 90_000L
     }
 }
 

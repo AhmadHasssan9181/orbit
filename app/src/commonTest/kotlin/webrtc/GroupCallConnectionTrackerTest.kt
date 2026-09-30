@@ -271,6 +271,86 @@ class GroupCallConnectionTrackerTest {
         assertEquals(GroupCallStage.InCall, tracker.connection.value.stage)
     }
 
+    // ── Reconnecting must be bounded, like every other stage ──
+    //
+    // Reconnecting used to fall through to the `else` branch of
+    // evaluateDeadlines, which returns None unconditionally. Every other stage on
+    // the ladder has a deadline; this one had none, so a socket that died and never
+    // came back left the call advertising "Reconnecting…" forever while the
+    // reconnect loop kept firing and the token kept refreshing.
+
+    @Test
+    fun reconnectingIsNotGivenUpOnImmediately() {
+        givenReconnecting()
+
+        // Well inside the window: a transient drop must not kill a live call.
+        assertEquals(
+            TrackerDecision.None,
+            tracker.evaluateDeadlines(
+                now = nowPlus(GroupCallConnectionTracker.RECONNECT_TIMEOUT_MS - 5_000),
+                videoRequested = false,
+                remoteMediaExpected = true
+            )
+        )
+        assertEquals(GroupCallStage.Reconnecting, tracker.connection.value.stage)
+    }
+
+    @Test
+    fun reconnectingIsGivenUpOnceItsDeadlinePasses() {
+        givenReconnecting()
+
+        assertEquals(
+            TrackerDecision.GiveUp,
+            tracker.evaluateDeadlines(
+                now = nowPlus(GroupCallConnectionTracker.RECONNECT_TIMEOUT_MS + 5_000),
+                videoRequested = false,
+                remoteMediaExpected = true
+            )
+        )
+    }
+
+    @Test
+    fun aReconnectThatKeepsSucceedingIsNeverGivenUpOn() {
+        // The deadline must measure the CURRENT attempt, not total time in the
+        // stage. A call that drops, recovers, drops again, recovers again is
+        // healthy and must not be failed by the sum of its outages -- onReconnectComplete
+        // re-stamps the stage-entry time, and this pins that it still does.
+        repeat(3) {
+            givenReconnecting()
+            assertEquals(
+                TrackerDecision.None,
+                tracker.evaluateDeadlines(
+                    now = nowPlus(GroupCallConnectionTracker.RECONNECT_TIMEOUT_MS - 5_000),
+                    videoRequested = false,
+                    remoteMediaExpected = true
+                )
+            )
+            tracker.onReconnectComplete()
+            assertEquals(GroupCallStage.InCall, tracker.connection.value.stage)
+        }
+    }
+
+    /**
+     * `evaluateDeadlines` derives elapsed time as `now - stageEnteredAtMs`, and
+     * `stageEnteredAtMs` is private. Offsetting `now` forward on the INJECTED
+     * clock is therefore the way to ask "what would you decide in N milliseconds",
+     * which is exactly the question these tests are asking. Using the wall clock
+     * here instead would silently compare against a `stageEnteredAtMs` stamped
+     * from `clockMs`, and every assertion would be measuring nothing.
+     */
+    private fun nowPlus(offsetMs: Long): Long = clockMs + offsetMs
+
+    private fun givenReconnecting() {
+        tracker.begin()
+        tracker.onMembershipPublished(true)
+        tracker.finalizeJoin(readiness(NativeMediaState.MediaReady), videoRequested = false)
+        assertEquals(GroupCallStage.InCall, tracker.connection.value.stage)
+        tracker.onNativeReadiness(
+            readiness(NativeMediaState.Reconnecting, audioPublished = false, acceptingAudioFrames = false)
+        )
+        assertEquals(GroupCallStage.Reconnecting, tracker.connection.value.stage)
+    }
+
     @Test
     fun midCallFailureFromInCallFailsWithMessage() {
         tracker.begin()
