@@ -193,7 +193,18 @@ fun WebRtcEffects(
         repository.configureCallEndpoints(sfuOverrideUrl.takeIf { it.isNotBlank() })
     }
     LaunchedEffect(attenuation) {
-        webRtcClient.setAttenuationStrength(attenuation / 100f)
+        // Through CallManager, not straight to the client.
+        //
+        // It used to call webRtcClient.setAttenuationStrength directly, which left
+        // CallManager.duckingStrength untouched. That flow is what the in-call
+        // "Attenuation" slider reads, and it was seeded with a hardcoded 0.8f, so
+        // the two controls were independent values for one feature: set Ducking
+        // Strength to 0 in Settings and the in-call slider still read 80%, or set
+        // it to 20% and the slider read 80% and quietly overwrote the setting.
+        //
+        // Routing through CallManager means one write updates both, which is the
+        // only thing that makes two controls for one setting defensible.
+        callManager.setDuckingStrength(attenuation / 100f)
     }
     LaunchedEffect(inputDevice) {
         callManager.setAudioInputDevice(inputDevice)

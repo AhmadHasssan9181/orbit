@@ -218,6 +218,15 @@ class CallManager(
         }
     }
 
+    /**
+     * Ducking strength, 0f..1f.
+     *
+     * The initial value is a placeholder only. `WebRtcEffects` pushes the persisted
+     * `attenuation` setting into this on first composition, which is what keeps the
+     * in-call slider and the Settings slider showing the same number. It used to be
+     * seeded straight to 0.8f and never synced, so the two controls were separate
+     * values for one setting.
+     */
     val duckingStrength = MutableStateFlow(0.8f)
     val noiseSuppression = MutableStateFlow(true)
     val echoCancellation = MutableStateFlow(true)
@@ -1123,6 +1132,17 @@ class CallManager(
             onSuccess = {
                 flushRemoteCandidates()
                 _callState.value = CallState.CONNECTED
+            },
+            onError = { error ->
+                // This had no handler at all, and `onError` defaults to a no-op, so
+                // a rejected answer produced no log output, no state change and no
+                // UI. The ring timeout is incoming-only, so nothing recovered it
+                // either -- Orbit sat on "Calling..." indefinitely. Both failure
+                // paths inside setRemoteDescription land here, including its own
+                // onError("PeerConnection is null").
+                println("ERROR: [CallMgr] Failed to set remote answer: $error")
+                _callState.value = CallState.ENDED
+                endCall(notifyRemote = false)
             }
         )
     }

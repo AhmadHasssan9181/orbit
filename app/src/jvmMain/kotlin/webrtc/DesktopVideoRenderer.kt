@@ -3,6 +3,8 @@ package webrtc
 import dev.onvoid.webrtc.media.video.I420Buffer
 import dev.onvoid.webrtc.media.video.VideoFrame
 import dev.onvoid.webrtc.media.video.VideoTrackSink
+import ui.screen.call.INBOUND_VIDEO_MAX_LONG_EDGE
+import ui.screen.call.INBOUND_VIDEO_MIN_FRAME_INTERVAL_NS
 import java.awt.image.BufferedImage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -25,18 +27,21 @@ class DesktopVideoRenderer(
         val verbose = util.OrbitLog.debugEnabled
 
         val now = System.nanoTime()
-        if (now - lastFrameNanos < 66_000_000L) {
+        if (now - lastFrameNanos < INBOUND_VIDEO_MIN_FRAME_INTERVAL_NS) {
             frame.release()
             return
         }
         lastFrameNanos = now
 
-        if (verbose) {
-            println("DEBUG: [WebRTC] DesktopVideoRenderer (isScreen=$isScreenShare) received frame: ${frame.buffer.width}x${frame.buffer.height}, format=${frame.buffer.javaClass.simpleName}")
-        }
-
         var i420: I420Buffer? = null
         try {
+            // Inside the try, deliberately. The verbose line used to read
+            // frame.buffer.width before the try, so a throw there skipped the
+            // finally and leaked the frame -- the only exit that did.
+            if (verbose) {
+                println("DEBUG: [WebRTC] DesktopVideoRenderer (isScreen=$isScreenShare) received frame: ${frame.buffer.width}x${frame.buffer.height}, format=${frame.buffer.javaClass.simpleName}")
+            }
+
             i420 = frame.buffer.toI420()
             if (verbose && i420 != null) {
                 println("DEBUG: [WebRTC] DesktopVideoRenderer I420Buffer size: ${i420.width}x${i420.height}, Y-stride: ${i420.strideY}")
@@ -54,18 +59,33 @@ class DesktopVideoRenderer(
     }
 
     private fun I420Buffer.toBufferedImage(): BufferedImage {
-        val frameWidth = this.width
-        val frameHeight = this.height
+        val srcWidth = this.width
+        val srcHeight = this.height
+
+        // Nearest-neighbour downscale by an integer step.
+        //
+        // Nearest rather than bilinear on purpose: this is a screen share, where
+        // 1-pixel text IS the content. Averaging adjacent pixels turns small type
+        // into grey mush, which is exactly the "blurry" complaint. Dropping pixels
+        // keeps edges hard and every glyph legible. It can alias slightly on a
+        // diagonal, which is a far better trade for text.
+        val step = integerDownscaleStep(srcWidth, srcHeight, INBOUND_VIDEO_MAX_LONG_EDGE)
+        val frameWidth = srcWidth / step
+        val frameHeight = srcHeight / step
+
         val image = BufferedImage(frameWidth, frameHeight, BufferedImage.TYPE_INT_ARGB)
         val yPlane = getDataY()
         val uPlane = getDataU()
         val vPlane = getDataV()
 
         for (y in 0 until frameHeight) {
+            val srcY = y * step
+            val chromaRow = (srcY / 2)
             for (x in 0 until frameWidth) {
-                val yValue = yPlane.get(y * getStrideY() + x).toInt() and 0xFF
-                val uValue = uPlane.get((y / 2) * getStrideU() + (x / 2)).toInt() and 0xFF
-                val vPlaneValue = vPlane.get((y / 2) * getStrideV() + (x / 2)).toInt() and 0xFF
+                val srcX = x * step
+                val yValue = yPlane.get(srcY * getStrideY() + srcX).toInt() and 0xFF
+                val uValue = uPlane.get(chromaRow * getStrideU() + (srcX / 2)).toInt() and 0xFF
+                val vPlaneValue = vPlane.get(chromaRow * getStrideV() + (srcX / 2)).toInt() and 0xFF
 
                 image.setRGB(x, y, yuvToArgb(yValue, uValue, vPlaneValue))
             }
@@ -124,3 +144,18 @@ internal fun yuvToArgb(y: Int, u: Int, v: Int): Int {
 }
 
 private fun clampChannel(value: Int): Int = value.coerceIn(0, 255)
+
+/**
+ * The integer factor to shrink by, so the longest edge lands at or under [maxEdge].
+ *
+ * Integer-only, so the source pixel index is a multiplication rather than a
+ * float multiply and a cast on every one of several million pixels. A frame
+ * already inside the limit returns 1 and is untouched.
+ */
+internal fun integerDownscaleStep(width: Int, height: Int, maxEdge: Int): Int {
+    if (width <= 0 || height <= 0 || maxEdge <= 0) return 1
+    val longest = maxOf(width, height)
+    if (longest <= maxEdge) return 1
+    // Ceiling so the result is always within the limit, never exactly on it.
+    return (longest + maxEdge - 1) / maxEdge
+}
