@@ -3411,6 +3411,23 @@ public:
             return;
         }
         SessionLock lock;
+        if (event.publication != nullptr) {
+            // A publication can be withdrawn before it ever carried a track, and
+            // that is not a shape the reader log can express: no reader, no track
+            // SID, no frame that never came. Run 22 lost a whole screen share this
+            // way and every line about it was technically correct.
+            // `trackPresent` is the one field that says whether the share was ever
+            // real.
+            if (event.publication->track() == nullptr) {
+                std::cout << "DEBUG [OrbitLiveKitAudio] publication withdrawn before carrying a track "
+                          << "source=" << trackSourceLabel(event.publication->source())
+                          << " publicationSid=" << event.publication->sid()
+                          << " kind=" << (event.publication->kind() == livekit::TrackKind::KIND_VIDEO ? "video" : "audio")
+                          << " subscribed=" << (event.publication->subscribed() ? "true" : "false")
+                          << " participantIdentity=" << (event.participant != nullptr ? event.participant->identity() : std::string{"<none>"})
+                          << std::endl;
+            }
+        }
         if (event.publication != nullptr && event.publication->kind() == livekit::TrackKind::KIND_VIDEO) {
             std::cout << "DEBUG [RemoteVideo] remote video track unpublished "
                       << "participantIdentity=" << (event.participant != nullptr ? event.participant->identity() : std::string{"<none>"})
@@ -6947,7 +6964,32 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeRescanRemoteVideoTracks(JNIEnv*, jclass
             const auto track = publication->track();
             inventory += " " + trackSourceLabel(publication->source()) + "/" +
                 publication->sid() + (publication->subscribed() ? "=sub" : "=UNSUB") +
-                (publication->muted() ? "/muted" : "");
+                (publication->muted() ? "/muted" : "") +
+                // Track presence is in the inventory because it is the thing that
+                // was invisible. Run 22's first share sat at `=UNSUB` and then,
+                // once force-subscribed, at `=sub` -- and still produced no
+                // picture, because the publication had no track attached at ANY
+                // sighting and the sender withdrew it. Every line said the right
+                // thing about the subscription and nothing about whether there
+                // was anything to subscribe TO. `/+track` appearing (or not) in
+                // a later inventory line is now the whole diagnosis.
+                (track != nullptr ? "/+track" : "/noTrack");
+            if (!publication->subscribed() && track == nullptr) {
+                // A publication with no track attached. There is nothing to
+                // subscribe to, so the force-subscribe path below is skipped on
+                // purpose -- and recording that here is the point, because run 22
+                // force-subscribed exactly this state and the share still showed
+                // nothing.
+                //
+                // What run 22 could not tell us is whether that call was harmless
+                // or whether subscribing to a trackless publication is what kept
+                // the track from ever appearing. Both readings fit the log: the
+                // publication may have been born dead, or Orbit may have wedged it
+                // by poking it too early. Not poking it removes the second
+                // possibility, and the inventory's /+track marker answers the
+                // first on the next run.
+                continue;
+            }
             if (!publication->subscribed()) {
                 // auto_subscribe is on, so an unsubscribed publication means the
                 // auto-subscribe lost a race with the publish and nothing ever
