@@ -3,7 +3,7 @@
 A working document for the codebase. Not a changelog: it covers what the code
 *is*, what was removed and why, and the traps that have already cost hours.
 
-Last updated: 2026-09-30 · 174 tests passing · everything staged, nothing committed
+Last updated: 2026-09-30 · 182 tests passing · everything staged, nothing committed
 
 ---
 
@@ -272,7 +272,7 @@ app/src/
   jvmMain/
     cpp/           Native audio. SessionLock, deferred dispatch, RoomDelegate.
     kotlin/util/   JVM-only: browser, audio player, media fetch, file pickers.
-  commonTest/kotlin/   174 tests, all JVM.
+  commonTest/kotlin/   182 tests, all JVM.
 deploy/                Self-hosting bundle. Synapse + LiveKit + coturn, compose
                        files, and the Tailscale / public / Tuwunel guides.
 ```
@@ -371,6 +371,104 @@ The single worst bug in the codebase, and it was four bugs stacked.
 Three were fixed as a group because a test against racy code just bakes the race
 in: the epoch, the capture generation, and the readiness cache all needed the
 shared state extracted into something testable first (`MonotonicEpoch.kt`).
+
+### The two "it works on my machine" video defects
+
+Both of these only bite at 1080p, which is why a camera at 640x360 always looked
+fine and a shared window never did. The numbers are in run 19.
+
+**A screen share was invisible; a camera at the same moment was not.** The remote
+video reader loop was
+
+```cpp
+while (reader->running && reader->stream->read(event)) {
+    dispatchRemoteVideoFrame(reader, event, sequence);   // full frame, every frame
+}
+```
+
+No downscale, no rate cap, no backpressure. A 1920x1080 share is 8.29 MB of RGBA
+and the SFU pushed 28.8 fps (`seq 60 -> 120 in 2080 ms`), so ~237 MB/s went into the
+JVM as `NewByteArray` + `SetByteArrayRegion`. The UI then amplified every one of
+those four times over: `ByteArray` -> `BufferedImage` raster -> `toComposeImageBitmap`
+-> Skia `Bitmap`. That is ~1 GB/s of allocation from 8 MB live objects, which is
+permanent full-GC territory — the camera survived it at 12 MB/s, the share did not.
+
+Fixed by bounding the *input* rather than the symptom:
+
+| Bound | Value | Why that value |
+|---|---|---|
+| Long edge | 1280 px | The standard "big layer" size, and about what a call tile can resolve anyway. 1080p -> 1280x720 is 2.25x less data |
+| Delivery | 20 fps | Nobody distinguishes 20 from 30 on a talking head or a shared window |
+
+Both are one-line constants, and `DEBUG [RemoteVideo] frame` now prints
+`read=` / `rateSkipped=` / `srcWidth=` / `downscaledFrames=`, so if it is *still*
+too slow the log says by how much instead of the next guess being another guess.
+The downscale is an exact-area box filter (not point sampling — a shared window is
+mostly text, and point-sampling drops half the glyph strokes) and it runs while
+the pixels are still in native memory, so the detail is discarded once instead of
+being copied four times and thrown away later.
+
+**A screen share could be filed as a camera.** `updateFrame` handles frames that
+arrive before `trackAdded` by calling `trackStarted(participantIdentity, trackSid)`
+— with `trackSource` defaulted to `""`. An empty source makes `isScreenShare`
+false, and `CallGrid` keys its entire layout off `RenderNode.isScreenShare`: a
+share gets the 2.5-weight spotlight, a camera gets an equal grid cell. So this was
+not "a slightly smaller video", it was the wrong UI shape on the path that decides
+what is on screen at all.
+
+The race is real, not theoretical: native starts the reader thread immediately
+after queueing `onRemoteVideoTrackAdded`, and that queue only runs inline when the
+session lock is free. It did not happen to lose in run 19, which is exactly why it
+survived. Fixed by passing the source in with every frame — the native reader
+already knows it. That changed the JNI signature of `onRemoteVideoFrame`, which
+means the method-ID string in `nativeSetRemoteVideoSink` and the interface in
+`NativeMediaEvents.kt` are a matched pair; change one without the other and the
+sink fails to install with `NativeRemoteVideoSink methods not found`.
+
+Pinned by `RemoteVideoTrackClassificationTest` (5 cases). Reverting the one-word
+fix turns exactly 2 of them red, and the 2 that go red are the 2 share cases —
+verified, not assumed.
+
+### A 12-second microphone probe sat on the join path
+
+`JOIN-TIMING` from run 19, added the previous session:
+
+```
+JOIN-TIMING ice=216ms token=1177ms publish=5179ms encProbe=208ms native=14216ms (attempts=1) total=21001ms
+```
+
+`native=14216ms` looked like SFU connect time. It was not. Inside it:
+
+```
+DEBUG [LiveKitNativeMediaSession] microphone self-test before call start durationMs=3000
+DEBUG [LiveKitNativeAudioCapture] self-test started durationMs=3000 mixers=4
+... one line per mixer, 3 seconds apart, four of them ...
+```
+
+`probeInputMixers` maps over the candidates, and each probe is `durationMs` of
+blocking `TargetDataLine.read()`. **Four mixers x 3 s = 12 s of the 21 s join**,
+spent listening to microphones before the SFU connection was allowed to start. On
+a laptop with one built-in mic it is 3 s, which is why this reads as "the network
+is slow here" rather than as a bug.
+
+The result does not change between two calls in a session: which mic is plugged in
+and which one the user picked are both the same. The chosen mixer was *already*
+cached in `preparedMixerKey` and reused when the capture line opened — only the
+probing repeated, which is the expensive part, and the fresh answer was then
+discarded in favour of the cached one.
+
+So the probe now records a signature of what it probed (override + every
+candidate's name, description, format support, override match, score) and skips
+when nothing changed. Plugging a mic in, editing the override, or a device
+changing its supported formats all produce a different signature and force a real
+probe. `DEBUG [LiveKitNativeAudioCapture] microphone self-test reused cached probe`
+says so, with the milliseconds it saved.
+
+**The honest limit:** this only helps from the *second* call onwards. The first
+join still pays the full probe, because that is the join that has to discover what
+the hardware is. Removing that would mean not blocking the connect on the device
+choice at all — a restructure of `LiveKitNativeMediaSession`, not a cache. Not
+done.
 
 ### Silent data loss
 
@@ -522,7 +620,7 @@ Everything below is confirmed still open by reading the code or a run log.
 
 | Thing | State | Evidence |
 |---|---|---|
-| **Video heap** | 3,686,400 bytes per 1280x720 frame at 30 fps. `heap used=258MB` mid-call, and the 3.6 MB `ByteArray` per frame is copied on every UI update | run 14 `RemoteVideoUI frame updated` |
+| ~~**Video heap**~~ | **Fixed for remote video, see §4.** The reader forwarded every frame at full size: 1920x1080 RGBA is 8.29 MB, the SFU pushed 28.8 fps, so ~237 MB/s of JNI `byte[]`, amplified ~4x by the UI into a `BufferedImage` raster and a Skia `Bitmap`. Now averaged down to a 1280 px long edge in native and capped at 20 fps | run 19, `vid.remote n=79 mb=624` in one 5 s window; `seq 60 -> 120 in 2080 ms` |
 | **Key-exchange convergence sweep never gives up** | `convergence sweep: resending key index=N to 1 underdelivered device(s) ([@nfak_ism:matrix.org:ZVK65HTOZW])` every 3s for the whole call, then `deferring 1 device(s) without stored keys` — the same device, immediately after deferring it. The loop has no attempt cap or backoff | run 14, every run |
 | **Avatars in 1:1** | The local "You" tile and the whole P2P path never resolve `avatarUrl`, so 1:1s fall back to a seed colour next to group tiles | read 2026-09-30 |
 | **Chat history stops at 50** | The repository's `fromToken` is correct; the UI never supplies one, so there is no scrollback | read 2026-09-30 |
@@ -620,7 +718,7 @@ anything new to readiness — not worth doing blind.
 
 ```powershell
 .\gradlew.bat :app:compileKotlinJvm --console=plain -q     # fast, ~6s
-.\gradlew.bat :app:jvmTest --console=plain                 # 174 tests, must be 0 failures
+.\gradlew.bat :app:jvmTest --console=plain                 # 182 tests, must be 0 failures
 .\gradlew.bat :app:run --console=plain                     # ONLY when the user asks
 ```
 
@@ -631,7 +729,7 @@ harmless, just slow.
 
 ### What the test suite does and does not cover
 
-105 tests at the start of this work; 160 now. What got added:
+105 tests at the start of this work; 182 now. What got added:
 
 - `CallStateResolver` — every branch of the terminated/aged-out/fresh-membership
   decision, as a pure function.
@@ -639,12 +737,25 @@ harmless, just slow.
   reverted, the test was confirmed red, then the fix was restored. Do this for any
   concurrency fix you can extract into a pure class; a test written against racy
   code just bakes the race in.
+- `RemoteVideoTrackClassification` — the same discipline, on the screen-share
+  race. Reverting the fix turns exactly 2 of its 5 cases red, and the 2 that go
+  red are the 2 share cases. Note the SIDs in that test are deliberately neutral:
+  `isScreenShare` also matches on the SID containing "share", so a SID of
+  `TR_SHARE` makes every camera assertion pass for the wrong reason.
 - `ChannelGrouping` — drawer grouping, including the lite-mode rows it now shares
   with nothing.
 - `MatrixRtcMembership` — membership acceptance, the 120 s start-skew allowance,
   and the "one junk element must not wipe the parse" rule.
 
-What it does **not** cover, and I am not going to pretend otherwise: the frame-store
+The native box filter has no test *in the suite* — it is C++ in a file with
+LiveKit headers, so a JVM test cannot reach it. I copied the function verbatim into
+a standalone program and ran it against reference cases instead (uniform frame
+preserved exactly, 2x2 block averaging to the true mean of 0/100/200/255 = 138,
+exact 2:1 ratio not round-upping to source size, null/zero/1x1 all refused, output
+size always exactly `w*h*4`). That verifies the arithmetic; it does not verify the
+JNI handoff, which only a real call does.
+
+What the suite does **not** cover, and I am not going to pretend otherwise: the frame-store
 commit lock, the COM de-duplication, the ringtone flag, the readiness cache. Those
 need a real audio device, a real WASAPI session, or a native reader thread. They are
 compiler-verified and reasoned, not test-verified. **The next app run is the test for
@@ -810,7 +921,30 @@ Being explicit, because "it compiles" is not "it works".
   exercised at runtime. They need a second 1:1 call, not a group call.
 - **58 readiness derive sites** still read fields individually. Narrower clobber
   window, not zero. §6 explains why I stopped.
-- **The video heap** is measured (`258MB` mid-call) but not fixed. I know a
-  3.6 MB `ByteArray` per frame is allocated and copied on every UI update, and
-  that is where it goes; I have not read the frame store to see whether the
-  copy can be shared rather than duplicated.
+- **The video frame budget is a reasoned fix, not a measured one.** The *diagnosis*
+  is measured — 8.29 MB/frame, 28.8 fps, `vid.remote mb=624` in one 5 s window,
+  `seq 60 -> 120 in 2080 ms` — and the box filter is verified against a reference
+  implementation (uniform frames preserved exactly, 2x2 blocks average to the true
+  mean, no upscale, degenerate inputs refused). What is **not** measured is whether
+  1280 px at 20 fps is enough for a 1080p share to actually appear. If it is still
+  invisible, the number to move is `kRemoteVideoMaxLongEdge` and the log line to
+  read is `vid.remote mb=` in the next run. I picked 1280/20 because they are the
+  conventional values, not because a run told me they work on this machine.
+- **The screen-share-as-camera race did not lose in run 19.** The classification is
+  now correct by construction and 5 tests cover it, but the ordering that exposed it
+  has not been observed happening. If the next run shows a share landing as a
+  half-size camera tile again, the fix is not in the store — it is that
+  `onRemoteVideoTrackAdded` and the first frame are racing somewhere I have not
+  looked.
+- **The cached microphone probe has not been seen skipping.** It is written to skip
+  on the second join in a session; nobody has run two calls back to back yet. Look
+  for `microphone self-test reused cached probe`.
+- **`publish=5179ms` was reduced by removing one of three round trips, not by
+  making anything faster.** The post-publish check re-read all 89 room-state events
+  to confirm the one event it had just written; it now asks
+  `GET /rooms/{id}/state/{type}/{stateKey}` and keeps the full scan as the fallback
+  when the single-event fetch cannot answer. The check itself is unchanged and
+  still gates the join, because "peers can see me" is worth 1.7 s. Whether the
+  remaining two round trips to matrix.org can be overlapped is not a code problem
+  — the first one has to pick the reference member event before the payload can be
+  built, and the publish has to happen before the state can be read back.

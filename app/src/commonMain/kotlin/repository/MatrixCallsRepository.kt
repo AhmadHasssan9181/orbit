@@ -827,6 +827,60 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
         }
     }
 
+    /**
+     * Is OUR membership event readable in room state, by a single-event fetch?
+     *
+     * The post-publish check used to re-read the whole room state — 89 events on
+     * the room this was measured on — to answer "is the one event I just wrote
+     * there?". That is a whole extra round trip to matrix.org in front of the SFU
+     * connect, and it was the largest single slice of the measured 5.2 s publish
+     * phase. `GET /rooms/{id}/state/{type}/{stateKey}` asks the exact question with
+     * one event, and a 404 is the exact answer "not visible".
+     *
+     * Returns null when the answer is inconclusive (network error, non-2xx that is
+     * not a 404) so the caller can fall back to the full scan rather than
+     * mistaking "could not tell" for "not there".
+     */
+    private suspend fun fetchOwnMembershipEvent(
+        roomId: String,
+        eventType: String,
+        stateKey: String
+    ): MatrixRtcVisibilityEvent? {
+        return try {
+            val response = context.httpClient.get(
+                context.fullUrl("/rooms/$roomId/state/$eventType/${stateKey.encodeStateKey()}")
+            ) {
+                header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
+            }
+            val status = response.status.value
+            if (status == 404) {
+                // The state key is simply not in room state. That is a real answer,
+                // not a failure to answer.
+                response.drain()
+                println("WARN [MatrixRTCVisibilityAudit] own membership absent from state status=404 type=$eventType state_key=$stateKey")
+                return null
+            }
+            if (status !in 200..299) {
+                response.drain()
+                println("WARN [MatrixRTCVisibilityAudit] own-membership state fetch failed status=$status")
+                return null
+            }
+            val raw = Json.parseToJsonElement(response.bodyAsText()).jsonObject
+            MatrixRtcVisibilityEvent(
+                type = jsonString(raw, "type") ?: eventType,
+                stateKey = jsonString(raw, "state_key") ?: stateKey,
+                sender = jsonString(raw, "sender") ?: "",
+                content = raw["content"]?.jsonObject ?: buildJsonObject { },
+                raw = raw
+            )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            println("WARN [MatrixRTCVisibilityAudit] own-membership state fetch exception=${e.message}")
+            null
+        }
+    }
+
     private fun logMatrixRtcVisibilityEvents(label: String, events: List<MatrixRtcVisibilityEvent>) {
         // One summary line always; the per-event dump only under the debug flag.
         // This was ~20 lines per member event, several times per call attempt.
@@ -1427,6 +1481,7 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
             println("DEBUG [MatrixCallsRepository] Sending m.call.member payload: $payload")
 
             var allPublished = true
+            var firstPublishedType: String? = null
             for (eventType in publishMode.eventTypes) {
                 val response = context.httpClient.put(context.fullUrl("/rooms/$roomId/state/$eventType/${stateKey.encodeStateKey()}")) {
                     header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
@@ -1435,6 +1490,8 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                 }
                 if (response.status.value !in 200..299) {
                     allPublished = false
+                } else if (firstPublishedType == null) {
+                    firstPublishedType = eventType
                 }
                 println("DEBUG [MatrixCallsRepository] Published $eventType status=${response.status.value}")
                 println(
@@ -1443,12 +1500,35 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                 response.drain()
             }
 
-            val afterEvents = fetchMatrixRtcVisibilityEvents(roomId).orEmpty()
-            logMatrixRtcVisibilityEvents("after_publish", afterEvents)
-            logElementReferenceDump("after_publish", afterEvents, userId)
-            val orbitMember = findOwnMemberEvent(afterEvents, deviceId, membershipId, stateKey)
+            // Confirm our own event is really in room state — peers cannot see us,
+            // cannot send us media keys, and the call is a one-way street if this
+            // silently fails, so the check is worth keeping on the join path.
+            //
+            // The full-state re-read only earns its cost when it is also feeding the
+            // side-by-side comparison dump, which is debug-only. Normally one
+            // single-event fetch answers it, and the full scan is the fallback for
+            // when that cannot answer.
+            val verifyStart = getTimeMillis()
+            var orbitMember: MatrixRtcVisibilityEvent? = null
+            if (OrbitLog.debugEnabled) {
+                val afterEvents = fetchMatrixRtcVisibilityEvents(roomId).orEmpty()
+                logMatrixRtcVisibilityEvents("after_publish", afterEvents)
+                logElementReferenceDump("after_publish", afterEvents, userId)
+                orbitMember = findOwnMemberEvent(afterEvents, deviceId, membershipId, stateKey)
+            } else {
+                orbitMember = firstPublishedType?.let { fetchOwnMembershipEvent(roomId, it, stateKey) }
+                if (orbitMember == null) {
+                    // Could not confirm cheaply. Fall back to the authoritative scan
+                    // rather than reporting a join failure on a network hiccup.
+                    val afterEvents = fetchMatrixRtcVisibilityEvents(roomId).orEmpty()
+                    orbitMember = findOwnMemberEvent(afterEvents, deviceId, membershipId, stateKey)
+                }
+            }
+            val verifyMs = getTimeMillis() - verifyStart
             println(
-                "DEBUG [MatrixRTCVisibilityAudit] orbit member visible=${orbitMember != null} selected_state_key=$stateKey selected_mode=${publishMode.label}"
+                "DEBUG [MatrixRTCVisibilityAudit] orbit member visible=${orbitMember != null} " +
+                    "selected_state_key=$stateKey selected_mode=${publishMode.label} " +
+                    "verify=${verifyMs}ms via=${if (OrbitLog.debugEnabled) "all-state" else "single-state"}"
             )
             logMembershipComparison(reference, orbitMember)
             return allPublished || orbitMember != null

@@ -83,6 +83,10 @@ object LiveKitNativeAudioCapture {
     @Volatile private var preparedMixerKey: MixerKey? = null
     @Volatile private var preparedProbeResult: MicProbeResult? = null
     @Volatile private var preparedOverrideName: String = ""
+    // What the probe was run against, so a second join can tell "same inputs,
+    // same override" from "the hardware changed" without re-probing to find out.
+    @Volatile private var preparedCandidatesSignature: String = ""
+    @Volatile private var preparedSelfTestResult: MicCaptureSelfTestResult? = null
     @Volatile private var inputDeviceOverride = ""
     @Volatile private var userVolumeFactor = 1f
 
@@ -367,6 +371,20 @@ object LiveKitNativeAudioCapture {
             candidates
         }
 
+        val signature = candidatesSignature(candidatesToProbe, overrideName)
+        val cached = preparedSelfTestResult
+        if (cached != null && preparedMixerKey != null &&
+            preparedCandidatesSignature == signature && preparedOverrideName == overrideName
+        ) {
+            println(
+                "DEBUG [LiveKitNativeAudioCapture] microphone self-test reused cached probe " +
+                    "mixer=${cached.selectedMixerName} peak=${cached.selectedPeak} " +
+                    "rms=${cached.selectedRms.formatRms()} mixers=${candidatesToProbe.size} " +
+                    "(inputs unchanged since the last probe; skipped ${candidatesToProbe.size * durationMs}ms of re-probing)"
+            )
+            return cached
+        }
+
         println("DEBUG [LiveKitNativeAudioCapture] microphone self-test started durationMs=$durationMs mixers=${candidatesToProbe.size}")
         val results = probeInputMixers(format, candidatesToProbe, durationMs)
         val selected = selectBestProbeResult(results)
@@ -378,13 +396,20 @@ object LiveKitNativeAudioCapture {
             preparedMixerKey = selected.toMixerKey()
             preparedProbeResult = selected
             preparedOverrideName = overrideName
-            println("DEBUG [LiveKitNativeAudioCapture] microphone self-test selected mixer=${selected.mixerName} peak=${selected.peak} rms=${selected.rms.formatRms()} first10Samples=${selected.firstSamples.joinToString(prefix = "[", postfix = "]")} nonZeroSamples=${selected.nonZeroSamples}/${selected.totalSamples}")
         } else {
             preparedMixerKey = null
             preparedProbeResult = null
             preparedOverrideName = overrideName
         }
-        return MicCaptureSelfTestResult(
+        if (selected != null) {
+            println(
+                "DEBUG [LiveKitNativeAudioCapture] microphone self-test selected mixer=${selected.mixerName} " +
+                    "peak=${selected.peak} rms=${selected.rms.formatRms()} " +
+                    "first10Samples=${selected.firstSamples.joinToString(prefix = "[", postfix = "]")} " +
+                    "nonZeroSamples=${selected.nonZeroSamples}/${selected.totalSamples}"
+            )
+        }
+        val result = MicCaptureSelfTestResult(
             selectedMixerName = selected?.mixerName,
             selectedMixerDescription = selected?.mixerDescription,
             selectedPeak = selected?.peak ?: 0,
@@ -393,7 +418,46 @@ object LiveKitNativeAudioCapture {
             allInputsTooLow = allInputsTooLow,
             results = results
         )
+        preparedCandidatesSignature = signature
+        preparedSelfTestResult = result
+        return result
     }
+
+    /**
+     * The probe is `durationMs` of blocking audio per mixer, run SEQUENTIALLY,
+     * and it sat on the join path. On the machine this was measured on that is
+     * four inputs at 3 s each — 12 s of the 21 s it took to join a call, spent
+     * listening to microphones before the SFU connection was even allowed to
+     * start.
+     *
+     * But the answer it produces does not change between two calls in the same
+     * session: which mic is plugged in, and which one the user picked, are both
+     * the same. The chosen mixer was already being cached in [preparedMixerKey]
+     * and reused when the capture line opened — only the *probing* was repeated,
+     * which is the expensive part and produced a result that was then thrown
+     * away in favour of the cached one.
+     *
+     * So: remember which inputs were probed, and skip the probe when they are
+     * unchanged. Any difference — a device plugged in or unplugged, the
+     * override edited, the per-candidate format support changing — produces a
+     * different signature and forces a real probe again.
+     */
+    private fun candidatesSignature(candidates: List<InputMixerCandidate>, overrideName: String): String =
+        buildString {
+            append(overrideName)
+            for (candidate in candidates) {
+                append('\u0000')
+                append(candidate.mixerInfo.name)
+                append('|')
+                append(candidate.mixerInfo.description)
+                append('|')
+                append(candidate.desiredFormatSupported)
+                append('|')
+                append(candidate.overrideMatch)
+                append('|')
+                append(candidate.score)
+            }
+        }
 
     suspend fun prepareMicrophoneForCall(durationMs: Long = 3000): NativeResult<MicCaptureSelfTestResult> =
         // 3 s PER MIXER of blocking TargetDataLine.read() probing. The connect path
