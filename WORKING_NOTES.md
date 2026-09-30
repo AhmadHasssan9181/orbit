@@ -911,13 +911,23 @@ Being explicit, because "it compiles" is not "it works".
   share in that run was still not seen, and the log shows its tile holding a frame
   too, so the flood was necessary but may not be the whole story. See
   "Still unverified" below.
-- **Element's shared-window audio is still inaudible, and the track never
-  arrives.** `screenshare_audio` appears nowhere in run 20; the only audio track
-  Element published was a microphone. `MIXSTAT participants=1` throughout, so only
-  one remote queue ever existed. The user could hear the peer's mic, so the audio
-  path itself works — the screen-audio track is simply not being received. Two
-  gaps closed this round (both in the rescan/publish handlers) but **this is not
-  fixed**; see §4.
+- **Element's shared-window audio now arrives, and the cause was a subscribe race
+  Orbit caused itself.** `auto_subscribe = true`, yet run 21 caught the track
+  sitting unsubscribed on the server: `screenshare_audio/TR_AsX64VRzkuR4yn=UNSUB`.
+  The rescan force-subscribed it on the next tick, it went `=sub`, and
+  `MIXSTAT participants` went 1 -> 2 with `inRms=3052`. So this was never an
+  Element bug or a protocol limit. The `screenshare_audio` string was absent from
+  runs 19 and 20 for the same reason: an unsubscribed publication left no log
+  trace at all, so a track Orbit never claimed was indistinguishable from one
+  Element never sent.
+- **A screen share could be published and never subscribed — the first attempt in
+  every run showed nothing.** Same race, video side, and it was left in place by
+  the audio fix: the guard read `kind() == KIND_AUDIO &&`, so
+  `screenshare/TR_VSHDWz6h52h3pe=UNSUB` sat unsubscribed for three consecutive
+  ticks and was then unpublished. It was never `=sub` once in the whole run.
+  **The guard now covers both kinds.** Writing a check against the symptom instead
+  of the mechanism fixed one instance of a bug and left the identical bug beside
+  it.
 - Remote audio actually decodes and plays. `inRms=339 outRms=339`,
   `RXSTAT lost=0 jbTargetMs=26`, and `drops=0 catchUp=0 qDepth=3360` for a
   whole call where it previously climbed past 19,000. The mixer catch-up fix is
@@ -972,14 +982,16 @@ Being explicit, because "it compiles" is not "it works".
   `GET /rooms/{id}/state/{type}/{stateKey}` and keeps the full scan as the fallback
   when the single-event fetch cannot answer. The check itself is unchanged and
   still gates the join. **Corrected:** the measured saving is 430ms, not 1.7s.
-- **Element's shared-window audio does not arrive, and I cannot yet say whose
-  fault that is.** The mixer already downmixes stereo to mono correctly
-  (`pushParticipantFrame` averages channels), so a track that arrived would play.
-  `auto_subscribe = true` and there is no `TrackSubscription` filter, so Orbit asks
-  for everything. The track is simply never seen. Two observability gaps are now
-  closed — `onTrackPublished`'s audio branch was completely silent, and the rescan
-  only logged when it *started* something, so a handled track and a missing track
-  looked identical. **The next run decides it:** if `remote publication inventory`
-  shows no `screenshare_audio` entry, Element never sent it and the bug is not
-  Orbit's; if it shows `=UNSUB`, the rescan now force-subscribes it once and
-  should recover.
+- **Sharing your own screen starves call audio.** Run 21, during Orbit's own
+  outbound share: `starved` 10 -> 307, `drops` 8160 -> 11520, and playback
+  `droppedOldest=183` with `play.arrived=582 play.played=489`. The mixer queue
+  collapsed from 1920 to 480 samples. It happens while the *local* screen share is
+  publishing, not on the remote one, and the call audio is what suffers — so in a
+  group call someone talking to you stutters the moment you share. Not yet
+  diagnosed; the obvious suspects are the 60 fps 1920x1080 I420 publish path and
+  the share-audio loopback thread competing with the mixer for the same cores.
+- **`ActivateAudioInterfaceAsync failed hr=0x8000000e` on this machine**, so
+  share audio falls back to full-device loopback and captures Orbit's own
+  playback. It ducks to 0.3 to limit the echo and the AEC unlocks again almost
+  immediately, so it is a mitigation, not a fix. Process loopback is unavailable
+  on this Windows build; there is no code-side answer beyond the duck.

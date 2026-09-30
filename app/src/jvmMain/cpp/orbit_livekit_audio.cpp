@@ -210,10 +210,10 @@ struct RemoteVideoReader {
 std::unordered_map<std::string, std::shared_ptr<RemoteAudioReader>> g_remoteAudioReaders;
 std::unordered_map<std::string, std::shared_ptr<RemoteVideoReader>> g_remoteVideoReaders;
 
-// Audio publications the rescan has already tried to force-subscribe, so a track
+// Publications the rescan has already tried to force-subscribe, so a track
 // the server keeps refusing costs one attempt rather than one per tick.
-std::mutex g_forcedAudioSubscribesMutex;
-std::unordered_set<std::string> g_forcedAudioSubscribes;
+std::mutex g_forcedSubscribesMutex;
+std::unordered_set<std::string> g_forcedSubscribes;
 
 // Last remote publication inventory, compared so the rescan logs a line only when
 // the set of tracks in the room actually changes. The rescan runs on a timer for
@@ -4097,8 +4097,8 @@ void resetRoomLocked() {
     // change-only inventory would print nothing because it still "matched" the
     // previous call's tracks.
     {
-        std::lock_guard<std::mutex> forcedLock(g_forcedAudioSubscribesMutex);
-        g_forcedAudioSubscribes.clear();
+        std::lock_guard<std::mutex> forcedLock(g_forcedSubscribesMutex);
+        g_forcedSubscribes.clear();
     }
     g_remotePublicationInventory.clear();
     if (g_videoSource != nullptr || g_videoTrack != nullptr || g_videoPublished || g_acceptingVideoFrames) {
@@ -6948,26 +6948,42 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeRescanRemoteVideoTracks(JNIEnv*, jclass
             inventory += " " + trackSourceLabel(publication->source()) + "/" +
                 publication->sid() + (publication->subscribed() ? "=sub" : "=UNSUB") +
                 (publication->muted() ? "/muted" : "");
-            if (publication->kind() == livekit::TrackKind::KIND_AUDIO && !publication->subscribed()) {
+            if (!publication->subscribed()) {
                 // auto_subscribe is on, so an unsubscribed publication means the
                 // auto-subscribe lost a race with the publish and nothing ever
-                // claimed it. That is the shape of "Element shared a window with
-                // audio and Orbit heard nothing": the track exists on the server,
-                // Orbit asked for everything, and the request never happened for
-                // this one track.
+                // claimed it. The track exists on the server, Orbit asked for
+                // everything, and the request never happened for this one track.
                 //
                 // Subscribe explicitly, ONCE per publication. Unbounded retries
                 // would hammer the SFU every tick and could never succeed if the
                 // server is refusing for some other reason.
+                //
+                // BOTH kinds, and that restriction is the whole bug this replaces.
+                // The first version of this guard was `kind() == KIND_AUDIO &&`,
+                // written when the only known symptom was missing share audio. Run
+                // 21 then showed the same race hitting VIDEO:
+                //
+                //   inventory: ... screenshare_audio/TR_AsX64VRzkuR4yn=UNSUB
+                //              screenshare/TR_VSHDWz6h52h3pe=UNSUB
+                //
+                // The audio one was picked up on the next tick and became =sub.
+                // The video one stayed =UNSUB for three consecutive ticks and was
+                // then unpublished -- that is the whole of "Element's first share
+                // showed nothing at all". A guard written to match the symptom
+                // instead of the mechanism fixes one instance of the bug and
+                // leaves the identical bug next to it.
                 const auto publicationSid = publication->sid();
                 bool alreadyTried = false;
                 {
-                    std::lock_guard<std::mutex> forcedLock(g_forcedAudioSubscribesMutex);
-                    alreadyTried = !g_forcedAudioSubscribes.insert(publicationSid).second;
+                    std::lock_guard<std::mutex> forcedLock(g_forcedSubscribesMutex);
+                    alreadyTried = !g_forcedSubscribes.insert(publicationSid).second;
                 }
                 if (!alreadyTried) {
-                    std::cout << "DEBUG [OrbitLiveKitAudio] forcing subscribe for unsubscribed audio publication "
-                              << "participantIdentity=" << participant->identity()
+                    const char* kindLabel =
+                        publication->kind() == livekit::TrackKind::KIND_VIDEO ? "video" : "audio";
+                    std::cout << "DEBUG [OrbitLiveKitAudio] forcing subscribe for unsubscribed publication "
+                              << "kind=" << kindLabel
+                              << " participantIdentity=" << participant->identity()
                               << " publicationSid=" << publicationSid
                               << " source=" << trackSourceLabel(publication->source())
                               << " trackPresent=" << (track != nullptr ? "true" : "false")
