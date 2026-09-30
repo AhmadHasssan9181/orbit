@@ -900,6 +900,24 @@ Being explicit, because "it compiles" is not "it works".
 
 **Now verified in a real run** (2026-09-30, two accounts, real LiveKit call):
 
+- **A 1920x1080 screen share from Element is now visible.** This was the
+  "can't see the stream" report. Run 20 shows the tile holding a live frame for
+  the whole share: `tiles=2 withFrame=1 perTrack=[camera/SFF9CQ=<none>
+  screenshare/t8bVcs=1280x720]`, and the reader logging `srcWidth=1920
+  srcHeight=1080 width=1280 height=720 downscaledFrames=480 read=985
+  rateSkipped=505`. Byte rate fell from ~125 MB/s to ~40 MB/s and heap now
+  oscillates 68-183 MB instead of climbing. The user confirmed visibility.
+  **Caveat, stated plainly:** it worked from the *second* share attempt. The first
+  share in that run was still not seen, and the log shows its tile holding a frame
+  too, so the flood was necessary but may not be the whole story. See
+  "Still unverified" below.
+- **Element's shared-window audio is still inaudible, and the track never
+  arrives.** `screenshare_audio` appears nowhere in run 20; the only audio track
+  Element published was a microphone. `MIXSTAT participants=1` throughout, so only
+  one remote queue ever existed. The user could hear the peer's mic, so the audio
+  path itself works — the screen-audio track is simply not being received. Two
+  gaps closed this round (both in the rescan/publish handlers) but **this is not
+  fixed**; see §4.
 - Remote audio actually decodes and plays. `inRms=339 outRms=339`,
   `RXSTAT lost=0 jbTargetMs=26`, and `drops=0 catchUp=0 qDepth=3360` for a
   whole call where it previously climbed past 19,000. The mixer catch-up fix is
@@ -921,15 +939,24 @@ Being explicit, because "it compiles" is not "it works".
   exercised at runtime. They need a second 1:1 call, not a group call.
 - **58 readiness derive sites** still read fields individually. Narrower clobber
   window, not zero. §6 explains why I stopped.
-- **The video frame budget is a reasoned fix, not a measured one.** The *diagnosis*
-  is measured — 8.29 MB/frame, 28.8 fps, `vid.remote mb=624` in one 5 s window,
-  `seq 60 -> 120 in 2080 ms` — and the box filter is verified against a reference
-  implementation (uniform frames preserved exactly, 2x2 blocks average to the true
-  mean, no upscale, degenerate inputs refused). What is **not** measured is whether
-  1280 px at 20 fps is enough for a 1080p share to actually appear. If it is still
-  invisible, the number to move is `kRemoteVideoMaxLongEdge` and the log line to
-  read is `vid.remote mb=` in the next run. I picked 1280/20 because they are the
-  conventional values, not because a run told me they work on this machine.
+- **The first share of run 20 was still invisible, and the log cannot say why.**
+  Its tile read `screenshare/HNUQvu=1280x720` — pixels present — exactly like the
+  share that *was* visible four readings later. So "frame in the tile" does not
+  imply "on screen", and the renderer is now the prime suspect. Nothing in the log
+  records whether an image was actually drawn: the conversion in
+  `rememberConvertedRgbaFrame` is fire-and-forget on `Dispatchers.Default` and
+  reports nothing. That is the next thing to instrument if it recurs.
+- **`publish=5179ms` was reduced by one round trip, not by much.** Measured:
+  `verify=430ms via=all-state`. I claimed 1.7s in the commit message and that was
+  wrong. Note the run also took `publish=8247ms` versus 5179ms previously, so
+  that phase is dominated by matrix.org round trips and network variance, not by
+  anything Orbit controls. The remaining two round trips cannot be overlapped:
+  the first must pick the reference member event before the payload exists, and
+  the publish must land before the state can be read back.
+- **The cached microphone probe still has not been seen skipping.** Run 20 was
+  again a first call in its session, so it probed all four mixers for 12s and
+  `native=14732ms` was unchanged. Two consecutive calls in one session are needed.
+  I have now twice built a run that could not exercise the thing I was testing.
 - **The screen-share-as-camera race did not lose in run 19.** The classification is
   now correct by construction and 5 tests cover it, but the ordering that exposed it
   has not been observed happening. If the next run shows a share landing as a
@@ -944,7 +971,15 @@ Being explicit, because "it compiles" is not "it works".
   to confirm the one event it had just written; it now asks
   `GET /rooms/{id}/state/{type}/{stateKey}` and keeps the full scan as the fallback
   when the single-event fetch cannot answer. The check itself is unchanged and
-  still gates the join, because "peers can see me" is worth 1.7 s. Whether the
-  remaining two round trips to matrix.org can be overlapped is not a code problem
-  — the first one has to pick the reference member event before the payload can be
-  built, and the publish has to happen before the state can be read back.
+  still gates the join. **Corrected:** the measured saving is 430ms, not 1.7s.
+- **Element's shared-window audio does not arrive, and I cannot yet say whose
+  fault that is.** The mixer already downmixes stereo to mono correctly
+  (`pushParticipantFrame` averages channels), so a track that arrived would play.
+  `auto_subscribe = true` and there is no `TrackSubscription` filter, so Orbit asks
+  for everything. The track is simply never seen. Two observability gaps are now
+  closed — `onTrackPublished`'s audio branch was completely silent, and the rescan
+  only logged when it *started* something, so a handled track and a missing track
+  looked identical. **The next run decides it:** if `remote publication inventory`
+  shows no `screenshare_audio` entry, Element never sent it and the bug is not
+  Orbit's; if it shows `=UNSUB`, the rescan now force-subscribes it once and
+  should recover.
