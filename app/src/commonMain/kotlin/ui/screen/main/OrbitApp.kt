@@ -821,6 +821,26 @@ private fun MainAppContent(
             // mini view has somewhere to render instead of the call vanishing.
             val callActive = callState != CallState.IDLE && callState != CallState.ENDED
 
+            // The other person's picture for the 1:1 call surface, which had no way
+            // to receive one and so always drew a coloured circle. Resolved from the
+            // DM contact rather than from the channel's own avatarUrl, because for a
+            // non-DM room that field is the ROOM's picture and putting it on a
+            // person's face tile would be a different kind of wrong.
+            //
+            // resolveDmContacts is already cached and already used by the DM list,
+            // and it only answers for a room with exactly one other joined member,
+            // which is the only shape where "the other person" is a single person.
+            var p2pPeerAvatarUrl by remember(activeRoomId) { mutableStateOf<String?>(null) }
+            LaunchedEffect(activeRoomId, isGroupCall, callActive) {
+                val room = activeRoomId ?: return@LaunchedEffect
+                p2pPeerAvatarUrl = null
+                if (isGroupCall || !callActive) return@LaunchedEffect
+                val contact = runCatching {
+                    repository.resolveDmContacts(listOf(room))[room]
+                }.getOrNull()
+                p2pPeerAvatarUrl = contact?.avatarUrl
+            }
+
             // ── No floating call widget ────────────────────────────────────
             //
             // There used to be a draggable pill pinned to the bottom-right
@@ -848,6 +868,8 @@ private fun MainAppContent(
                 CallScreen(
                     callManager = callManager,
                     callerName = callerName,
+                    callerAvatarUrl = p2pPeerAvatarUrl,
+                    myAvatarUrl = currentUser?.avatarUrl,
                     isEmbedded = true,
                     modifier = Modifier.fillMaxSize()
                 )

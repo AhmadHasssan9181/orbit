@@ -53,17 +53,10 @@ import webrtc.CallState
 import webrtc.GroupCallConnection
 import webrtc.GroupCallStage
 
-private val tileAvatarPalette = listOf(
-    0xFF7B74E8, 0xFF23A559, 0xFFEB459E, 0xFFFAA61A, 0xFF00A8FC, 0xFFD65A54
-).map { it.toInt() }
-
 private fun identityDisplayName(identity: String?): String = when {
     identity.isNullOrBlank() -> "Participant"
     else -> identity.substringAfter("@", identity).substringBefore(":").ifBlank { identity }
 }
-
-private fun identityColor(identity: String?): Int =
-    tileAvatarPalette[((identity ?: "").hashCode() % tileAvatarPalette.size + tileAvatarPalette.size) % tileAvatarPalette.size]
 
 private fun memberInfoFor(members: List<OrbitUser>, identity: String?): OrbitUser? {
     if (identity.isNullOrBlank()) return null
@@ -190,8 +183,17 @@ fun LiveKitGroupCallSurface(
             // published a member event we happened to see, so a tile whose
             // identity is missing from it rendered as a bare letter forever.
             // Idempotent: CallManager skips identities it already resolved.
-            LaunchedEffect(remoteParticipants, activeTracks) {
+            //
+            // selfId is in this set, which it was not. The "You" tile asks
+            // profileForIdentity(selfId) for an avatar, but nothing ever requested
+            // a profile for our own identity, so the lookup could only ever return
+            // null and that tile was permanently a seeded circle with "Y" in it --
+            // in every group call, for as long as group calls have existed. The
+            // roster's usual reason for a missing avatar does not apply to us at
+            // all: our own profile is the one profile a client can always fetch.
+            LaunchedEffect(remoteParticipants, activeTracks, selfId) {
                 val identities = buildSet {
+                    selfId?.let { add(it) }
                     remoteParticipants.forEach { add(it) }
                     activeTracks.keys.forEach { trackSid ->
                         LiveKitRemoteVideoFrameStore.activeTracks.value[trackSid]?.participantIdentity?.let { add(it) }
