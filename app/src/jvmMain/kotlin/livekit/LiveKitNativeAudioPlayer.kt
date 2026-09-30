@@ -160,7 +160,19 @@ private object PlaybackDump {
 }
 
 object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
-    private const val UNDERRUN_WINDOW_NS = 250_000_000L
+    /**
+     * How long the writer may go without feeding the line before it counts as an
+     * output underrun.
+     *
+     * 60 ms, not the old 250 ms. The line's buffer is ~125 ms
+     * (`sampleRate * channels * 2 / 8` at 48 kHz stereo), so a gap shorter than
+     * that is absorbed by the buffer and is inaudible; a gap longer than it is
+     * not. The threshold is deliberately well under the buffer size so the
+     * counter reports the stall that precedes audible damage rather than the
+     * damage itself, and well over one 10 ms frame so ordinary scheduling jitter
+     * does not trip it.
+     */
+    private const val UNDERRUN_GAP_NS = 60_000_000L
 
     // ReentrantLock, not `synchronized`: onMixedAudioFrame runs on the native
     // real-time render thread and must be able to tryLock() instead of blocking.
@@ -302,7 +314,42 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
                     continue
                 }
                 if (outputMuted) continue // Deafened: discard frame, keep queue draining
-                lastPcmAtNs.set(System.nanoTime())
+                // A real output underrun is the LINE running dry, which happens when
+                // this writer stops writing for longer than the line's buffer can
+                // cover. So the thing to measure is the gap between consecutive
+                // completed writes, and the stamp has to be taken AFTER the write
+                // for that number to mean anything.
+                //
+                // This used to read:
+                //
+                //     lastPcmAtNs.set(System.nanoTime())          // stamped HERE
+                //     ...
+                //     if (available >= out.bufferSize &&
+                //         System.nanoTime() - lastPcmAtNs.get() < UNDERRUN_WINDOW_NS)
+                //         CallPathStats.onPlayerUnderrun()
+                //
+                // and both halves were wrong. The elapsed comparison measured the
+                // microseconds spent in `ensureLine` plus the `runCatching`
+                // prologue, so it was always under the window and always true.
+                //
+                // Worse, the condition itself was inverted.
+                // `SourceDataLine.available()` is how many bytes can be written
+                // WITHOUT BLOCKING, so `available >= bufferSize` means the line's
+                // buffer is completely EMPTY -- the hardware consumed everything
+                // and the next write returns instantly. That is "we are ahead",
+                // the healthiest state there is, and the counter was logging it as
+                // an underrun. Runs showed `underruns=364` in a 5s window during a
+                // call that was otherwise clean, and I took that at face value and
+                // recorded a playback defect that did not exist.
+                //
+                // The producer-side starvation signal was already being collected
+                // and is the opposite one: `onPlayerIdle` fires when `poll` returns
+                // null, i.e. the mixer produced nothing for 50 ms. That is the
+                // number to watch.
+                val sinceLastWriteNs = System.nanoTime() - lastPcmAtNs.get()
+                if (lastPcmAtNs.get() != 0L && sinceLastWriteNs > UNDERRUN_GAP_NS) {
+                    CallPathStats.onPlayerUnderrun()
+                }
                 // Adopt whatever format the render thread last published, then
                 // open/reopen the line under the lock if it changed. This is the
                 // only place a SourceDataLine is ever opened.
@@ -311,13 +358,6 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
                 if (sr <= 0 || ch <= 0) continue
                 val out = lock.withLock { ensureLine(sr, ch) } ?: continue
                 runCatching {
-                    // True underrun = output line fully drained while remote frames are still flowing
-                    val available = runCatching { out.available() }.getOrDefault(-1)
-                    if (available >= out.bufferSize &&
-                        System.nanoTime() - lastPcmAtNs.get() < UNDERRUN_WINDOW_NS
-                    ) {
-                        CallPathStats.onPlayerUnderrun()
-                    }
                     PlaybackDump.dumpIn(pcm)
                     if (OrbitApm.enabled) {
                         OrbitApm.processRender(pcm, sr, ch)
@@ -329,6 +369,9 @@ object LiveKitNativeAudioPlayer : NativeMixedAudioSink {
                     ShareAudioAec.processRender(outPcm, sr, ch)
                     PlaybackDump.dumpOut(outPcm)
                     out.write(outPcm, 0, outPcm.size)
+                    // AFTER the write: this stamps when the line was last FED, which
+                    // is the baseline the next gap measurement needs.
+                    lastPcmAtNs.set(System.nanoTime())
                     CallPathStats.onPlayerFramePlayed()
                 }.onFailure { error ->
                     CallPathStats.onPlayerWriteFailure()
