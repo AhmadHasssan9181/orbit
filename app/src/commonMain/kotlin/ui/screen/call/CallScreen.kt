@@ -1334,8 +1334,15 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
         // look abandoned.
         val avatarSize = (minOf(maxWidth, maxHeight) * 0.26f).coerceIn(56.dp, 180.dp)
 
-        if (node.renderer != null) {
+        // A stuck share skips the renderer entirely rather than drawing it. The
+        // renderer now shows a spinner while it waits for a first frame, and
+        // spinning forever behind "can't be received" says the opposite of what
+        // is true -- Orbit has stopped trying and is offering the one thing that
+        // still works.
+        if (node.renderer != null && !node.isStuckShare) {
             VideoRenderer(renderer = node.renderer, modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp)))
+        } else if (node.isStuckShare) {
+            Box(modifier = Modifier.fillMaxSize().background(tokens.Sunken))
         } else {
             // Audio-only fallback with radial gradient
             Box(
