@@ -231,34 +231,16 @@ std::mutex g_tracklessTicksMutex;
 std::unordered_map<std::string, int> g_tracklessTicks;
 
 // Consecutive trackless sightings (2 s apart) at which to make the SDK
-// renegotiate the subscription. Escalating, and bounded.
+// renegotiate. Escalating, and bounded.
 //
-// WHY THIS EXISTS. Run 23 established that `onTrackPublished` in SDK 0.4.1 arrives
-// with a null publication EVERY time -- pub=5 nullPub=5, 100% -- so that event can
-// never tell Orbit a track exists. `onTrackSubscribed` does carry a real track, but
-// it only fires if the SDK subscribes us, and with auto_subscribe on it sometimes
-// does not. The 2 s rescan is therefore the ONLY route by which Orbit learns about
-// a track at all, and it was strictly passive: a publication with no track was
-// skipped, so a share that never got one was invisible and stayed invisible.
-//
-// `setSubscribed(false)` then `setSubscribed(true)` is the only re-negotiation the
-// SDK exposes for a remote publication (remote_track_publication.h declares nothing
-// else, and room.h has no resync). It is the same cycle the audio jitter-buffer
-// recovery already uses, so it is a known-good move on this SDK rather than a guess.
-//
-// WHY ESCALATING RATHER THAN ONCE. The first version fired a single time, and run
-// 25 showed exactly what that costs:
-//
-//   renegotiate count=2   (both tracks, once each)
-//   ... audio  -> sub/+track   within a few seconds. Fixed.
-//   ... video  -> sub/noTrack   for the REST OF THE CALL. Still broken.
-//
-// One attempt is enough for a share's audio track and not enough for its video
-// track, and the difference is not something the log can explain -- so the bound
-// is raised from one to three, spaced out, rather than guessed at. 3 / 9 / 18
-// ticks is 6 s, 18 s and 36 s. A publication that is still trackless after ~36 s
-// while its sender insists it is sharing is not going to be rescued by a fourth
-// attempt, and the escalation stops there.
+// WHY ESCALATING. The first version fired a single time, and run 25 showed what
+// that costs: one renegotiate fixed a share's audio track within seconds and left
+// its video track trackless for the rest of the call, which is exactly what the
+// user reported -- "stream audio started, no stream". Nothing in the log explains
+// the difference, so the bound goes from one to three rather than being tuned to a
+// guess. 3 / 9 / 18 ticks is 6 s, 18 s and 36 s. A publication still trackless
+// after ~36 s while its sender insists it is sharing will not be rescued by a
+// fourth attempt.
 constexpr int kTracklessTicksBeforeRenegotiate = 3;
 constexpr int kTracklessRenegotiateEscalation[] = {3, 9, 18};
 
@@ -7112,27 +7094,36 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeRescanRemoteVideoTracks(JNIEnv*, jclass
                 // was anything to subscribe TO. `/+track` appearing (or not) in
                 // a later inventory line is now the whole diagnosis.
                 (track != nullptr ? "/+track" : "/noTrack");
-            if (!publication->subscribed() && track == nullptr) {
-                // A publication with no track attached, and nothing subscribed.
-                // This is the state that makes a screen share permanently
-                // invisible, and the 2 s rescan is the only thing that ever sees
-                // it, so it cannot just be skipped.
+            if (track == nullptr) {
+                // A publication with no track attached. This is the state that
+                // makes a screen share permanently invisible, and the 2 s rescan
+                // is the only thing that ever sees it, so it cannot be skipped.
                 //
-                // Record that it is trackless, and once it has stayed that way long
-                // enough, make the SDK renegotiate rather than waiting forever for
-                // a track that is not coming.
+                // COUNTED ON TRACKLESS ALONE, NOT ON TRACKLESS-AND-UNSUBSCRIBED.
+                //
+                // That condition was the previous version and it made the whole
+                // escalation dead code. The first renegotiate ends with
+                // setSubscribed(true), so the publication stops being "unsubscribed",
+                // the `!subscribed() && trackless` test stops matching, and the
+                // counter freezes at whatever it reached. Run 26 shows the result:
+                // one renegotiate per publication, `count=2`, and the 18 s and
+                // 36 s attempts could never fire no matter how long the share was
+                // held open.
+                //
+                // The counter is about a missing TRACK. Subscription state is what
+                // the renegotiate changes, not what it is waiting on.
                 int tracklessTicks = 0;
                 {
                     std::lock_guard<std::mutex> lock(g_tracklessTicksMutex);
                     tracklessTicks = ++g_tracklessTicks[publication->sid()];
                 }
-                if (tracklessTicks == kTracklessTicksBeforeRenegotiate ||
-                    isTracklessRenegotiateTick(tracklessTicks)) {
+                if (isTracklessRenegotiateTick(tracklessTicks)) {
                     std::cout << "DEBUG [OrbitLiveKitAudio] publication trackless for "
-                              << (tracklessTicks * 2) << "s, renegotiating subscription "
+                              << (tracklessTicks * 2) << "s (attempt), renegotiating subscription "
                               << "kind=" << (publication->kind() == livekit::TrackKind::KIND_VIDEO ? "video" : "audio")
                               << " source=" << trackSourceLabel(publication->source())
                               << " publicationSid=" << publication->sid()
+                              << " subscribed=" << (publication->subscribed() ? "true" : "false")
                               << " participantIdentity=" << participant->identity()
                               << std::endl;
                     try {
