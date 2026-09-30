@@ -982,6 +982,25 @@ Being explicit, because "it compiles" is not "it works".
   `GET /rooms/{id}/state/{type}/{stateKey}` and keeps the full scan as the fallback
   when the single-event fetch cannot answer. The check itself is unchanged and
   still gates the join. **Corrected:** the measured saving is 430ms, not 1.7s.
+- **A screen share's VIDEO track does not recover where its AUDIO track does.**
+  Run 25 is the cleanest evidence yet, and the renegotiate fix works -- partially.
+  Both share publications arrived `=UNSUB/noTrack`; the rescan renegotiated both;
+  the audio track went `sub/+track` within seconds and played, and the video track
+  stayed `sub/noTrack` for the entire rest of the call. The user reported exactly
+  that: "stream audio started, no stream". Only a hang-up and rejoin rescued the
+  video. **The single renegotiate attempt is therefore not enough for video**, and
+  the bound is now 3 attempts at 6 s / 18 s / 36 s rather than one. Unverified: no
+  run has yet seen the second and third attempts fire.
+- **After the video track finally appears, the first frame is a long wait.** Run 25
+  call 2: the reader started, the tile existed, and the tile read `<none>` for
+  roughly 23 two-second samples before the first frame arrived. The track is known
+  and the reader is running, so this is `stream->read()` returning nothing while the
+  subscription sits half-completed server-side. Same family as the trackless bug and
+  possibly the same fix, but not yet proven.
+- **The microphone probe cache is verified.** `reused cached probe ... skipped
+  12000ms`, and the join went from `native=14290ms total=24676ms` on the first call
+  to `native=1872ms total=8051ms` on the rejoin in the same session. 16.6 s saved,
+  which is the whole of the probe plus the difference in SFU warm-up.
 - **Sharing your own screen starves call audio.** Run 21, during Orbit's own
   outbound share: `starved` 10 -> 307, `drops` 8160 -> 11520, and playback
   `droppedOldest=183` with `play.arrived=582 play.played=489`. The mixer queue
