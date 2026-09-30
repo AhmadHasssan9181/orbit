@@ -367,8 +367,12 @@ class MatrixContext(homeserverUrl: String) {
             val foci = body["org.matrix.msc4143.rtc_foci"] as? JsonArray
             val focusUrl = foci?.firstNotNullOfOrNull { entry ->
                 val obj = entry as? JsonObject ?: return@firstNotNullOfOrNull null
-                if (obj["type"]?.jsonPrimitive?.content == "livekit") {
-                    obj["livekit_service_url"]?.jsonPrimitive?.content
+                if ((obj["type"] as? JsonPrimitive)?.content == "livekit") {
+                    // `as? JsonPrimitive` rather than `?.jsonPrimitive`: the
+                    // latter throws on an object instead of yielding null, and
+                    // this reads a document a homeserver controls. A malformed
+                    // .well-known must cost us the SFU override, not the session.
+                    (obj["livekit_service_url"] as? JsonPrimitive)?.content
                         ?: obj["livekit_service_url"]?.toString()
                 } else null
             }
@@ -488,12 +492,39 @@ class MatrixContext(homeserverUrl: String) {
         if (roomId in knownCallRoomIds) return true
         voiceRoomCache[roomId]?.let { return it }
 
-        val detected = roomStateEvents(roomId).any { element ->
-            val raw = element.jsonObject
-            val type = raw["type"]?.jsonPrimitive?.contentOrNull
-            type in MATRIXRTC_VOICE_STATE_TYPES &&
-                callKindOf(raw["content"]?.jsonPrimitive?.contentOrNull)
-                    ?.equals("voice", ignoreCase = true) == true
+        // Two independent hazards, and this used to hide both.
+        //
+        // 1. `content` is NOT always a string. For `m.call.member` it is a
+        //    populated object, and `?.jsonPrimitive` on a JsonObject THROWS
+        //    IllegalArgumentException rather than returning null -- it is not a
+        //    cast, it is an assertion. So the old `raw["content"]?.jsonPrimitive`
+        //    was a live crash waiting for a room with a member event in its
+        //    state, which is every MatrixRTC room.
+        //
+        // 2. The whole parse used to sit inside `catch (_: Throwable) { false }`,
+        //    so that throw was swallowed and the room was merely misreported as
+        //    not-voice. Moving the fetch into [roomStateEvents] took the `.any {}`
+        //    out of that catch and turned a silent wrong answer into a crash that
+        //    took the drawer down with an error dialog -- confirmed in a real run:
+        //    `Element class kotlinx.serialization.json.JsonObject ... is not a
+        //    JsonPrimitive` at `isVoiceRoom`, on the AWT event thread.
+        //
+        // So: read `content` as a primitive-or-nothing, and keep a catch around
+        // the scan. A state event this function cannot understand must cost one
+        // room its voice badge, never the window.
+        val detected = try {
+            roomStateEvents(roomId).any { element ->
+                val raw = runCatching { element.jsonObject }.getOrNull() ?: return@any false
+                val type = (raw["type"] as? JsonPrimitive)?.contentOrNull
+                type in MATRIXRTC_VOICE_STATE_TYPES &&
+                    callKindOf((raw["content"] as? JsonPrimitive)?.contentOrNull)
+                        ?.equals("voice", ignoreCase = true) == true
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            util.OrbitLog.w("MatrixContext", "isVoiceRoom scan failed for $roomId: ${e.message}")
+            false
         }
         voiceRoomCache[roomId] = detected
         return detected
@@ -566,12 +597,22 @@ class MatrixContext(homeserverUrl: String) {
      */
     fun cachedRoomTopic(roomId: String): String {
         val events = roomStateCache[roomId]?.first ?: return ""
-        return events.firstNotNullOfOrNull { element ->
-            val raw = element.jsonObject
-            if (raw["type"]?.jsonPrimitive?.contentOrNull != "m.room.topic") return@firstNotNullOfOrNull null
-            (raw["content"] as? kotlinx.serialization.json.JsonObject)
-                ?.get("topic") as? JsonPrimitive
-        }?.contentOrNull?.trim().orEmpty()
+        return try {
+            events.firstNotNullOfOrNull { element ->
+                val raw = element.jsonObject
+                if ((raw["type"] as? JsonPrimitive)?.contentOrNull != "m.room.topic") {
+                    return@firstNotNullOfOrNull null
+                }
+                (raw["content"] as? kotlinx.serialization.json.JsonObject)
+                    ?.get("topic") as? JsonPrimitive
+            }?.contentOrNull?.trim().orEmpty()
+        } catch (e: Exception) {
+            // A state array with a shape this does not understand costs this room
+            // its subtitle, not the drawer. See the note in [isVoiceRoom]: the
+            // same `jsonObject` assertion threw a real crash there.
+            util.OrbitLog.w("MatrixContext", "cachedRoomTopic scan failed for $roomId: ${e.message}")
+            ""
+        }
     }
 
     fun invalidateRoomState(roomId: String) {
