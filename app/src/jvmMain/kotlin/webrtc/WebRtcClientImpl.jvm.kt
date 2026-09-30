@@ -775,6 +775,7 @@ class JvmWebRtcClient : WebRtcClient {
         try {
             if (!isGroupCall && peerConnection == null) {
                 println("WARN [WebRTC] startScreenShare aborted: P2P mode with no peer connection")
+                util.SelfCaptureGuard.release()
                 return
             }
             // Warm the factory and the source list off the critical path when we can.
@@ -889,10 +890,22 @@ class JvmWebRtcClient : WebRtcClient {
                 }
             } else {
                 println("WARN [WebRTC] screen share aborted: no desktop/window source matched sourceId=$sourceId")
+                // Nothing will ever call stopScreenShare for a share that never
+                // started, so the guard has to be undone here or Orbit's window
+                // stays excluded from every screenshot, screen recorder and share
+                // on the machine until the call ends.
+                util.SelfCaptureGuard.release()
+                screenSource?.stop()
+                screenSource = null
             }
 
         } catch (e: Exception) {
             e.printStackTrace()
+            // Same reasoning as the branch above: engage() ran before the try, so
+            // every exit out of here that is not a successful share must undo it.
+            util.SelfCaptureGuard.release()
+            runCatching { screenSource?.stop() }
+            screenSource = null
         }
     }
 
@@ -1037,12 +1050,31 @@ class JvmWebRtcClient : WebRtcClient {
         }
     }
 
+    /**
+     * Whether the local mic should be transmitting.
+     *
+     * Stored rather than read back off the track, because the track gets rebuilt.
+     * `rebuildMicAudioTrack` is reached from three places -- setAudioOptions (the
+     * in-call More Options menu), setStreamAudioEnabled, and endCall -- and it used
+     * to hardcode `setEnabled(true)` on the new track. Muting, then touching noise
+     * suppression or echo cancellation, therefore re-opened the mic with no
+     * indication, while CallManager.isLocalAudioEnabled still reported "muted" so
+     * the UI kept showing a muted microphone over a live one.
+     *
+     * That is the most serious defect this audit found: not a cosmetic state
+     * mismatch, but a muted microphone that is not muted.
+     */
+    @Volatile
+    private var localMicMuted = false
+
     override fun toggleMute(isMuted: Boolean) {
         if (isGroupCall && livekit.LiveKitNativeAudioSession.isConnected) {
             livekit.LiveKitNativeAudioSession.setMuted(isMuted)
             return
         }
+        localMicMuted = isMuted
         localAudioTrack?.setEnabled(!isMuted)
+        println("DEBUG: [WebRTC] local mic muted=$isMuted")
     }
 
     override fun toggleVideo(isVideoEnabled: Boolean) {
@@ -1364,7 +1396,10 @@ class JvmWebRtcClient : WebRtcClient {
 
             val newAudioSource = f.createAudioSource(options)
             val newAudioTrack = f.createAudioTrack("audioTrack_${System.currentTimeMillis()}", newAudioSource)
-            newAudioTrack.setEnabled(true)
+            // Honour the current mute state rather than assuming open. This used to
+            // be an unconditional setEnabled(true), which meant any rebuild after a
+            // mute silently re-opened the microphone.
+            newAudioTrack.setEnabled(!localMicMuted)
 
             if (localAudioSender != null) {
                 localAudioSender?.replaceTrack(newAudioTrack)

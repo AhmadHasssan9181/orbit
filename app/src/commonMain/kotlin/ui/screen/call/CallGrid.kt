@@ -453,6 +453,36 @@ internal fun <T> featuredNodeFor(
     return null
 }
 
+/**
+ * Longest edge an inbound 1:1 frame is downscaled to.
+ *
+ * The 1:1 path had NO resolution limit at all -- only a frame-interval gate --
+ * while a comment in WebRtcClientImpl claimed it was already capped at 1280. So a
+ * peer sharing a 4K screen made the renderer allocate a 3840x2160 ARGB image
+ * (about 33 MB) and run 8.3 million pixel conversions 15 times a second, on a
+ * WebRTC sink thread. The frame-time comments there also claimed 20 fps where the
+ * code said 66 ms, which is 15.
+ *
+ * **1920, not the group path's 1280, and deliberately so.** 1280 was tried first
+ * and the test suite caught what it would have done: 1920x1080 is the most common
+ * screen-share resolution there is, and an integer downscale to a 1280 long edge
+ * halves it to 960x540. That is a real loss of legibility on text, which is the
+ * entire content of a screen share -- it would have manufactured exactly the
+ * "blurry stream" complaint this was meant to address.
+ *
+ * So the limit sits at 1920: a 1080p share passes through untouched, a 4K share is
+ * halved to 1080p, and an 8K share comes down to 1080p. The audio-starvation risk
+ * is closed without degrading anything anybody actually sends at a normal
+ * resolution. The two paths now cost different amounts, which is honest: a group
+ * call with a dozen 1080p tiles is a different problem from a 1:1 with one.
+ */
+internal const val INBOUND_VIDEO_MAX_LONG_EDGE = 1920
+
+/** 20 fps. The code said 66 ms (15 fps) while the comment claimed 20. */
+internal const val INBOUND_VIDEO_MIN_FRAME_INTERVAL_NS = 50_000_000L
+
+private const val MIN_FRAME_INTERVAL_NS = INBOUND_VIDEO_MIN_FRAME_INTERVAL_NS
+
 /** Height of the participant strip that sits under a shared screen. */
 internal val CALL_SHARE_STRIP_HEIGHT = 132.dp
 
