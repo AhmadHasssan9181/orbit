@@ -667,6 +667,7 @@ class JvmWebRtcClient : WebRtcClient {
                 if (isScreen) {
                     remoteScreenVideoTrack = track
                     _isRemoteScreenSharing.value = true
+                    watchTrackEnd(track) { clearRemoteScreenShare(track) }
                     remoteScreenRenderer?.let {
                         it.isScreenShare = true
                         track.addSink(it)
@@ -674,6 +675,16 @@ class JvmWebRtcClient : WebRtcClient {
                     }
                 } else {
                     remoteVideoTrack = track
+                    // Clearing the field when the track ends is what stops the
+                    // `remoteVideoTrack != null` clause above from firing on the
+                    // NEXT video track. The peer's camera can restart for reasons
+                    // that have nothing to do with screen sharing -- a device
+                    // change, bandwidth adaptation, toggling the camera -- and
+                    // because the old field was never cleared, the replacement was
+                    // filed as a screen share: the camera tile kept rendering a
+                    // dead track while their face appeared letterboxed in the
+                    // share spotlight.
+                    watchTrackEnd(track) { clearRemoteCamera(track) }
                     remoteRenderer?.let {
                         it.isScreenShare = false
                         track.addSink(it)
@@ -682,6 +693,54 @@ class JvmWebRtcClient : WebRtcClient {
                 }
             }
         }
+    }
+
+    /**
+ * Run [onEnd] when [track] ends, swallowing listener-registration failures.
+ *
+ * Listener registration is a JNI call on a track owned by a signalling thread. If
+ * it throws, the only safe response is to carry on without the notification --
+ * which is exactly the state this code was already in before, since nothing
+ * listened for track ends at all.
+ */
+private fun watchTrackEnd(track: MediaStreamTrack, onEnd: () -> Unit) {
+        runCatching {
+            track.addTrackEndedListener { ended: MediaStreamTrack ->
+                if (ended.getId() == track.getId()) onEnd()
+            }
+        }.onFailure { e ->
+            println("DEBUG: [WebRTC] could not observe track end for ${track.getId()}: ${e.message}")
+        }
+    }
+
+    /**
+     * The peer's screen share has ended.
+     *
+     * `isRemoteScreenSharing` used to be set true on attach and reset only at
+     * hangup, so when the other person stopped sharing, Orbit kept their
+     * "$name's Screen" tile in the grid for the rest of the call: a frozen last
+     * frame, permanently holding the spotlight panel away from the camera. The
+     * group path has always cleaned this up -- LiveKitRemoteVideoFrameStore's
+     * trackStopped is pinned by RemoteVideoTrackClassificationTest -- which is
+     * the diff nobody carried across to the 1:1 path.
+     */
+    private fun clearRemoteScreenShare(track: MediaStreamTrack) {
+        if (remoteScreenVideoTrack?.getId() != track.getId()) return
+        remoteScreenVideoTrack = null
+        _isRemoteScreenSharing.value = false
+        _remoteScreenTrackIds.value = emptySet()
+        remoteScreenRenderer?.isScreenShare = false
+        // No removeSink: the sink is a single reusable DesktopVideoRenderer, and
+        // the next share re-adds it to a new track. Detaching is not needed
+        // because the ended track stops delivering frames on its own.
+        println("DEBUG: [WebRTC] remote screen share ended, clearing tile")
+    }
+
+    private fun clearRemoteCamera(track: MediaStreamTrack) {
+        if (remoteVideoTrack?.getId() != track.getId()) return
+        remoteVideoTrack = null
+        remoteRenderer?.isScreenShare = false
+        println("DEBUG: [WebRTC] remote camera track ended")
     }
 
     private fun attachRemoteAudioTrack(track: AudioTrack) {
