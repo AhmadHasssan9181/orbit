@@ -229,7 +229,10 @@ fun SettingsScreen(
                         .padding(horizontal = OrbitSpace.xxxl, vertical = OrbitSpace.xxl)
                 ) {
                     when (selectedCategory) {
-                        SettingsCategory.MyAccount -> settingsItem { MyAccountPane(repository) }
+                        SettingsCategory.MyAccount -> {
+                            settingsItem { MyAccountPane(repository) }
+                            settingsItem { VerifyDeviceCard(repository) }
+                        }
                         SettingsCategory.Profiles -> settingsItem { ProfilesPane(repository) }
 
                         SettingsCategory.Appearance -> {
@@ -398,6 +401,95 @@ private fun MyAccountPane(repository: OrbitRepository) {
                 }
             }
         }
+    }
+}
+
+/**
+ * Start a device verification.
+ *
+ * `VerificationOverlay` was already complete: it handles an incoming request, the
+ * SAS emoji comparison, cancellation and success. What did not exist anywhere in the
+ * app was the call that STARTS one -- so Orbit could verify a second device but only
+ * after that device asked first. Someone installing Orbit on a new laptop had no way
+ * to establish trust with the session they already had, short of opening a different
+ * client and asking from there.
+ *
+ * SAS only, because that is the one method this overlay can complete. QR would need
+ * a scanner, and offering a method with no way to finish it is worse than not
+ * offering it.
+ */
+@Composable
+private fun VerifyDeviceCard(repository: OrbitRepository) {
+    val scope = rememberCoroutineScope()
+    val t = rememberCosmicTokens()
+    var open by remember { mutableStateOf(false) }
+    var draft by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var problem by remember { mutableStateOf<String?>(null) }
+
+    if (open) {
+        AlertDialog(
+            onDismissRequest = { if (!busy) open = false },
+            title = { Text("Verify another device", color = t.Text_White) },
+            text = {
+                Column {
+                    Text(
+                        "Enter the Matrix ID of the other device — the same user, so your own ID. " +
+                            "You will be shown emojis to compare.",
+                        color = t.Text_Muted,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    OrbitTextField(
+                        value = draft,
+                        onValueChange = { draft = it; problem = null },
+                        placeholder = "@you:matrix.org",
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    problem?.let {
+                        Spacer(Modifier.height(8.dp))
+                        Text(it, color = t.Danger, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            },
+            confirmButton = {
+                Row {
+                    TextButton(
+                        onClick = {
+                            busy = true
+                            scope.launch {
+                                repository.startDeviceVerification(draft)
+                                    // Keep the dialog open on failure and say why. The
+                                    // overlay takes over on success and the dialog
+                                    // closes behind it, so a silent close on failure
+                                    // would leave nothing on screen at all.
+                                    .onSuccess { open = false }
+                                    .onFailure { problem = it.message ?: "Could not start verification" }
+                                busy = false
+                            }
+                        },
+                        enabled = !busy && draft.isNotBlank()
+                    ) { Text("Start", color = t.Accent) }
+                    TextButton(onClick = { open = false }, enabled = !busy) {
+                        Text("Cancel", color = t.Text_Muted)
+                    }
+                }
+            },
+            containerColor = t.Bg
+        )
+    }
+
+    PrefCard(
+        "Verify another device",
+        "Confirm a second session belongs to you by comparing emojis. Only needed if that session shows a warning about unverified keys.",
+        vertical = true
+    ) {
+        ui.components.OrbitButton(
+            text = "Verify a device",
+            onClick = { problem = null; open = true },
+            tone = ui.components.OrbitButtonTone.Neutral
+        )
     }
 }
 

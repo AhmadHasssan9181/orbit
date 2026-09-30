@@ -29,6 +29,7 @@ import de.connect2x.trixnity.clientserverapi.model.user.displayName
 import de.connect2x.trixnity.core.model.EventId
 import de.connect2x.trixnity.core.model.RoomId
 import de.connect2x.trixnity.core.model.UserId
+import de.connect2x.trixnity.core.model.events.m.key.verification.VerificationMethod
 import de.connect2x.trixnity.core.model.events.EventType
 import de.connect2x.trixnity.core.model.events.ClientEvent.RoomEvent
 import de.connect2x.trixnity.core.model.events.UnknownEventContent
@@ -136,6 +137,31 @@ class MatrixAuthRepository(private val context: MatrixContext) : OrbitAuthReposi
 
     override val activeDeviceVerification: Flow<Any?>?
         get() = context.trixnityClient?.verification?.activeDeviceVerification ?: flowOf(null)
+
+    override suspend fun startDeviceVerification(theirUserId: String): Result<Unit> {
+        val trixnity = context.trixnityClient
+            ?: return Result.failure(IllegalStateException("Not logged in"))
+        val userId = try {
+            UserId(theirUserId.trim())
+        } catch (e: Exception) {
+            // A malformed id fails inside Trixnity's own UserId parser, and the
+            // message it produces names its own class rather than saying what is
+            // wrong with what the user typed. Say it here instead.
+            return Result.failure(
+                IllegalArgumentException("\"$theirUserId\" is not a Matrix ID — expected @name:server")
+            )
+        }
+        return try {
+            // SAS only. Offering QR would need the scan UI, and silently starting a
+            // method with no way to complete it is worse than not offering it.
+            trixnity.verification.createDeviceVerificationRequest(userId, setOf(VerificationMethod.Sas.value))
+                .map { }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
 
     override suspend fun login(identifier: String, password: String, deviceName: String): AuthResult = try {
         loginInternal(identifier, password, deviceName)

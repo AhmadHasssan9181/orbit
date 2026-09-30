@@ -14,6 +14,25 @@ import ui.screen.main.*
 interface OrbitAuthRepository {
     val authStatus: Flow<AuthStatus>
     val activeDeviceVerification: Flow<Any?>? get() = null
+
+    /**
+     * Starts a SAS verification with another one of your own devices, the user
+     * identified by [theirUserId].
+     *
+     * [activeDeviceVerification] flows with the result, and
+     * [ui.screen.auth.VerificationOverlay] renders every state of it, including
+     * `OwnRequest` -- the state you sit in while the other device decides. That
+     * overlay was already complete; what was missing was the one call that starts
+     * the thing, so Orbit could accept a verification but could never begin one. A
+     * user who installs Orbit on a second machine had no way to verify it short of
+     * the other client asking first.
+     *
+     * Fails with a message worth showing if [theirUserId] is not a well-formed
+     * Matrix ID, so the caller can surface it rather than discovering an empty
+     * state flow and no explanation.
+     */
+    suspend fun startDeviceVerification(theirUserId: String): Result<Unit> =
+        Result.failure(IllegalStateException("Verification is not available"))
     suspend fun loginWithSso(): AuthResult
     suspend fun login(identifier: String, password: String, deviceName: String = "Orbit"): AuthResult
     /**
