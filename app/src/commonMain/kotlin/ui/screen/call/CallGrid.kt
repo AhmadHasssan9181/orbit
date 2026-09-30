@@ -12,6 +12,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,6 +64,27 @@ fun CallGrid(
     // no longer demoted to tiny thumbnails.
     val screenShareNodes = nodes.filter { it.isScreenShare }
     val nonShareNodes = nodes.filter { !it.isScreenShare }
+
+    // Which layout this call actually got, and what it decided from.
+    //
+    // Two "still the same" reports in a row, and neither the screenshot nor any
+    // existing log line could tell "the share branch never ran" apart from "the
+    // share branch ran and drew the wrong thing". Those are different bugs with
+    // different fixes, and guessing between them is what wasted the last two
+    // rounds. Logged once per distinct layout state so it cannot spam.
+    //
+    // Read `shares=` first. If it is 0 while somebody is visibly sharing, the
+    // share was never classified as a share and the layout is innocent.
+    val layoutSignature = nodes.joinToString(" ") {
+        it.id + if (it.isScreenShare) "[share]" else ""
+    }
+    LaunchedEffect(layoutSignature, layoutMode, pinnedNodeId) {
+        println(
+            "DEBUG [CallGrid] mode=$layoutMode pinned=$pinnedNodeId " +
+                "shares=${screenShareNodes.size} faces=${nonShareNodes.size} " +
+                "nodes=[$layoutSignature]"
+        )
+    }
     var sharePage by remember { mutableStateOf(0) }
     val clampedPage = if (screenShareNodes.isEmpty()) 0 else sharePage.coerceIn(0, screenShareNodes.lastIndex)
     val spotlightShareNode = screenShareNodes.getOrNull(clampedPage)
@@ -114,6 +136,12 @@ fun CallGrid(
             // aspect is the fix; no weight ratio can express it, because the right
             // ratio changes with the window.
             val panel = sharePanelSizeIn(maxWidth, maxHeight - stripHeight - gap)
+            println(
+                "DEBUG [CallGrid] share ON TOP featured=${featured.id} " +
+                    "panel=${panel.width.value}x${panel.height.value}dp " +
+                    "available=${maxWidth.value}x${(maxHeight - stripHeight - gap).value}dp " +
+                    "aspect=${panel.width.value / panel.height.value}"
+            )
             Column(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(gap)
