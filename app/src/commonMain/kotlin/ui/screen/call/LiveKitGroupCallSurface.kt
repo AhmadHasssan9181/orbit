@@ -30,6 +30,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -196,6 +197,42 @@ fun LiveKitGroupCallSurface(
                     }
                 }
                 callManager.requestProfilesFor(identities)
+            }
+
+            // What each tile is ACTUALLY holding, on a timer.
+            //
+            // "The share does not appear" has two completely different causes, and
+            // every existing log line lands on the same side of the divide: the
+            // store and the reader both log frames ARRIVING, so a run can be full
+            // of 1920x1080 `frame updated` lines while the window shows nothing.
+            // Those lines cannot distinguish "the pixels never got this far" from
+            // "the pixels are here and the UI is not keeping up", and they are the
+            // only evidence available when someone reports the second one.
+            //
+            // This reads the per-tile render input — the same `framesByTrack` map
+            // `VideoRenderer` indexes — and prints the size each tile would draw.
+            // A tile reading `<none>` never received a frame; a tile reading
+            // 1920x1080 has its pixels and the problem is downstream of here.
+            LaunchedEffect(callManager) {
+                while (true) {
+                    delay(2_000)
+                    val tracks = LiveKitRemoteVideoFrameStore.activeTracks.value
+                    val frames = LiveKitRemoteVideoFrameStore.framesByTrack.value
+                    if (tracks.isEmpty() && frames.isEmpty()) continue
+                    val perTrack = tracks.values
+                        .sortedBy { it.trackSid }
+                        .joinToString(" ") { track ->
+                            val source = track.trackSource.ifBlank { "?" }
+                            val size = frames[track.trackSid]?.let { "${it.width}x${it.height}" } ?: "<none>"
+                            "$source/${track.trackSid.takeLast(6)}=$size"
+                        }
+                    val orphanFrames = frames.keys.filter { it !in tracks.keys }
+                    println(
+                        "DEBUG [CallGridTiles] tiles=${tracks.size} withFrame=${frames.size} " +
+                            "perTrack=[$perTrack]" +
+                            (if (orphanFrames.isEmpty()) "" else " orphanFrames=$orphanFrames")
+                    )
+                }
             }
 
             // Roster first (it is a complete profile directory for the people we
