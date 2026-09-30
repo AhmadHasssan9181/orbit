@@ -230,8 +230,8 @@ std::unordered_set<std::string> g_publicationsEverSeenWithTrack;
 std::mutex g_tracklessTicksMutex;
 std::unordered_map<std::string, int> g_tracklessTicks;
 
-// After this many consecutive trackless sightings, stop waiting for the track to
-// materialise on its own and make the SDK renegotiate the subscription.
+// Consecutive trackless sightings (2 s apart) at which to make the SDK
+// renegotiate the subscription. Escalating, and bounded.
 //
 // WHY THIS EXISTS. Run 23 established that `onTrackPublished` in SDK 0.4.1 arrives
 // with a null publication EVERY time -- pub=5 nullPub=5, 100% -- so that event can
@@ -246,10 +246,30 @@ std::unordered_map<std::string, int> g_tracklessTicks;
 // else, and room.h has no resync). It is the same cycle the audio jitter-buffer
 // recovery already uses, so it is a known-good move on this SDK rather than a guess.
 //
-// Bounded three ways: only for tracks that have been trackless this long, only once
-// per publication, and only for publications still present. A track that has been
-// trackless for 6 s while its sender says it is sharing is not going to fix itself.
+// WHY ESCALATING RATHER THAN ONCE. The first version fired a single time, and run
+// 25 showed exactly what that costs:
+//
+//   renegotiate count=2   (both tracks, once each)
+//   ... audio  -> sub/+track   within a few seconds. Fixed.
+//   ... video  -> sub/noTrack   for the REST OF THE CALL. Still broken.
+//
+// One attempt is enough for a share's audio track and not enough for its video
+// track, and the difference is not something the log can explain -- so the bound
+// is raised from one to three, spaced out, rather than guessed at. 3 / 9 / 18
+// ticks is 6 s, 18 s and 36 s. A publication that is still trackless after ~36 s
+// while its sender insists it is sharing is not going to be rescued by a fourth
+// attempt, and the escalation stops there.
 constexpr int kTracklessTicksBeforeRenegotiate = 3;
+constexpr int kTracklessRenegotiateEscalation[] = {3, 9, 18};
+
+bool isTracklessRenegotiateTick(int ticks) {
+    for (const int threshold : kTracklessRenegotiateEscalation) {
+        if (ticks == threshold) {
+            return true;
+        }
+    }
+    return false;
+}
 
 // How many track-lifecycle delegate callbacks the SDK actually delivered, and how
 // many arrived carrying no publication at all.
@@ -7106,7 +7126,8 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeRescanRemoteVideoTracks(JNIEnv*, jclass
                     std::lock_guard<std::mutex> lock(g_tracklessTicksMutex);
                     tracklessTicks = ++g_tracklessTicks[publication->sid()];
                 }
-                if (tracklessTicks == kTracklessTicksBeforeRenegotiate) {
+                if (tracklessTicks == kTracklessTicksBeforeRenegotiate ||
+                    isTracklessRenegotiateTick(tracklessTicks)) {
                     std::cout << "DEBUG [OrbitLiveKitAudio] publication trackless for "
                               << (tracklessTicks * 2) << "s, renegotiating subscription "
                               << "kind=" << (publication->kind() == livekit::TrackKind::KIND_VIDEO ? "video" : "audio")
