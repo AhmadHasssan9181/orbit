@@ -71,7 +71,17 @@ internal fun DenseMessageBody(
     var showReactionMenu by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
 
-    Box(modifier = Modifier.fillMaxWidth()) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            // Hover lives on this Box rather than on the row below, for the same
+            // reason as in MessageBubbleFull: the toolbar hangs off this hover state
+            // and used to be drawn 4dp ABOVE the row, so reaching for it meant
+            // leaving the hoverable area and it faded out on the way. Grouped
+            // messages are the MAJORITY of a chat, so this was the one that showed
+            // up most often.
+            .hoverable(interactionSource)
+    ) {
         // The hover timestamp, drawn OVER the avatar gutter rather than as a
         // column of the Row.
         //
@@ -114,7 +124,6 @@ internal fun DenseMessageBody(
             modifier = Modifier
                 .fillMaxWidth()
                 .offset(x = rowOffset)
-                .hoverable(interactionSource)
                 .background(rowBg)
                 .padding(start = messageTextGutter, end = OrbitSpace.lg, top = 1.dp, bottom = 1.dp),
             verticalAlignment = Alignment.Top
@@ -129,9 +138,10 @@ internal fun DenseMessageBody(
         // Floating action toolbar on hover
         AnimatedVisibility(
             visible = isHovered,
+            // Inside the parent's bounds, for the reason given on the Box above.
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .offset(y = (-4).dp, x = (-16).dp),
+                .offset(y = 2.dp, x = (-8).dp),
             enter = fadeIn(OrbitMotion.tweenFast()) + scaleIn(
                 animationSpec = OrbitMotion.tweenFast(),
                 initialScale = 0.94f
