@@ -119,13 +119,22 @@ internal fun MessageBubbleFull(
     Box(
         modifier = Modifier
             .fillMaxWidth()
+            // The hover source is on THIS box, not on the row below it.
+            //
+            // The toolbar used to hang off the row's hover state while being drawn
+            // 6dp ABOVE the row's top edge. Those two facts are a trap: the instant
+            // the pointer crossed from the row toward the toolbar it left the
+            // hoverable area, `hovered` went false, and the toolbar began fading --
+            // so it was reliably gone before a click could land on it. Visible on
+            // hover, unclickable. The toolbar is drawn inside this Box now, so
+            // hovering it keeps the whole thing alive.
+            .hoverable(interaction)
             .padding(top = 1.dp, bottom = 1.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .offsetX(rowOffset)
-                .hoverable(interaction)
                 .background(rowBg)
                 .padding(horizontal = OrbitSpace.lg, vertical = 3.dp)
                 .padding(top = 3.dp),
@@ -208,9 +217,13 @@ internal fun MessageBubbleFull(
         // ── Floating hover toolbar ──────────────────────────────
         AnimatedVisibility(
             visible = hovered,
+            // INSIDE the parent's bounds. The `-6dp` y offset this replaces put
+            // the toolbar in the gap between two messages, so reaching for it
+            // meant leaving the hoverable area -- and it faded out on the way.
+            // A small inset reads the same and is reachable.
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .offset(y = (-6).dp, x = (-14).dp),
+                .offset(y = 4.dp, x = (-8).dp),
             enter = fadeIn(OrbitMotion.tweenFast()) + scaleIn(
                 animationSpec = OrbitMotion.tweenFast(),
                 initialScale = 0.94f
