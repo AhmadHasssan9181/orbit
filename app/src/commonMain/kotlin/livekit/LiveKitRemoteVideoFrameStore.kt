@@ -206,6 +206,34 @@ object LiveKitRemoteVideoFrameStore {
         }
     }
 
+    /**
+     * A remote video track exists in the room, and we have not seen a frame from
+     * it yet -- there may not even be a track object behind it.
+     *
+     * Registering it here is what makes the wait visible. The call tile is built
+     * from [activeTracks], and previously a track only entered that map from
+     * [updateFrame], so a share that took eighteen seconds to attach had no tile at
+     * all for those eighteen seconds. The tile appeared at the same instant as the
+     * picture, which made the "waiting" state unreachable rather than merely unused.
+     *
+     * [trackStarted] supersedes this once a real track arrives; the entry is
+     * overwritten with the authoritative source and name.
+     */
+    fun trackAnnounced(participantIdentity: String, trackSid: String, trackSource: String = "") {
+        if (trackSid.isBlank()) return
+        if (_activeTracks.value.containsKey(trackSid)) return
+        _activeTracks.update {
+            it + (
+                trackSid to LiveKitRemoteVideoTrackState(
+                    participantIdentity = participantIdentity,
+                    trackSid = trackSid,
+                    trackSource = trackSource,
+                    trackName = ""
+                )
+                )
+        }
+    }
+
     fun trackStarted(participantIdentity: String, trackSid: String, trackSource: String = "", trackName: String = "") {
         // A track existing at all means the share attached after all, so any stuck
         // marker for it is stale. Left in place it would keep offering a reconnect
