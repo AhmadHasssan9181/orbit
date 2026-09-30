@@ -636,7 +636,7 @@ wrong, because "it was broken and here is why" is the part worth keeping.
 | ~~**Banner URL**~~ | **Fixed — and the note was half wrong.** `m.room.banner` was never read, which left `ServerHeader`'s complete banner layout running on a field nobody assigned. The *profile* banner was fine and is still fine; what was wrong there is in §13 |
 | **`OrbitVideoEngine.injectVideoProcessor`** | No implementation in the shipped DLL, which is why the virtual background is inert. **Re-verified by test on every run** — `NativeSymbolAvailabilityTest` fails if the symbol ever appears, and says what to do then |
 | **`OrbitAudioDeviceModule.setAttenuationStrength`** | Same. Also why **Ducking Strength is inert**. Same test, same guard |
-| Soundboard in 1:1 | Local-monitor only. In a group call the mixer bus is folded into the outgoing mic frames; on P2P there is no JVM-side mic tap and the only transmission path is the fork-ADM system-audio loopback, which is off by default. **This is a feature gap, not a defect** — sending it on P2P means a WebRTC audio track carrying the bus, which is the LiveKit machinery the P2P path does not have |
+| Soundboard on a legacy-signalling 1:1 | **Resolved, and the old description of it was wrong.** It said "on P2P there is no JVM-side mic tap" as though all 1:1s were affected. They are not: every call Orbit *starts* is a LiveKit group call, and that path folds the mixer bus into outgoing mic frames correctly. Only a 1:1 arriving through legacy signalling is affected, and the panel now explains itself rather than playing locally-only. See §13.8 |
 
 ### Not fixable in this codebase
 
