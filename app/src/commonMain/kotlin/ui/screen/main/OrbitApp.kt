@@ -637,20 +637,25 @@ private fun MainAppContent(
         navigateTo(id)
     }
 
-    // ─── Settings screen ────────────────────────────────────────
-    if (showSettings) {
-        SettingsScreen(
-            repository = repository,
-            settingsManager = settingsManager,
-            onBack = { showSettings = false },
-            onLogout = {
-                onLogoutRequested()
-                showSettings = false
-            },
-            modifier = Modifier.fillMaxSize()
-        )
-        return
-    }
+    // Settings is rendered INSIDE the provider below, as one more overlay.
+    //
+    // It used to be an early `return` sitting between `WebRtcEffects(...)` and
+    // the `CompositionLocalProvider`, and that one statement was the cause of
+    // two separately reported bugs.
+    //
+    // `WebRtcEffects` is a composable whose `onDispose` calls
+    // `callManager.endCall(notifyRemote = false)` and then `callManager.release()`.
+    // Returning early left the composition, so opening Settings disposed it and
+    // did exactly both: the call was dropped, and the native media session was
+    // released while frames were still arriving. The second is not a clean
+    // shutdown -- the process died with `0xC0000374` (STATUS_HEAP_CORRUPTION),
+    // because native buffers were freed underneath an in-flight reader.
+    //
+    // The same early return also meant `LocalCallManager` was never provided on
+    // this path at all, so nothing in Settings could reach the call.
+    //
+    // Every screen switch now happens inside the provider, so the call stack
+    // outlives all of them and only the app going away tears it down.
 
     // ─── Route to appropriate layout ────────────────────────────
     CompositionLocalProvider(
@@ -722,6 +727,24 @@ private fun MainAppContent(
                     onOpenRoles = { showServerRoles = true },
                     unreadCounts = unreadCountsSnapshot,
                     unreadByServer = unreadByServer,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+
+            // ─── Settings screen ────────────────────────────────────
+            //
+            // An overlay like the dialogs below it, NOT an early return. See the
+            // note above: returning here used to dispose `WebRtcEffects`, which
+            // ends the call and releases the native media session mid-frame.
+            if (showSettings) {
+                SettingsScreen(
+                    repository = repository,
+                    settingsManager = settingsManager,
+                    onBack = { showSettings = false },
+                    onLogout = {
+                        onLogoutRequested()
+                        showSettings = false
+                    },
                     modifier = Modifier.fillMaxSize()
                 )
             }
