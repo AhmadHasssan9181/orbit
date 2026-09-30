@@ -210,6 +210,16 @@ struct RemoteVideoReader {
 std::unordered_map<std::string, std::shared_ptr<RemoteAudioReader>> g_remoteAudioReaders;
 std::unordered_map<std::string, std::shared_ptr<RemoteVideoReader>> g_remoteVideoReaders;
 
+// Audio publications the rescan has already tried to force-subscribe, so a track
+// the server keeps refusing costs one attempt rather than one per tick.
+std::mutex g_forcedAudioSubscribesMutex;
+std::unordered_set<std::string> g_forcedAudioSubscribes;
+
+// Last remote publication inventory, compared so the rescan logs a line only when
+// the set of tracks in the room actually changes. The rescan runs on a timer for
+// the whole call; a per-tick dump would bury everything else.
+std::string g_remotePublicationInventory;
+
 constexpr jint kSampleRate = 48000;
 constexpr jint kChannels = 1;
 constexpr jint kMaxChannels = 2;
@@ -3349,6 +3359,30 @@ public:
             event.publication,
             event.publication != nullptr ? event.publication->track() : nullptr,
             "published");
+        if (event.publication != nullptr && event.publication->kind() == livekit::TrackKind::KIND_AUDIO) {
+            // The audio half of this handler used to be silent. Video logged via
+            // logRemoteVideoPublicationDetected; audio had no line at all, so the
+            // only evidence an audio track ever existed was
+            // `remote audio participant added`, which fires from the READER once
+            // frames start flowing.
+            //
+            // That made one specific failure completely invisible. A participant
+            // sharing a window WITH audio publishes a second track with
+            // source SOURCE_SCREENSHARE_AUDIO. If that publication arrived already
+            // subscribed, this branch started a reader and printed nothing; if no
+            // frames ever arrived, nothing printed either. Both cases looked
+            // exactly like "Element sent no screen audio at all", which is what
+            // the log said for several runs while a share was in progress.
+            std::cout << "DEBUG [OrbitLiveKitAudio] remote audio publication "
+                      << "participantIdentity=" << (event.participant != nullptr ? event.participant->identity() : std::string{"<none>"})
+                      << " publicationSid=" << event.publication->sid()
+                      << " publicationSource=" << trackSourceLabel(event.publication->source())
+                      << " publicationSourceEnum=" << static_cast<int>(event.publication->source())
+                      << " subscribed=" << (event.publication->subscribed() ? "true" : "false")
+                      << " muted=" << (event.publication->muted() ? "true" : "false")
+                      << " trackPresent=" << (event.publication->track() != nullptr ? "true" : "false")
+                      << std::endl;
+        }
         if (event.publication != nullptr && event.publication->subscribed()) {
             if (event.publication->kind() == livekit::TrackKind::KIND_VIDEO) {
                 startRemoteVideoReaderLocked(event.publication->track(), event.participant, event.publication);
@@ -4058,6 +4092,15 @@ void shareAudioLoopbackMain(std::shared_ptr<livekit::AudioSource> source) {
 
 void resetRoomLocked() {
     g_acceptingFrames = false;
+    // Per-room subscribe bookkeeping. Left set, a reconnect would refuse to retry
+    // a publication whose SID the new room happens to reuse, and the
+    // change-only inventory would print nothing because it still "matched" the
+    // previous call's tracks.
+    {
+        std::lock_guard<std::mutex> forcedLock(g_forcedAudioSubscribesMutex);
+        g_forcedAudioSubscribes.clear();
+    }
+    g_remotePublicationInventory.clear();
     if (g_videoSource != nullptr || g_videoTrack != nullptr || g_videoPublished || g_acceptingVideoFrames) {
         std::cout << "DEBUG [VideoPublish] stop requested reason=room-reset" << std::endl;
     }
@@ -6877,6 +6920,10 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeRescanRemoteVideoTracks(JNIEnv*, jclass
         return kStatusOk;
     }
     int startedVideo = 0;
+    int forcedSubscribes = 0;
+    // Rebuilt every tick and compared against the previous one, so a line is
+    // printed only on a real change to the tracks present in the room.
+    std::string inventory;
     int startedAudio = 0;
     for (const auto& participant : g_room->remoteParticipants()) {
         if (participant == nullptr) {
@@ -6894,10 +6941,53 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeRescanRemoteVideoTracks(JNIEnv*, jclass
         }
         for (const auto& publicationEntry : participant->trackPublications()) {
             const auto& publication = publicationEntry.second;
-            if (publication == nullptr || !publication->subscribed()) {
+            if (publication == nullptr) {
                 continue;
             }
             const auto track = publication->track();
+            inventory += " " + trackSourceLabel(publication->source()) + "/" +
+                publication->sid() + (publication->subscribed() ? "=sub" : "=UNSUB") +
+                (publication->muted() ? "/muted" : "");
+            if (publication->kind() == livekit::TrackKind::KIND_AUDIO && !publication->subscribed()) {
+                // auto_subscribe is on, so an unsubscribed publication means the
+                // auto-subscribe lost a race with the publish and nothing ever
+                // claimed it. That is the shape of "Element shared a window with
+                // audio and Orbit heard nothing": the track exists on the server,
+                // Orbit asked for everything, and the request never happened for
+                // this one track.
+                //
+                // Subscribe explicitly, ONCE per publication. Unbounded retries
+                // would hammer the SFU every tick and could never succeed if the
+                // server is refusing for some other reason.
+                const auto publicationSid = publication->sid();
+                bool alreadyTried = false;
+                {
+                    std::lock_guard<std::mutex> forcedLock(g_forcedAudioSubscribesMutex);
+                    alreadyTried = !g_forcedAudioSubscribes.insert(publicationSid).second;
+                }
+                if (!alreadyTried) {
+                    std::cout << "DEBUG [OrbitLiveKitAudio] forcing subscribe for unsubscribed audio publication "
+                              << "participantIdentity=" << participant->identity()
+                              << " publicationSid=" << publicationSid
+                              << " source=" << trackSourceLabel(publication->source())
+                              << " trackPresent=" << (track != nullptr ? "true" : "false")
+                              << std::endl;
+                    try {
+                        publication->setSubscribed(true);
+                        forcedSubscribes += 1;
+                    } catch (const std::exception& error) {
+                        std::cerr << "WARN [OrbitLiveKitAudio] force subscribe threw publicationSid="
+                                  << publicationSid << " message=" << error.what() << std::endl;
+                    } catch (...) {
+                        std::cerr << "WARN [OrbitLiveKitAudio] force subscribe threw publicationSid="
+                                  << publicationSid << " message=unknown" << std::endl;
+                    }
+                }
+                continue;
+            }
+            if (!publication->subscribed()) {
+                continue;
+            }
             if (track == nullptr) {
                 continue;
             }
@@ -6930,9 +7020,18 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeRescanRemoteVideoTracks(JNIEnv*, jclass
             }
         }
     }
+    if (inventory != g_remotePublicationInventory) {
+        g_remotePublicationInventory = inventory;
+        std::cout << "DEBUG [OrbitLiveKitAudio] remote publication inventory:"
+                  << (inventory.empty() ? " <empty>" : inventory) << std::endl;
+    }
     if (startedVideo > 0 || startedAudio > 0) {
         std::cout << "DEBUG [OrbitLiveKitAudio] rescan recovered missing readers video="
                   << startedVideo << " audio=" << startedAudio << std::endl;
+    }
+    if (forcedSubscribes > 0) {
+        std::cout << "DEBUG [OrbitLiveKitAudio] rescan forced subscribe count="
+                  << forcedSubscribes << std::endl;
     }
     return kStatusOk;
 }
