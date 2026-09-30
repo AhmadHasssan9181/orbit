@@ -106,6 +106,19 @@ object LiveKitNativeRemoteVideoRenderer : NativeRemoteVideoSink {
         LiveKitRemoteVideoFrameStore.trackStopped(participantIdentity, trackSid)
     }
 
+    override fun onRemoteVideoTrackStuck(
+        sessionId: Long,
+        epoch: Long,
+        participantIdentity: String,
+        trackSid: String
+    ) {
+        println(
+            "WARN [LiveKitNativeRemoteVideoRenderer] remote screenshare STUCK " +
+                "sessionId=$sessionId epoch=$epoch participantIdentity=$participantIdentity trackSid=$trackSid"
+        )
+        LiveKitRemoteVideoFrameStore.trackStuck(participantIdentity, trackSid)
+    }
+
     override fun onRemoteAudioMuteChanged(
         sessionId: Long,
         epoch: Long,

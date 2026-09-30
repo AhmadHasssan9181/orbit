@@ -112,6 +112,25 @@ interface NativeRemoteVideoSink {
     fun onRemoteVideoTrackRemoved(sessionId: Long, epoch: Long, participantIdentity: String, trackSid: String)
 
     /**
+     * A remote screen share has been published and visible to us for long enough
+     * that it is clearly never going to attach: the publication exists, we know it
+     * is a screenshare, and it still has no track behind it after the whole
+     * retry ladder.
+     *
+     * This is the only point at which Orbit can act, because nothing else in the
+     * pipeline has a track to work with -- no reader, no stream, no frames. A
+     * fresh SFU connection is the only thing that recovers it (verified: the same
+     * still-running share acquires its track immediately after a rejoin), so the
+     * UI offers that rather than leaving an invisible share on screen.
+     */
+    fun onRemoteVideoTrackStuck(
+        sessionId: Long,
+        epoch: Long,
+        participantIdentity: String,
+        trackSid: String
+    )
+
+    /**
      * Remote mic mute state changed (or initial state announced at subscribe
      * time). Drives the Discord-style mic-off badges on tiles and the member
      * list; identities are LiveKit identities (`${userId}:${deviceId}`).

@@ -1182,7 +1182,11 @@ data class RenderNode(
     // Participant's hand is currently raised (io.orbit.raise_hand events).
     val isHandRaised: Boolean = false,
     val avatarUrl: String? = null,
-    val avatarColor: Int = 0xFF7B74E8.toInt()
+    val avatarColor: Int = 0xFF7B74E8.toInt(),
+    // Remote screen share whose track the SDK never produced. The tile has nothing
+    // to draw and retrying has stopped helping, so it carries the offer to rebuild
+    // the SFU session instead of sitting there blank.
+    val isStuckShare: Boolean = false
 )
 
 /**
@@ -1370,6 +1374,39 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                             fontWeight = FontWeight.Bold
                         )
                     }
+                }
+            }
+        }
+
+        // A stuck remote share gets a real explanation and a real action instead of
+        // a black rectangle. Retrying its subscription does not work -- the audio
+        // track of the same share recovers and the video track never does -- so the
+        // one thing that works is offered: rebuild the SFU session. Offered rather
+        // than forced, because it briefly restarts everyone's audio from us.
+        if (node.isStuckShare) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    "Screen share can't be received",
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    "${node.name}'s share is being sent but its video never attaches.",
+                    color = Color.White.copy(alpha = 0.7f),
+                    fontSize = 12.sp
+                )
+                Button(
+                    onClick = { callManager?.reconnectForStuckShare("user-tapped") },
+                    enabled = callManager != null
+                ) {
+                    Text("Reconnect call media")
                 }
             }
         }
