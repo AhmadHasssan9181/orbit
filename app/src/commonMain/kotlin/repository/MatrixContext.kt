@@ -279,6 +279,16 @@ class MatrixContext(homeserverUrl: String) {
 
     /** Lazily built; shares the repository's HttpClient, so it costs nothing extra. */
     internal val categories: MatrixCategories by lazy { MatrixCategories(this) }
+
+    /**
+     * `m.room.topic` per room, for the channel-header subtitle.
+     *
+     * Created for rooms written before this existed and never read back, so the
+     * header subtitle was permanently blank. Cached with a TTL because it is one
+     * state fetch per room and the drawer asks for every room on every space
+     * switch.
+     */
+    internal val roomTopics: MatrixRoomTopics by lazy { MatrixRoomTopics(this) }
     val accountDataCache = java.util.concurrent.ConcurrentHashMap<String, MutableStateFlow<Any?>>()
 
     // Event types whose account data has already been requested. The request used
@@ -478,28 +488,102 @@ class MatrixContext(homeserverUrl: String) {
         if (roomId in knownCallRoomIds) return true
         voiceRoomCache[roomId]?.let { return it }
 
-        val detected = try {
+        val detected = roomStateEvents(roomId).any { element ->
+            val raw = element.jsonObject
+            val type = raw["type"]?.jsonPrimitive?.contentOrNull
+            type in MATRIXRTC_VOICE_STATE_TYPES &&
+                callKindOf(raw["content"]?.jsonPrimitive?.contentOrNull)
+                    ?.equals("voice", ignoreCase = true) == true
+        }
+        voiceRoomCache[roomId] = detected
+        return detected
+    }
+
+    /**
+     * The room's full `m.state` array, fetched at most once per TTL and shared.
+     *
+     * ## Why this is shared
+     *
+     * `isVoiceRoom` used to issue its own `GET /rooms/{id}/state` and throw the
+     * response away. Anything else wanting a state event had no choice but to
+     * fetch the whole thing again -- which is how `m.room.topic` came to need a
+     * request per room per drawer open, or (as actually happened) to not exist
+     * at all: `createRoom` writes the topic and nothing ever read it back.
+     *
+     * One fetch, cached, every state reader takes what it needs. That strictly
+     * REDUCES the request count rather than adding to it.
+     *
+     * ## Encrypted rooms
+     *
+     * `m.state` over plain HTTP returns ciphertext for encrypted event types, so
+     * in an encrypted room a topic is not readable this way and resolves to `""`
+     * -- exactly what `OrbitChannel.topic` defaulted to before, so this can only
+     * ever improve. Reading it properly needs the decrypted store, which is its
+     * own piece of work rather than a fix here.
+     */
+    suspend fun roomStateEvents(roomId: String): Array<kotlinx.serialization.json.JsonElement> {
+        roomStateCache[roomId]?.let { (events, at) ->
+            if (getTimeMillisCompat() - at < ROOM_STATE_TTL_MS) return events
+        }
+        val events = try {
             val response = httpClient.get(fullUrl("/rooms/$roomId/state")) {
                 header(HttpHeaders.Authorization, "Bearer $accessToken")
             }
             if (response.status.value !in 200..299) {
                 response.drain()
-                false
+                emptyArray()
             } else {
-                Json.parseToJsonElement(response.bodyAsText()).jsonArray.any { element ->
-                    val raw = element.jsonObject
-                    val type = raw["type"]?.jsonPrimitive?.contentOrNull
-                    type in MATRIXRTC_VOICE_STATE_TYPES &&
-                        callKindOf(raw["content"]?.jsonPrimitive?.contentOrNull)
-                            ?.equals("voice", ignoreCase = true) == true
-                }
+                Json.parseToJsonElement(response.bodyAsText()).jsonArray.toTypedArray()
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (_: Throwable) {
-            false
+            emptyArray()
         }
-        voiceRoomCache[roomId] = detected
-        return detected
+        roomStateCache[roomId] = events to getTimeMillisCompat()
+        return events
     }
+
+    private val roomStateCache = java.util.Collections.synchronizedMap(
+        mutableMapOf<String, Pair<Array<kotlinx.serialization.json.JsonElement>, Long>>()
+    )
+
+    /**
+     * A minute. Long enough that a room list built from several sources does not
+     * refetch, short enough that a call started in the room is noticed while the
+     * drawer is still open -- `isVoiceRoom` also short-circuits on the call-room
+     * set, so this TTL is not what makes a live room light up.
+     */
+    private val ROOM_STATE_TTL_MS = 60_000L
+
+    /**
+     * `m.room.topic` from the cached `m.state`, or `""`.
+     *
+     * Non-suspending on purpose: this is called while building a channel list, and
+     * the state for a room has already been fetched by [isVoiceRoom] on the way
+     * there. Returns `""` when the room is not cached yet, which is the value the
+     * field defaulted to anyway, so the next drawer open picks it up.
+     */
+    fun cachedRoomTopic(roomId: String): String {
+        val events = roomStateCache[roomId]?.first ?: return ""
+        return events.firstNotNullOfOrNull { element ->
+            val raw = element.jsonObject
+            if (raw["type"]?.jsonPrimitive?.contentOrNull != "m.room.topic") return@firstNotNullOfOrNull null
+            (raw["content"] as? kotlinx.serialization.json.JsonObject)
+                ?.get("topic") as? JsonPrimitive
+        }?.contentOrNull?.trim().orEmpty()
+    }
+
+    fun invalidateRoomState(roomId: String) {
+        roomStateCache.remove(roomId)
+        voiceRoomCache.remove(roomId)
+    }
+
+    fun clearRoomStateCache() {
+        roomStateCache.clear()
+    }
+
+    private fun getTimeMillisCompat(): Long = io.ktor.util.date.getTimeMillis()
 
     /** `m.call` / `org.matrix.msc3401.call`, definition and member alike. */
     private val MATRIXRTC_VOICE_STATE_TYPES = setOf(

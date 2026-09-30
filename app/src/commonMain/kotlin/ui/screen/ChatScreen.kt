@@ -124,6 +124,11 @@ fun ChatScreen(
     firstUnreadId: String? = null,
     showMemberList: Boolean = true,
     onBack: (() -> Unit)? = null,
+    /**
+     * Request one more page of older history. Supplied by the shell, which owns
+     * the message list and the per-room paging state; null disables scrollback.
+     */
+    onLoadOlder: (suspend () -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val t = rememberCosmicTokens()
@@ -382,7 +387,8 @@ fun ChatScreen(
                                             it.id.endsWith(userId) ||
                                             userId.endsWith(it.id)
                                     }?.let { memberProfile = it }
-                                }
+                                },
+                                onLoadOlder = onLoadOlder
                             )
                         }
                     }
@@ -509,7 +515,8 @@ fun ChatScreen(
                                             it.id.endsWith(userId) ||
                                             userId.endsWith(it.id)
                                     }?.let { memberProfile = it }
-                                }
+                                },
+                                onLoadOlder = onLoadOlder
                             )
                         }
                         else -> Box(Modifier.fillMaxSize())
@@ -571,6 +578,7 @@ private fun ChatTimeline(
     onCancelReply: () -> Unit,
     onDraftRestored: () -> Unit,
     onMentionUser: (String) -> Unit,
+    onLoadOlder: (suspend () -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val t = rememberCosmicTokens()
@@ -588,7 +596,8 @@ private fun ChatTimeline(
                 onDeleteMessage = onDeleteMessage,
                 onTogglePin = onTogglePin,
                 onReply = onReply,
-                onMentionUser = onMentionUser
+                onMentionUser = onMentionUser,
+                onLoadOlder = onLoadOlder
             )
 
             // Typing indicator: a small, quiet, self-clearing pill.

@@ -86,14 +86,67 @@ object LiveKitNativeAudioCapture {
     @Volatile private var inputDeviceOverride = ""
     @Volatile private var userVolumeFactor = 1f
 
-    // Voice & Video settings: runtime input-device selection. Substring-matched against
-    // JavaSound mixer names when the capture line opens (next call).
+    /**
+     * Voice & Video settings: runtime input-device selection. Substring-matched
+     * against JavaSound mixer names when the capture line opens.
+     *
+     * Takes effect IMMEDIATELY, including mid-call.
+     *
+     * This used to be documented as "applies on next capture start" and behaved
+     * exactly that way: it stored the name, logged it, and did nothing else. The
+     * capture line is opened once when a call starts and `start()` returns early
+     * while `started` is true, so a live call never re-read the override at all.
+     * Picking a different microphone during a call therefore produced a settings
+     * screen that looked like it had changed something and did not -- reported
+     * as "changing input device doesn't really change it".
+     *
+     * The restart goes through the normal stop/start path rather than swapping
+     * the line in place, because the generation token is what retires the old
+     * loop safely: a capture loop that had its line closed underneath it would
+     * read a closed `TargetDataLine` and report a device failure against the
+     * call that just asked for the new device. Done on [scope], never on the
+     * caller's thread, because the caller is the Compose/EDT path.
+     */
     fun setInputDeviceOverride(name: String) {
         val trimmed = name.trim()
         val next = if (trimmed.isEmpty() || trimmed.equals("Default", ignoreCase = true)) "" else trimmed
         if (inputDeviceOverride == next) return
         inputDeviceOverride = next
-        println("DEBUG [LiveKitNativeAudioCapture] input device override=\"$next\" (applies on next capture start)")
+
+        // Snapshot what a restart needs. Read under the same lock `requestStop`
+        // uses, because that clears them.
+        val restartSessionId: Long
+        val restartEpoch: Long
+        val restartBridge: OrbitLiveKitNativeBridge?
+        val restartFailure: ((NativeError) -> Unit)?
+        synchronized(captureGeneration) {
+            if (!started || captureJob == null) {
+                println(
+                    "DEBUG [LiveKitNativeAudioCapture] input device override=\"$next\" " +
+                        "(no capture running; will be used when one starts)"
+                )
+                return
+            }
+            restartSessionId = sessionId
+            restartEpoch = epoch
+            restartBridge = bridge
+            restartFailure = failureSink
+        }
+        println(
+            "DEBUG [LiveKitNativeAudioCapture] input device override=\"$next\" " +
+                "(restarting capture now — the old line is still open on the previous device)"
+        )
+        scope.launch {
+            val previous = requestStop()
+            previous?.cancelAndJoin()
+            if (restartBridge != null) {
+                val ok = start(restartSessionId, restartEpoch, restartBridge, restartFailure ?: {})
+                println(
+                    "DEBUG [LiveKitNativeAudioCapture] capture restarted on " +
+                        "override=\"$next\" ok=$ok"
+                )
+            }
+        }
     }
 
     // Multiplies the fixed capture gain / post-APM signal; 1.0 leaves levels untouched.

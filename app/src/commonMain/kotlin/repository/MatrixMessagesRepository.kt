@@ -199,6 +199,27 @@ class MatrixMessagesRepository(val context: MatrixContext) : OrbitMessagesReposi
         const val DECRYPTION_WAIT_TIMEOUT_MS = 10_000L
         const val HISTORY_LOAD_TIMEOUT_MS = 20_000L
         const val PINNED_EVENTS_TTL_MS = 30_000L
+
+        /**
+         * How recent an undecrypted event must be for "waiting for keys" to be an
+         * honest label.
+         *
+         * Inside this window the event arrived over sync, and its megolm session
+         * is travelling in the same to-device batch -- so it genuinely may still
+         * decrypt. Outside it, the event came from backfill and the session
+         * predates this device; nothing is coming.
+         *
+         * 5 minutes is generous on purpose. A megolm session that has not arrived
+         * five minutes after its message has effectively failed, and labelling it
+         * "waiting" forever is what made a whole DM look broken. Generosity here
+         * costs one message occasionally reading "waiting" slightly too long; the
+         * opposite choice costs a genuinely-decryptable message being written off.
+         */
+        const val DECRYPTION_PENDING_WINDOW_MS = 5 * 60_000L
+
+        /** Rooms already reported as having undecryptable history. */
+        val undecryptableHistoryLogged =
+            java.util.Collections.synchronizedSet(mutableSetOf<String>())
     }
 
     override suspend fun sendMessage(channelId: String, body: String): Result<String> {
@@ -536,12 +557,44 @@ class MatrixMessagesRepository(val context: MatrixContext) : OrbitMessagesReposi
         //
         //   pending  -> the megolm session may still arrive, so more messages
         //               could decrypt. "Waiting" is a promise worth making.
-        //   failed   -> for a message from before this device joined the room,
-        //               nothing is ever coming. Saying "waiting" there is a
-        //               promise nobody keeps, which is what the old placeholder
-        //               did to every historical message in a DM.
+        //   failed   -> nothing is ever coming. Saying "waiting" there is a
+        //               promise nobody keeps.
+        //
+        // `null` is NOT by itself evidence of pending. It is what trixnity
+        // returns for an event it has no key for and will not re-emit, which is
+        // exactly what a BACKFILLED historical message looks like: the session
+        // was established months ago on a device that no longer exists, so no
+        // to-device key is ever coming.
+        //
+        // That distinction was half-made. The `isFailure` branch correctly says
+        // "couldn't be decrypted" for a message from before this device joined,
+        // and the comment above it calls the old always-"waiting" placeholder out
+        // as the bug it was. But backfill produces `null`, not a failure, so the
+        // fix never reached the case that actually happens -- and a DM's entire
+        // history rendered as "Encrypted - waiting for keys", forever, for every
+        // message in it. Screenshot-confirmed: two messages, 31 May and 12 June,
+        // both promised keys that were never coming.
+        //
+        // So the age of the event decides, because that is the only honest signal
+        // available here. An undecrypted event from inside the sync window may
+        // still get its session (the key arrives over to-device as the message
+        // does). One older than that is history, and history does not decrypt
+        // later.
         if (contentResult == null || contentResult.isFailure) {
-            val pending = contentResult == null
+            val ageMs = io.ktor.util.date.getTimeMillis() - ts.toEpochMilliseconds()
+            val pending = contentResult == null && ageMs <= DECRYPTION_PENDING_WINDOW_MS
+            if (contentResult == null && !pending) {
+                // Logged once per load rather than per message, so a room full of
+                // undecryptable history is diagnosable without flooding the log.
+                if (undecryptableHistoryLogged.add(roomId)) {
+                    util.OrbitLog.d(
+                        "MatrixMessagesRepository",
+                        "history in $roomId is undecryptable and never will be " +
+                            "(oldest ${ageMs / 86_400_000}d); labelled as undecryptable, not pending. " +
+                            "This device was not in the room when those megolm sessions existed.",
+                    )
+                }
+            }
             val placeholder = if (pending) {
                 "🔒 Encrypted — waiting for keys"
             } else {

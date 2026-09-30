@@ -210,7 +210,29 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                 ?: "orbit_party_1"
             val callId = content["call_id"]?.jsonPrimitive?.content ?: return Result.failure(Exception("No call_id"))
             val versionStr = content["version"]?.jsonPrimitive?.content ?: "1"
-            
+
+            // Orbit-specific event types have no representation in trixnity's
+            // `CallEventContent`, which is a SEALED class covering only the
+            // `m.call.*` family. There is no case to add, so `io.orbit.raise_hand`
+            // fell through to `Unknown call event type` and the raise-hand button
+            // did nothing at all.
+            //
+            // The receive side already reads these (MatrixSyncRepository matches
+            // on `content.eventType` and parses `raised`/`call_id` out of the raw
+            // JSON), so only the send half was missing.
+            //
+            // Sent as a raw `PUT /rooms/{id}/send/{type}/{txnId}` rather than
+            // through the typed builder, which is the only way to put a
+            // non-`m.call.*` type on the timeline. Scope worth being explicit
+            // about: this interoperates Orbit-to-Orbit. Element has no raise-hand
+            // UI and will not react to the event, and in an encrypted room the
+            // event travels unencrypted, so it is not a general Matrix feature.
+            // It is Orbit's own signal, and pretending otherwise would be the
+            // same class of lie as the `enabled = {}` button it replaces.
+            if (!eventType.startsWith("m.call.")) {
+                return sendRawTimelineEvent(roomId, eventType, content)
+            }
+
             val eventContent = when (eventType) {
                 "m.call.invite" -> {
                     val offer = content["offer"]?.jsonObject ?: return Result.failure(Exception("No offer"))
@@ -271,6 +293,47 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
             return Result.success(txnId)
         } catch (e: Exception) {
             return Result.failure(e)
+        }
+    }
+
+    /**
+     * Put a non-`m.call.*` event on a room's timeline as raw JSON.
+     *
+     * `PUT /rooms/{roomId}/send/{eventType}/{txnId}` is the standard endpoint
+     * every Matrix client uses to send a message; going through it directly is
+     * the only option for an event type the SDK's typed builder does not model.
+     */
+    private suspend fun sendRawTimelineEvent(
+        roomId: RoomId,
+        eventType: String,
+        content: JsonObject
+    ): Result<String> {
+        return try {
+            val txnId = "orbit_${System.currentTimeMillis()}_${eventType.substringAfterLast('.')}"
+            val response = context.httpClient.put(
+                context.fullUrl("/rooms/${roomId.full}/send/$eventType/$txnId")
+            ) {
+                header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
+                contentType(ContentType.Application.Json)
+                setBody(content)
+            }
+            if (response.status.value in 200..299) {
+                response.drain()
+                util.OrbitLog.d("MatrixCallsRepository", "raw timeline event sent type=$eventType txn=$txnId")
+                Result.success(txnId)
+            } else {
+                val body = runCatching { response.bodyAsText() }.getOrDefault("")
+                response.drain()
+                util.OrbitLog.e(
+                    "MatrixCallsRepository",
+                    "raw timeline event failed type=$eventType status=${response.status.value} body=$body"
+                )
+                Result.failure(Exception("Failed to send $eventType: HTTP ${response.status.value}"))
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 
