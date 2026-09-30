@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -20,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -103,6 +105,30 @@ internal fun AppearanceExtrasPane(settingsManager: SettingsManager) {
         val showMemberList by settingsManager.showMemberList.collectAsState(true)
         PrefCard("Show member list", "Display the member sidebar in channels by default.") {
             CosmicSwitch(checked = showMemberList, onCheckedChange = { settingsManager.setShowMemberList(it) })
+        }
+
+        // Clock and date. Both of these settings have had a reader in ChatUtils
+        // since the day they were written -- LocalUse24HourClock and
+        // LocalDateFormat are both consulted on every timestamp in every message --
+        // and neither had a writer anywhere in the app. So every timestamp was
+        // 12-hour and day-first, permanently, with no way to ask otherwise.
+        //
+        // The four date options below are exactly the four that `formatDate`
+        // can render. Anything else falls through to its `else` branch and quietly
+        // prints DD/MM/YYYY, so offering more here would be offering a control that
+        // lies.
+        SectionHeader("Clock & Date")
+        val use24Hour by settingsManager.use24HourClock.collectAsState(false)
+        PrefCard("24-hour clock", "Show 18:30 instead of 6:30 PM next to messages.") {
+            CosmicSwitch(checked = use24Hour, onCheckedChange = { settingsManager.setUse24HourClock(it) })
+        }
+        val dateFormat by settingsManager.dateFormat.collectAsState("DD/MM/YYYY")
+        PrefCard("Date format", "How dates are written. Only affects older messages; today and yesterday are named.") {
+            ChipGroup(
+                options = ui.screen.chat.DATE_FORMATS,
+                selected = dateFormat,
+                onSelect = { settingsManager.setDateFormat(it) }
+            )
         }
     }
 }
@@ -320,5 +346,99 @@ internal fun VoiceVideoFullPane(settingsManager: SettingsManager) {
             valueRange = 8f..384f,
             label = { "${it.toInt()} kbps" }
         )
+
+        // Self-hosted SFU. Left blank -- the default -- the client asks the
+        // homeserver's .well-known for an rtc_foci and falls back to the public dev
+        // SFU. Filling this in skips both, which is the only way to point Orbit at
+        // your own LiveKit deployment. It had a reader in WebRtcEffects and no
+        // writer anywhere, so it was permanently blank and the self-host path was
+        // documented but unreachable.
+        val sfuOverride by settingsManager.liveKitServiceUrl.collectAsState("")
+        var sfuDraft by remember(sfuOverride) { mutableStateOf(sfuOverride) }
+        // Same verdict the setter applies, computed here so the field can say why
+        // rather than refusing the save and saying nothing.
+        val sfuProblem = sfuDraft.trim().isNotEmpty() && repository.normalizeSfuUrl(sfuDraft) == null
+        PrefCard("SFU service URL", "Leave blank to use your homeserver's .well-known. Set only if you run your own LiveKit server.", vertical = true) {
+            BasicTextField(
+                value = sfuDraft,
+                onValueChange = { sfuDraft = it },
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyMedium.copy(color = tokens.Text_White),
+                cursorBrush = SolidColor(tokens.Accent),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(tokens.Input_Bg)
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
+            ) {
+                Text(
+                    text = when {
+                        sfuProblem -> "Must start with http:// or https://"
+                        else -> "https://livekit.example.com"
+                    },
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        color = if (sfuProblem) tokens.Danger else tokens.Text_Muted
+                    ),
+                    modifier = Modifier.weight(1f)
+                )
+                ui.components.OrbitButton(
+                    text = "Save",
+                    onClick = { settingsManager.setLiveKitServiceUrl(sfuDraft) },
+                    tone = ui.components.OrbitButtonTone.Primary,
+                    size = 30.dp,
+                    enabled = !sfuProblem
+                )
+            }
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  NOTIFICATIONS — desktop notifications and call sounds
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Notifications and call sounds.
+ *
+ * This category existed once and was deleted as a mock-up: every switch on it had
+ * a `SettingsManager` accessor and no reader anywhere, which made the pane a set of
+ * claims about behaviour that did not exist. It is back because that is no longer
+ * true of these four -- `WebRtcEffects` reads and honours every one of them. What
+ * brought it back is the setters, not the pane.
+ *
+ * Each caption below describes what the reader actually does, checked rather than
+ * remembered. There are deliberately no switches here for things like "message"
+ * notifications or per-channel muting: there is no engine behind either, and the
+ * absence is the honest position.
+ */
+@Composable
+internal fun NotificationsPane(settingsManager: SettingsManager) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        SectionHeader("Desktop")
+        val desktopNotifs by settingsManager.desktopNotifs.collectAsState(true)
+        PrefCard(
+            "Call notifications",
+            "Show a system notification for an incoming call, and for one you miss. Shown even when Orbit is in the background."
+        ) {
+            CosmicSwitch(checked = desktopNotifs, onCheckedChange = { settingsManager.setDesktopNotifs(it) })
+        }
+
+        SectionHeader("Call sounds")
+        val ringtone by settingsManager.callRingtone.collectAsState(true)
+        PrefCard("Incoming call ringtone", "Play a ringing sound while a call is waiting to be answered.") {
+            CosmicSwitch(checked = ringtone, onCheckedChange = { settingsManager.setCallRingtone(it) })
+        }
+        val joinLeave by settingsManager.joinLeaveSound.collectAsState(true)
+        PrefCard("Join and leave sounds", "Play a short blip when someone joins or leaves a call, including you.") {
+            CosmicSwitch(checked = joinLeave, onCheckedChange = { settingsManager.setJoinLeaveSound(it) })
+        }
+        val deafen by settingsManager.deafenSound.collectAsState(true)
+        PrefCard("Deafen sounds", "Play a short blip when you deafen or undeafen yourself.") {
+            CosmicSwitch(checked = deafen, onCheckedChange = { settingsManager.setDeafenSound(it) })
+        }
     }
 }

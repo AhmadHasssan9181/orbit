@@ -51,10 +51,14 @@ class SettingsManager {
     
     val enterSend = flowSettings.getBooleanFlow("enterSend", true)
     fun setEnterSend(value: Boolean) = settings.putBoolean("enterSend", value)
-    
-    val spellcheck = flowSettings.getBooleanFlow("spellcheck", true)
 
     // --- Accessibility ---
+    //
+    // "spellcheck" was an accessor with no reader and no writer: the switch that
+    // once offered it was deleted with the rest of the fabricated settings, and the
+    // Compose text field it would have applied to is not a spell-checkable one. It
+    // is gone rather than left as a reader, because a reader with no writer is the
+    // exact shape that made this file look configurable when it was not.
     
     
     // --- Voice & Video ---
@@ -119,7 +123,16 @@ class SettingsManager {
 
     // --- Calls / SFU ---
     // Blank means auto: .well-known rtc_foci → public dev-fallback SFU.
+    //
+    // The URL is interpolated straight into "<url>/get_token" and "<url>/sfu/get",
+    // so a value with no scheme produces a relative URL and the failure surfaces
+    // much later as a call that will not connect, with nothing in the log saying
+    // the setting was the reason. `normalizeSfuUrl` rejects it at the point of
+    // entry instead; it is public and pure so the settings card can show the same
+    // verdict before it lets you save.
     val liveKitServiceUrl = flowSettings.getStringFlow("liveKitServiceUrl", "")
+    fun setLiveKitServiceUrl(value: String) =
+        settings.putString("liveKitServiceUrl", normalizeSfuUrl(value) ?: "")
 
     // --- Integrations ---
     // Secret material must not live in plaintext preferences; blank disables the
@@ -142,25 +155,35 @@ class SettingsManager {
         const val TENOR_API_KEY_SETTING = "tenorApiKey"
     }
 
-    // --- Notifications ---
+    // --- Notifications & Sounds ---
+    //
+    // These four had readers and no writer for the whole life of the app. The
+    // readers are real -- WebRtcEffects honours every one of them -- so the app
+    // behaved as though each of these were configurable while no control existed to
+    // change any of them, and the only reachable value was the default. The setters
+    // are below and the switches are in Settings > Notifications.
     val desktopNotifs = flowSettings.getBooleanFlow("desktopNotifs", true)
-    
-    
+    fun setDesktopNotifs(value: Boolean) = settings.putBoolean("desktopNotifs", value)
+
     val joinLeaveSound = flowSettings.getBooleanFlow("joinLeaveSound", true)
-    
-    
+    fun setJoinLeaveSound(value: Boolean) = settings.putBoolean("joinLeaveSound", value)
+
     val callRingtone = flowSettings.getBooleanFlow("callRingtone", true)
-    
+    fun setCallRingtone(value: Boolean) = settings.putBoolean("callRingtone", value)
+
     val deafenSound = flowSettings.getBooleanFlow("deafenSound", true)
-    
-    
+    fun setDeafenSound(value: Boolean) = settings.putBoolean("deafenSound", value)
+
     // --- Language & Time ---
-    
-    
+    //
+    // Also reader-without-writer: `use24HourClock` was permanently false and
+    // `dateFormat` permanently "DD/MM/YYYY", so every timestamp in every message was
+    // 12-hour and day-first with no way to ask otherwise.
     val use24HourClock = flowSettings.getBooleanFlow("use24HourClock", false)
-    
-    
+    fun setUse24HourClock(value: Boolean) = settings.putBoolean("use24HourClock", value)
+
     val dateFormat = flowSettings.getStringFlow("dateFormat", "DD/MM/YYYY")
+    fun setDateFormat(value: String) = settings.putString("dateFormat", value)
 
     // --- Windows ---
     
@@ -169,10 +192,14 @@ class SettingsManager {
     // JVM (with its whole call session) in the tray. Opt in for tray mode.
     val minimizeToTray = flowSettings.getBooleanFlow("minimizeToTray", false)
     fun setMinimizeToTray(value: Boolean) = settings.putBoolean("minimizeToTray", value)
-    
-    val alwaysOnTop = flowSettings.getBooleanFlow("alwaysOnTop", false)
-    
-    
+
+    // "alwaysOnTop" was also reader-less and writer-less. The one place that could
+    // have honoured it, CallPipWindow, passes the literal `alwaysOnTop = true` to the
+    // native window -- a picture-in-picture call window that can slide behind the
+    // app it belongs to is not a picture-in-picture window. If that ever becomes
+    // configurable it needs the reader; until then the accessor is a lie about a
+    // capability that does not exist.
+
     // --- Advanced ---
     
     /**
@@ -220,4 +247,30 @@ class SettingsManager {
         settings.putString("roomNotifMode.$roomId", mode)
     
     
+}
+
+/**
+ * Validates a user-supplied SFU URL, returning the value to store or null if it
+ * cannot be one.
+ *
+ * Blank is a legitimate answer and normalises to null, which the setter turns back
+ * into "" -- the auto-detect path. Anything else must carry an http(s) scheme,
+ * because the value is concatenated onto "/get_token" and "/sfu/get" without one
+ * being added, so "livekit.example.com" would ask for a relative path and the
+ * result would be a call that silently never connects.
+ *
+ * Trailing slashes are removed rather than rejected: the user will paste one, the
+ * token provider already trims, and failing on it would be pedantry.
+ */
+internal fun normalizeSfuUrl(raw: String): String? {
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty()) return null
+    val lower = trimmed.lowercase()
+    if (!lower.startsWith("http://") && !lower.startsWith("https://")) return null
+    // Trim trailing slashes, but never past the "scheme://" itself. A naive
+    // trimEnd('/') turns a typed "https://" into "https:", which is a worse value
+    // than the one the user entered and produces a token URL with no scheme at all.
+    val schemeEnd = lower.indexOf("://") + 3
+    val body = trimmed.substring(schemeEnd).trimEnd('/')
+    return trimmed.substring(0, schemeEnd) + body
 }
