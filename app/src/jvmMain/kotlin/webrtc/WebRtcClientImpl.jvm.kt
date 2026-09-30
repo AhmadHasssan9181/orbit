@@ -1082,9 +1082,18 @@ class JvmWebRtcClient : WebRtcClient {
 
     override fun setAttenuationStrength(strength: Float) {
         attenuationStrength = strength
-        if (peerConnection != null) {
-            WindowsAudioDucker.duckVolumes(strength)
-        }
+        // No `if (peerConnection != null)` gate.
+        //
+        // That gate meant ducking only ever ran on a 1:1, because a group call has
+        // no WebRTC peer connection -- it goes through LiveKit. So the setting was
+        // live in the one call type where ducking matters least and dead in the one
+        // where it matters most, and nobody noticed because the slider moved in
+        // both.
+        //
+        // [duckVolumes] enumerates audio sessions itself and holds no reference to
+        // the call, so it is safe with or without a peer connection.
+        runCatching { WindowsAudioDucker.duckVolumes(strength) }
+            .onFailure { println("WARN [WebRTC] duckVolumes failed: ${it.message}") }
     }
 
     override fun setRemoteVolume(volume: Float) {

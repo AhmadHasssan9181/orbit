@@ -259,7 +259,11 @@ private fun darkTokens(cs: androidx.compose.material3.ColorScheme) = CosmicToken
     SeparatorStrong = Color(0xFF232428),
 
     Header_Bg = Ink780,
-    Input_Bg = Ink700,
+    // Discord's own chat-input colour (#383A40). This was Ink700 -- identical to
+    // CardBg -- so an input sitting on a card had the same colour as the card and
+    // no edge at all. Ink780 is darker than the card: the recessed direction, and
+    // what Discord actually does.
+    Input_Bg = Ink780,
     Members_Bg = Ink800,
     Rail_Bg = Ink950,
     Rail_Active = Ink650,   // flat grey, not an accent wash — Discord's server rail

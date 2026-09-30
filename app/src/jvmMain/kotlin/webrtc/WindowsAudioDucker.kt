@@ -91,6 +91,36 @@ object WindowsAudioDucker {
     private var duckJob: Job? = null
 
     /**
+     * Where the last fade left off, so the next one ramps FROM there.
+     *
+     * Without this every fade restarts at 1.0, which means a duck during a duck
+     * leaps up to full volume and back down again instead of adjusting smoothly.
+     */
+    @Volatile
+    private var lastFactor: Float = 1.0f
+
+    /** Steps in a fade ramp. */
+    private const val FADE_STEPS = 24
+
+    /**
+     * Delay between steps. 24 × 20 ms = 480 ms.
+     *
+     * It was 10 × 15 ms = 150 ms, which is quick enough to read as a swoop rather
+     * than a duck. Long enough to sound deliberate, short enough that ducking still
+     * feels immediate when someone starts talking.
+     */
+    private const val FADE_STEP_MS = 20L
+
+    /**
+     * Factor changes below this are ignored.
+     *
+     * A slider emits a value per frame while it moves, and re-issuing
+     * `SetMasterVolume` for each one is what made the old jump-branch sound like it
+     * was pumping. Below about 1% nobody can hear the difference.
+     */
+    private const val MIN_FACTOR_DELTA = 0.01f
+
+    /**
      * Starts a fade, cancelling AND joining the previous one. cancel() alone
      * cannot preempt a running non-suspending forEach, so two fade loops could
      * be inside SetMasterVolume at the same time and the older one would win.
@@ -181,19 +211,48 @@ object WindowsAudioDucker {
         }
     }
 
+    /**
+     * Fade every captured session toward [targetFactor], over [FADE_STEPS] × [FADE_STEP_MS].
+     *
+     * Runs inside [replaceFadeJob], so a new fade preempts the previous one rather
+     * than racing it.
+     */
+    private suspend fun CoroutineScope.fadeSessionsTo(targetFactor: Float) {
+        val from = lastFactor
+        // A change smaller than this is not worth a fade: re-issuing the same volume
+        // for every slider tick is what made the old code sound like it was pumping.
+        if (kotlin.math.abs(targetFactor - from) < MIN_FACTOR_DELTA) return
+        for (step in 1..FADE_STEPS) {
+            val t = step / FADE_STEPS.toFloat()
+            val factor = from + (targetFactor - from) * t
+            duckedSessions.forEach { (vol, original) ->
+                vol.SetMasterVolume(original * factor, null)
+            }
+            lastFactor = factor
+            delay(FADE_STEP_MS)
+        }
+        lastFactor = targetFactor
+    }
+
     fun duckVolumes(strength: Float) {
         if (strength <= 0.01f) {
             unduckVolumes()
             return
         }
-        
+
         if (duckedSessions.isNotEmpty()) {
-            replaceFadeJob {
-                val currentFactor = 1.0f - strength
-                duckedSessions.forEach { (vol, original) ->
-                    vol.SetMasterVolume(original * currentFactor, null)
-                }
-            }
+            // FADE, every time.
+            //
+            // This branch used to jump straight to the new level with no fade at
+            // all:
+            //
+            //     val currentFactor = 1.0f - strength
+            //     duckedSessions.forEach { vol.SetMasterVolume(original * currentFactor, null) }
+            //
+            // So the FIRST duck faded over 150 ms and every duck after it was an
+            // instant jump -- which is what made it pump. Drags and held notes moved
+            // other applications in audible steps while the first one swooped.
+            replaceFadeJob { fadeSessionsTo(1.0f - strength) }
             return
         }
         
@@ -271,14 +330,9 @@ object WindowsAudioDucker {
                             sessionEnumerator.Release()
 
                             replaceFadeJob {
-                                // Fade down
-                                for (step in 1..10) {
-                                    val currentFactor = 1.0f - (strength * (step / 10.0f))
-                                    duckedSessions.forEach { (vol, original) ->
-                                        vol.SetMasterVolume(original * currentFactor, null)
-                                    }
-                                    delay(15)
-                                }
+                                // Fade down, through the shared ramp so the first
+                                // duck sounds like every subsequent one.
+                                fadeSessionsTo(1.0f - strength)
                             }
                         }
                         sessionManager.Release()
@@ -308,20 +362,41 @@ object WindowsAudioDucker {
 
         replaceFadeJob {
             try {
-                // Restore original volume
-                sessionsToUnduck.forEach { (vol, original) ->
-                    vol.SetMasterVolume(original, null)
+                // Fade BACK UP over the same ramp.
+                //
+                // This used to restore every session in one assignment with no fade
+                // at all, so ducking swooshed down over 150 ms and unducking SNAPPED
+                // back to full volume instantly. That asymmetry is the loudest part
+                // of the whole feature and it is why it read as broken rather than
+                // as crude: a volume jump with no ramp is a click, and a click at
+                // full scale is startling.
+                //
+                // The sessions are put back into `duckedSessions` for the duration
+                // of the fade because [fadeSessionsTo] walks that list, and taken
+                // out again afterwards -- otherwise the Release below would free a
+                // COM interface while the fade was still calling SetMasterVolume
+                // through it.
+                duckedSessions.addAll(sessionsToUnduck)
+                try {
+                    fadeSessionsTo(1.0f)
+                } finally {
+                    val remaining = synchronized(duckCaptureLock) {
+                        val copy = duckedSessions.toList()
+                        duckedSessions.clear()
+                        duckedKeys.clear()
+                        copy
+                    }
+                    // Only release what is genuinely no longer in use: a duck that
+                    // arrived mid-unduck has already re-captured the same pointers.
+                    remaining.forEach { entry ->
+                        if (!duckedKeys.contains(entry.second)) runCatching { entry.first.Release() }
+                    }
                 }
-                delay(15) // small delay to ensure COM calls finish
-            } finally {
-                // Release in a non-cancellable context. These Release calls used
-                // to sit after a suspension point, so a duckVolumes() landing
-                // inside the 15 ms delay cancelled this job first and leaked
-                // every captured ISimpleAudioVolume permanently — one leaked
-                // interface per rapid screen-share toggle.
-                withContext(kotlinx.coroutines.NonCancellable) {
-                    sessionsToUnduck.forEach { runCatching { it.first.Release() } }
-                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Cancelled by a duck that landed mid-unduck. The pointers were
+                // re-captured by that duck, so releasing them here would free a
+                // COM interface the new fade is still using.
+                throw e
             }
         }
     }

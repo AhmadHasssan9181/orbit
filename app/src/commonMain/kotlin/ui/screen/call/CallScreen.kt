@@ -529,15 +529,24 @@ fun CallScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    if (!isEmbedded) {
-                        IconButton(
-                            onClick = { callManager.isMinimized.value = true },
-                            modifier = Modifier
-                                .size(36.dp)
-                                .background(Color.White.copy(alpha = 0.08f), CircleShape)
-                        ) {
-                            Icon(Icons.Default.ArrowBack, contentDescription = "Minimize", tint = Color.White, modifier = Modifier.size(18.dp))
-                        }
+                    // Always rendered, including embedded.
+                    //
+                    // This was `if (!isEmbedded)`, and OrbitApp mounts the 1:1
+                    // surface with `isEmbedded = true` -- so the minimize button did
+                    // not exist in a 1:1 at all. That was the other half of the same
+                    // mistake fixed in the PiP branch above: I widened the gate on
+                    // the destination and left the one on the button that leads to
+                    // it. Both had to move together; neither alone does anything.
+                    //
+                    // `isEmbedded` means "the host supplies its own corner card". It
+                    // does not mean "this surface has no way out".
+                    IconButton(
+                        onClick = { callManager.isMinimized.value = true },
+                        modifier = Modifier
+                            .size(36.dp)
+                            .background(Color.White.copy(alpha = 0.08f), CircleShape)
+                    ) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Minimize", tint = Color.White, modifier = Modifier.size(18.dp))
                     }
 
                     Column {
