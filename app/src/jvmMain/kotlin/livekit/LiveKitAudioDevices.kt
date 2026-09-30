@@ -32,32 +32,54 @@ import javax.sound.sampled.TargetDataLine
  *
  * ## Format
  *
- * The names are probed against the formats Orbit actually uses — 48 kHz, 16-bit,
- * signed, little-endian, mono for capture and the render format for playback. A
- * mixer is listed only if it can open a line for the format we will ask it for,
- * so the list cannot contain a device that is guaranteed to fail on selection.
+ * Names are probed against what the two paths actually open, and the two
+ * differ:
+ *
+ * - capture opens a `TargetDataLine` at 48 kHz / 16-bit / **mono** (the run log
+ *   confirms: `selected AudioFormat: sampleRate=48000 channels=1`)
+ * - playback opens a `SourceDataLine` at 48 kHz / 16-bit / **stereo**, because
+ *   the native mixer builds `AudioFrame(..., 2, kSamplesPerChannel)`
+ *
+ * That difference was a real bug, and it was mine: this list filtered outputs on
+ * MONO support while the player asked for stereo, so the picker offered devices
+ * the player could not open and omitted devices it could. Input worked (its
+ * filter matched) and output did not, which is exactly the reported symptom --
+ * "input is getting mapped not the output".
+ *
+ * A mixer is listed if it can open the line at 48 kHz / 16-bit signed LE in
+ * EITHER channel count, because that is what either path might ask for and
+ * neither should be offered a device that will be rejected.
  *
  * `Default` is always offered and always listed first. It means "let the system
  * choose", and it is what both ends fall back to, so it has to be reachable.
  */
 object LiveKitAudioDevices {
 
-    /** What the capture loop opens. Mono, because the mixer downmixes. */
-    private val CAPTURE_FORMAT = AudioFormat(48_000f, 16, 1, true, false)
-
-    /** What the playback line opens. Mono out; the mixer is already downmixed. */
-    private val PLAYBACK_FORMAT = AudioFormat(48_000f, 16, 1, true, false)
-
+    private const val SAMPLE_RATE = 48_000f
+    private const val BITS = 16
     private const val DEFAULT_LABEL = "Default"
 
-    fun inputNames(): List<String> = listOf(DEFAULT_LABEL) + mixersFor(TargetDataLine::class.java, CAPTURE_FORMAT)
-
-    fun outputNames(): List<String> = listOf(DEFAULT_LABEL) + mixersFor(SourceDataLine::class.java, PLAYBACK_FORMAT)
+    /** What the capture loop opens. */
+    private val CAPTURE_FORMATS = listOf(AudioFormat(SAMPLE_RATE, BITS, 1, true, false))
 
     /**
-     * Every mixer that can open [lineClass] for [format], named the way the
-     * matcher in `LiveKitNativeAudioCapture` / `LiveKitNativeAudioPlayer` will
-     * see it.
+     * What the playback line opens: stereo, matching the frames the native mixer
+     * produces. Mono is accepted too, so a device that only does mono is still
+     * offered rather than silently missing.
+     */
+    private val PLAYBACK_FORMATS = listOf(
+        AudioFormat(SAMPLE_RATE, BITS, 2, true, false),
+        AudioFormat(SAMPLE_RATE, BITS, 1, true, false),
+    )
+
+    fun inputNames(): List<String> = listOf(DEFAULT_LABEL) + mixersFor(TargetDataLine::class.java, CAPTURE_FORMATS)
+
+    fun outputNames(): List<String> = listOf(DEFAULT_LABEL) + mixersFor(SourceDataLine::class.java, PLAYBACK_FORMATS)
+
+    /**
+     * Every mixer that can open [lineClass] for at least one of [formats], named
+     * the way the matcher in `LiveKitNativeAudioCapture` / `LiveKitNativeAudioPlayer`
+     * will see it.
      *
      * Sorted so the list is stable between runs: `AudioSystem.getMixerInfo()`
      * order is not guaranteed, and a picker whose options reshuffle on every
@@ -65,14 +87,14 @@ object LiveKitAudioDevices {
      */
     private fun mixersFor(
         lineClass: Class<out DataLine>,
-        format: AudioFormat
+        formats: List<AudioFormat>
     ): List<String> {
-        val info = DataLine.Info(lineClass, format)
         return runCatching {
             AudioSystem.getMixerInfo()
                 .filter { candidate ->
                     runCatching {
-                        AudioSystem.getMixer(candidate).isLineSupported(info)
+                        val mixer = AudioSystem.getMixer(candidate)
+                        formats.any { mixer.isLineSupported(DataLine.Info(lineClass, it)) }
                     }.getOrDefault(false)
                 }
                 .map { it.name }

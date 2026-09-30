@@ -685,7 +685,21 @@ class CallManager(
         livekitTokenFetcher: suspend () -> livekit.LiveKitAuthResponse
     ): Boolean {
         return try {
+            // Phase timer. Joining a MatrixRTC call is four network round trips
+            // (ICE discovery, OpenID, SFU JWT, membership publish) plus the native
+            // connect, and "joining takes a long time" is not a diagnosis. Each
+            // step is stamped so the slow one is a number rather than a guess.
+            // One line at the end; see JOIN-TIMING below.
+            val t0 = System.nanoTime()
+            fun phase() = (System.nanoTime() - t0) / 1_000_000L
+            var tIce = 0L
+            var tToken = 0L
+            var tPublish = 0L
+            var tProbe = 0L
+            var tNative = 0L
+
             loadIceServers()
+            tIce = phase()
             var effectiveIceServers = iceServers
             if (effectiveIceServers.isEmpty()) {
                 println("DEBUG [CallManager] No Matrix ICE servers found, injecting fallback STUN")
@@ -693,7 +707,9 @@ class CallManager(
             }
 
             println("DEBUG [CallManager] Fetching LiveKit token for url: $livekitUrl")
+            val tokenStart = System.nanoTime()
             val authResponse = withTimeoutOrNull(TOKEN_FETCH_TIMEOUT_MS) { livekitTokenFetcher() }
+            tToken = (System.nanoTime() - tokenStart) / 1_000_000L
             if (authResponse == null) {
                 println("ERROR [CallManager] LiveKit token fetch timed out after ${TOKEN_FETCH_TIMEOUT_MS}ms")
                 groupConnectionTracker.markFailed("Timed out fetching LiveKit token")
@@ -704,8 +720,10 @@ class CallManager(
             // the Joining deadline so it only measures the membership publish.
             groupConnectionTracker.noteJoiningProgress()
             groupCallLivekitIdentity = authResponse.identity
+            val publishStart = System.nanoTime()
             val membershipVisible = onUpdateGroupCallMembershipCapabilities
                 ?.invoke(roomId, callId, true, false, authResponse.identity) ?: true
+            tPublish = (System.nanoTime() - publishStart) / 1_000_000L
             groupConnectionTracker.onMembershipPublished(membershipVisible)
             if (!membershipVisible) {
                 println("ERROR [CallManager] MatrixRTC membership was not visible after publish; aborting join")
@@ -741,12 +759,14 @@ class CallManager(
 
             // Encrypted rooms need per-participant media keys (matrixRTC olm
             // exchange) and the native frame cryptors armed BEFORE connect.
+            val probeStart = System.nanoTime()
             val roomEncrypted = try {
                 roomIsEncryptedChecker?.invoke(roomId) ?: false
             } catch (e: Exception) {
                 println("WARN [CallManager] room encryption probe failed: ${e.message}")
                 false
             }
+            tProbe = (System.nanoTime() - probeStart) / 1_000_000L
             livekit.prepareNativeE2EE(roomEncrypted)
             println(
                 "DEBUG [CallManager] room encrypted=$roomEncrypted → native E2EE media " +
@@ -755,6 +775,8 @@ class CallManager(
 
             var readiness: livekit.NativeResult<livekit.NativeMediaReadiness>? = null
             var connectOk = false
+            val nativeStart = System.nanoTime()
+            var attempts = 0
             for (attempt in 1..GroupCallConnectionTracker.MAX_CONNECT_ATTEMPTS) {
                 if (attempt > 1) {
                     groupConnectionTracker.noteRetryStarted()
@@ -762,6 +784,7 @@ class CallManager(
                     livekit.disconnectFromLiveKit(userInitiated = false)
                     delay(RETRY_BACKOFF_MS)
                 }
+                attempts = attempt
                 readiness = connectOnceWithProgress(isVideo, effectiveIceServers, livekitTokenFetcher, authResponse)
                 connectOk = readiness.ok && readiness.value != null &&
                     readiness.value.state == livekit.NativeMediaState.MediaReady &&
@@ -769,6 +792,11 @@ class CallManager(
                     readiness.value.acceptingAudioFrames
                 if (connectOk || groupConnectionTracker.connection.value.stage == GroupCallStage.Failed) break
             }
+            tNative = (System.nanoTime() - nativeStart) / 1_000_000L
+            println(
+                "JOIN-TIMING ice=${tIce}ms token=${tToken}ms publish=${tPublish}ms " +
+                    "encProbe=${tProbe}ms native=${tNative}ms (attempts=$attempts) total=${phase()}ms"
+            )
             if (groupConnectionTracker.connection.value.stage == GroupCallStage.Failed) {
                 // Watchdog gave up mid-join (even if the session technically
                 // connected afterwards): tear down instead of leaving a zombie
