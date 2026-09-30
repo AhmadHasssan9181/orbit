@@ -1649,19 +1649,34 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
         }
 
         val normalizedStreamIds = streamIds.ifEmpty { setOf("mediaStream") }
+
+        // Which stream ids belong to the screen share, worked out per video
+        // section rather than once for the whole SDP.
+        //
+        // This was one boolean for the entire offer, stamped onto every stream in
+        // it. So an SDP carrying both a camera and a screen share marked BOTH as
+        // the share, and an SDP carrying only a camera that happened to mention
+        // SCREEN_TRACK_ID anywhere marked the camera as the share. Whichever way
+        // it went, the answer was attached to streams that had nothing to do with
+        // it.
+        val screenStreamIds = sdpScreenShareStreamIds(sdp)
+
         val hasAudio = sdpHasSendingMedia(sdp, "audio")
         val hasVideo = sdpHasSendingMedia(sdp, "video")
-        
-        val isScreenShare = sdp.contains("SCREEN_TRACK_ID") || sdp.contains("screenTrack")
 
-        return normalizedStreamIds.associateWith {
+        return normalizedStreamIds.associateWith { streamId ->
             StreamMetadata(
-                purpose = if (isScreenShare) Purpose.SCREENSHARE else Purpose.USERMEDIA,
+                purpose = if (streamId in screenStreamIds) {
+                    Purpose.SCREENSHARE
+                } else {
+                    Purpose.USERMEDIA
+                },
                 audioMuted = !hasAudio,
                 videoMuted = !hasVideo
             )
         }
     }
+
 
     private fun sdpHasSendingMedia(sdp: String, media: String): Boolean {
         val section = sdpMediaSection(sdp, media) ?: return false
@@ -1703,3 +1718,82 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
 
 @kotlinx.serialization.Serializable
 data class TurnServerResponse(val uris: List<String>, val username: String? = null, val password: String? = null, val ttl: Long? = null)
+
+/**
+ * Stream ids that belong to the screen share.
+ *
+ * Top level on purpose: the WebRTC layer has to ask this question the moment a
+ * remote description arrives, and it has no repository instance to ask.
+ *
+ * Two independent signals, because neither alone is reliable:
+ *
+ *  - A video section whose OWN body mentions a screen-share marker. That is
+ *    precise, and the only safe answer when a call carries a camera and a share
+ *    at the same time.
+ *  - A marker at session level, which older Matrix clients emit there rather
+ *    than per section. Honoured only when there is a single video stream, where
+ *    it is unambiguous. With several streams it is not, and guessing there is
+ *    exactly what made a camera render as a shared screen.
+ */
+internal fun sdpScreenShareStreamIds(sdp: String): Set<String> {
+    if (sdp.isBlank()) return emptySet()
+    if (!sdpMentionsScreenShare(sdp)) return emptySet()
+
+    // VIDEO sections only. An audio section carries an msid too, and one of them
+    // mentioning a screen-share marker -- which a client sharing screen audio will
+    // do -- would otherwise contribute its stream as though it were the video
+    // share. Caught by audioOnlySectionsAreNeverConsideredShares.
+    val sections = sdpMediaSections(sdp)
+        .filter { it.firstOrNull()?.startsWith("m=video ") == true }
+        .map { section ->
+            val body = section.joinToString("\n")
+            body to sdpVideoSectionStreamId(body)
+        }
+        .filter { (_, id) -> id != null }
+
+    val videoStreamIds = sections.map { it.second }.filterNotNull()
+
+    // One video stream and a session-level marker: that IS the share.
+    if (videoStreamIds.size <= 1) return videoStreamIds.toSet()
+
+    // Several: trust only the markers sitting inside a section.
+    return sections
+        .filter { (body, _) -> sdpMentionsScreenShare(body) }
+        .mapNotNull { it.second }
+        .toSet()
+}
+
+internal fun sdpMentionsScreenShare(sdp: String): Boolean =
+    sdp.contains("SCREEN_TRACK_ID") ||
+        sdp.contains("screenTrack", ignoreCase = true) ||
+        sdp.contains("screenshare", ignoreCase = true) ||
+        sdp.contains("screen_share", ignoreCase = true)
+
+/**
+ * Every media section in the SDP, each as its own list of lines.
+ *
+ * Reads `m=` as the start of a section, the same rule the single-section lookup
+ * inside the repository uses, so the two cannot drift apart on what a boundary
+ * is.
+ */
+internal fun sdpMediaSections(sdp: String): List<List<String>> {
+    val lines = sdp.lineSequence().map { it.trim() }.toList()
+    val sections = mutableListOf<List<String>>()
+    var current: MutableList<String>? = null
+    for (line in lines) {
+        if (line.startsWith("m=")) {
+            current = mutableListOf(line)
+            sections.add(current)
+        } else if (current != null) {
+            current.add(line)
+        }
+    }
+    return sections
+}
+
+/** The stream id named by `a=msid:<stream> <track>` inside one section. */
+internal fun sdpVideoSectionStreamId(section: String): String? {
+    Regex("""(?m)^a=msid:([^\s]+)""").find(section)?.let { return it.groupValues[1] }
+    Regex("""(?m)^a=ssrc:\d+\s+msid:([^\s]+)""").find(section)?.let { return it.groupValues[1] }
+    return null
+}

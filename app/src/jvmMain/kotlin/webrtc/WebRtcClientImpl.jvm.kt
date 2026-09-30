@@ -43,6 +43,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import repository.TurnServer
+import repository.sdpScreenShareStreamIds
 import kotlin.math.abs
 
 /**
@@ -118,6 +119,55 @@ class JvmWebRtcClient : WebRtcClient {
     override val isScreenSharing: StateFlow<Boolean> = _isScreenSharing
 
     private val _isRemoteScreenSharing = MutableStateFlow(false)
+
+    /**
+     * Track ids the negotiated SDP attributed to a screen share.
+     *
+     * Empty until a remote description arrives, which is the correct answer for a
+     * call where nobody is sharing.
+     */
+    private val _remoteScreenTrackIds = MutableStateFlow<Set<String>>(emptySet())
+
+    private fun remoteScreenTrackIds(): Set<String> = _remoteScreenTrackIds.value
+
+    /**
+     * Read a remote SDP and remember which of its video streams are shares.
+     *
+     * Deliberately lenient about finding the share, and strict about not
+     * inventing one. A miss means the share renders as a camera tile, which is
+     * wrong but visible and recoverable. A false positive turns somebody's face
+     * into a letterboxed panel on top of the call, which is worse and looks like
+     * a bug in our layout rather than in our signalling.
+     */
+    private fun noteRemoteScreenShareTracks(sdp: String) {
+        if (sdp.isBlank()) return
+        val streamIds = sdpScreenShareStreamIds(sdp)
+        if (streamIds.isEmpty()) return
+        val trackIds = sdpVideoTrackIdsFor(sdp, streamIds)
+        if (trackIds.isEmpty()) {
+            println("DEBUG: [WebRTC] SDP marked streams=$streamIds but no a=msid track ids to match on")
+            return
+        }
+        _remoteScreenTrackIds.value = trackIds
+        println("DEBUG: [WebRTC] SDP marked screen-share streams=$streamIds tracks=$trackIds")
+    }
+
+    /**
+     * Track ids belonging to [streamIds], per `a=msid:<stream> <track>`.
+     *
+     * The track id is the second token. That is the value the native layer
+     * reports back from `onTrack`, which is why it is the one compared against
+     * rather than the stream id.
+     */
+    private fun sdpVideoTrackIdsFor(sdp: String, streamIds: Set<String>): Set<String> {
+        val ids = LinkedHashSet<String>()
+        Regex("""(?m)^a=msid:([^\s]+)\s+([^\s]+)""").findAll(sdp).forEach { match ->
+            val stream = match.groupValues[1]
+            val track = match.groupValues[2]
+            if (stream in streamIds) ids.add(track)
+        }
+        return ids
+    }
     override val isRemoteScreenSharing: StateFlow<Boolean> = _isRemoteScreenSharing
 
     private var selectedAudioOutput: String = "Default"
@@ -488,12 +538,33 @@ class JvmWebRtcClient : WebRtcClient {
                 println("DEBUG: [WebRTC] Attaching VideoTrack sink! track ID: ${track.getId()}")
                 _onStreamAdded.tryEmit(true)
                 
-                // Element and other Matrix clients often don't label screen share track IDs with "screen".
-                // If we already have a remote camera track, assume any subsequent video track is a screen share.
-                val isScreen = track.getId().contains("screen", ignoreCase = true) || 
-                               track.getId().contains("desktop", ignoreCase = true) ||
-                               remoteVideoTrack != null
-                
+                // What the negotiated SDP said about this track, which is the only
+                // authoritative answer available here.
+                //
+                // The three name-based guesses below are all unreliable, and the
+                // one that carried the weight -- "a second video track must be a
+                // screen share" -- only works if the camera happened to arrive
+                // first. Element's track ids are bare UUIDs, so `contains("screen")`
+                // and `contains("desktop")` are both false, and a share that arrives
+                // as the FIRST remote track has `remoteVideoTrack == null`, so every
+                // clause is false and the share is filed as a camera.
+                //
+                // That is not hypothetical. Run 45 caught it exactly: one remote
+                // track, id 528d6310-a864-4e5a-ab1d-989b6c6d8c15, filed as
+                // "Remote Camera VideoTrack", and the grid reporting shares=0 while
+                // the screen plainly showed somebody sharing.
+                val id = track.getId()
+                val fromSdp = remoteScreenTrackIds().contains(id)
+                val byName = id.contains("screen", ignoreCase = true) ||
+                             id.contains("desktop", ignoreCase = true)
+                val isScreen = fromSdp || byName || remoteVideoTrack != null
+
+                println(
+                    "DEBUG: [WebRTC] remote track id=$id " +
+                        "fromSdp=$fromSdp byName=$byName hadCamera=${remoteVideoTrack != null} " +
+                        "-> ${if (isScreen) "SCREENSHARE" else "camera"}"
+                )
+
                 if (isScreen) {
                     remoteScreenVideoTrack = track
                     _isRemoteScreenSharing.value = true
@@ -945,6 +1016,12 @@ class JvmWebRtcClient : WebRtcClient {
     override fun setRemoteDescription(sessionDescription: SessionDescriptionModel, onSuccess: () -> Unit, onError: (String) -> Unit) {
         try {
             val type = RTCSdpType.valueOf(sessionDescription.type.uppercase())
+            // Every remote description passes through here, so this is the one
+            // place the negotiated SDP can be read for what it says the tracks
+            // are. It is also the only trustworthy answer to "is this video track
+            // a camera or a screen share" -- track ids are bare UUIDs from
+            // Element, so there is nothing in the id to read.
+            noteRemoteScreenShareTracks(sessionDescription.sdp)
             val sdp = RTCSessionDescription(type, sessionDescription.sdp)
             val observer = object : SetSessionDescriptionObserver {
                 override fun onSuccess() { onSuccess() }
