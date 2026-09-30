@@ -237,6 +237,30 @@ constexpr int kMaxCatchUpFramesPerTick = 8;
 // audio. Losing old samples beats emitting an ever-growing pile of stale ones.
 constexpr int kCatchUpResyncMs = 200;
 
+// ── Remote video frame budget ───────────────────────────────────────────────
+//
+// The reader loop used to forward every frame the SFU delivered, at full size,
+// into a fresh Java byte[] per frame. Measured on a 1920x1080 screen share from
+// Element: the SFU pushed 28.8 fps (seq 60 -> 120 in 2080 ms) at 8.29 MB per
+// RGBA frame, so ~237 MB/s was being pushed into the JVM. Each of those was then
+// amplified on the UI side into a BufferedImage raster and a Skia Bitmap —
+// roughly 1 GB/s of allocation — which is why a 1080p share was invisible while
+// a 640x360 camera (about 12 MB/s) was fine.
+//
+// Two bounds, both applied while the pixels are still in native memory so the
+// detail is thrown away once rather than copied four times and discarded later:
+//
+//   * long edge capped at 1280 px — the standard "big layer" size, and about
+//     what a call tile can actually resolve. 1080p -> 1280x720 is 2.25x less
+//     data per frame.
+//   * delivery capped at 20 fps. Nobody distinguishes 20 from 30 on a talking
+//     head or a shared window, and it is another 1.44x off the byte rate.
+//
+// Both are one-line changes if the log says the rate is still too high; that is
+// the point of logging the achieved rate below rather than guessing again.
+constexpr int kRemoteVideoMaxLongEdge = 1280;
+constexpr long long kRemoteVideoMinFrameIntervalNs = 50'000'000;  // 20 fps
+
 // H6: receiver jitter-buffer recovery. When the SDK's NetEQ target stays
 // inflated (post-E2EE-key arrival storm, key rotations) the only cure is a
 // fresh receiver, i.e. setSubscribed(false->true). Guarded so failure modes
@@ -2707,10 +2731,98 @@ void notifyRemoteVideoTrackRemoved(const std::shared_ptr<RemoteVideoReader>& rea
     deferDispatchIfSessionLockHeld([reader] { dispatchRemoteVideoTrackRemoved(reader); });
 }
 
+// Box-filter RGBA downscale. Returns false (leaving `out` untouched) when the
+// frame is already small enough, so the caller can forward the SFU's own buffer
+// untouched and there is zero cost on the common small-frame path.
+//
+// Exact area averaging rather than nearest-neighbour: a shared window is mostly
+// text, and point-sampling it drops half the glyph strokes into a visibly
+// noisier, harder-to-read image. Averaging touches each source pixel once
+// (1920x1080 -> 1280x720 is ~2.1M reads) which is comfortably under a
+// millisecond, and it happens before the single JNI copy rather than after four
+// allocations' worth of them.
+bool downscaleRgbaBox(
+    const std::uint8_t* src,
+    int srcWidth,
+    int srcHeight,
+    int maxLongEdge,
+    std::vector<std::uint8_t>& out,
+    int& outWidth,
+    int& outHeight) {
+    if (src == nullptr || srcWidth <= 1 || srcHeight <= 1) {
+        return false;
+    }
+    const long long longEdge = std::max(srcWidth, srcHeight);
+    if (longEdge <= maxLongEdge) {
+        return false;
+    }
+    const double scale = static_cast<double>(maxLongEdge) / static_cast<double>(longEdge);
+    // floor, not round: rounding can push a dimension back up to the source size
+    // on an exact ratio, and this must never be an upscale.
+    outWidth = std::clamp(static_cast<int>(srcWidth * scale), 1, srcWidth - 1);
+    outHeight = std::clamp(static_cast<int>(srcHeight * scale), 1, srcHeight - 1);
+    if (outWidth <= 0 || outHeight <= 0) {
+        return false;
+    }
+
+    out.resize(static_cast<std::size_t>(outWidth) * static_cast<std::size_t>(outHeight) * 4u);
+    const std::size_t srcStride = static_cast<std::size_t>(srcWidth) * 4u;
+    for (int dy = 0; dy < outHeight; ++dy) {
+        // Integer source bounds per destination row, computed once per row.
+        const int y0 = static_cast<int>(static_cast<long long>(dy) * srcHeight / outHeight);
+        int y1 = static_cast<int>(static_cast<long long>(dy + 1) * srcHeight / outHeight);
+        if (y1 <= y0) {
+            y1 = y0 + 1;
+        }
+        if (y1 > srcHeight) {
+            y1 = srcHeight;
+        }
+        auto* dstRow = out.data() + static_cast<std::size_t>(dy) * static_cast<std::size_t>(outWidth) * 4u;
+        for (int dx = 0; dx < outWidth; ++dx) {
+            const int x0 = static_cast<int>(static_cast<long long>(dx) * srcWidth / outWidth);
+            int x1 = static_cast<int>(static_cast<long long>(dx + 1) * srcWidth / outWidth);
+            if (x1 <= x0) {
+                x1 = x0 + 1;
+            }
+            if (x1 > srcWidth) {
+                x1 = srcWidth;
+            }
+            std::uint32_t sumR = 0;
+            std::uint32_t sumG = 0;
+            std::uint32_t sumB = 0;
+            std::uint32_t sumA = 0;
+            std::uint32_t count = 0;
+            for (int y = y0; y < y1; ++y) {
+                const auto* srcRow = src + static_cast<std::size_t>(y) * srcStride;
+                for (int x = x0; x < x1; ++x) {
+                    const std::size_t offset = static_cast<std::size_t>(x) * 4u;
+                    sumR += srcRow[offset];
+                    sumG += srcRow[offset + 1];
+                    sumB += srcRow[offset + 2];
+                    sumA += srcRow[offset + 3];
+                    count += 1;
+                }
+            }
+            if (count == 0) {
+                count = 1;
+            }
+            const std::size_t dst = static_cast<std::size_t>(dx) * 4u;
+            dstRow[dst] = static_cast<std::uint8_t>(sumR / count);
+            dstRow[dst + 1] = static_cast<std::uint8_t>(sumG / count);
+            dstRow[dst + 2] = static_cast<std::uint8_t>(sumB / count);
+            dstRow[dst + 3] = static_cast<std::uint8_t>(sumA / count);
+        }
+    }
+    return true;
+}
+
 void dispatchRemoteVideoFrame(
     const std::shared_ptr<RemoteVideoReader>& reader,
     const livekit::VideoFrameEvent& event,
-    std::uint64_t sequence) {
+    std::uint64_t sequence,
+    const std::vector<std::uint8_t>* downscale = nullptr,
+    int downscaleWidth = 0,
+    int downscaleHeight = 0) {
     if (reader == nullptr || callbacksStopped("remote-video-frame")) {
         return;
     }
@@ -2720,10 +2832,17 @@ void dispatchRemoteVideoFrame(
     }
 
     const auto& frame = event.frame;
-    const std::size_t byteLength = frame.dataSize();
+    // Normally the SFU's own buffer is forwarded verbatim. When the reader loop
+    // has averaged the frame down (see downscaleRgbaBox) that replacement is used
+    // instead, with the SAME buffer type, so the JNI strideY below stays correct.
+    const std::uint8_t* pixels = downscale != nullptr ? downscale->data() : frame.data();
+    const std::size_t byteLength = downscale != nullptr ? downscale->size() : frame.dataSize();
+    const int width = downscale != nullptr ? downscaleWidth : static_cast<int>(frame.width());
+    const int height = downscale != nullptr ? downscaleHeight : static_cast<int>(frame.height());
+    const auto bufferType = frame.type();
     // dataSize() can be non-zero while the buffer pointer is null, which would
     // hand SetByteArrayRegion a null source and crash the VM.
-    if (frame.data() == nullptr || frame.width() <= 0 || frame.height() <= 0 || byteLength == 0 ||
+    if (pixels == nullptr || width <= 0 || height <= 0 || byteLength == 0 ||
         byteLength > static_cast<std::size_t>(std::numeric_limits<jsize>::max())) {
         return;
     }
@@ -2750,18 +2869,19 @@ void dispatchRemoteVideoFrame(
         jbyteArray bytes = env->NewByteArray(jByteLength);
         jstring participantIdentity = env->NewStringUTF(reader->participantIdentity.c_str());
         jstring trackSid = env->NewStringUTF(reader->trackSid.c_str());
+        jstring trackSource = env->NewStringUTF(reader->trackSource.c_str());
         if (bytes != nullptr) {
             env->SetByteArrayRegion(
                 bytes,
                 0,
                 jByteLength,
-                reinterpret_cast<const jbyte*>(frame.data()));
+                reinterpret_cast<const jbyte*>(pixels));
             const auto timestampNs = event.timestamp_us > 0
                 ? static_cast<jlong>(event.timestamp_us * 1000LL)
                 : static_cast<jlong>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                       std::chrono::steady_clock::now().time_since_epoch()).count());
-            const jint strideY = frame.type() == livekit::VideoBufferType::RGBA
-                ? static_cast<jint>(frame.width() * 4)
+            const jint strideY = bufferType == livekit::VideoBufferType::RGBA
+                ? static_cast<jint>(width * 4)
                 : static_cast<jint>(0);
             env->CallVoidMethod(
                 sink,
@@ -2770,10 +2890,11 @@ void dispatchRemoteVideoFrame(
                 reader->epoch,
                 participantIdentity,
                 trackSid,
+                trackSource,
                 bytes,
-                static_cast<jint>(frame.width()),
-                static_cast<jint>(frame.height()),
-                static_cast<jint>(frame.type()),
+                static_cast<jint>(width),
+                static_cast<jint>(height),
+                static_cast<jint>(bufferType),
                 strideY,
                 static_cast<jint>(0),
                 static_cast<jint>(0),
@@ -2787,6 +2908,7 @@ void dispatchRemoteVideoFrame(
         if (bytes != nullptr) env->DeleteLocalRef(bytes);
         if (participantIdentity != nullptr) env->DeleteLocalRef(participantIdentity);
         if (trackSid != nullptr) env->DeleteLocalRef(trackSid);
+        if (trackSource != nullptr) env->DeleteLocalRef(trackSource);
         env->DeleteLocalRef(sink);
     }
 
@@ -2973,30 +3095,82 @@ void startRemoteVideoReaderLocked(
             // teardown below is reached on every path.
             try {
                 std::uint64_t sequence = 0;
+                std::uint64_t delivered = 0;
+                std::uint64_t rateSkipped = 0;
+                std::uint64_t downscaled = 0;
+                long long lastDeliveredNs = 0;
+                std::vector<std::uint8_t> scratch;
                 livekit::VideoFrameEvent event;
                 while (reader->running.load() && reader->stream != nullptr && reader->stream->read(event)) {
                     if (!reader->running.load()) {
                         break;
                     }
                     sequence += 1;
+
+                    // Rate cap. Read as fast as the SFU produces, so without this
+                    // the delivery rate is whatever the sender's encoder decided,
+                    // and every one of those frames costs a JNI copy plus three
+                    // UI-side allocations. Skipping here, before the copy, is the
+                    // only place the saving is real.
+                    const auto nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch()).count();
+                    if (lastDeliveredNs != 0 && (nowNs - lastDeliveredNs) < kRemoteVideoMinFrameIntervalNs) {
+                        rateSkipped += 1;
+                        continue;
+                    }
+                    lastDeliveredNs = nowNs;
+                    delivered += 1;
+
                     const auto& frame = event.frame;
+                    // Downscale before the copy, once, in native memory. See the
+                    // kRemoteVideoMaxLongEdge comment for the measured numbers.
+                    int outWidth = 0;
+                    int outHeight = 0;
+                    const bool didDownscale =
+                        frame.type() == livekit::VideoBufferType::RGBA &&
+                        downscaleRgbaBox(
+                            reinterpret_cast<const std::uint8_t*>(frame.data()),
+                            static_cast<int>(frame.width()),
+                            static_cast<int>(frame.height()),
+                            kRemoteVideoMaxLongEdge,
+                            scratch,
+                            outWidth,
+                            outHeight);
+                    if (didDownscale) {
+                        downscaled += 1;
+                    }
                     const auto timestampNs = event.timestamp_us > 0
                         ? static_cast<long long>(event.timestamp_us * 1000LL)
                         : static_cast<long long>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                               std::chrono::steady_clock::now().time_since_epoch()).count());
-                    if (sequence <= 5 || sequence % 120 == 0) {
+                    // One line per track per 120 delivered frames: the achieved
+                    // delivery rate, how much was dropped for rate, and how much
+                    // was shrunk. Without these, "the share is invisible" has no
+                    // number attached and the next guess is another guess.
+                    if (delivered <= 2 || delivered % 120 == 0) {
                         std::cout << "DEBUG [RemoteVideo] frame "
                                   << "participantIdentity=" << reader->participantIdentity
                                   << " trackSid=" << reader->trackSid
-                                  << " seq=" << sequence
-                                  << " width=" << frame.width()
-                                  << " height=" << frame.height()
+                                  << " seq=" << delivered
+                                  << " read=" << sequence
+                                  << " rateSkipped=" << rateSkipped
+                                  << " width=" << (didDownscale ? outWidth : frame.width())
+                                  << " height=" << (didDownscale ? outHeight : frame.height())
+                                  << " srcWidth=" << frame.width()
+                                  << " srcHeight=" << frame.height()
+                                  << " downscaledFrames=" << downscaled
                                   << " format=" << static_cast<int>(frame.type())
-                                  << " bytes=" << frame.dataSize()
+                                  << " bytes=" << (didDownscale ? scratch.size() : frame.dataSize())
                                   << " timestampNs=" << timestampNs
                                   << std::endl;
                     }
-                    dispatchRemoteVideoFrame(reader, event, sequence);
+                    dispatchRemoteVideoFrame(
+                        reader,
+                        event,
+                        sequence,
+                        didDownscale ? &scratch : nullptr,
+                        outWidth,
+                        outHeight);
                 }
             } catch (const std::exception& error) {
                 std::cerr << "ERROR [RemoteVideo] reader threw trackSid=" << reader->trackSid
@@ -5325,7 +5499,9 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetRemoteVideoSink(JNIEnv* env, jclass,
     jmethodID frameMethod = env->GetMethodID(
         sinkClass,
         "onRemoteVideoFrame",
-        "(JJLjava/lang/String;Ljava/lang/String;[BIIIIIIJI)V");
+        // trackSource sits before the byte[] so the Java side can classify the
+        // track on the very first frame, even if it beats trackAdded to the store.
+        "(JJLjava/lang/String;Ljava/lang/String;Ljava/lang/String;[BIIIIIIJI)V");
     jmethodID removedMethod = env->GetMethodID(
         sinkClass,
         "onRemoteVideoTrackRemoved",

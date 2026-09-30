@@ -102,7 +102,7 @@ object LiveKitRemoteVideoFrameStore {
     // One native reader thread exists per remote video track, so every mutation
     // below can run concurrently. `sequence += 1` and `_flow.value = _flow.value + x`
     // are non-atomic read-modify-writes: they lose updates (a tile whose map entry
-    // is dropped then shows "Video starting…" forever) and hand out duplicate
+    // is dropped then shows "Video startingÃ¢â‚¬Â¦" forever) and hand out duplicate
     // sequence numbers.
     private val sequence = AtomicLong(0L)
     @Volatile private var activeTrackSid: String? = null
@@ -129,7 +129,7 @@ object LiveKitRemoteVideoFrameStore {
      * and `clear()` is called from teardown on another thread. Without this, the
      * sequence "read activeSession, do some work, write five StateFlows" lets a
      * concurrent `clear()` slip in the middle: the store is disarmed and emptied,
-     * and then the in-flight frame's writes repopulate it — a ghost tile that
+     * and then the in-flight frame's writes repopulate it Ã¢â‚¬â€ a ghost tile that
      * outlives the call.
      *
      * Held only for the writes and the re-validation, never across buffer
@@ -206,6 +206,7 @@ object LiveKitRemoteVideoFrameStore {
         epoch: Long,
         participantIdentity: String,
         trackSid: String,
+        trackSource: String,
         buffer: ByteArray,
         width: Int,
         height: Int,
@@ -226,7 +227,7 @@ object LiveKitRemoteVideoFrameStore {
         // `activeSession` and then writing five separate StateFlows left a window
         // for `clear()` to run in between: the clear disarmed the store and wiped
         // the maps, and then this method's pending writes landed on top and
-        // repopulated them — a ghost tile that survived into the NEXT call.
+        // repopulated them Ã¢â‚¬â€ a ghost tile that survived into the NEXT call.
         //
         // The comment below used to claim the ordering ("Disarm BEFORE the map
         // resets") protected against exactly this. Ordering does not help when
@@ -234,8 +235,17 @@ object LiveKitRemoteVideoFrameStore {
         val frameSequence = sequence.incrementAndGet()
         // Frame-before-trackAdded race (or a late frame after trackStopped): register
         // the track so the tile is addressable and the entry can be cleaned up later.
+        //
+        // The source has to come from the CALLER, not from a default. Native starts
+        // the reader thread straight after queuing onRemoteVideoTrackAdded, and that
+        // queue is only run inline when the session lock is free Ã¢â‚¬â€ so the first
+        // frames really can arrive first. Registering with an empty source made
+        // isScreenShare false, which filed a 1080p screen share as a camera track:
+        // half-size tile, no spotlight, and `isScreenShare` false on the node the
+        // whole CallGrid layout keys off. The native reader already knows the
+        // source, so it is passed with every frame.
         if (_activeTracks.value[trackSid] == null) {
-            trackStarted(participantIdentity, trackSid)
+            trackStarted(participantIdentity, trackSid, trackSource)
         }
         if (frameSequence <= 3L || frameSequence % 60L == 0L) {
             println(
@@ -286,7 +296,7 @@ object LiveKitRemoteVideoFrameStore {
         synchronized(commitLock) {
             _activeTracks.update { it - trackSid }
             _framesByTrack.update { it - trackSid }
-            // Clear shared single-slot views only when they display THIS track —
+            // Clear shared single-slot views only when they display THIS track Ã¢â‚¬â€
             // other same-source tracks may still be flowing.
             if (_latestScreenShareFrame.value?.trackSid == trackSid) {
                 _latestScreenShareFrame.value = null

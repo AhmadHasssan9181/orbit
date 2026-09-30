@@ -97,6 +97,7 @@ interface NativeRemoteVideoSink {
         epoch: Long,
         participantIdentity: String,
         trackSid: String,
+        trackSource: String,
         buffer: ByteArray,
         width: Int,
         height: Int,
