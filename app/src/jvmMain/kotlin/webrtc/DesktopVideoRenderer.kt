@@ -65,19 +65,9 @@ class DesktopVideoRenderer(
             for (x in 0 until frameWidth) {
                 val yValue = yPlane.get(y * getStrideY() + x).toInt() and 0xFF
                 val uValue = uPlane.get((y / 2) * getStrideU() + (x / 2)).toInt() and 0xFF
-                val vValue = vPlane.get((y / 2) * getStrideV() + (x / 2)).toInt() and 0xFF
+                val vPlaneValue = vPlane.get((y / 2) * getStrideV() + (x / 2)).toInt() and 0xFF
 
-                // Boost brightness and slightly reduce contrast to fix the "too dark / high contrast" issue
-                val c = ((yValue * 0.85) + 35).toInt()
-                val d = uValue - 128
-                val e = vValue - 128
-
-                val red = clamp(c + ((e * 359) shr 8))
-                val green = clamp(c - ((d * 88) shr 8) - ((e * 183) shr 8))
-                val blue = clamp(c + ((d * 454) shr 8))
-
-                // Ensure alpha is 0xFF (fully opaque) to prevent Compose from treating it as transparent
-                image.setRGB(x, y, (0xFF shl 24) or (red shl 16) or (green shl 8) or blue)
+                image.setRGB(x, y, yuvToArgb(yValue, uValue, vPlaneValue))
             }
         }
 
@@ -94,3 +84,43 @@ class DesktopVideoRenderer(
 
     private fun clamp(value: Int): Int = value.coerceIn(0, 255)
 }
+
+/**
+ * One I420 pixel to opaque ARGB, limited-range BT.601.
+ *
+ * This used to fold a brightness "fix" into the luma base:
+ *
+ *     val c = ((yValue * 0.85) + 35)
+ *
+ * which is the whole reason a 1:1 looked like a washed-out green haze while group
+ * calls -- which go through LiveKit and never touch this file -- looked correct.
+ * A screen share is mostly dark UI, and lifting luma to `y * 0.85 + 35` moves
+ * video black (16) to 48 and mid grey (128) to 144. Every dark pixel became a pale
+ * grey-green, which is precisely the reported symptom. The colour channels were
+ * computed from that damaged base, so no amount of adjusting them could recover it.
+ *
+ * Limited range because that is what video carries: luma 16-235, chroma 16-240.
+ * Treating it as full range is the other half of the usual green cast, and it is
+ * why the sample pixels never matched the source even on mid greys.
+ *
+ * The coefficients are the standard integer BT.601 ones, chosen over floats
+ * because this runs per pixel per frame -- at 1280x720 and 15fps that is 14
+ * million conversions a second and the arithmetic has to be cheap.
+ *
+ * Pure and top level so the conversion can be pinned by test against known
+ * values, rather than judged by eye on a screenshot.
+ */
+internal fun yuvToArgb(y: Int, u: Int, v: Int): Int {
+    val luma = (y - 16).coerceAtLeast(0) * 298
+    val du = u - 128
+    val dv = v - 128
+
+    val red = clampChannel((luma + 409 * dv + 128) shr 8)
+    val green = clampChannel((luma - 100 * du - 208 * dv + 128) shr 8)
+    val blue = clampChannel((luma + 516 * du + 128) shr 8)
+
+    // Alpha forced opaque so Compose does not treat the frame as transparent.
+    return (0xFF shl 24) or (red shl 16) or (green shl 8) or blue
+}
+
+private fun clampChannel(value: Int): Int = value.coerceIn(0, 255)
