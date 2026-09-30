@@ -76,6 +76,7 @@ internal fun ProfilesPane(repository: OrbitRepository) {
     }
 
     var avatarBusy by remember { mutableStateOf(false) }
+    var bannerBusy by remember { mutableStateOf(false) }
     var me by remember { mutableStateOf<ui.model.OrbitUser?>(null) }
     LaunchedEffect(Unit) { me = repository.getCurrentUser() }
 
@@ -144,10 +145,19 @@ internal fun ProfilesPane(repository: OrbitRepository) {
 
         SectionHeader("Profile Customization")
 
-        // Banner by URL only. The repository DOES have a real banner media-upload
-        // API now (uploadBanner) but there is no picker wired to it, and reusing
-        // uploadAvatar() would overwrite the user's real avatar, so the honest
-        // state is a URL field rather than a button that silently does nothing.
+        // Banner: pick a file, or paste a URL.
+        //
+        // This was URL-only, and the comment above it explained why no picker was
+        // wired up: reusing uploadAvatar "would overwrite the user's real avatar".
+        // That reason was stale -- uploadBanner exists precisely to avoid it, has for
+        // some time, and had no caller at all. So the field asked for a URL, the app
+        // could have accepted an upload the whole time, and 13 lines of working code
+        // sat unused.
+        //
+        // The caption below is careful about scope: this banner is stored in your own
+        // account data and previewed here, and nothing else displays it yet. Saying
+        // "your profile banner" without that would be the same false claim that got
+        // the seven fields below removed.
         //
         // The Pronouns / Email / About Me / Custom Status / Profile Accent Color /
         // Avatar Decoration / Profile Effect controls were removed here: each one
@@ -156,11 +166,34 @@ internal fun ProfilesPane(repository: OrbitRepository) {
         // profile card", "visible to your friends") were false. Their fields stay
         // in the schema so previously-saved data is not discarded on next save.
         SettingsTextField(
-            label = "Banner URL",
-            description = "Link to an image for your profile banner.",
+            label = "Banner",
+            description = "Shown at the top of this page. Not yet displayed to other people.",
             value = draft.bannerUrl ?: "",
             onValueChange = { draft = draft.copy(bannerUrl = it); savedNotice = false },
-            placeholder = "https://example.com/banner.jpg"
+            placeholder = "https://example.com/banner.jpg",
+            trailing = {
+                OrbitButton(
+                    text = if (bannerBusy) "Uploading…" else "Upload",
+                    onClick = {
+                        scope.launch {
+                            bannerBusy = true
+                            val bytes = util.pickImageFile()
+                            if (bytes != null) {
+                                repository.uploadBanner(bytes)
+                                    .onFailureOrNotify("Banner upload", "Settings")
+                                    // The uploaded URL goes into the DRAFT, not straight
+                                    // to the server: the profile still has to be saved,
+                                    // and a preview that appears before the thing it
+                                    // previews is committed would be a lie.
+                                    .onSuccess { draft = draft.copy(bannerUrl = it); savedNotice = false }
+                            }
+                            bannerBusy = false
+                        }
+                    },
+                    tone = OrbitButtonTone.Neutral,
+                    enabled = !bannerBusy
+                )
+            }
         )
 
         OrbitButton(
@@ -182,7 +215,15 @@ internal fun SettingsTextField(
     value: String,
     onValueChange: (String) -> Unit,
     placeholder: String = "",
-    multiline: Boolean = false
+    multiline: Boolean = false,
+    /**
+     * Optional control on the label row, to the right of the field name.
+     *
+     * Exists for the one field that has an action as well as a value -- the profile
+     * banner, which can be uploaded or pasted. Putting the action here rather than
+     * below keeps it attached to the label it belongs to.
+     */
+    trailing: (@Composable () -> Unit)? = null
 ) {
     val t = rememberCosmicTokens()
     // Keeps its border: this is a card, and cards keep the hairline that
@@ -197,7 +238,19 @@ internal fun SettingsTextField(
             .border(1.dp, t.Separator, RoundedCornerShape(12.dp))
             .padding(16.dp)
     ) {
-        Text(label, color = t.Text_White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                label,
+                color = t.Text_White,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f)
+            )
+            trailing?.invoke()
+        }
         if (description.isNotEmpty()) {
             Text(description, color = t.Text_Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
         }

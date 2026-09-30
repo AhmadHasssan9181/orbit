@@ -134,6 +134,13 @@ class MatrixUsersRepository(private val context: MatrixContext) : OrbitUsersRepo
             ).getOrThrow()
             trixnity.setProfileField(ProfileField.AvatarUrl(mxcUrl)).getOrThrow()
             Result.success(mxcUrl)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // The `catch (e: Exception)` below would swallow this, so a coroutine
+            // cancelled mid-upload -- the user navigating away, a call starting --
+            // would have its cancellation turned into a returned failure and carry on
+            // running inside a scope that is already gone. uploadBanner below
+            // already rethrows it; this one did not.
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -144,9 +151,23 @@ class MatrixUsersRepository(private val context: MatrixContext) : OrbitUsersRepo
     }
 
     /**
-     * Uploads an image and returns its mxc:// URL, but does NOT set any profile
-     * field. The banner lives in Orbit's own `im.orbit.profile_extras` account
-     * data, so routing it through uploadAvatar would clobber the real avatar.
+     * Uploads an image and returns a URL that can be displayed, but does NOT set any
+     * profile field. The banner lives in Orbit's own `im.orbit.profile_extras`
+     * account data, so routing it through uploadAvatar would clobber the real
+     * avatar.
+     *
+     * Returns the CONVERTED http(s) URL rather than the raw `mxc://`. This function
+     * existed with a single caller-shaped hole: it was implemented and declared and
+     * never called, and the comment beside the URL field said no picker was wired to
+     * it "because reusing uploadAvatar would overwrite the avatar" -- a blocker that
+     * this very function already removed, so the reason was stale.
+     *
+     * Converting here rather than at the call site is deliberate. The value it
+     * returns goes straight into the banner field and from there into Coil, and Coil
+     * cannot load an `mxc://` URI -- it fails silently, leaving a blank rectangle
+     * that looks exactly like a room with no banner. Every other avatar in the app
+     * is converted in the repository for the same reason, so the UI has no mxc
+     * handling to get wrong.
      */
     override suspend fun uploadBanner(imageBytes: ByteArray): Result<String> {
         return try {
@@ -154,7 +175,7 @@ class MatrixUsersRepository(private val context: MatrixContext) : OrbitUsersRepo
             val mxcUrl = trixnity.media.uploadMedia(
                 trixnity.media.prepareUploadMedia(kotlinx.coroutines.flow.flowOf(imageBytes), ContentType.Image.PNG)
             ).getOrThrow()
-            Result.success(mxcUrl)
+            Result.success(context.convertMxcUrl(mxcUrl))
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {

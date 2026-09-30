@@ -296,7 +296,11 @@ class MatrixSpacesRepository(private val context: MatrixContext) : OrbitSpacesRe
                 iconColor = context.hashToColor(space.roomId.full),
                 description = space.name?.explicitName ?: "",
                 isDM = false,
-                avatarUrl = space.avatarUrl?.let { context.convertMxcUrl(it) }
+                avatarUrl = space.avatarUrl?.let { context.convertMxcUrl(it) },
+                // Was never assigned, which is why ServerHeader's banner layout had
+                // never run. Reads the same cached m.state the topic and the voice
+                // probe read, so it adds no request.
+                bannerUrl = context.cachedRoomBanner(space.roomId.full)
             ))
         }
 
