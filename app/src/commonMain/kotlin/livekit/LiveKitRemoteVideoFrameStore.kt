@@ -84,6 +84,32 @@ object LiveKitRemoteVideoFrameStore {
     val latestScreenShareFrame: StateFlow<LiveKitRemoteVideoFrame?> = _latestScreenShareFrame
     private val _activeTracks = MutableStateFlow<Map<String, LiveKitRemoteVideoTrackState>>(emptyMap())
     val activeTracks: StateFlow<Map<String, LiveKitRemoteVideoTrackState>> = _activeTracks
+
+    /**
+     * Remote screen shares that are published, named as screen shares, and have
+     * had no track behind them long enough that retrying has stopped helping.
+     *
+     * The tile for one of these has nothing to draw and never will: there is no
+     * reader, no stream, no frames, because the SDK never produced a track object.
+     * Retrying the subscription fixes a share's audio track and never its video
+     * one; rebuilding the SFU session does, because the fresh connection picks the
+     * still-running share up with its track attached. So this set exists to give
+     * the UI something to act on instead of leaving an invisible share on screen.
+     */
+    private val _stuckTracks = MutableStateFlow<Map<String, String>>(emptyMap())
+    val stuckTracks: StateFlow<Map<String, String>> = _stuckTracks
+
+    /** Track sid -> participant identity, for a share with no track behind it. */
+    fun trackStuck(participantIdentity: String, trackSid: String) {
+        if (trackSid.isBlank()) return
+        if (_stuckTracks.value.containsKey(trackSid)) return
+        _stuckTracks.value = _stuckTracks.value + (trackSid to participantIdentity)
+    }
+
+    fun clearStuckTracks() {
+        if (_stuckTracks.value.isEmpty()) return
+        _stuckTracks.value = emptyMap()
+    }
     private val _framesByTrack = MutableStateFlow<Map<String, LiveKitRemoteVideoFrame>>(emptyMap())
     val framesByTrack: StateFlow<Map<String, LiveKitRemoteVideoFrame>> = _framesByTrack
     private val _remoteParticipants = MutableStateFlow<Set<String>>(emptySet())
@@ -181,6 +207,12 @@ object LiveKitRemoteVideoFrameStore {
     }
 
     fun trackStarted(participantIdentity: String, trackSid: String, trackSource: String = "", trackName: String = "") {
+        // A track existing at all means the share attached after all, so any stuck
+        // marker for it is stale. Left in place it would keep offering a reconnect
+        // for a share that is working.
+        if (_stuckTracks.value.containsKey(trackSid)) {
+            _stuckTracks.value = _stuckTracks.value - trackSid
+        }
         participantConnected(participantIdentity)
         _activeTracks.update {
             it + (
@@ -290,6 +322,10 @@ object LiveKitRemoteVideoFrameStore {
     }
 
     fun trackStopped(participantIdentity: String, trackSid: String) {
+        // The sender withdrew it, so there is nothing left to reconnect for.
+        if (_stuckTracks.value.containsKey(trackSid)) {
+            _stuckTracks.value = _stuckTracks.value - trackSid
+        }
         // Under the same lock as the frame commit, so a frame in flight cannot
         // resurrect the track we are removing, and the "promote an arbitrary
         // remaining entry" below cannot observe a map being rebuilt underneath it.
@@ -334,6 +370,7 @@ object LiveKitRemoteVideoFrameStore {
             _remoteParticipants.value = emptySet()
             _remoteAudioMuted.value = emptySet()
             _connectionQuality.value = emptyMap()
+            _stuckTracks.value = emptyMap()
             _latestFrame.value = null
             _latestCameraFrame.value = null
             _latestScreenShareFrame.value = null

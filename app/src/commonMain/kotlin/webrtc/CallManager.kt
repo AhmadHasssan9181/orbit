@@ -635,6 +635,22 @@ class CallManager(
         teardownNativeMedia()
     }
 
+    /**
+     * Rebuild the SFU session because a remote screen share never attached.
+     *
+     * Delegates to the media session's existing token-refresh reconnect, so the
+     * Matrix membership and the call itself are untouched -- only the LiveKit
+     * session is rebuilt. Deliberately not silent: the UI offers it, and the UI
+     * also fires it automatically after five seconds, because a share nobody can
+     * see is a dead call rather than a waiting one.
+     */
+    fun reconnectForStuckShare(reason: String) {
+        if (_callState.value != CallState.CONNECTED) return
+        scope.launch {
+            livekit.reconnectForStuckShare(reason)
+        }
+    }
+
     private fun ensureNativeMediaSessionStarted(
         roomId: String,
         callId: String,

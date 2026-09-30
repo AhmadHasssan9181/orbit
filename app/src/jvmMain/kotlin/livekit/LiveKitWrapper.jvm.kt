@@ -64,6 +64,10 @@ actual fun setLiveKitPlaybackMuted(muted: Boolean) {
     LiveKitNativeAudioPlayer.setOutputMuted(muted)
 }
 
+actual fun reconnectForStuckShare(reason: String) {
+    LiveKitNativeMediaSession.reconnectForStuckShare(reason)
+}
+
 actual fun setLiveKitVirtualBackground(enabled: Boolean) {
     LiveKitNativeVideoCapture.setVirtualBackgroundEnabled(enabled)
 }

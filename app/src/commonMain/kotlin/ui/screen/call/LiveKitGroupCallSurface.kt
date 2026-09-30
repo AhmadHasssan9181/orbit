@@ -91,6 +91,7 @@ fun LiveKitGroupCallSurface(
     // framerate (30/s) on top of the O(n) node list build.
     val hasLocalFrame by remember { derivedStateOf { LiveKitLocalVideoFrameStore.latestFrame.value != null } }
     val activeTracks by LiveKitRemoteVideoFrameStore.activeTracks.collectAsState()
+    val stuckTracks by LiveKitRemoteVideoFrameStore.stuckTracks.collectAsState()
     val remoteParticipants by LiveKitRemoteVideoFrameStore.remoteParticipants.collectAsState()
     val isVideoIntent by callManager.isVideoCall.collectAsState()
     // Raw Matrix membership roster: kept as the PROFILE DIRECTORY for tiles.
@@ -199,6 +200,30 @@ fun LiveKitGroupCallSurface(
                 callManager.requestProfilesFor(identities)
             }
 
+            // A stuck share gets five seconds, then the session is rebuilt whether
+            // or not anyone pressed the button.
+            //
+            // The button is there so the reconnect is never a surprise, not so it
+            // can be declined -- a share that cannot be received is a dead call
+            // for everyone in it, and sitting on a black tile waiting for someone
+            // to notice is the worse outcome. Five seconds is long enough to read
+            // the explanation and short enough that nobody is still looking at it
+            // when the audio comes back.
+            LaunchedEffect(stuckTracks) {
+                if (stuckTracks.isEmpty()) return@LaunchedEffect
+                val who = stuckTracks.values.firstOrNull() ?: return@LaunchedEffect
+                println("DEBUG [CallGridTiles] stuck share detected tracks=${stuckTracks.keys} participant=$who; auto-reconnect in 5s")
+                delay(5_000)
+                // Re-read rather than trusting the captured map: the share may have
+                // attached, or been withdrawn, while the countdown ran.
+                val stillStuck = LiveKitRemoteVideoFrameStore.stuckTracks.value
+                if (stillStuck.isEmpty()) {
+                    println("DEBUG [CallGridTiles] stuck share resolved during countdown; not reconnecting")
+                    return@LaunchedEffect
+                }
+                callManager.reconnectForStuckShare("auto-after-5s")
+            }
+
             // What each tile is ACTUALLY holding, on a timer.
             //
             // "The share does not appear" has two completely different causes, and
@@ -301,6 +326,7 @@ fun LiveKitGroupCallSurface(
                             renderer = LiveKitVideoTileRenderer.RemoteTrack(track.trackSid, isScreenShare = true),
                             isScreenShare = true,
                             participantIdentity = track.participantIdentity,
+                            isStuckShare = stuckTracks.containsKey(track.trackSid),
                             avatarColor = memberFor(track.participantIdentity)?.avatarColor
                                 ?: identityColor(track.participantIdentity)
                         )

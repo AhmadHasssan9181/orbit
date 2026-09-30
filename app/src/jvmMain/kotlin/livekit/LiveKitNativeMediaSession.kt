@@ -1180,6 +1180,36 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         }
     }
 
+    /**
+     * Rebuild the SFU session without leaving the call.
+     *
+     * Used for a remote screen share whose track the SDK never produced. Retrying
+     * the subscription does not help -- verified across three runs, the audio track
+     * of the same share recovers and the video track never does -- but a fresh
+     * connection picks the same still-running share up with its track attached,
+     * because the track object is built during connection setup rather than
+     * publication.
+     *
+     * Goes through the existing token-refresh reconnect rather than a new path, so
+     * it inherits the same epoch handling, republish and readiness bookkeeping that
+     * a genuine reconnect already uses. The Matrix membership is untouched, so the
+     * user stays in the call; the cost is that everyone's audio from us restarts,
+     * which is why the UI offers this rather than doing it silently at speed.
+     */
+    fun reconnectForStuckShare(reason: String) {
+        if (sessionId == 0L || !readinessCache.connected) {
+            println("DEBUG [LiveKitNativeMediaSession] stuck-share reconnect skipped reason=$reason notConnected")
+            return
+        }
+        if (!reconnectAllowed) {
+            println("WARN [LiveKitNativeMediaSession] stuck-share reconnect refused reason=$reason reconnectNotAllowed")
+            return
+        }
+        println("DEBUG [LiveKitNativeMediaSession] stuck-share reconnect requested reason=$reason")
+        LiveKitRemoteVideoFrameStore.clearStuckTracks()
+        scheduleTokenRefreshNow()
+    }
+
     private suspend fun refreshAndReconnect(fetcher: suspend () -> LiveKitAuthResponse) {
         if (!reconnectAllowed) return
 

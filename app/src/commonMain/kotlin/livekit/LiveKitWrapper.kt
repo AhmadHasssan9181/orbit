@@ -30,6 +30,15 @@ expect fun releaseNativeLiveKitSession()
 // Deafen: mute mixed playback output while keeping the mic publishing
 expect fun setLiveKitPlaybackMuted(muted: Boolean)
 
+// Rebuild the SFU session because a remote screen share never attached.
+//
+// The only recovery that works for a share the SDK published without a track:
+// retrying the subscription fixes its audio track and never its video one, while a
+// fresh connection builds the track object as part of setup. The Matrix membership
+// and the call are untouched, so this is not a rejoin -- everyone's audio from us
+// restarts, which is why the UI offers it and also fires it on a timer.
+expect fun reconnectForStuckShare(reason: String)
+
 // Virtual background: blur the group-path camera frames (applied at next camera open)
 expect fun setLiveKitVirtualBackground(enabled: Boolean)
 

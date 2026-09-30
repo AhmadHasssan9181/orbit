@@ -132,6 +132,7 @@ jmethodID g_remoteAudioMuteChangedMethod = nullptr;
 jmethodID g_remoteConnectionQualityMethod = nullptr;
 jmethodID g_remoteVideoTrackAddedMethod = nullptr;
 jmethodID g_remoteVideoFrameMethod = nullptr;
+jmethodID g_remoteVideoTrackStuckMethod = nullptr;
 jmethodID g_remoteVideoTrackRemovedMethod = nullptr;
 
 // Participant SIDs already announced through onRemoteParticipantConnected.
@@ -231,18 +232,32 @@ std::mutex g_tracklessTicksMutex;
 std::unordered_map<std::string, int> g_tracklessTicks;
 
 // Consecutive trackless sightings (2 s apart) at which to make the SDK
-// renegotiate. Escalating, and bounded.
+// renegotiate, and the tick at which to give up and tell the UI.
 //
-// WHY ESCALATING. The first version fired a single time, and run 25 showed what
-// that costs: one renegotiate fixed a share's audio track within seconds and left
-// its video track trackless for the rest of the call, which is exactly what the
-// user reported -- "stream audio started, no stream". Nothing in the log explains
-// the difference, so the bound goes from one to three rather than being tuned to a
-// guess. 3 / 9 / 18 ticks is 6 s, 18 s and 36 s. A publication still trackless
-// after ~36 s while its sender insists it is sharing will not be rescued by a
-// fourth attempt.
+// WHY THIS EXISTS. Run 23 established that `onTrackPublished` in SDK 0.4.1 arrives
+// with a null publication EVERY time -- pub=5 nullPub=5, 100% -- so that event can
+// never tell Orbit a track exists. `onTrackSubscribed` does carry a real track, but
+// it only fires if the SDK subscribes us, and with auto_subscribe on it sometimes
+// does not. The 2 s rescan is therefore the ONLY route by which Orbit learns about
+// a track at all, and it was strictly passive: a publication with no track was
+// skipped, so a share that never got one was invisible and stayed invisible.
+//
+// `setSubscribed(false)` then `setSubscribed(true)` is the only re-negotiation the
+// SDK exposes for a remote publication (remote_track_publication.h declares nothing
+// else, and room.h has no resync). It is the same cycle the audio jitter-buffer
+// recovery already uses, so it is a known-good move on this SDK rather than a guess.
+//
+// TIMING. 3 / 9 ticks is 6 s then 18 s of retrying, and tick 15 (30 s) is where
+// Orbit stops retrying and surfaces it to the UI. The gap after the last retry is
+// deliberate: a share that attaches on the second attempt should not flash a
+// reconnect button at someone for something that has already resolved.
 constexpr int kTracklessTicksBeforeRenegotiate = 3;
-constexpr int kTracklessRenegotiateEscalation[] = {3, 9, 18};
+constexpr int kTracklessRenegotiateEscalation[] = {3, 9};
+
+// Trackless for this long and the share is declared stuck. The UI is told, and the
+// one recovery that is actually proven to work -- a fresh SFU connection, which
+// picks the track up on the fresh session -- is offered rather than left implicit.
+constexpr int kTracklessTicksBeforeStuck = 15;
 
 bool isTracklessRenegotiateTick(int ticks) {
     for (const int threshold : kTracklessRenegotiateEscalation) {
@@ -2694,6 +2709,66 @@ std::string publicationTrackSid(const std::shared_ptr<livekit::TrackPublication>
     return normalizedSid(publication->sid());
 }
 
+// Announce that a remote screen share is published, named as such, and still has
+// no track after the whole retry ladder.
+//
+// Deliberately NOT a teardown: the track does not exist, so there is no reader and
+// nothing to stop. The point is to reach the UI, which is the only layer that can
+// offer the one recovery that works -- rebuilding the SFU session, which picks the
+// track up on the fresh connection.
+void dispatchRemoteVideoTrackStuck(
+    jlong sessionId,
+    jlong epoch,
+    const std::string& participantIdentity,
+    const std::string& trackSid) {
+    if (callbacksStopped("remote-video-track-stuck")) {
+        return;
+    }
+    jmethodID method = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_remoteVideoSinkMutex);
+        method = g_remoteVideoTrackStuckMethod;
+    }
+    if (method == nullptr) {
+        logCallbackSkipOnce("remote-video-track-stuck", "sink missing");
+        return;
+    }
+
+    JNIEnv* env = nullptr;
+    bool attached = false;
+    if (!getJniEnv(&env, &attached, "remote-video-track-stuck") || env == nullptr) {
+        return;
+    }
+    logJniAttachSuccess("remote-video-track-stuck", attached);
+
+    jobject sink = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_remoteVideoSinkMutex);
+        if (g_remoteVideoSink != nullptr) {
+            sink = env->NewLocalRef(g_remoteVideoSink);
+        }
+    }
+    if (sink != nullptr) {
+        jstring identityString = env->NewStringUTF(participantIdentity.c_str());
+        jstring trackSidString = env->NewStringUTF(trackSid.c_str());
+        env->CallVoidMethod(
+            sink,
+            method,
+            sessionId,
+            epoch,
+            identityString,
+            trackSidString);
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        if (identityString != nullptr) env->DeleteLocalRef(identityString);
+        if (trackSidString != nullptr) env->DeleteLocalRef(trackSidString);
+        env->DeleteLocalRef(sink);
+    }
+    releaseJniEnv(attached);
+}
+
 void dispatchRemoteVideoTrackAdded(const std::shared_ptr<RemoteVideoReader>& reader) {
     if (reader == nullptr || callbacksStopped("remote-video-track-added")) {
         return;
@@ -4227,6 +4302,10 @@ void resetRoomLocked() {
         g_publicationsEverSeenWithTrack.clear();
     }
     {
+        // A fresh SFU session is exactly the recovery for a stuck share, so a
+        // reconnect must clear the tick counters -- otherwise the new session's
+        // first screenshare inherits the old one's count and is declared stuck
+        // within a second of appearing.
         std::lock_guard<std::mutex> lock(g_tracklessTicksMutex);
         g_tracklessTicks.clear();
     }
@@ -5685,11 +5764,20 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetRemoteVideoSink(JNIEnv* env, jclass,
         sinkClass,
         "onRemoteVideoTrackRemoved",
         "(JJLjava/lang/String;Ljava/lang/String;)V");
+    // Same shape as onRemoteVideoTrackRemoved. The two are separate methods on
+    // purpose: one means "the sender withdrew it", the other means "it is still
+    // up there and Orbit cannot get hold of it", and collapsing them would make
+    // the stuck case indistinguishable from a clean teardown.
+    jmethodID stuckMethod = env->GetMethodID(
+        sinkClass,
+        "onRemoteVideoTrackStuck",
+        "(JJLjava/lang/String;Ljava/lang/String;)V");
     env->DeleteLocalRef(sinkClass);
 
     if (partConnectedMethod == nullptr || partDisconnectedMethod == nullptr ||
         audioMuteMethod == nullptr || connQualityMethod == nullptr ||
-        addedMethod == nullptr || frameMethod == nullptr || removedMethod == nullptr) {
+        addedMethod == nullptr || frameMethod == nullptr || removedMethod == nullptr ||
+        stuckMethod == nullptr) {
         if (env->ExceptionCheck()) {
             env->ExceptionDescribe();
             env->ExceptionClear();
@@ -5713,6 +5801,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetRemoteVideoSink(JNIEnv* env, jclass,
         g_remoteVideoTrackAddedMethod = addedMethod;
         g_remoteVideoFrameMethod = frameMethod;
         g_remoteVideoTrackRemovedMethod = removedMethod;
+        g_remoteVideoTrackStuckMethod = stuckMethod;
     }
 
     std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
@@ -7136,6 +7225,40 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeRescanRemoteVideoTracks(JNIEnv*, jclass
                     } catch (...) {
                         std::cerr << "WARN [OrbitLiveKitAudio] renegotiate threw publicationSid="
                                   << publication->sid() << " message=unknown" << std::endl;
+                    }
+                }
+                if (tracklessTicks == kTracklessTicksBeforeStuck) {
+                    // Retrying has not produced a track and nothing else in this
+                    // pipeline can without one. Hand it to the UI, which is the only
+                    // layer that can offer the one recovery that works.
+                    //
+                    // VIDEO only, and only a screenshare: this is the reported
+                    // failure, and a stuck microphone is a different problem with a
+                    // different answer.
+                    const bool isVideo = publication->kind() == livekit::TrackKind::KIND_VIDEO;
+                    const bool isScreenShare =
+                        publication->source() == livekit::TrackSource::SOURCE_SCREENSHARE ||
+                        publication->source() == livekit::TrackSource::SOURCE_SCREENSHARE_AUDIO;
+                    if (isVideo && isScreenShare) {
+                        const std::string identity = participant->identity();
+                        const std::string publicationSid = publication->sid();
+                        std::cout << "WARN [OrbitLiveKitAudio] screenshare track still has no track after "
+                                  << (tracklessTicks * 2) << "s and "
+                                  << kTracklessTicksBeforeRenegotiate << " renegotiations; "
+                                  << "surfacing to UI publicationSid=" << publicationSid
+                                  << " participantIdentity=" << identity << std::endl;
+                        deferDispatchIfSessionLockHeld([identity, publicationSid] {
+                            // kRawSessionId for the id, and the ATOMIC epoch mirror
+                            // rather than g_rawEpoch: this dispatch is deferred, so
+                            // it can run after the mutex is released, and a reader
+                            // that took g_sessionMutex here would deadlock the
+                            // teardown already waiting on that reader.
+                            dispatchRemoteVideoTrackStuck(
+                                kRawSessionId,
+                                g_rawEpochForCallbacks.load(std::memory_order_acquire),
+                                identity,
+                                publicationSid);
+                        });
                     }
                 }
                 continue;
