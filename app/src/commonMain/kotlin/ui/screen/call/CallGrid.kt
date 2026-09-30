@@ -112,10 +112,17 @@ fun CallGrid(
     // The empty case is left alone on purpose. A share with nobody else in the
     // call has no strip to lay out, and it falls through to the single-tile card
     // further down, which is already a full-width panel.
-    if (screenShareNodes.isNotEmpty() && nonShareNodes.isNotEmpty()) {
-        // Index rather than getOrNull: clampedPage is coerceIn(0, lastIndex), and
-        // this branch is only reached with a non-empty list, so it cannot miss.
-        val featured = screenShareNodes[clampedPage]
+    val featuredNode = featuredNodeFor(
+        nodes = nodes,
+        isShare = { it.isScreenShare },
+        hasVideo = { it.renderer != null }
+    )
+    val stripNodes = if (featuredNode == null) nodes else nodes.filter { it.id != featuredNode.id }
+
+    if (featuredNode != null && stripNodes.isNotEmpty()) {
+        // A share wins over anything else for the panel, and the pager still
+        // shifts between sharers when there is more than one.
+        val featured = if (screenShareNodes.isNotEmpty()) screenShareNodes[clampedPage] else featuredNode
         val gap = 12.dp
         val stripHeight = CALL_SHARE_STRIP_HEIGHT
         BoxWithConstraints(
@@ -135,12 +142,19 @@ fun CallGrid(
             // given a third of the window. Sizing the panel to the content's own
             // aspect is the fix; no weight ratio can express it, because the right
             // ratio changes with the window.
-            val panel = sharePanelSizeIn(maxWidth, maxHeight - stripHeight - gap)
+            val panel = if (featured.isScreenShare) {
+                sharePanelSizeIn(maxWidth, maxHeight - stripHeight - gap)
+            } else {
+                // A face has no aspect to honour. It is drawn with Crop, so it
+                // fills whatever box it is given, and giving it the whole area
+                // above the strip is what makes a 1:1 read like a 1:1.
+                SharePanelSize(maxWidth, maxHeight - stripHeight - gap)
+            }
             println(
-                "DEBUG [CallGrid] share ON TOP featured=${featured.id} " +
+                "DEBUG [CallGrid] ON TOP featured=${featured.id} share=${featured.isScreenShare} " +
                     "panel=${panel.width.value}x${panel.height.value}dp " +
                     "available=${maxWidth.value}x${(maxHeight - stripHeight - gap).value}dp " +
-                    "aspect=${panel.width.value / panel.height.value}"
+                    "strip=${stripNodes.map { it.id }}"
             )
             Column(
                 modifier = Modifier.fillMaxSize(),
@@ -172,7 +186,7 @@ fun CallGrid(
                         .height(stripHeight),
                     horizontalArrangement = Arrangement.spacedBy(gap)
                 ) {
-                    stripOrderFor(nonShareNodes, pinnedNodeId) { it.id }
+                    stripOrderFor(stripNodes, pinnedNodeId) { it.id }
                         .forEach { node ->
                             VideoNodeCard(
                                 node,
@@ -396,6 +410,47 @@ internal fun <T> stripOrderFor(
 ): List<T> {
     if (pinnedNodeId == null) return faces
     return faces.filter { id(it) == pinnedNodeId } + faces.filter { id(it) != pinnedNodeId }
+}
+
+/**
+ * The node that gets the big panel on top, or null to use the plain grid.
+ *
+ * This deliberately does NOT require knowing whether something is a screen share.
+ *
+ * Run 47 ended that line of enquiry. Element's SDP for a shared screen in a 1:1 is
+ * a single video m-line with a bare-UUID msid and no screen-share marker anywhere
+ * in it:
+ *
+ *     m=video 9 UDP/TLS/RTP/SAVPF 96 98 100 ...
+ *     a=mid:1
+ *     a=msid:8c8aae6b-... ee0cac5d-...
+ *
+ * So the share is genuinely indistinguishable from a camera by signalling, and any
+ * layout that waits to be told will keep rendering it wrong no matter how good the
+ * classifier is.
+ *
+ * The rule that needs no such knowledge is the one every real client uses anyway:
+ * when exactly one tile in a two-person call has live video, that tile is what the
+ * caller is looking at, so it gets the panel and the other goes in the strip. That
+ * is Discord's 1:1, and it is what the screenshot should have shown -- instead
+ * half the window went to a local avatar with its camera off.
+ *
+ * A share still outranks this, because when the share is identified it is known to
+ * be what people are watching. This is the fallback for when it cannot be.
+ */
+internal fun <T> featuredNodeFor(
+    nodes: List<T>,
+    isShare: (T) -> Boolean,
+    hasVideo: (T) -> Boolean
+): T? {
+    val shares = nodes.filter(isShare)
+    if (shares.isNotEmpty()) return shares.first()
+    // Two people, one of them showing video: that one is the call.
+    if (nodes.size == 2) {
+        val withVideo = nodes.filter(hasVideo)
+        if (withVideo.size == 1) return withVideo.first()
+    }
+    return null
 }
 
 /** Height of the participant strip that sits under a shared screen. */
