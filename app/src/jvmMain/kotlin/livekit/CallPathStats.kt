@@ -46,7 +46,21 @@ object CallPathStats {
 
     fun onPlayerFrameArrived() { if (enabled) playerFramesArrived.incrementAndGet() }
     fun onPlayerFramePlayed() { if (enabled) playerFramesPlayed.incrementAndGet() }
+    /**
+     * The output line went longer than the underrun threshold without being fed.
+     *
+     * A writer-side stall, not a buffer measurement. See the note in
+     * `printSummaryAndReset` -- the old version of this counter tested
+     * `available() >= bufferSize`, which is the *healthy* state.
+     */
     fun onPlayerUnderrun() { if (enabled) playerUnderruns.incrementAndGet() }
+
+    /**
+     * `poll` returned null: the mixer produced nothing for the poll timeout.
+     *
+     * Producer-side starvation, and the counter that actually moves when a call
+     * is having trouble upstream.
+     */
     fun onPlayerIdle() { if (enabled) playerIdlePolls.incrementAndGet() }
     fun onPlayerDroppedOldest() { if (enabled) playerDroppedOldest.incrementAndGet() }
     fun onPlayerWriteFailure() { if (enabled) playerWriteFailures.incrementAndGet() }
@@ -109,12 +123,22 @@ object CallPathStats {
         val heapMaxMb = memory.heapMemoryUsage.max / (1024L * 1024L)
         val pendingFinalizations = memory.objectPendingFinalizationCount
 
-        // 100 frames/s ≈ healthy per direction at 10 ms frames; played persistently
-        // above arrived means the sink consumes faster than production paces.
+        // 100 frames/s ≈ healthy per direction at 10 ms frames.
+        //
+        // `underruns` is a WRITER stall: the output line went longer than 60 ms
+        // without being fed, so the line itself ran dry. It used to be reported
+        // inverted — `SourceDataLine.available() >= bufferSize` means the buffer
+        // is empty and writes are instant, i.e. we are AHEAD — which is why runs
+        // showed `underruns=364` during calls that were completely clean.
+        //
+        // `starved` is the PRODUCER-side counterpart and is usually the one that
+        // moves first: `poll` returned null, so the mixer delivered nothing for
+        // 50 ms. `droppedOldest` is the consumer being too slow (queue overflow).
+        // All three at zero is the healthy call.
         println(
             "STATS [CallPathStats/5s] mic.read=$read stalls=$stalls muted=$muted clippedSamples=$clipped | " +
-                "jni.push ok=$pOk fail=$pFail | play.arrived=$arrived play.played=$played underruns=$underruns " +
-                "idlePolls=$idlePolls droppedOldest=$dropped writeFails=$writeFails | " +
+                "jni.push ok=$pOk fail=$pFail | play.arrived=$arrived play.played=$played " +
+                "underruns=$underruns starved=$idlePolls droppedOldest=$dropped writeFails=$writeFails | " +
                 "vid.remote n=$rvf mb=${rvb / (1024L * 1024L)} vid.share n=$sf mb=${sfb / (1024L * 1024L)} " +
                 "camPrev=$camPrev | heap used=${heapUsedMb}MB max=${heapMaxMb}MB pendingFin=$pendingFinalizations"
         )

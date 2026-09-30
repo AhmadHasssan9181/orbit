@@ -522,7 +522,6 @@ Everything below is confirmed still open by reading the code or a run log.
 
 | Thing | State | Evidence |
 |---|---|---|
-| **Playback underruns** | `underruns=364` in a single 5s window while `play.arrived=500 play.played=500`. The playback sink is starving and refilling, not the mixer — the mixer reported `drops=0 catchUp=0 qDepth=3360` in the same call. Compounded by `output device "Speakers (NVIDIA Broadcast)" matched no mixer, using default` | run 14 `CallPathStats` |
 | **Video heap** | 3,686,400 bytes per 1280x720 frame at 30 fps. `heap used=258MB` mid-call, and the 3.6 MB `ByteArray` per frame is copied on every UI update | run 14 `RemoteVideoUI frame updated` |
 | **Key-exchange convergence sweep never gives up** | `convergence sweep: resending key index=N to 1 underdelivered device(s) ([@nfak_ism:matrix.org:ZVK65HTOZW])` every 3s for the whole call, then `deferring 1 device(s) without stored keys` — the same device, immediately after deferring it. The loop has no attempt cap or backoff | run 14, every run |
 | **Avatars in 1:1** | The local "You" tile and the whole P2P path never resolve `avatarUrl`, so 1:1s fall back to a seed colour next to group tiles | read 2026-09-30 |
@@ -547,6 +546,27 @@ Everything below is confirmed still open by reading the code or a run log.
 
 ### Corrected as of this session
 
+- **The playback underrun counter was reporting a healthy call as broken.** I
+  recorded a "playback underrun defect" here on the strength of
+  `underruns=364` and it was not real. The check was
+  `available() >= out.bufferSize`, and `SourceDataLine.available()` is bytes
+  writable *without blocking* — so that condition means the line's buffer is
+  completely **empty** and the next write returns instantly. It is "we are
+  ahead". The second half of the condition was dead as well: it compared
+  against a timestamp stamped ten lines earlier, so it measured the
+  microseconds spent in `ensureLine` and was always true.
+
+  `underruns` is now a write-gap measurement (>60 ms between completed
+  writes, stamped *after* the write), which is what an output underrun
+  actually is. The producer-side counter was already right and is now
+  printed under its real name: `starved`, meaning `poll` returned null, i.e.
+  the mixer delivered nothing for 50 ms. `underruns`, `starved`,
+  `droppedOldest` and `writeFails` all at zero is the healthy call.
+
+  So the real backlog is one shorter than I listed, and playback was never
+  on it. The `Speakers (NVIDIA Broadcast) matched no mixer, using default`
+  warning is still real and still unexplained, but it is a device-selection
+  fallback, not a starvation signal.
 - The 50ms `g_sessionMutex` self-cleanup wait on both remote readers is gone.
   It could never succeed (the holder is the thread blocked joining) and only
   added 50ms to every hangup. Now one non-blocking attempt. **The video
@@ -790,9 +810,7 @@ Being explicit, because "it compiles" is not "it works".
   exercised at runtime. They need a second 1:1 call, not a group call.
 - **58 readiness derive sites** still read fields individually. Narrower clobber
   window, not zero. §6 explains why I stopped.
-- **The playback underrun** is measured but not diagnosed. I know the sink is
-  starving (`underruns=364`) and that the mixer is not responsible
-  (`drops=0`), and that it coincides with the output device falling back to the
-  default mixer. I have not read `LiveKitNativeAudioPlayer`'s ring buffer, so I
-  do not yet know whether it is too small, refilling badly, or being reset by
-  the mute toggles. That is tomorrow's first job.
+- **The video heap** is measured (`258MB` mid-call) but not fixed. I know a
+  3.6 MB `ByteArray` per frame is allocated and copied on every UI update, and
+  that is where it goes; I have not read the frame store to see whether the
+  copy can be shared rather than duplicated.
