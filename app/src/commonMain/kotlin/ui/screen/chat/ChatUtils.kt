@@ -145,6 +145,18 @@ internal val MessageAvatarSize = 36.dp
 internal val messageTextGutter: Dp = OrbitSpace.lg + MessageAvatarSize + OrbitSpace.md
 
 /**
+ * Where a grouped message's hover timestamp is drawn from the row's left edge.
+ *
+ * Sits in the avatar gutter, where there is nothing on a grouped message -- so
+ * hovering swaps the time in where the avatar would be on a first message.
+ *
+ * It is drawn in the PARENT Box rather than as a child of the body Row, and that
+ * is the part that matters. As a Row child it reserved 48dp of layout whatever
+ * its offset said, pushing every grouped body 48dp right of the message above it.
+ */
+internal val hoverTimestampInset: Dp = 8.dp
+
+/**
  * Name colours.
  *
  * This used to be `hslToColor(hash)`, i.e. fully saturated HSL at 70% — every

@@ -72,6 +72,44 @@ internal fun DenseMessageBody(
     var showMoreMenu by remember { mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxWidth()) {
+        // The hover timestamp, drawn OVER the avatar gutter rather than as a
+        // column of the Row.
+        //
+        // It used to be a 48dp Row child with `offset(x = -56.dp)`. The offset
+        // moves a child VISUALLY but does not give the space back, so the Row
+        // still reserved 48dp and every grouped message body started at
+        // gutter + 48 -- a full 48dp to the right of the message above it. The
+        // `padding(start = ...)` was correct and the extra 48dp was invisible in
+        // the source, which is why this survived a gutter fix that was itself
+        // right.
+        //
+        // Its comment claimed the always-present slot stopped the body shoving
+        // sideways on hover, which was a real problem -- and the fix stabilised
+        // the shove at the wrong value instead of removing it. Aligning to the
+        // parent Box removes the shift entirely: there is no longer a slot to
+        // reserve, so hovering cannot move the body whether the timestamp is
+        // showing or not.
+        val hoverStamp by animateFloatAsState(
+            targetValue = if (isHovered && showTimestamps) 1f else 0f,
+            animationSpec = OrbitMotion.Snappy,
+            label = "denseMessageStampAlpha"
+        )
+        if (hoverStamp > 0.01f) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = hoverTimestampInset)
+                    .width(48.dp)
+            ) {
+                Text(
+                    text = formatTimestamp(message.timestamp).replace("Today at ", ""),
+                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall.copy(
+                        color = t.Text_Muted,
+                        fontSize = 9.sp
+                    )
+                )
+            }
+        }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -81,29 +119,6 @@ internal fun DenseMessageBody(
                 .padding(start = messageTextGutter, end = OrbitSpace.lg, top = 1.dp, bottom = 1.dp),
             verticalAlignment = Alignment.Top
         ) {
-            // Fixed-width always-present slot: adding a Row child only while
-            // hovered used to shove the body 48dp right on every mouse move.
-            val hoverStamp by animateFloatAsState(
-                targetValue = if (isHovered && showTimestamps) 1f else 0f,
-                animationSpec = OrbitMotion.Snappy,
-                label = "denseMessageStampAlpha"
-            )
-            Box(
-                modifier = Modifier
-                    .width(48.dp)
-                    .offset(x = (-56).dp)
-            ) {
-                if (hoverStamp > 0.01f) {
-                    Text(
-                        text = formatTimestamp(message.timestamp).replace("Today at ", ""),
-                        style = androidx.compose.material3.MaterialTheme.typography.labelSmall.copy(
-                            color = t.Text_Muted,
-                            fontSize = 9.sp
-                        ),
-                        modifier = Modifier.alpha(hoverStamp)
-                    )
-                }
-            }
             MessageContentView(
                 content = message.content,
                 isCompact = true,

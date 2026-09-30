@@ -4,6 +4,7 @@ import androidx.compose.ui.unit.dp
 import ui.theme.OrbitSpace
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * The message text column.
@@ -49,14 +50,28 @@ class MessageTextGutterTest {
     }
 
     @Test
-    fun theHoverTimestampLandsWhereTheAvatarIs() {
-        // DenseMessageBody draws the hover timestamp in a 48dp box offset by
-        // -56dp. With the gutter at 64 that puts the box at 8dp, which is where
-        // the avatar starts -- so hovering swaps the avatar for the time in place
-        // rather than shoving the timestamp somewhere else.
+    fun theHoverTimestampLandsWhereTheAvatarIsWithoutReservingSpace() {
+        // The timestamp is drawn in the parent Box at 8dp, which is where the
+        // avatar starts, so hovering swaps the avatar for the time in place.
+        assertEquals(8.dp, hoverTimestampInset)
+    }
+
+    @Test
+    fun theTimestampInsetIsLeftOfTheGutterSoItCannotPushTheBody() {
+        // The invariant that matters, and the one that was broken.
         //
-        // This is why the -56 was already right while the padding was wrong, and
-        // why the text looked wrong while the timestamp looked fine.
-        assertEquals(8.dp, messageTextGutter - 56.dp)
+        // The timestamp used to be a 48dp child of the body Row with
+        // `offset(x = -56.dp)`. An offset moves a child visually and does NOT give
+        // the space back, so the Row reserved 48dp and every grouped body started
+        // at gutter + 48 -- 48dp to the right of the message above it.
+        //
+        // It is now a sibling of the Row in the parent Box, aligned and inset, so
+        // it contributes nothing to the Row's layout. The body starts at the
+        // gutter and only at the gutter.
+        assertTrue(
+            hoverTimestampInset < messageTextGutter,
+            "the timestamp must sit left of the text column, not inside it"
+        )
+        assertEquals(messageTextGutter, OrbitSpace.lg + MessageAvatarSize + OrbitSpace.md)
     }
 }
