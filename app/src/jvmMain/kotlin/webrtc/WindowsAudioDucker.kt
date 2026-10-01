@@ -163,7 +163,38 @@ object WindowsAudioDucker {
         return hr >= 0
     }
     
+    /**
+     * Does nothing, deliberately.
+     *
+     * This used to call `IAudioSessionControl2::SetDuckingPreference(TRUE)` on the
+     * process default audio session. That parameter is `optOut`, so TRUE means "do
+     * not duck me" -- and opting out is precisely what triggers the behaviour
+     * reported as "when I speak the whole system's voice stops".
+     *
+     * Windows' rule is not "the opted-out session stays loud". It is: when a session
+     * that has opted out becomes ACTIVE, Windows attenuates every OTHER session in
+     * the system. Orbit's session becomes active when it captures or plays, so
+     * simply speaking was enough to duck every other application on the machine. The
+     * log showed the calls landing on eRender/eConsole, eRender/eCommunications and
+     * eCapture/eCommunications -- three separate chances for Windows to apply it.
+     *
+     * The old intent was legitimate: keep Orbit's own playback from being ducked so
+     * the remote voice stays audible. It was achieved by making Orbit the session
+     * that causes everyone else to be attenuated, which is a different thing and not
+     * what anyone wants from a call.
+     *
+     * Kept as a named no-op rather than deleted, so the call site still documents the
+     * intent and the next person who wants non-ducked playback finds out here why the
+     * obvious implementation is wrong, instead of re-deriving it.
+     */
     fun disableWindowsDucking() {
+        if (isWindowsDuckingDisabled) return
+        isWindowsDuckingDisabled = true
+        println("DEBUG: [Ducker] Windows ducking opt-out removed; other applications are no longer attenuated")
+    }
+
+    @Suppress("UNUSED_PARAMETER")
+    private fun disableWindowsDuckingPreviousImplementation() {
         if (isWindowsDuckingDisabled) return
         try {
             Ole32.INSTANCE.CoInitializeEx(null, Ole32.COINIT_MULTITHREADED)
@@ -234,7 +265,33 @@ object WindowsAudioDucker {
         lastFactor = targetFactor
     }
 
+    /**
+     * Does nothing, deliberately.
+     *
+     * This used to enumerate every audio session on the machine, skip its own, and
+     * call `SetMasterVolume(original * factor)` on the rest -- turning down every
+     * other application to `1 - strength`. At the 0.8 default that is **every other
+     * application at 20% volume**, which is the same complaint as the
+     * SetDuckingPreference path above reached by a different route: music, games and
+     * browser tabs all went quiet for the duration of a call, and the only control
+     * over it was a slider most people never find.
+     *
+     * Mutating another application's volume is not something a call client should be
+     * doing to the rest of the machine. A user who wants their music quieter can
+     * lower it; a user who never asked cannot get it back.
+     *
+     * Kept as a no-op so the setting's call sites still compile and still document
+     * what the behaviour was. [unduckVolumes] is deliberately left working: a no-op
+     * ducker captures nothing, but leaving the release path intact means a volume
+     * lowered by an earlier build in the same session cannot stay lowered.
+     */
+    @Suppress("UNUSED_PARAMETER")
     fun duckVolumes(strength: Float) {
+        // Intentionally empty. See the KDoc above.
+    }
+
+    @Suppress("UNUSED_PARAMETER")
+    private fun duckVolumesPreviousImplementation(strength: Float) {
         if (strength <= 0.01f) {
             unduckVolumes()
             return
