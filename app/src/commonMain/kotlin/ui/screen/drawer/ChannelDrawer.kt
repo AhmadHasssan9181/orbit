@@ -1,5 +1,6 @@
-package ui.screen.drawer
+﻿package ui.screen.drawer
 
+import ui.screen.call.VoiceConnectedPanel
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -322,6 +323,46 @@ fun ChannelDrawer(
         // `.mini-screen-preview-card` — between the channel list and the user
         // bar, and only while a share is running, which is what the concept
         // gates it on (`voiceState.connected`).
+        val activeCallManager = LocalCallManager.current
+        val activeCallStateFlow = remember(activeCallManager) {
+            activeCallManager?.callState ?: flowOf(webrtc.CallState.IDLE)
+        }
+        val activeCallState by activeCallStateFlow.collectAsState(initial = webrtc.CallState.IDLE)
+        val inCall = activeCallState == webrtc.CallState.CONNECTED || activeCallState == webrtc.CallState.CONNECTING
+
+        if (inCall && activeCallManager != null) {
+            val isLocalAudioEnabled by activeCallManager.isLocalAudioEnabled.collectAsState()
+            val isLocalVideoEnabled by activeCallManager.isLocalVideoEnabled.collectAsState()
+            val isScreenSharing by activeCallManager.isScreenSharing.collectAsState()
+            val activeRoomId by activeCallManager.activeRoomIdFlow.collectAsState()
+            val activeChannelName = channels.find { it.id == activeRoomId }?.name?.let { "#" }
+                ?: server.name.ifBlank { "Voice Connected" }
+            val displayCallMembers by (activeCallManager.displayCallMembers ?: flowOf(emptyList())).collectAsState(emptyList())
+
+            VoiceConnectedPanel(
+                channelName = activeChannelName,
+                participantCount = displayCallMembers.size.coerceAtLeast(1),
+                isMuted = !isLocalAudioEnabled,
+                isScreenSharing = isScreenSharing,
+                isVideoEnabled = isLocalVideoEnabled,
+                onToggleMute = { activeCallManager.toggleMute(isLocalAudioEnabled) },
+                onToggleScreenShare = {
+                    if (isScreenSharing) activeCallManager.stopScreenShare() else activeCallManager.expandCallSurface()
+                },
+                onToggleCamera = { activeCallManager.toggleVideo(!isLocalVideoEnabled) },
+                onToggleSoundboard = { activeCallManager.expandCallSurface() },
+                onDisconnect = { activeCallManager.endCall() },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        role = Role.Button,
+                        onClickLabel = "Return to call",
+                        onClick = { activeCallManager.expandCallSurface() }
+                    )
+            )
+        }
         MiniScreenPreviewSlot(
             callManager = LocalCallManager.current,
             modifier = Modifier.fillMaxWidth()

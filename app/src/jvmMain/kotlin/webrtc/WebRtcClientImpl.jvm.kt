@@ -1266,7 +1266,7 @@ private fun watchTrackEnd(track: MediaStreamTrack, onEnd: () -> Unit) {
         cameraVideoTrack?.removeSink(localRenderer)
         screenVideoTrack?.removeSink(localRenderer)
         remoteVideoTrack?.removeSink(remoteRenderer)
-        remoteScreenVideoTrack?.removeSink(remoteRenderer)
+        remoteScreenVideoTrack?.removeSink(remoteScreenRenderer)
 
         runCatching { peerConnection?.close() }
             .onFailure { println("WARN [WebRtcClientImpl] endCall: peerConnection.close failed: ${it.message}") }

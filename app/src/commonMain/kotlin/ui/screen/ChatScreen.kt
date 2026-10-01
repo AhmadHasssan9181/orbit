@@ -745,13 +745,22 @@ private fun ChatSidePanel(
     content: @Composable ColumnScope.() -> Unit
 ) {
     val t = rememberCosmicTokens()
-    Column(
-        modifier = modifier
-            .fillMaxHeight()
-            .background(t.Members_Bg)
-            .border(1.dp, t.Separator)
+    Row(
+        modifier = modifier.fillMaxHeight()
     ) {
-        SidePanelHeader(
+        Box(
+            modifier = Modifier
+                .width(1.dp)
+                .fillMaxHeight()
+                .background(t.Separator)
+        )
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .background(t.Members_Bg)
+        ) {
+            SidePanelHeader(
             icon = OrbitIcons.TextChannel,
             title = "#${channel.name}",
             // The participant count belongs to the call, and the call is not in
@@ -776,7 +785,8 @@ private fun ChatSidePanel(
         HorizontalDivider(color = t.Separator, thickness = 1.dp)
         content()
     }
-}
+        }
+    }
 
 /**
  * The call-chat panel collapsed to a 48dp rail.
@@ -792,14 +802,24 @@ private fun CallChatCollapsedRail(
     onExpand: () -> Unit
 ) {
     val t = rememberCosmicTokens()
-    Column(
+    Row(
         modifier = Modifier
             .width(48.dp)
             .fillMaxHeight()
-            .background(t.Members_Bg)
-            .border(1.dp, t.Separator),
-        horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        Box(
+            modifier = Modifier
+                .width(1.dp)
+                .fillMaxHeight()
+                .background(t.Separator)
+        )
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .background(t.Members_Bg),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
         OrbitIconButton(
             icon = OrbitIcons.ChevronLeft,
             contentDescription = "Show chat panel",
@@ -825,7 +845,8 @@ private fun CallChatCollapsedRail(
             )
         }
     }
-}
+        }
+    }
 
 /**
  * Shown instead of the voice surface when the call stack is not wired up. The
@@ -1143,7 +1164,7 @@ internal fun SidePanelHeader(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(44.dp)
+            .height(ui.theme.OrbitConceptMetrics.headerHeight)
             .padding(horizontal = OrbitSpace.md),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(OrbitSpace.sm)

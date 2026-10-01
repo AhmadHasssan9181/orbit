@@ -1,7 +1,12 @@
 package ui.screen
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -43,17 +48,13 @@ import androidx.compose.ui.window.FrameWindowScope
 import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.WindowState
 import ui.theme.OrbitSpace
-import ui.theme.rememberCosmicTokens
 
 /**
  * Window chrome.
  *
- * The previous bar was a 32dp strip of hard-coded `#0D0D12` with the glyphs
- * "—" and "□" standing in for minimise and maximise, and a close button that
- * behaved exactly like the other two. Windows users expect the real
- * convention: 46×32 hit areas, a red close on hover, and a distinct icon for
- * "restore". The bar also earns its pixels by naming the app and carrying the
- * window menu, which the undecorated window otherwise throws away.
+ * Rendered in sleek Discord-black (#000000). When in full screen (either OS fullscreen
+ * or maximized call stream stage), the title bar completely disappears, maximizing
+ * viewing area.
  */
 @Composable
 fun FrameWindowScope.CustomTitleBar(
@@ -62,65 +63,71 @@ fun FrameWindowScope.CustomTitleBar(
     title: String = "Orbit",
     trailingContent: (@Composable () -> Unit)? = null
 ) {
-    val t = rememberCosmicTokens()
     val maximized = state.placement == WindowPlacement.Maximized
+    val isFullscreen = state.placement == WindowPlacement.Fullscreen || webrtc.CallShortcuts.isStageMaximized
 
-    WindowDraggableArea {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(36.dp)
-                .background(t.Rail_Bg)
-                .padding(start = OrbitSpace.md),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Image(
-                painter = painterResource("logo.jpeg"),
-                contentDescription = null,
+    AnimatedVisibility(
+        visible = !isFullscreen,
+        enter = expandVertically(tween(160)) + fadeIn(tween(160)),
+        exit = shrinkVertically(tween(160)) + fadeOut(tween(160))
+    ) {
+        WindowDraggableArea {
+            Row(
                 modifier = Modifier
-                    .size(15.dp)
-                    .clip(RoundedCornerShape(4.dp))
-            )
-            Spacer(Modifier.width(OrbitSpace.sm))
-            Text(
-                text = title,
-                color = t.Text_Secondary,
-                fontSize = 11.5.sp,
-                fontWeight = FontWeight.SemiBold,
-                letterSpacing = 0.3.sp
-            )
-
-            if (trailingContent != null) {
-                Spacer(Modifier.width(OrbitSpace.md))
-                trailingContent()
-            }
-
-            Spacer(Modifier.weight(1f))
-
-            TitleBarButton(
-                description = "Minimise",
-                onClick = { state.isMinimized = true }
-            ) { glyph -> MinimiseGlyph(glyph) }
-
-            TitleBarButton(
-                description = if (maximized) "Restore" else "Maximise",
-                onClick = {
-                    state.placement =
-                        if (maximized) WindowPlacement.Floating else WindowPlacement.Maximized
-                }
-            ) { glyph -> MaximiseGlyph(maximized, glyph) }
-
-            TitleBarButton(
-                description = "Close",
-                onClick = onClose,
-                hoverColor = Color(0xFFE81123)
-            ) { glyph ->
-                Icon(
-                    Icons.Default.Close,
+                    .fillMaxWidth()
+                    .height(34.dp)
+                    .background(Color(0xFF000000))
+                    .padding(start = OrbitSpace.md),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Image(
+                    painter = painterResource("logo.jpeg"),
                     contentDescription = null,
-                    tint = glyph,
-                    modifier = Modifier.size(13.dp)
+                    modifier = Modifier
+                        .size(15.dp)
+                        .clip(RoundedCornerShape(4.dp))
                 )
+                Spacer(Modifier.width(OrbitSpace.sm))
+                Text(
+                    text = title,
+                    color = Color(0xFFDBDEE1),
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 0.3.sp
+                )
+
+                if (trailingContent != null) {
+                    Spacer(Modifier.width(OrbitSpace.md))
+                    trailingContent()
+                }
+
+                Spacer(Modifier.weight(1f))
+
+                TitleBarButton(
+                    description = "Minimise",
+                    onClick = { state.isMinimized = true }
+                ) { glyph -> MinimiseGlyph(glyph) }
+
+                TitleBarButton(
+                    description = if (maximized) "Restore" else "Maximise",
+                    onClick = {
+                        state.placement =
+                            if (maximized) WindowPlacement.Floating else WindowPlacement.Maximized
+                    }
+                ) { glyph -> MaximiseGlyph(maximized, glyph) }
+
+                TitleBarButton(
+                    description = "Close",
+                    onClick = onClose,
+                    hoverColor = Color(0xFFE81123)
+                ) { glyph ->
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = null,
+                        tint = glyph,
+                        modifier = Modifier.size(13.dp)
+                    )
+                }
             }
         }
     }
@@ -133,7 +140,6 @@ private fun TitleBarButton(
     hoverColor: Color? = null,
     content: @Composable (Color) -> Unit
 ) {
-    val t = rememberCosmicTokens()
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
 
@@ -141,20 +147,18 @@ private fun TitleBarButton(
         targetValue = when {
             !hovered -> Color.Transparent
             hoverColor != null -> hoverColor
-            else -> t.Pressed
+            else -> Color(0xFF2B2D31)
         },
         animationSpec = tween(110),
         label = "titleBtnBg"
     )
-    val glyph = if (hovered && hoverColor != null) Color.White else t.Text_Secondary
+    val glyph = if (hovered && hoverColor != null) Color.White else if (hovered) Color.White else Color(0xFF949BA4)
 
     Box(
         modifier = Modifier
             .fillMaxHeight()
             .width(46.dp)
             .background(bg)
-            // The glyphs are drawn shapes / an Icon with a null description, so
-            // without this the window buttons were unlabelled to a screen reader.
             .semantics {
                 contentDescription = description
                 role = Role.Button
@@ -186,7 +190,6 @@ private fun MinimiseGlyph(color: Color) {
 private fun MaximiseGlyph(maximized: Boolean, color: Color) {
     Box(modifier = Modifier.size(10.dp), contentAlignment = Alignment.Center) {
         if (maximized) {
-            // Two offset outlines read as "restore".
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)

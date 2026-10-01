@@ -1,7 +1,9 @@
-package ui.screen.call
+﻿package ui.screen.call
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -218,8 +220,10 @@ fun CallGrid(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(stripHeight),
-                        horizontalArrangement = Arrangement.spacedBy(gap)
+                            .height(stripHeight)
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         stripOrderFor(stripNodes, pinnedNodeId) { it.id }
                             .forEach { node ->
@@ -230,7 +234,7 @@ fun CallGrid(
                                     isPinned = node.id == pinnedNodeId,
                                     onPinToggle = onPinToggle,
                                     modifier = Modifier
-                                        .weight(1f)
+                                        .width(134.dp)
                                         .fillMaxHeight()
                                 )
                             }
@@ -358,16 +362,24 @@ fun CallGrid(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 visibleRows.forEach { rowNodes ->
+                    val isOddRow = rowNodes.size < 2
                     Row(
                         modifier = Modifier.weight(1f).fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        horizontalArrangement = if (isOddRow) Arrangement.Center else Arrangement.spacedBy(12.dp)
                     ) {
                         rowNodes.forEach { node ->
-                            VideoNodeCard(node, tokens, callManager = callManager, isPinned = node.id == pinnedNodeId, onPinToggle = onPinToggle, modifier = Modifier.weight(1f).fillMaxHeight())
-                        }
-                        // If odd number, add empty space
-                        if (rowNodes.size < 2) {
-                            Spacer(modifier = Modifier.weight(1f))
+                            VideoNodeCard(
+                                node,
+                                tokens,
+                                callManager = callManager,
+                                isPinned = node.id == pinnedNodeId,
+                                onPinToggle = onPinToggle,
+                                modifier = if (isOddRow) {
+                                    Modifier.fillMaxWidth(0.5f).fillMaxHeight()
+                                } else {
+                                    Modifier.weight(1f).fillMaxHeight()
+                                }
+                            )
                         }
                     }
                 }
@@ -534,7 +546,7 @@ internal const val INBOUND_VIDEO_MIN_FRAME_INTERVAL_NS = 50_000_000L
 private const val MIN_FRAME_INTERVAL_NS = INBOUND_VIDEO_MIN_FRAME_INTERVAL_NS
 
 /** Height of the participant strip that sits under a shared screen. */
-internal val CALL_SHARE_STRIP_HEIGHT = 132.dp
+internal val CALL_SHARE_STRIP_HEIGHT = 80.dp
 
 /** The aspect a shared screen is presented at. */
 internal const val CALL_SHARE_ASPECT = 16f / 9f

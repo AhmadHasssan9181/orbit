@@ -108,6 +108,7 @@ fun CallScreen(
     var showScreenShareDialog by remember { mutableStateOf(false) }
     var showSoundboard by remember { mutableStateOf(false) }
     var layoutMode by remember { mutableStateOf(CallLayoutMode.Grid) }
+    var pinnedNodeId by remember { mutableStateOf<String?>(null) }
     val isDeafened by callManager.isDeafened.collectAsState()
 
     // `.voice-room-maximized` / `isMaximized`: the share takes the whole stage on
@@ -119,13 +120,17 @@ fun CallScreen(
     // Escape keeps meaning "close whatever is open" everywhere else in the app.
     var isStageMaximized by remember { mutableStateOf(false) }
     DisposableEffect(isStageMaximized) {
+        CallShortcuts.isStageMaximized = isStageMaximized
         val exit: (() -> Unit)? = if (isStageMaximized) {
             { isStageMaximized = false }
         } else {
             null
         }
         CallShortcuts.onExitMaximizedStage = exit
-        onDispose { CallShortcuts.onExitMaximizedStage = null }
+        onDispose {
+            CallShortcuts.onExitMaximizedStage = null
+            CallShortcuts.isStageMaximized = false
+        }
     }
     // A call that ends must not leave a stage "maximised" for the next one.
     LaunchedEffect(callState) {
@@ -389,10 +394,17 @@ fun CallScreen(
                         remoteRenderer,
                         isScreenShare = false,
                         avatarUrl = callerAvatarUrl,
-                        // Seeded from the person, not a fixed red: every 1:1 tile in
-                        // every 1:1 call used to be the same red, and a colour
-                        // derived from the name means the tile still looks
-                        // deliberate when they have set no picture.
+                        avatarColor = identityColor(callerName)
+                    )
+                )
+            } else {
+                nodes.add(
+                    RenderNode(
+                        "remote",
+                        callerName,
+                        null,
+                        isScreenShare = false,
+                        avatarUrl = callerAvatarUrl,
                         avatarColor = identityColor(callerName)
                     )
                 )
@@ -406,14 +418,17 @@ fun CallScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(top = 56.dp)  // Space for header
+                    .padding(top = if (isStageMaximized) 0.dp else 56.dp)
                     .padding(horizontal = 12.dp)
-                    .padding(bottom = 80.dp) // Space for controls
+                    .padding(bottom = if (isStageMaximized) 12.dp else 96.dp)
             ) {
                 CallGrid(
                     nodes = nodes,
                     tokens = tokens,
                     layoutMode = layoutMode,
+                    callManager = callManager,
+                    pinnedNodeId = pinnedNodeId,
+                    onPinToggle = { id -> pinnedNodeId = if (pinnedNodeId == id) null else id },
                     maximized = isStageMaximized,
                     onToggleMaximized = { isStageMaximized = !isStageMaximized },
                     modifier = Modifier.fillMaxSize()
@@ -473,7 +488,21 @@ fun CallScreen(
                                 .border(3.dp, Color.White.copy(alpha = 0.1f), CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
-                            OrbitBrandMark(modifier = Modifier.size(70.dp), showGlow = false)
+                            if (callerAvatarUrl != null) {
+                                coil3.compose.AsyncImage(
+                                    model = callerAvatarUrl,
+                                    contentDescription = callerName,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize().clip(CircleShape)
+                                )
+                            } else {
+                                OrbitDefaultAvatar(
+                                    label = callerName,
+                                    seed = callerName,
+                                    color = Color(identityColor(callerName)),
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
                         }
                     }
 
@@ -537,7 +566,7 @@ fun CallScreen(
         //  HEADER BAR (Top)
         // ══════════════════════════════════════════════════════════════════
         AnimatedVisibility(
-            visible = true,
+            visible = !isStageMaximized,
             enter = fadeIn(tween(200)) + slideInVertically { -it },
             exit = fadeOut(tween(200)) + slideOutVertically { -it },
             modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth()
@@ -576,6 +605,30 @@ fun CallScreen(
                             .background(Color.White.copy(alpha = 0.08f), CircleShape)
                     ) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Minimize", tint = Color.White, modifier = Modifier.size(18.dp))
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(Color(identityColor(callerName))),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (callerAvatarUrl != null) {
+                            coil3.compose.AsyncImage(
+                                model = callerAvatarUrl,
+                                contentDescription = callerName,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize().clip(CircleShape)
+                            )
+                        } else {
+                            OrbitDefaultAvatar(
+                                label = callerName,
+                                seed = callerName,
+                                    color = Color(identityColor(callerName)),
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
                     }
 
                     Column {
@@ -742,7 +795,21 @@ fun CallScreen(
                                 ),
                             contentAlignment = Alignment.Center
                         ) {
-                            OrbitBrandMark(modifier = Modifier.size(60.dp), showGlow = false)
+                            if (callerAvatarUrl != null) {
+                                coil3.compose.AsyncImage(
+                                    model = callerAvatarUrl,
+                                    contentDescription = callerName,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize().clip(CircleShape)
+                                )
+                            } else {
+                                OrbitDefaultAvatar(
+                                    label = callerName,
+                                    seed = callerName,
+                                    color = Color(identityColor(callerName)),
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
                         }
                     }
                     Spacer(Modifier.height(28.dp))
@@ -1424,7 +1491,21 @@ data class RenderNode(
     // Remote screen share whose track the SDK never produced. The tile has nothing
     // to draw and retrying has stopped helping, so it carries the offer to rebuild
     // the SFU session instead of sitting there blank.
-    val isStuckShare: Boolean = false
+    val isStuckShare: Boolean = false,
+    /**
+     * False while this participant's video is still inside its grace window.
+     *
+     * A camera-off participant still arrives as a tile with a renderer, because
+     * LiveKit announces the publication regardless of whether it will ever carry a
+     * frame. The tile then drew that renderer indefinitely, which is a spinner (or,
+     * on the 1:1 path, the words "Starting video") for someone whose camera is off
+     * and never going to produce anything.
+     *
+     * Derived from [videoPlaceholder], and the tile falls back to the avatar the
+     * moment this goes false -- so "working on it" and "there is nothing here"
+     * finally look different.
+     */
+    val hasVideoFrameYet: Boolean = true
 )
 
 /**
@@ -1610,7 +1691,7 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
         // spinning forever behind "can't be received" says the opposite of what
         // is true -- Orbit has stopped trying and is offering the one thing that
         // still works.
-        if (node.renderer != null && !node.isStuckShare) {
+        if (node.renderer != null && !node.isStuckShare && !node.hasVideoFrameYet) {
             VideoRenderer(renderer = node.renderer, modifier = Modifier.fillMaxSize().clip(CallTileShape))
         } else if (node.isStuckShare) {
             Box(modifier = Modifier.fillMaxSize().background(tokens.Sunken))

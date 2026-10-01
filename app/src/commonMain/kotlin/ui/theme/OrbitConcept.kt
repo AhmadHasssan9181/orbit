@@ -1,6 +1,8 @@
-package ui.theme
+﻿package ui.theme
 
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -154,4 +156,34 @@ object OrbitConceptStatus {
     val dnd = Color(0xFFF23F43)         // --status-dnd
     val offline = Color(0xFF80848E)    // --status-offline
     val streaming = Color(0xFF593695)  // --status-streaming
+}
+/**
+ * Resolved theme-aware surfaces and foregrounds from the Orbit concept.
+ * Avoids hard-coding OrbitConceptDark in modals, dialogs, and overlays.
+ */
+object OrbitConceptTheme {
+    val isLight: Boolean @Composable get() = rememberCosmicTokens().Bg.luminance() > 0.5f
+
+    val chat: Color @Composable get() = if (isLight) OrbitConceptLight.chat else OrbitConceptDark.chat
+
+    val secondary: Color @Composable get() = if (isLight) OrbitConceptLight.secondary else OrbitConceptDark.secondary
+
+    val floating: Color @Composable get() = if (isLight) OrbitConceptLight.floating else OrbitConceptDark.floating
+
+    val textPrimary: Color @Composable get() = if (isLight) OrbitConceptLight.textPrimary else OrbitConceptDark.textPrimary
+
+    val textNormal: Color @Composable get() = if (isLight) OrbitConceptLight.textNormal else OrbitConceptDark.textNormal
+
+    val textMuted: Color @Composable get() = if (isLight) OrbitConceptLight.textMuted else OrbitConceptDark.textMuted
+
+    val hairline: Color @Composable get() = if (isLight) Color(0x14000000) else OrbitConceptBorder.subtle()
+
+    fun isLight(t: CosmicTokens): Boolean = t.Bg.luminance() > 0.5f
+    fun chat(t: CosmicTokens): Color = if (isLight(t)) OrbitConceptLight.chat else OrbitConceptDark.chat
+    fun secondary(t: CosmicTokens): Color = if (isLight(t)) OrbitConceptLight.secondary else OrbitConceptDark.secondary
+    fun floating(t: CosmicTokens): Color = if (isLight(t)) OrbitConceptLight.floating else OrbitConceptDark.floating
+    fun textPrimary(t: CosmicTokens): Color = if (isLight(t)) OrbitConceptLight.textPrimary else OrbitConceptDark.textPrimary
+    fun textNormal(t: CosmicTokens): Color = if (isLight(t)) OrbitConceptLight.textNormal else OrbitConceptDark.textNormal
+    fun textMuted(t: CosmicTokens): Color = if (isLight(t)) OrbitConceptLight.textMuted else OrbitConceptDark.textMuted
+    fun hairline(t: CosmicTokens): Color = if (isLight(t)) Color(0x14000000) else OrbitConceptBorder.subtle()
 }
