@@ -114,6 +114,9 @@ class JvmWebRtcClient : WebRtcClient {
     private var screenSource: VideoDesktopSource? = null
     private var screenVideoTrack: VideoTrack? = null
     private var shareWindowTrackingJob: Job? = null
+
+    /** 1:1 audio send sampler. See [startAudioSendDiagnostic]. */
+    private var audioSendDiagnosticJob: Job? = null
     override var isGroupCall: Boolean = false
 
     private var selectedAudioInput: String = "Default"
@@ -417,6 +420,63 @@ class JvmWebRtcClient : WebRtcClient {
         }
     }
 
+    /**
+     * One 1:1 audio send sample, every [AUDIO_SEND_DIAGNOSTIC_INTERVAL_MS].
+     *
+     * There was no audio instrumentation on the 1:1 path at all -- no mic level, no
+     * sender byte count, and Orbit's own SDP was never logged. "The Element user can't
+     * hear me" therefore had four candidate causes (muted, capturing silence, never
+     * negotiated, sent-but-undecodable) and the single line that existed,
+     * `enabled=true id=audioTrack`, was identical for all four.
+     *
+     * bytesSent is what separates them, so that is what is sampled. Restarted per call
+     * because the counters are cumulative and a stale job would report the previous
+     * call's totals as this call's.
+     *
+     * Best-effort throughout: a stats callback that throws is swallowed by WebRTC, so
+     * every failure here is swallowed deliberately rather than left to propagate into
+     * a callback whose exception would take the diagnostic down with it.
+     */
+    private fun startAudioSendDiagnostic() {
+        stopAudioSendDiagnostic()
+        audioSendDiagnosticJob = CoroutineScope(Dispatchers.IO).launch {
+            while (isActive) {
+                delay(AudioSendDiagnosis.AUDIO_SEND_DIAGNOSTIC_INTERVAL_MS)
+                val sender = localAudioSender
+                val pConn = peerConnection
+                if (sender == null || pConn == null) {
+                    println("AUDIOSTAT verdict=no-sender track=${localAudioTrack != null}")
+                    continue
+                }
+                val enabled = runCatching { localAudioTrack?.isEnabled() == true }.getOrDefault(false)
+                runCatching {
+                    val connState = runCatching { pConn.connectionState.name }.getOrDefault("?")
+                    pConn.getStats(sender, object : dev.onvoid.webrtc.RTCStatsCollectorCallback {
+                        override fun onStatsDelivered(report: dev.onvoid.webrtc.RTCStatsReport) {
+                            runCatching {
+                                val outbound = report.stats.values.firstNotNullOfOrNull { stat ->
+                                    AudioSendDiagnosis.readOutbound(stat.getAttributes(), enabled)
+                                } ?: AudioSendDiagnosis.noOutboundEntry(enabled)
+                                println(
+                                    "AUDIOSTAT verdict=${outbound.verdict} bytes=${outbound.bytesSent} " +
+                                        "packets=${outbound.packetsSent} enabled=$enabled " +
+                                        "active=${outbound.active} signalState=$connState"
+                                )
+                            }
+                        }
+                    })
+                }.onFailure {
+                    println("AUDIOSTAT verdict=stats-unavailable reason=${it.message}")
+                }
+            }
+        }
+    }
+
+    private fun stopAudioSendDiagnostic() {
+        audioSendDiagnosticJob?.cancel()
+        audioSendDiagnosticJob = null
+    }
+
     private fun applyAudioDevices() {
         val adm = audioDeviceModule ?: return
         
@@ -486,6 +546,11 @@ class JvmWebRtcClient : WebRtcClient {
                 localAudioTrack = audioTrack
                 localAudioSender = pConn.addTrack(audioTrack, listOf("mediaStream"))
                 println("DEBUG: [WebRTC] Desktop local audio track enabled=${audioTrack.isEnabled()} id=${audioTrack.getId()}")
+                // Start sampling here, not at CONNECTED: the send counters begin
+                // filling as soon as the track is attached, and waiting for the call
+                // to connect would miss the window where "attached but not sending"
+                // is the whole answer.
+                startAudioSendDiagnostic()
             }
 
             if (isVideoEnabled) {
@@ -860,6 +925,7 @@ private fun watchTrackEnd(track: MediaStreamTrack, onEnd: () -> Unit) {
     }
 
     override fun stopLocalMedia() {
+        stopAudioSendDiagnostic()
         if (isGroupCall) {
             runCatching { livekit.LiveKitNativeAudioSession.stopPublishing() }
             isLiveKitMediaStarted = false
