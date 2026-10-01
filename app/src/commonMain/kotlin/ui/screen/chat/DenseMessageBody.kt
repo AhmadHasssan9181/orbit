@@ -1,16 +1,25 @@
 package ui.screen.chat
 
-import androidx.compose.animation.*
-import androidx.compose.animation.core.*
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -19,7 +28,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -27,22 +35,20 @@ import androidx.compose.ui.unit.sp
 import ui.icons.OrbitIcons
 import ui.model.OrbitMessage
 import ui.theme.LocalShowTimestamps
-import ui.theme.OrbitSpace
+import ui.theme.OrbitConceptOverlay
 import ui.theme.OrbitMotion
 import ui.theme.rememberCosmicTokens
-
-import ui.screen.auth.*
-import ui.screen.settings.*
-import ui.screen.drawer.*
-import ui.screen.server.*
-import ui.screen.call.*
-import ui.screen.media.*
-import ui.screen.main.*
 
 /**
  * A grouped message — the follow-on lines of a run, and the whole of a room in
  * compact mode. That makes it the *majority* of messages in a chat, which is why
  * the hover toolbar here used to be three dead buttons.
+ *
+ * The row itself is the concept's `.message-item` with the avatar column left
+ * empty: same 6dp/12dp padding, same 6dp radius, same `--bg-modifier-hover`
+ * fill, same 16dp gap between the gutter and the text. The gutter is
+ * `messageTextGutter` — the same constant `MessageBubbleFull` derives from the
+ * avatar — so a run of messages from one person reads as one column.
  */
 @Composable
 internal fun DenseMessageBody(
@@ -54,18 +60,16 @@ internal fun DenseMessageBody(
     onMentionUser: ((String) -> Unit)? = null
 ) {
     val t = rememberCosmicTokens()
+    val light = isLightChatSurface(t)
     val showTimestamps = LocalShowTimestamps.current
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
     val rowBg by animateColorAsState(
-        targetValue = if (isHovered) t.MessageHover_Bg else Color.Transparent,
+        targetValue = if (isHovered) {
+            if (light) OrbitConceptOverlay.hoverLight() else OrbitConceptOverlay.hover()
+        } else Color.Transparent,
         animationSpec = OrbitMotion.SnappyColor,
         label = "denseMessageBg"
-    )
-    val rowOffset by animateDpAsState(
-        targetValue = if (isHovered) 2.dp else 0.dp,
-        animationSpec = OrbitMotion.SnappyDp,
-        label = "denseMessageOffset"
     )
 
     var showReactionMenu by remember { mutableStateOf(false) }
@@ -113,9 +117,11 @@ internal fun DenseMessageBody(
             ) {
                 Text(
                     text = formatTimestamp(message.timestamp).replace("Today at ", ""),
-                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall.copy(
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        // .message-timestamp { font-size: 12px; color: var(--text-muted) }
                         color = t.Text_Muted,
-                        fontSize = 9.sp
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp
                     )
                 )
             }
@@ -123,9 +129,14 @@ internal fun DenseMessageBody(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .offset(x = rowOffset)
+                .clip(messageRowRadius)
                 .background(rowBg)
-                .padding(start = messageTextGutter, end = OrbitSpace.lg, top = 1.dp, bottom = 1.dp),
+                .padding(
+                    start = messageTextGutter,
+                    end = messageRowInset,
+                    top = 1.dp,
+                    bottom = 1.dp
+                ),
             verticalAlignment = Alignment.Top
         ) {
             MessageContentView(
@@ -139,9 +150,10 @@ internal fun DenseMessageBody(
         AnimatedVisibility(
             visible = isHovered,
             // Inside the parent's bounds, for the reason given on the Box above.
+            // `right: 16px` from the `.message-item` edge, as in MessageBubbleFull.
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .offset(y = 2.dp, x = (-8).dp),
+                .offset(y = 2.dp, x = (-16).dp),
             enter = fadeIn(OrbitMotion.tweenFast()) + scaleIn(
                 animationSpec = OrbitMotion.tweenFast(),
                 initialScale = 0.94f
@@ -151,23 +163,12 @@ internal fun DenseMessageBody(
                 targetScale = 0.94f
             )
         ) {
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(t.Elevated)
-                    .border(
-                        1.dp,
-                        t.Separator,
-                        RoundedCornerShape(4.dp)
-                    )
-                    .padding(horizontal = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(0.dp)
-            ) {
+            MessageToolbarFrame(light = light) {
                 if (onReply != null) {
                     MessageActionBtn(OrbitIcons.Reply, "Reply") { onReply(message.id) }
                 }
                 if (onReact != null) {
-                    MessageActionBtn(OrbitIcons.Emoji, "React") { showReactionMenu = true }
+                    MessageActionBtn(OrbitIcons.Emoji, "Add reaction") { showReactionMenu = true }
                     ReactionPickerMenu(
                         expanded = showReactionMenu,
                         alreadyAdded = { emoji -> message.reactions[emoji]?.isNotEmpty() == true },

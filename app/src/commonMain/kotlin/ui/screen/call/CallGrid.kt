@@ -46,7 +46,21 @@ fun CallGrid(
     modifier: Modifier = Modifier,
     callManager: CallManager? = null,
     pinnedNodeId: String? = null,
-    onPinToggle: ((String) -> Unit)? = null
+    onPinToggle: ((String) -> Unit)? = null,
+    /**
+     * `.voice-room-maximized`: the featured tile takes the whole stage on pure
+     * black and the participant strip steps aside.
+     *
+     * This is a VIEWPORT state, not a layout mode. The concept's maximise button
+     * does not choose between grid and theatre — it makes the container fill the
+     * window — and in Orbit the container is already full size, so the only
+     * honest reading of the same gesture is "the presentation, and nothing else,
+     * is on screen". The two layout rules the tests pin are untouched by it: the
+     * share still goes on top at a 16:9 box sized by [sharePanelSizeIn], and the
+     * strip order is still [stripOrderFor]'s.
+     */
+    maximized: Boolean = false,
+    onToggleMaximized: (() -> Unit)? = null
 ) {
     if (nodes.isEmpty()) {
         Box(modifier = modifier.fillMaxSize().background(tokens.Sunken), contentAlignment = Alignment.Center) {
@@ -128,7 +142,10 @@ fun CallGrid(
         BoxWithConstraints(
             modifier = modifier
                 .fillMaxSize()
-                .background(tokens.Sunken)
+                // `.voice-room-maximized { background-color: #000000 }` over
+                // `.stream-theater-stage`'s #0b0c0e. Both are literal: a
+                // letterbox is black whatever the app's theme is.
+                .background(if (maximized) callStageBlack else tokens.Sunken)
         ) {
             // The share is a true 16:9 box, as large as the space above the strip
             // allows, centred in whatever is left over.
@@ -142,63 +159,82 @@ fun CallGrid(
             // given a third of the window. Sizing the panel to the content's own
             // aspect is the fix; no weight ratio can express it, because the right
             // ratio changes with the window.
+            //
+            // Maximised, the strip is not there, so the panel gets everything --
+            // the same function, a larger space, and therefore the same 16:9.
+            val panelSpace = if (maximized) maxHeight else maxHeight - stripHeight - gap
             val panel = if (featured.isScreenShare) {
-                sharePanelSizeIn(maxWidth, maxHeight - stripHeight - gap)
+                sharePanelSizeIn(maxWidth, panelSpace)
             } else {
                 // A face has no aspect to honour. It is drawn with Crop, so it
                 // fills whatever box it is given, and giving it the whole area
                 // above the strip is what makes a 1:1 read like a 1:1.
-                SharePanelSize(maxWidth, maxHeight - stripHeight - gap)
+                SharePanelSize(maxWidth, panelSpace)
             }
             println(
-                "DEBUG [CallGrid] ON TOP featured=${featured.id} share=${featured.isScreenShare} " +
+                "DEBUG [CallGrid] ${if (maximized) "MAXIMIZED " else ""}" +
+                    "ON TOP featured=${featured.id} share=${featured.isScreenShare} " +
                     "panel=${panel.width.value}x${panel.height.value}dp " +
-                    "available=${maxWidth.value}x${(maxHeight - stripHeight - gap).value}dp " +
+                    "available=${maxWidth.value}x${panelSpace.value}dp " +
                     "strip=${stripNodes.map { it.id }}"
             )
-            Column(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(gap)
+            // The presentation area: everything above the participant strip, or
+            // the whole stage once the call is maximised. The panel is centred in
+            // it, and `.stream-bottom-right-actions` is pinned to ITS bottom-right
+            // — which is where the concept pins them, because there the parent
+            // `.stream-theater-stage` holds nothing but the stream.
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(bottom = if (maximized) 0.dp else stripHeight + gap),
+                contentAlignment = Alignment.Center
             ) {
-                Box(
+                ShareSpotlightBox(
+                    node = featured,
+                    shareCount = screenShareNodes.size,
+                    selectedPage = clampedPage,
+                    onPageChange = { sharePage = it },
+                    tokens = tokens,
+                    callManager = callManager,
+                    isPinned = featured.id == pinnedNodeId,
+                    onPinToggle = onPinToggle,
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    contentAlignment = Alignment.Center
-                ) {
-                    ShareSpotlightBox(
-                        node = featured,
-                        shareCount = screenShareNodes.size,
-                        selectedPage = clampedPage,
-                        onPageChange = { sharePage = it },
-                        tokens = tokens,
-                        callManager = callManager,
-                        isPinned = featured.id == pinnedNodeId,
-                        onPinToggle = onPinToggle,
-                        modifier = Modifier
-                            .width(panel.width)
-                            .height(panel.height)
+                        .width(panel.width)
+                        .height(panel.height)
+                )
+                if (onToggleMaximized != null) {
+                    CallStreamBottomActions(
+                        isMaximized = maximized,
+                        onToggleMaximized = onToggleMaximized
                     )
                 }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(stripHeight),
-                    horizontalArrangement = Arrangement.spacedBy(gap)
+            }
+            if (!maximized) {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(gap)
                 ) {
-                    stripOrderFor(stripNodes, pinnedNodeId) { it.id }
-                        .forEach { node ->
-                            VideoNodeCard(
-                                node,
-                                tokens,
-                                callManager = callManager,
-                                isPinned = node.id == pinnedNodeId,
-                                onPinToggle = onPinToggle,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxHeight()
-                            )
-                        }
+                    Spacer(modifier = Modifier.weight(1f))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(stripHeight),
+                        horizontalArrangement = Arrangement.spacedBy(gap)
+                    ) {
+                        stripOrderFor(stripNodes, pinnedNodeId) { it.id }
+                            .forEach { node ->
+                                VideoNodeCard(
+                                    node,
+                                    tokens,
+                                    callManager = callManager,
+                                    isPinned = node.id == pinnedNodeId,
+                                    onPinToggle = onPinToggle,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight()
+                                )
+                            }
+                    }
                 }
             }
         }
@@ -217,7 +253,9 @@ fun CallGrid(
         val thumbnailNodes = nodes.filter { it.id != spotlightNode.id }
 
         Row(
-            modifier = modifier.fillMaxSize(),
+            modifier = modifier
+                .fillMaxSize()
+                .background(if (maximized) callStageBlack else Color.Transparent),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             // Main spotlight
@@ -270,7 +308,15 @@ fun CallGrid(
     // rectangle with no sense of depth -- the single biggest reason the call
     // screen did not read as Discord. `Sunken` is the app's darkest surface and
     // matches Discord's stage; the tiles sit above it.
-    Box(modifier = modifier.fillMaxSize().background(tokens.Sunken)) {
+    //
+    // Maximised, the concept paints the whole container #000000
+    // (`.voice-room-maximized`), and that is the one place the stage is allowed
+    // to be pure black rather than the app's darkest neutral.
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(if (maximized) callStageBlack else tokens.Sunken)
+    ) {
     when {
         nodes.size == 1 -> {
             // Single participant — centered large card with empty panel below
@@ -334,9 +380,13 @@ fun CallGrid(
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxHeight()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(tokens.Sunken)
-                                .border(1.dp, tokens.Separator, RoundedCornerShape(8.dp)),
+                                .clip(CallTileShape)
+                                // The same `--bg-call-card` as every other tile.
+                                // It was `tokens.Sunken`, which is lighter, so the
+                                // count read as a hole punched in the grid rather
+                                // than as the last tile of it.
+                                .background(callCardSurface(tokens))
+                                .border(1.dp, tokens.Separator, CallTileShape),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(

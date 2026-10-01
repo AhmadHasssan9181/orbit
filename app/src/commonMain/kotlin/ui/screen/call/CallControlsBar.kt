@@ -1,7 +1,7 @@
 package ui.screen.call
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -57,12 +58,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -71,13 +69,13 @@ import ui.components.OrbitMenuDivider
 import ui.components.OrbitMenuHeader
 import ui.components.OrbitMenuItem
 import ui.components.OrbitMenuSwitch
-import ui.components.OrbitSwitch
 import ui.components.OrbitTooltip
 import ui.components.onColorFor
 import ui.icons.OrbitIcons
 import ui.theme.LocalReduceMotion
+import ui.theme.OrbitConceptBorder
+import ui.theme.OrbitConceptDark
 import ui.theme.OrbitMotion
-import ui.theme.OrbitRadius
 import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
 import webrtc.CallManager
@@ -85,15 +83,19 @@ import webrtc.CallManager
 /**
  * In-call controls.
  *
- * This bar was the loudest object in the app: a 28dp pill built from a
+ * This bar used to be the loudest object in the app: a 28dp pill built from a
  * three-stop near-black gradient, containing Discord's exact greys (`#313338`,
  * `#2B2D31`, `#111214`), a hard `#F23F42` hang-up, a neon `#5865F2` layout
  * toggle and a `#FAA81A` raise-hand — none of which changed with the theme, so
  * the call screen stayed a screenshot of another product inside Orbit.
  *
- * Now: one elevation surface from the token set, one shape language, and a
- * strict rule that colour carries *state* only — accent for engaged, danger for
- * destructive, everything else neutral.
+ * It is now `.call-dock-pill-bar` from the concept, measured off that
+ * stylesheet: a 30px-radius pill on `--bg-call-card` at 92%, ringed with a
+ * `--border-subtle` hairline, 6px/14px of padding and a 12px gap, holding 44px
+ * circular buttons. Its states are the four the CSS defines and no others —
+ * resting, hover, `.active` (blurple fill), `.active-green` (a share that is
+ * running) and `.danger` (mute, camera-off, hang-up) — so colour still carries
+ * *state* only, which is the one rule worth keeping from the previous version.
  */
 @Composable
 fun CallControlsBar(
@@ -118,18 +120,23 @@ fun CallControlsBar(
     var moreOptionsExpanded by remember { mutableStateOf(false) }
 
     Surface(
-        shape = RoundedCornerShape(26.dp),
-        shadowElevation = 18.dp,
+        shape = CallDockShape,
+        // The concept's dock carries a `0 12px 32px rgba(0,0,0,0.6)` drop. CSS
+        // shadows are not expressible in Compose, but this bar is the one control
+        // surface that floats over video, and the drop is most of what separates
+        // "a bar" from "a bar in front of a call".
+        shadowElevation = 12.dp,
         color = Color.Transparent,
         modifier = modifier
     ) {
         Row(
             modifier = Modifier
-                .background(t.ElevatedAlt)
+                // rgba(24, 25, 28, 0.92) dark / rgba(255, 255, 255, 0.96) light.
+                .background(callDockSurface(t))
                 // The bar keeps its ring: it floats over a video stage and the
                 // outline is what stops the controls bleeding into the frame.
-                .border(1.dp, t.Separator, RoundedCornerShape(26.dp))
-                .padding(horizontal = OrbitSpace.xs, vertical = OrbitSpace.xs),
+                .border(1.dp, OrbitConceptBorder.subtle(), CallDockShape)
+                .padding(horizontal = 14.dp, vertical = 6.dp),
             // Grouping is expressed as GAPS, not drawn separator lines.
             //
             // Discord separates control groups with whitespace. Orbit drew a
@@ -137,7 +144,7 @@ fun CallControlsBar(
             // lines inside a rounded bar and made it read as a toolbar from a
             // different app. Whitespace also survives theme changes: a rule has to
             // be recoloured, a gap does not.
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // ── Media group: camera + mic, each a joined pair ────
@@ -161,7 +168,7 @@ fun CallControlsBar(
                     tooltip = if (isVideoEnabled) "Turn off camera" else "Turn on camera",
                     // Camera off is a state the user must be able to see at a
                     // glance for the same reason muted mic is.
-                    danger = !isVideoEnabled,
+                    state = if (isVideoEnabled) CallControlState.Active else CallControlState.Danger,
                     onClick = { callManager.toggleVideo(!isVideoEnabled) },
                     modifier = Modifier.padding(horizontal = 2.dp)
                 )
@@ -169,7 +176,7 @@ fun CallControlsBar(
                 CallControlButton(
                     icon = if (!isMuted) OrbitIcons.Mic else OrbitIcons.MicOff,
                     tooltip = if (isMuted) "Unmute" else "Mute",
-                    danger = isMuted,
+                    state = if (isMuted) CallControlState.Danger else CallControlState.Off,
                     onClick = { callManager.toggleMute(!isMuted) }
                 )
                 Box {
@@ -199,7 +206,7 @@ fun CallControlsBar(
                     CallControlButton(
                         icon = if (isDeafened) Icons.Default.HeadsetOff else Icons.Default.Headphones,
                         tooltip = if (isDeafened) "Undeafen" else "Deafen",
-                        danger = isDeafened,
+                        state = if (isDeafened) CallControlState.Danger else CallControlState.Off,
                         onClick = onToggleDeafen,
                         modifier = Modifier.padding(start = 2.dp, end = 2.dp)
                     )
@@ -216,8 +223,9 @@ fun CallControlsBar(
                 CallControlButton(
                     icon = if (isScreenSharing) OrbitIcons.ScreenShareOff else OrbitIcons.ScreenShare,
                     tooltip = if (isScreenSharing) "Stop sharing" else "Share screen",
-                    active = isScreenSharing,
-                    activeTint = t.Success,
+                    // `.call-pill-btn.active-green` — a running share is green,
+                    // and this is the only green anywhere in the bar.
+                    state = if (isScreenSharing) CallControlState.ActiveGreen else CallControlState.Off,
                     onClick = onScreenShareClick,
                     modifier = Modifier.padding(horizontal = 2.dp)
                 )
@@ -234,8 +242,10 @@ fun CallControlsBar(
                 CallControlButton(
                     icon = Icons.Default.PanTool,
                     tooltip = if (myHandRaised) "Lower hand" else "Raise hand",
-                    active = myHandRaised,
-                    activeTint = t.Warning,
+                    // A raised hand is the concept's `.call-pill-btn.active`:
+                    // filled with the accent, because a raised hand is the one
+                    // thing in the bar that other people act on.
+                    state = if (myHandRaised) CallControlState.Active else CallControlState.Off,
                     onClick = { callManager.toggleRaiseHand() },
                     modifier = Modifier.padding(start = 2.dp)
                 )
@@ -243,7 +253,7 @@ fun CallControlsBar(
                 CallControlButton(
                     icon = if (layoutMode == CallLayoutMode.Grid) Icons.Default.GridView else Icons.Default.CropFree,
                     tooltip = if (layoutMode == CallLayoutMode.Grid) "Focus mode" else "Grid mode",
-                    active = layoutMode == CallLayoutMode.Focus,
+                    state = if (layoutMode == CallLayoutMode.Focus) CallControlState.Active else CallControlState.Off,
                     onClick = onLayoutModeToggle,
                     modifier = Modifier.padding(horizontal = 2.dp)
                 )
@@ -252,7 +262,7 @@ fun CallControlsBar(
                     CallControlButton(
                         icon = Icons.Default.MusicNote,
                         tooltip = "Soundboard",
-                        active = showSoundboard,
+                        state = if (showSoundboard) CallControlState.Active else CallControlState.Off,
                         onClick = { onSoundboardToggle() },
                         modifier = Modifier.padding(horizontal = 2.dp)
                     )
@@ -263,7 +273,7 @@ fun CallControlsBar(
                         CallControlButton(
                             icon = Icons.Default.MoreHoriz,
                             tooltip = "Audio and video options",
-                            active = moreOptionsExpanded,
+                            state = if (moreOptionsExpanded) CallControlState.Active else CallControlState.Off,
                             onClick = { moreOptionsExpanded = !moreOptionsExpanded },
                             modifier = Modifier.padding(start = 2.dp, end = 2.dp)
                         )
@@ -277,37 +287,45 @@ fun CallControlsBar(
             }
 
             // ── Hang up ────────────────────────────────────────────
+            // `.call-pill-btn.danger` — the same 44px circle and the same red as
+            // every other pill in the bar, with the same 2px lift on hover. It
+            // used to be its own 46dp circle that scaled instead, which made the
+            // one control that ends the call the one control that behaved
+            // differently from the other eight.
+            val reduce = LocalReduceMotion.current
             val endInteraction = remember { MutableInteractionSource() }
             val endHovered by endInteraction.collectIsHoveredAsState()
-            val endScale by animateFloatAsState(
-                targetValue = if (endHovered) 1.08f else 1f,
-                animationSpec = OrbitMotion.Snappy,
-                label = "hangupScale"
+            val endLift by animateDpAsState(
+                targetValue = if (endHovered && !reduce) -CallPillHoverLift else 0.dp,
+                animationSpec = OrbitMotion.SnappyDp,
+                label = "hangupLift"
             )
             val endBg by animateColorAsState(
-                targetValue = if (endHovered) t.Danger.copy(alpha = 0.88f) else t.Danger,
+                targetValue = if (endHovered) CallPillDangerHover else CallPillDanger,
                 animationSpec = OrbitMotion.SnappyColor,
                 label = "hangupBg"
             )
             Box(
                 modifier = Modifier
-                    .size(46.dp)
-                    .scale(endScale)
-                    .shadow(8.dp, CircleShape, clip = false)
+                    .size(CallPillSize)
+                    .offset(y = endLift)
                     .clip(CircleShape)
                     .background(endBg)
                     .hoverable(endInteraction)
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) { callManager.endCall() },
+                        indication = null,
+                        role = Role.Button,
+                        onClickLabel = "Leave the call",
+                        onClick = { callManager.endCall() }
+                    ),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     OrbitIcons.CallEnd,
                     contentDescription = "Leave the call",
                     tint = onColorFor(endBg),
-                    modifier = Modifier.size(22.dp)
+                    modifier = Modifier.size(20.dp)
                 )
             }
         }
@@ -428,8 +446,47 @@ fun ControlDivider() {
 }
 
 /**
- * One call control. Neutral at rest, accent-tinted when engaged, and it grows
- * a little on hover — the entire vocabulary of the call bar in one composable.
+ * The five states a `.call-pill-btn` can be in.
+ *
+ * The concept writes these as CSS classes — `active`, `active-green`,
+ * `danger` — and each one is a *filled* pill, not a wash. That is the whole
+ * reason they are an enum here: a `Boolean active` plus a separate
+ * `Boolean danger` is how this control came to be unable to say "a share is
+ * running" and "the mic is off" at the same time, which are the two states
+ * that matter most on a call.
+ */
+enum class CallControlState {
+    /** At rest. */
+    Off,
+
+    /**
+     * `.call-pill-btn.active` — `--brand-blurple` fill, white glyph. Camera on,
+     * focus layout, soundboard open, hand raised.
+     */
+    Active,
+
+    /**
+     * `.call-pill-btn.active-green` — `#23a55a` fill, white glyph, hover
+     * `#1f9450`. Only ever a screen share that is actually running.
+     */
+    ActiveGreen,
+
+    /**
+     * `.call-pill-btn.danger` — `#f23f43` fill, white glyph, hover `#d83a3e`.
+     *
+     * Discord colours a muted mic RED rather than dimming the glyph, because
+     * dimming is how a control that is merely idle looks — and muted-vs-idle is
+     * exactly the distinction someone on a call most needs to make at a glance.
+     * This was previously carried as `active = !isMuted`, which inverted the
+     * meaning: unmuted rendered as the "highlighted" state and muted as idle.
+     */
+    Danger
+}
+
+/**
+ * One call control: a 44px circle that is neutral at rest, filled when it is
+ * carrying state, and lifts 2px on hover. The entire vocabulary of the call bar
+ * in one composable.
  */
 @Composable
 fun CallControlButton(
@@ -437,69 +494,64 @@ fun CallControlButton(
     tooltip: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    active: Boolean = false,
-    activeTint: Color? = null,
-    size: Dp = 42.dp,
-    iconSize: Dp = 20.dp,
-    /**
-     * Renders as a "this is off and you should know it" control: red fill, white
-     * icon.
-     *
-     * Discord colours a muted mic RED rather than just dimming the glyph, because
-     * dimming is how a control that is merely idle looks -- and muted-vs-idle is
-     * exactly the distinction someone on a call most needs to make at a glance.
-     * This was previously carried as `active = !isMuted`, which inverted the
-     * meaning: unmuted rendered as the "highlighted" state and muted as idle.
-     */
-    danger: Boolean = false
+    state: CallControlState = CallControlState.Off,
+    size: Dp = CallPillSize,
+    iconSize: Dp = 20.dp
 ) {
     val t = rememberCosmicTokens()
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
     val reduce = LocalReduceMotion.current
-    val accent = activeTint ?: t.Accent
 
     val bg by animateColorAsState(
-        targetValue = when {
-            danger -> t.Danger
-            active -> accent.copy(alpha = 0.18f)
-            hovered -> t.CardBgHover
-            // Discord's resting button is a mid grey, not the sunken well colour.
-            // On a dark stage a well-coloured button is invisible, which is why the
-            // bar read as a row of floating icons rather than a control bar.
-            else -> t.Elevated
+        targetValue = when (state) {
+            // The concept has a hover step for every filled state it defines
+            // except `.active`; blurple's own `--brand-blurple-hover` fills
+            // that gap rather than leaving the one filled control inert.
+            CallControlState.Active -> if (hovered) OrbitConceptDark.brandHover else t.Accent
+            CallControlState.ActiveGreen ->
+                if (hovered) CallPillActiveGreenHover else CallPillActiveGreen
+            CallControlState.Danger -> if (hovered) CallPillDangerHover else CallPillDanger
+            // `.call-pill-btn:hover { background-color: #383a40; color: #fff }`.
+            // Discord's resting button is a mid grey, not the sunken well colour:
+            // on a dark stage a well-coloured button is invisible, which is why the
+            // bar used to read as a row of floating icons.
+            CallControlState.Off -> if (hovered) callPillHover(t) else callPillRest(t)
         },
         animationSpec = OrbitMotion.SnappyColor,
         label = "callBtnBg"
     )
     val tint by animateColorAsState(
-        targetValue = when {
-            // White on red: a red glyph on a red fill disappears.
-            danger -> Color.White
-            active -> accent
-            hovered -> t.Text_White
-            else -> t.Text_Secondary
+        targetValue = when (state) {
+            // White on a fill: a red glyph on a red fill disappears.
+            CallControlState.Active,
+            CallControlState.ActiveGreen,
+            CallControlState.Danger -> Color.White
+            CallControlState.Off -> if (hovered) t.Text_White else t.Text_Secondary
         },
         animationSpec = OrbitMotion.SnappyColor,
         label = "callBtnTint"
     )
-    val scale by animateFloatAsState(
-        targetValue = if (hovered && !reduce) 1.06f else 1f,
-        animationSpec = OrbitMotion.Snappy,
-        label = "callBtnScale"
+    // `.call-pill-btn:hover { transform: translateY(-2px) }`.
+    val lift by animateDpAsState(
+        targetValue = if (hovered && !reduce) -CallPillHoverLift else 0.dp,
+        animationSpec = OrbitMotion.SnappyDp,
+        label = "callBtnLift"
     )
 
     OrbitTooltip(tooltip) {
         Box(
             modifier = modifier
                 .size(size)
-                .scale(scale)
+                .offset(y = lift)
                 .clip(CircleShape)
                 .background(bg)
                 .hoverable(interaction)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
+                    role = Role.Button,
+                    onClickLabel = tooltip,
                     onClick = onClick
                 ),
             contentAlignment = Alignment.Center

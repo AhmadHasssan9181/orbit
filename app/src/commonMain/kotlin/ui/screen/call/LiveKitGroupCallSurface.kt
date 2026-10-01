@@ -7,17 +7,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -36,7 +32,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import livekit.LiveKitLocalVideoFrameStore
@@ -45,7 +40,6 @@ import livekit.LiveKitVideoTileRenderer
 import livekit.NativeMediaState
 import repository.CredentialManager
 import ui.model.OrbitUser
-import ui.icons.OrbitIcons
 import ui.theme.rememberCosmicTokens
 import webrtc.CallManager
 import webrtc.CallShortcuts
@@ -135,8 +129,24 @@ fun LiveKitGroupCallSurface(
     var showSoundboard by remember { mutableStateOf(false) }
     // Right-click Pin: spotlight one participant until unpinned or call ends.
     var pinnedNodeId by remember { mutableStateOf<String?>(null) }
+    // `.voice-room-maximized`. Escape leaves it, and the handler is published
+    // only while it is on, so Escape keeps meaning "close whatever is open"
+    // everywhere else in the app.
+    var isStageMaximized by remember { mutableStateOf(false) }
+    DisposableEffect(isStageMaximized) {
+        val exit: (() -> Unit)? = if (isStageMaximized) {
+            { isStageMaximized = false }
+        } else {
+            null
+        }
+        CallShortcuts.onExitMaximizedStage = exit
+        onDispose { CallShortcuts.onExitMaximizedStage = null }
+    }
     LaunchedEffect(callState) {
-        if (callState == CallState.IDLE || callState == CallState.ENDED) pinnedNodeId = null
+        if (callState == CallState.IDLE || callState == CallState.ENDED) {
+            pinnedNodeId = null
+            isStageMaximized = false
+        }
     }
 
     val nativeMediaReady = nativeReadiness?.state == NativeMediaState.MediaReady &&
@@ -366,10 +376,12 @@ fun LiveKitGroupCallSurface(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(horizontal = 12.dp)
-                    .padding(top = 12.dp, bottom = 96.dp),
+                    .padding(top = 12.dp, bottom = if (isStageMaximized) 12.dp else 96.dp),
                 callManager = callManager,
                 pinnedNodeId = pinnedNodeId,
-                onPinToggle = { id -> pinnedNodeId = if (pinnedNodeId == id) null else id }
+                onPinToggle = { id -> pinnedNodeId = if (pinnedNodeId == id) null else id },
+                maximized = isStageMaximized,
+                onToggleMaximized = { isStageMaximized = !isStageMaximized }
             )
         } else {
             GroupCallJoinStatus(
@@ -426,13 +438,15 @@ fun LiveKitGroupCallSurface(
             onSoundboardToggle = { showSoundboard = !showSoundboard }
         )
 
-        // "Voice Connected" card, bottom-left.
+        // "Voice Connected" panel, bottom-left.
         //
-        // Discord keeps a persistent card there for the whole call showing who you
-        // are connected to, your mute state, and a hang-up button. Orbit had only
-        // the bottom-centre bar, so once the call was live there was nothing on
-        // screen naming the room you were in -- and when you minimised, the only
-        // cue that a call was running at all was a small floating pill.
+        // The concept draws this at the bottom of the channel sidebar, above the
+        // user bar, where it stays visible for the whole call. Orbit's group
+        // surface draws it bottom-left over the stage, which is the same job done
+        // in the one place the stage has spare room, and the same CSS does the
+        // work: `--bg-secondary` between two `--border-subtle` hairlines, a
+        // `--status-online` heading, an 11px muted channel line, a red
+        // quick-disconnect and a row of 34x32 tools.
         //
         // Built from displayMembers, never the raw Matrix roster: that roster is a
         // membership record, so counting it is how a two-person call came to
@@ -445,56 +459,27 @@ fun LiveKitGroupCallSurface(
                 .size
                 .coerceAtLeast(1)
         }
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(start = 24.dp, bottom = 24.dp)
-                .widthIn(max = 280.dp)
-                .clip(androidx.compose.foundation.shape.RoundedCornerShape(10.dp))
-                .background(ui.theme.Ink850)
-                .border(1.dp, ui.theme.Ink600, RoundedCornerShape(10.dp))
-                // Not clickable. It used to set `isMinimized`, which minimised to
-                // the floating pill. The pill is gone, so a click here would have
-                // done nothing at all — and worse, an earlier version of this
-                // change left the `isMinimized` branch in place, which made this
-                // card blank the entire call surface.
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = if (isMuted) OrbitIcons.MicOff else OrbitIcons.Mic,
-                    contentDescription = null,
-                    tint = if (isMuted) ui.theme.Rust500 else ui.theme.Sage500,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = if (isMuted) "Muted" else "Voice Connected",
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        color = ui.theme.Sage500,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 13.sp
-                    ),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false)
-                )
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = callLabel,
-                    style = MaterialTheme.typography.bodySmall.copy(color = ui.theme.Ink550, fontSize = 12.sp),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = if (visibleParticipants > 1) "$visibleParticipants" else "",
-                    style = MaterialTheme.typography.bodySmall.copy(color = ui.theme.Ink550, fontSize = 11.sp)
-                )
-            }
+        if (!isStageMaximized) {
+            VoiceConnectedPanel(
+                channelName = callLabel,
+                participantCount = visibleParticipants,
+                isMuted = isMuted,
+                isScreenSharing = isScreenSharing,
+                isVideoEnabled = isVideoEnabled,
+                onToggleMute = { callManager.toggleMute(!isMuted) },
+                onToggleScreenShare = {
+                    // The panel button starts a share through the same source
+                    // picker the dock uses, and stops a running one directly --
+                    // the same contract as `onToggleStream`.
+                    if (isScreenSharing) callManager.stopScreenShare() else showScreenShareDialog = true
+                },
+                onToggleCamera = { callManager.toggleVideo(!isVideoEnabled) },
+                onToggleSoundboard = { showSoundboard = !showSoundboard },
+                onDisconnect = { callManager.endCall() },
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 24.dp, bottom = 24.dp)
+            )
         }
     }
 }

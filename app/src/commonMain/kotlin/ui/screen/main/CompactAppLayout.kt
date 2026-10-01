@@ -54,6 +54,9 @@ fun CompactLayout(
     onOpenRoles: () -> Unit,
     unreadCounts: Map<String, Int> = emptyMap(),
     unreadByServer: Map<String, Int> = emptyMap(),
+    /** See [ExpandedLayout.friendsTabActive]. */
+    friendsTabActive: Boolean = false,
+    onSelectFriendsTab: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val tokens = rememberCosmicTokens()
@@ -93,17 +96,34 @@ fun CompactLayout(
                     // Show DM server channels as a full-screen list
                     val dmServer = servers.firstOrNull { it.isDM }
                     if (dmServer != null) {
-                        CompactChannelList(
-                            server = dmServer,
-                            channels = channels.filter { it.categoryId == "dm" || it.type == ChannelType.TEXT },
-                            selectedChannelId = selectedChannelId,
-                            currentUser = currentUser,
-                            repository = repository,
-                            onChannelClick = onChannelClick,
-                            onOpenSettings = onOpenSettings,
-                            isLoadingChannels = isLoadingChannels,
-                            onCreateRoom = onCreateRoom
-                        )
+                        // On a phone the drawer IS the screen, so the friends
+                        // view replaces it rather than sitting beside it. The
+                        // `Friends` row is therefore only drawn while this is
+                        // reachable — pressing it swaps the pane.
+                        if (friendsTabActive) {
+                            FriendsPanel(
+                                repository = repository,
+                                dmChannels = channels,
+                                onOpenChannel = { id ->
+                                    onSelectFriendsTab()
+                                    onChannelClick(id)
+                                },
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else {
+                            CompactChannelList(
+                                server = dmServer,
+                                channels = channels.filter { it.categoryId == "dm" || it.type == ChannelType.TEXT },
+                                selectedChannelId = selectedChannelId,
+                                currentUser = currentUser,
+                                repository = repository,
+                                onChannelClick = onChannelClick,
+                                onOpenSettings = onOpenSettings,
+                                isLoadingChannels = isLoadingChannels,
+                                onCreateRoom = onCreateRoom,
+                                onSelectFriendsTab = onSelectFriendsTab
+                            )
+                        }
                     } else {
                         CompactEmptyDMs()
                     }
@@ -161,7 +181,9 @@ fun CompactChannelList(
     onChannelClick: (String) -> Unit,
     onOpenSettings: () -> Unit,
     isLoadingChannels: Boolean,
-    onCreateRoom: (() -> Unit)? = null
+    onCreateRoom: (() -> Unit)? = null,
+    /** Opens the friends view, which replaces this pane on a phone. */
+    onSelectFriendsTab: (() -> Unit)? = null
 ) {
     val tokens = rememberCosmicTokens()
 
@@ -216,6 +238,7 @@ fun CompactChannelList(
                 repository = repository,
                 onChannelClick = onChannelClick,
                 onOpenSettings = onOpenSettings,
+                onSelectFriendsTab = onSelectFriendsTab,
                 modifier = Modifier.weight(1f)
             )
         }

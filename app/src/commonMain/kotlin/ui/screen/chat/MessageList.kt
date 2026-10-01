@@ -1,7 +1,6 @@
 package ui.screen.chat
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -27,6 +26,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -54,15 +54,15 @@ import ui.components.OrbitButton
 import ui.components.OrbitButtonTone
 import ui.components.OrbitIconButtonRound
 import ui.components.OrbitMessageSkeleton
+import ui.icons.OrbitIcons
 import ui.model.MessageContent
 import ui.model.OrbitMessage
 import ui.model.OrbitUser
 import ui.theme.LocalReduceMotion
+import ui.theme.OrbitConceptBorder
 import ui.theme.OrbitMotion
-import ui.theme.OrbitRadius
 import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
-import kotlinx.datetime.Clock
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.Instant
 import kotlinx.datetime.minus
@@ -84,6 +84,13 @@ internal fun MessageList(
     messages: List<OrbitMessage>,
     currentUser: OrbitUser?,
     modifier: Modifier = Modifier,
+    /**
+     * The room's name, for the `.channel-welcome-banner` headline.
+     *
+     * The concept reads it off the channel object, which this screen is not given
+     * — the list is handed a message list, and a name is all the banner needs.
+     */
+    channelName: String = "general",
     isLoading: Boolean = false,
     firstUnreadId: String? = null,
     onSeen: (String) -> Unit = {},
@@ -220,11 +227,33 @@ internal fun MessageList(
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(vertical = OrbitSpace.md),
-            verticalArrangement = Arrangement.spacedBy(0.dp)
+            // `.messages-stream { padding: 20px 16px 12px }` — with the
+            // `.message-item { margin: 0 -12px }` half of that rule folded in, so
+            // the horizontal figure is 16 - 12 = 4dp and the row's own 12dp
+            // padding takes the content back out to 16. Written as two constants
+            // rather than as a literal 4 so the arithmetic stays visible.
+            contentPadding = PaddingValues(
+                start = messageStreamInset,
+                end = messageStreamInset,
+                top = messageStreamPaddingTop,
+                bottom = messageStreamPaddingBottom
+            ),
+            // `.messages-stream { gap: 16px }`
+            verticalArrangement = Arrangement.spacedBy(messageStackGap)
         ) {
             if (isLoading) {
                 items(6, contentType = { "skeleton" }) { OrbitMessageSkeleton() }
+            }
+
+            // `.channel-welcome-banner` — only when the room is empty, which is the
+            // only time the copy underneath it is true ("This is the start of the
+            // #name channel"). Rendered as its own lazy item so the message rows'
+            // indices — which the unread marker and the scrollback trigger both
+            // count — are untouched.
+            if (rows.isEmpty() && !isLoading) {
+                item(key = "channel_welcome") {
+                    ChannelWelcomeHeader(channelName = channelName)
+                }
             }
 
             itemsIndexed(
@@ -447,13 +476,105 @@ private fun dayLabel(ts: Instant): String {
     }
 }
 
+/**
+ * `.channel-welcome-banner` — the head of an empty room.
+ *
+ * ```
+ * .channel-welcome-banner { margin-top: auto; margin-bottom: 16px;
+ *   padding-bottom: 16px; border-bottom: 1px solid var(--border-subtle) }
+ * .channel-welcome-icon    { width: 68px; height: 68px; border-radius: 50%;
+ *   background-color: var(--bg-sidebar); display: flex; align-items: center;
+ *   justify-content: center; color: #fff; margin-bottom: 12px }
+ * .channel-welcome-title   { font-size: 32px; font-weight: 800;
+ *   color: var(--header-primary); margin-bottom: 6px }
+ * .channel-welcome-subtitle{ font-size: 15px; color: var(--text-muted) }
+ * ```
+ *
+ * `margin-top: auto` in the concept pushes the banner to the bottom of a stream
+ * that is not full, i.e. it sits directly above the first message. Here the
+ * banner IS the whole list, so it goes at the top and the 16dp rule below it
+ * takes the role that gap played.
+ *
+ * The light theme inverts the roundel: `[data-theme='light'] .channel-welcome-icon
+ * { background-color: #e3e5e8; color: var(--brand-blurple) }` — grey disc, accent
+ * hash, so it does not read as a hole punched in the canvas.
+ */
+@Composable
+private fun ChannelWelcomeHeader(channelName: String) {
+    val t = rememberCosmicTokens()
+    val light = isLightChatSurface(t)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                start = messageRowInset,
+                end = messageRowInset,
+                top = messageStreamPaddingTop,
+                // margin-bottom: 16px + padding-bottom: 16px
+                bottom = 32.dp
+            )
+    ) {
+        Box(
+            modifier = Modifier
+                .size(68.dp)
+                .clip(CircleShape)
+                .background(if (light) ChatConcept.sidebarLight else ChatConcept.sidebar),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = OrbitIcons.TextChannel,
+                contentDescription = null,
+                tint = if (light) t.Accent else Color.White,
+                modifier = Modifier.size(40.dp)
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = "Welcome to #$channelName!",
+            style = MaterialTheme.typography.displaySmall.copy(
+                fontSize = 32.sp,
+                lineHeight = 38.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = if (light) ChatConcept.headerPrimaryLight else t.Text_White
+            )
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = "This is the start of the #$channelName channel. Send a message, share code, or jump into voice!",
+            style = MaterialTheme.typography.bodyMedium.copy(
+                fontSize = 15.sp,
+                lineHeight = 20.sp,
+                color = t.Text_Muted
+            )
+        )
+        HorizontalDivider(
+            color = if (light) ChatConcept.borderSubtleLight else OrbitConceptBorder.subtle(),
+            thickness = 1.dp,
+            modifier = Modifier.padding(top = 16.dp)
+        )
+    }
+}
+
+/**
+ * The day separator.
+ *
+ * The concept has no `.chat-date-divider` — there is no such rule and no such
+ * element in `ChatArea.jsx`, so this is Orbit's, kept because a chat without one
+ * makes you do mental arithmetic to answer "when did they say that". What it
+ * borrows from the concept is its only divider: a 1dp hairline in
+ * `var(--border-subtle)`, which is what `.channel-welcome-banner` and
+ * `.chat-header` use for theirs, and the muted 11px label treatment that
+ * `.code-block-header` and `.embed-field-title` use for their small caps.
+ */
 @Composable
 private fun DateSeparator(label: String) {
     val t = rememberCosmicTokens()
+    val light = isLightChatSurface(t)
+    val rule = if (light) ChatConcept.borderSubtleLight else OrbitConceptBorder.subtle()
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = OrbitSpace.lg, vertical = OrbitSpace.md),
+            .padding(horizontal = messageRowInset, vertical = OrbitSpace.sm),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(OrbitSpace.md)
     ) {
@@ -461,22 +582,23 @@ private fun DateSeparator(label: String) {
             modifier = Modifier
                 .weight(1f)
                 .height(1.dp)
-                .background(t.Separator)
+                .background(rule)
         )
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall.copy(
-                color = t.Text_Subtle,
+                color = t.Text_Muted,
                 fontWeight = FontWeight.SemiBold,
-                fontSize = 10.5.sp,
-                letterSpacing = 0.4.sp
+                fontSize = 11.sp,
+                lineHeight = 14.sp,
+                letterSpacing = 0.sp
             )
         )
         Box(
             modifier = Modifier
                 .weight(1f)
                 .height(1.dp)
-                .background(t.Separator)
+                .background(rule)
         )
     }
 }
@@ -487,7 +609,7 @@ private fun UnreadSeparatorRow() {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = OrbitSpace.lg, vertical = OrbitSpace.sm),
+            .padding(horizontal = messageRowInset, vertical = OrbitSpace.sm),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(OrbitSpace.md)
     ) {
@@ -522,11 +644,20 @@ private fun UnreadSeparatorRow() {
     }
 }
 
+/**
+ * "Seen" under your own message.
+ *
+ * The inset is the text column, less the 2dp the icon's optical left edge
+ * wanted before. It used to be a hard-coded `62.dp`, which was the 64dp gutter
+ * minus 2 — i.e. it was already a magic number derived from the gutter, written
+ * out, and would have survived the gutter change without moving. Reading the
+ * constant is what makes it follow.
+ */
 @Composable
 private fun SeenIndicator() {
     val t = rememberCosmicTokens()
     Row(
-        modifier = Modifier.padding(start = 62.dp, top = 1.dp, bottom = 4.dp),
+        modifier = Modifier.padding(start = messageTextGutter - 2.dp, top = 1.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(3.dp)
     ) {

@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.MoreVert
@@ -42,7 +41,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import repository.MemberRoleInfo
-import ui.assets.OrbitDefaultAvatar
 import ui.assets.OrbitVerifiedBadge
 import ui.assets.isOrbitVerifiedUser
 import ui.components.OrbitButton
@@ -262,15 +260,22 @@ private fun MemberSectionLabel(label: String, count: Int) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
+        // `.member-group-header` — 12px, weight 700, `--text-muted`, uppercase,
+        // 0.02em tracking, 4px/8px of padding. It was 10px at SemiBold with
+        // 0.6em tracking, which is a different heading: smaller, lighter and
+        // tracked out so wide it read as a caption rather than a group name.
         Text(
             text = label.uppercase(),
             style = MaterialTheme.typography.labelSmall.copy(
-                fontWeight = FontWeight.SemiBold,
+                fontWeight = FontWeight.Bold,
                 color = t.Text_Muted,
-                fontSize = 10.sp,
-                letterSpacing = 0.6.sp
+                fontSize = 12.sp,
+                letterSpacing = 0.24.sp
             )
         )
+        // The count is Orbit's addition and is deliberately kept: the header
+        // above the list says how many there are, and having the same number
+        // again here is how a roster can be checked at a glance.
         Text(
             text = count.toString(),
             style = MaterialTheme.typography.labelSmall.copy(
@@ -330,41 +335,30 @@ private fun MemberItem(
         // Was `onClick = {}`: every row looked strongly interactive and did
         // nothing. Now the row is only clickable when there is a profile to open.
         onClick = onSelectUser?.let { open -> { open(user) } },
-        height = 40.dp,
+        // `.member-item-row { padding: 6px 8px; gap: 10px }` around a 32px
+        // avatar, which is 44px of row. It was 40px with 6px of side padding, so
+        // the roster was 4px shorter per row and its names sat 2px further in than
+        // the channel list's.
+        height = 44.dp,
         showSelectionBar = false,
         role = null,
-        horizontalPadding = 6.dp,
+        horizontalPadding = 8.dp,
         titleStyle = MaterialTheme.typography.bodyMedium.copy(
             color = if (liveStatus == UserStatus.OFFLINE) t.Text_Subtle else t.Text_Secondary,
             fontSize = 13.sp,
             fontWeight = FontWeight.Normal
         ),
         leading = OrbitRowLeading(
+            // `.member-avatar-wrap` — 32px, with a 10px presence dot ringed in 2px
+            // of the surface the list is painted on. Was 28px with a 9px unringed
+            // dot, so the dot touched the avatar and the roster read a size smaller
+            // than the concept's.
             avatar = {
-                Box(modifier = Modifier.size(28.dp)) {
-                    if (user.avatarUrl != null) {
-                        coil3.compose.AsyncImage(
-                            model = user.avatarUrl,
-                            contentDescription = user.displayName,
-                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize().clip(CircleShape)
-                        )
-                    } else {
-                        OrbitDefaultAvatar(
-                            label = user.displayName,
-                            seed = user.id,
-                            color = Color(user.avatarColor),
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
-                    Box(
-                        modifier = Modifier
-                            .size(9.dp)
-                            .align(Alignment.BottomEnd)
-                            .clip(CircleShape)
-                            .background(memberStatusColor(liveStatus))
-                    )
-                }
+                MemberAvatarWithStatus(
+                    user = user,
+                    status = liveStatus,
+                    ringColor = t.Members_Bg
+                )
             }
         ),
         trailing = {

@@ -168,6 +168,22 @@ fun dispatchOrbitShortcut(event: KeyEvent, pttBinding: PttBinding?): Boolean {
         return true
     }
 
+    // Escape leaves a maximised call stage, and only then.
+    //
+    // Checked LAST, and gated on a handler actually being published, because
+    // Escape is the app's universal "get me out of this" key. With no stage
+    // maximised the handler is null, the event falls through unconsumed, and
+    // Escape still closes the dialog or menu that has focus.
+    if (!event.isCtrlPressed && !event.isShiftPressed && !event.isAltPressed &&
+        event.key == Key.Escape
+    ) {
+        val exitStage = webrtc.CallShortcuts.onExitMaximizedStage
+        if (exitStage != null) {
+            exitStage()
+            return true
+        }
+    }
+
     return false
 }
 

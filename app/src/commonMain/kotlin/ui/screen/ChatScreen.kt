@@ -44,13 +44,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
-import ui.components.OrbitEmptyState
+import ui.assets.OrbitDefaultAvatar
 import ui.components.OrbitIconButton
 import ui.components.OrbitScrollbar
 import ui.components.OrbitSearchField
@@ -61,6 +65,9 @@ import ui.model.OrbitChannel
 import ui.model.OrbitMessage
 import ui.model.OrbitUser
 import ui.theme.LocalReduceMotion
+import ui.theme.OrbitConceptBorder
+import ui.theme.OrbitConceptDark
+import ui.theme.OrbitConceptMetrics
 import ui.theme.OrbitMetrics
 import ui.theme.OrbitMotion
 import ui.theme.OrbitRadius
@@ -258,6 +265,15 @@ fun ChatScreen(
         messages
     }
 
+    /**
+     * "3 results" / "1 result".
+     *
+     * Named because it is now written in two places — beside the field on a narrow
+     * window, and under the header on a wide one — and a plural rule duplicated
+     * into two call sites is a bug waiting for the day the two disagree.
+     */
+    fun searchResultLabel(count: Int) = "$count result${if (count == 1) "" else "s"}"
+
     Row(
         modifier = modifier
             .fillMaxSize()
@@ -273,16 +289,39 @@ fun ChatScreen(
                     onVoiceCall = { callManager?.startCall(channel.id, false) },
                     searchActive = searchActive,
                     onToggleSearch = { searchActive = !searchActive },
+                    // On a window wide enough for it, the search field is IN the
+                    // header — which is where `.chat-search-bar` lives in the
+                    // concept. On a narrow one there is no room for a 144dp field
+                    // beside six icon buttons, so the toggle stays a button and
+                    // the row below takes the field instead.
+                    searchQuery = if (searchActive && windowSize.isMediumOrLarger) searchQuery else null,
+                    onSearchQueryChange = { searchQuery = it },
                     pinsActive = pinsActive,
+                    pinCount = messages.count { it.isPinned },
                     onTogglePins = { pinsActive = !pinsActive },
                     memberListActive = memberPanelOpen,
                     onToggleMemberList = memberPanelToggle,
                     notifMode = notifMode,
                     onCycleNotificationMode = onCycleNotificationMode
                 )
-                HorizontalDivider(color = t.Separator, thickness = 1.dp)
 
-                if (searchActive) {
+                if (searchActive && windowSize.isMediumOrLarger && searchQuery.isNotBlank()) {
+                    // The field is in the header, so there is no room beside it for
+                    // a count; it rides underneath on its own line. `.chat-search-bar`
+                    // has no result readout of its own, so this is Orbit's addition
+                    // rather than the concept's.
+                    Text(
+                        text = searchResultLabel(displayMessages.size),
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            color = t.Text_Muted,
+                            fontSize = 11.sp
+                        ),
+                        maxLines = 1,
+                        modifier = Modifier.padding(start = OrbitSpace.lg, top = OrbitSpace.sm)
+                    )
+                }
+
+                if (searchActive && !windowSize.isMediumOrLarger) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -298,7 +337,7 @@ fun ChatScreen(
                         if (searchQuery.isNotBlank()) {
                             Spacer(Modifier.width(OrbitSpace.sm))
                             Text(
-                                text = "${displayMessages.size} result${if (displayMessages.size == 1) "" else "s"}",
+                                text = searchResultLabel(displayMessages.size),
                                 style = MaterialTheme.typography.labelSmall.copy(color = t.Text_Subtle, fontSize = 11.sp),
                                 maxLines = 1
                             )
@@ -450,7 +489,11 @@ fun ChatScreen(
                         1 -> PinnedMessagesPanel(
                             pinned = messages.filter { it.isPinned },
                             canUnpin = onTogglePin != null,
-                            onUnpin = { onTogglePin?.invoke(it) }
+                            onUnpin = { onTogglePin?.invoke(it) },
+                            // The concept's drawer has a close X in its header;
+                            // without it the panel is only reachable by re-pressing
+                            // the header's pin button.
+                            onClose = { pinsActive = false }
                         )
                         2 -> MemberListPanel(
                             members = members,
@@ -587,6 +630,7 @@ private fun ChatTimeline(
             MessageList(
                 messages = displayMessages,
                 currentUser = currentUser,
+                channelName = if (directProfile != null) directProfile.displayName else channel.name,
                 isLoading = isLoadingMessages,
                 modifier = Modifier.fillMaxSize(),
                 firstUnreadId = firstUnreadId,
@@ -743,94 +787,259 @@ private fun TypingDots() {
     }
 }
 
+/** `width: '380px'` on `.pinned-drawer`. */
+private val PinnedDrawerWidth = 380.dp
+
+/** `borderRadius: '8px'` on the drawer's message cards. */
+private val PinnedCardShape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+
+/**
+ * The pinned-messages drawer, from the concept's `PinnedDrawer.jsx`.
+ *
+ * Every value below is that file's, one to one:
+ *
+ *  - `width: '380px'` → [PinnedDrawerWidth]
+ *  - `backgroundColor: var(--bg-secondary)` → `OrbitConceptDark.secondary`
+ *  - `borderLeft: 1px solid var(--border-subtle)` → the 1dp strip down the left
+ *  - `boxShadow: var(--elevation-floating)` (0 16px 32px rgba(0,0,0,0.4)) →
+ *    `shadow(16.dp)`, which is as close as Compose's elevation model gets
+ *  - header `height: 48px` → `OrbitConceptMetrics.headerHeight`
+ *  - content `padding: 16px` / `gap: 16px`
+ *  - card `backgroundColor: var(--bg-chat)`, `borderRadius: 8px`,
+ *    `padding: 12px`, `border: 1px solid var(--border-subtle)`
+ *  - body `fontSize: 13px`, `lineHeight: 1.4`
+ *
+ * It previously borrowed [SidePanelHeader] instead: 44dp tall, 13sp, a count
+ * badge and no close control, with each message as a bare
+ * divider-separated row. That is the app-wide panel header, and the concept's
+ * drawer is a different shape — it has cards on a lighter surface inside a
+ * darker drawer, and it closes.
+ *
+ * ## Not reproduced
+ *
+ * The concept's per-message "Jump" button calls `onClose` and nothing else —
+ * there is no scroll target behind it. Orbit has no pinned-message scroll
+ * plumbing either, so it is omitted rather than shipped as a control that
+ * pretends to navigate.
+ */
 @Composable
 private fun PinnedMessagesPanel(
     pinned: List<OrbitMessage>,
     canUnpin: Boolean,
-    onUnpin: (String) -> Unit
+    onUnpin: (String) -> Unit,
+    onClose: () -> Unit
 ) {
-    val t = rememberCosmicTokens()
-    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val listState = rememberLazyListState()
+    val roomMembers = ui.theme.LocalRoomMembers.current
 
-    Column(
+    Row(
         modifier = Modifier
-            .width(OrbitMetrics.sidePanelWidth)
+            .width(PinnedDrawerWidth)
             .fillMaxHeight()
-            .background(t.Members_Bg)
-            .border(1.dp, t.Separator)
+            // box-shadow: var(--elevation-floating)
+            .shadow(16.dp)
     ) {
-        SidePanelHeader(
-            icon = Icons.Default.PushPin,
-            title = "Pinned",
-            count = pinned.size
+        // border-left: 1px solid var(--border-subtle)
+        Box(
+            modifier = Modifier
+                .width(1.dp)
+                .fillMaxHeight()
+                .background(OrbitConceptBorder.subtle())
         )
-        HorizontalDivider(color = t.Separator, thickness = 1.dp)
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                // backgroundColor: var(--bg-secondary)
+                .background(OrbitConceptDark.secondary)
+        ) {
+            // Header: height 48px, padding 0 16px, space-between.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(OrbitConceptMetrics.headerHeight)
+                    .padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                androidx.compose.material3.Icon(
+                    imageVector = Icons.Default.PushPin,
+                    contentDescription = null,
+                    tint = OrbitConceptDark.textPrimary,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(OrbitSpace.sm))
+                Text(
+                    text = "Pinned Messages",
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        color = OrbitConceptDark.textPrimary,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                OrbitIconButton(
+                    icon = Icons.Default.Close,
+                    contentDescription = "Close pinned messages",
+                    onClick = onClose,
+                    size = 28.dp,
+                    iconSize = 18.dp,
+                    shape = OrbitRadius.xsShape
+                )
+            }
+            // border-bottom: 1px solid var(--border-subtle)
+            HorizontalDivider(color = OrbitConceptBorder.subtle(), thickness = 1.dp)
 
-        if (pinned.isEmpty()) {
-            OrbitEmptyState(
-                title = "Nothing pinned yet",
-                body = "Open a message's ··· menu and choose Pin to keep it here for everyone in the room.",
+            if (pinned.isEmpty()) {
+                // padding: 16px, gap: 16px — then margin-top: 40px on the block.
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(OrbitSpace.lg)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(top = 40.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        androidx.compose.material3.Icon(
+                            imageVector = Icons.Default.PushPin,
+                            contentDescription = null,
+                            tint = OrbitConceptDark.textMuted,
+                            // size 32, opacity 0.5
+                            modifier = Modifier.size(32.dp).alpha(0.5f)
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            text = "No pinned messages in this channel yet.",
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = OrbitConceptDark.textMuted,
+                                fontSize = 13.sp
+                            ),
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            } else {
+                Box(Modifier.weight(1f)) {
+                    androidx.compose.foundation.lazy.LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        // padding: 16px
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(OrbitSpace.lg)
+                    ) {
+                        items(pinned.size, key = { pinned[it].id }) { index ->
+                            val message = pinned[index]
+                            // backgroundColor: var(--bg-chat); border-radius: 8px;
+                            // padding: 12px; border: 1px solid var(--border-subtle)
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(PinnedCardShape)
+                                    .background(OrbitConceptDark.chat)
+                                    .border(1.dp, OrbitConceptBorder.subtle(), PinnedCardShape)
+                                    .padding(12.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(OrbitSpace.sm),
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    ) {
+                                        PinnedAuthorAvatar(
+                                            username = message.username,
+                                            userId = message.userId,
+                                            member = roomMembers.firstOrNull {
+                                                it.id == message.userId ||
+                                                    it.id.endsWith(message.userId) ||
+                                                    message.userId.endsWith(it.id)
+                                            }
+                                        )
+                                        Text(
+                                            text = message.username,
+                                            style = MaterialTheme.typography.labelLarge.copy(
+                                                color = OrbitConceptDark.textPrimary,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 13.sp
+                                            ),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = formatTimestampCompact(message.timestamp),
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                color = OrbitConceptDark.textMuted,
+                                                fontSize = 11.sp
+                                            ),
+                                            maxLines = 1
+                                        )
+                                    }
+                                    if (canUnpin) {
+                                        OrbitIconButton(
+                                            icon = Icons.Default.Close,
+                                            contentDescription = "Unpin message",
+                                            onClick = { onUnpin(message.id) },
+                                            size = 22.dp,
+                                            iconSize = 14.dp,
+                                            shape = OrbitRadius.xsShape
+                                        )
+                                    }
+                                }
+                                Spacer(Modifier.height(OrbitSpace.sm))
+                                Text(
+                                    text = message.body,
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        color = OrbitConceptDark.textNormal,
+                                        fontSize = 13.sp,
+                                        // line-height: 1.4
+                                        lineHeight = 18.2.sp
+                                    )
+                                )
+                            }
+                        }
+                    }
+                    OrbitScrollbar(listState = listState, modifier = Modifier.align(Alignment.CenterEnd))
+                }
+            }
+        }
+    }
+}
+
+/**
+ * `width: 24px; height: 24px; border-radius: 50%` on a pinned message's author.
+ *
+ * Resolved from the room roster rather than invented: a message carries a user id
+ * and a name, and `LocalRoomMembers` is already provided by `ChatScreen`.
+ */
+@Composable
+private fun PinnedAuthorAvatar(
+    username: String,
+    userId: String,
+    member: OrbitUser?
+) {
+    Box(
+        modifier = Modifier
+            .size(24.dp)
+            .clip(androidx.compose.foundation.shape.CircleShape)
+            .background(OrbitConceptDark.secondary)
+    ) {
+        val avatarUrl = member?.avatarUrl
+        if (avatarUrl != null) {
+            coil3.compose.AsyncImage(
+                model = avatarUrl,
+                contentDescription = username,
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
             )
         } else {
-            Box(Modifier.weight(1f)) {
-                androidx.compose.foundation.lazy.LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(bottom = OrbitSpace.lg)
-                ) {
-                    items(pinned.size, key = { pinned[it].id }) { index ->
-                        val message = pinned[index]
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = OrbitSpace.md, vertical = OrbitSpace.md)
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = message.username,
-                                    style = MaterialTheme.typography.labelMedium.copy(
-                                        color = t.Accent,
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 12.sp
-                                    ),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f, fill = false)
-                                )
-                                if (canUnpin) {
-                                    OrbitIconButton(
-                                        icon = Icons.Default.Close,
-                                        contentDescription = "Unpin this message",
-                                        onClick = { onUnpin(message.id) },
-                                        size = 22.dp,
-                                        iconSize = 12.dp,
-                                        shape = OrbitRadius.xsShape
-                                    )
-                                }
-                            }
-                            Spacer(Modifier.height(2.dp))
-                            Text(
-                                text = message.body,
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    color = t.Text_Secondary,
-                                    fontSize = 12.5.sp,
-                                    lineHeight = 17.sp
-                                ),
-                                maxLines = 4,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                text = formatTimestampCompact(message.timestamp),
-                                style = MaterialTheme.typography.labelSmall.copy(color = t.Text_Subtle, fontSize = 10.sp)
-                            )
-                        }
-                        HorizontalDivider(color = t.Separator, thickness = 1.dp)
-                    }
-                }
-                OrbitScrollbar(listState = listState, modifier = Modifier.align(Alignment.CenterEnd))
-            }
+            OrbitDefaultAvatar(
+                label = username,
+                seed = userId,
+                color = member?.let { Color(it.avatarColor) },
+                modifier = Modifier.fillMaxSize()
+            )
         }
     }
 }

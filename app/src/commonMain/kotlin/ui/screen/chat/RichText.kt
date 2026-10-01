@@ -31,6 +31,15 @@ import androidx.compose.ui.unit.sp
 internal data class RichTextPalette(
     val text: Color,
     val muted: Color,
+    /**
+     * Foreground for `<b>` / `<strong>` / `**bold**`.
+     *
+     * The concept's `.message-text strong { font-weight: 700; color: var(--header-primary) }`
+     * — bold body text is a *different colour* from the body around it, not just a
+     * heavier weight. Added as its own field rather than reusing [text] so a caller
+     * that does not care can leave it at the default and keep the two together.
+     */
+    val strong: Color = text,
     val accent: Color,
     val codeBg: Color,
     /**
@@ -197,7 +206,8 @@ private fun pushAnchor(b: AnnotatedString.Builder, stack: ArrayList<OpenTag>, at
 }
 
 private fun styleForTag(name: String, p: RichTextPalette): SpanStyle = when (name) {
-    "b", "strong" -> SpanStyle(fontWeight = FontWeight.Bold)
+    // `.message-text strong { font-weight: 700; color: var(--header-primary) }`
+    "b", "strong" -> SpanStyle(fontWeight = FontWeight.Bold, color = p.strong)
     "i", "em", "cite", "var" -> SpanStyle(fontStyle = FontStyle.Italic)
     "u", "ins" -> SpanStyle(textDecoration = TextDecoration.Underline)
     "s", "strike", "del" -> SpanStyle(textDecoration = TextDecoration.LineThrough)
@@ -363,7 +373,7 @@ internal fun buildPlainTextRich(
                 b.append(g[1])
                 b.pop()
             }
-            g[3].isNotEmpty() -> styled(b, g[3], SpanStyle(fontWeight = FontWeight.Bold), p)
+            g[3].isNotEmpty() -> styled(b, g[3], SpanStyle(fontWeight = FontWeight.Bold, color = p.strong), p)
             g[5].isNotEmpty() -> styled(b, g[5], SpanStyle(textDecoration = TextDecoration.Underline), p)
             g[7].isNotEmpty() -> styled(b, g[7], SpanStyle(textDecoration = TextDecoration.LineThrough), p)
             g[9].isNotEmpty() -> styled(b, g[9], SpanStyle(fontFamily = FontFamily.Monospace, background = p.codeBg), p)

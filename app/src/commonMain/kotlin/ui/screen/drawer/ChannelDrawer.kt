@@ -1,26 +1,26 @@
 package ui.screen.drawer
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.PersonAdd
-import androidx.compose.material.icons.filled.Security
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -30,49 +30,44 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
+import repository.MatrixOrbitRepository
 import repository.SettingsManager
-import ui.components.OrbitIconButton
 import ui.components.OrbitSearchField
 import ui.components.OrbitNotices
-import ui.components.OrbitNotices.onFailureOrNotify
+import ui.icons.OrbitIcons
+import ui.layout.LocalWindowSizeClass
 import ui.model.ChannelCategory
 import ui.model.OrbitChannel
 import ui.model.OrbitServer
 import ui.model.OrbitUser
 import ui.screen.server.ServerHeader
-import ui.theme.OrbitMetrics
+import ui.screen.server.ServerMenuEntry
+import ui.theme.OrbitConceptMetrics
 import ui.theme.OrbitRadius
 import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
+import webrtc.LocalCallManager
 
 /**
- * No ripple on the quiet Roles link: it is chrome, not a primary target.
+ * The channel sidebar. The concept's `.channel-sidebar`.
  *
- * Deliberately NOT remembered -- a `Modifier.clickable` factory that called
- * `remember` would have to be `@Composable`, and this is a plain modifier
- * factory. A fresh `MutableInteractionSource` per application is what the
- * ripple-less overload is for, and at one call site it costs nothing.
- */
-private fun Modifier.clickableNoIndication(onClick: () -> Unit): Modifier =
-    this.clickable(
-        interactionSource = androidx.compose.foundation.interaction.MutableInteractionSource(),
-        indication = null,
-        onClick = onClick
-    )
-
-/**
- * The channel drawer.
+ * Geometry and chrome are the concept's, rule for rule: 240dp wide
+ * (`--sidebar-width`), `--bg-sidebar`, an 8dp radius on its top-left corner only
+ * (the one rounded edge on the panel), `overflow: hidden`, and a column of
+ * header / scrollable list / voice panel / user bar.
  *
- * Two structural changes here beyond restyling:
+ * ## What the concept's chrome actually costs
  *
- *  1. "Browse Channels" was a button wired to `{}` — a visible dead control in
- *     the most-used panel of the app. It is now a real search field that
- *     filters the room list, which is what the label always implied.
- *  2. The four action rows are now quiet, hover-revealed affordances instead of
- *     four permanently-coloured buttons sitting directly under the server name.
+ * The old shell was 248dp on `OrbitMetrics.drawerWidth` and had no top-left
+ * radius at all, so the drawer met the rail on a hard right angle and read as a
+ * second flat column rather than a panel sitting over the workspace.
  */
 @Composable
 fun ChannelDrawer(
@@ -87,14 +82,24 @@ fun ChannelDrawer(
     onOpenRolesClick: (() -> Unit)? = null,
     repository: repository.OrbitRepository? = null,
     unreadCounts: Map<String, Int> = emptyMap(),
+    /**
+     * Whether the friends view is the main column, and how to open it.
+     *
+     * Both are null/false unless a layout has somewhere to show
+     * [FriendsPanel]. The concept's DM sidebar has a `Friends` row above the
+     * conversations; when there is nowhere for it to go, the row is not drawn
+     * rather than drawn as a button that opens nothing.
+     */
+    friendsTabActive: Boolean = false,
+    onSelectFriendsTab: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var showInviteDialog by remember { mutableStateOf(false) }
     var channelQuery by remember(server.id) { mutableStateOf("") }
     val t = rememberCosmicTokens()
     // CompactAppLayout hands this drawer `weight(1f)` and expects it to span the
-    // pane; a hard-coded 248dp fought the weight and clipped the room list.
-    val isCompact = ui.layout.LocalWindowSizeClass.current.isCompact
+    // pane; a hard-coded width fought the weight and clipped the room list.
+    val isCompact = LocalWindowSizeClass.current.isCompact
 
     val visibleChannels = remember(channels, channelQuery) {
         if (channelQuery.isBlank()) {
@@ -126,26 +131,41 @@ fun ChannelDrawer(
                     // cleanly at the panel border instead of bleeding across the
                     // chat area beside it.
                     Modifier
-                        .width(OrbitMetrics.drawerWidth)
+                        .width(OrbitConceptMetrics.sidebarWidth)
                         .clipToBounds()
                 }
             )
             .fillMaxHeight()
-            .background(t.Drawer_Bg)
+            // `.channel-sidebar { border-top-left-radius: 8px; overflow: hidden }`.
+            // The radius is on ONE corner: it is the rail-to-sidebar join, so the
+            // panel reads as sitting over the workspace rather than as a column
+            // butted against it.
+            .clip(SidebarConcept.sidebarShape)
+            .background(conceptSidebarSurface())
     ) {
+        // `.server-header` with the concept's dropdown behind it.
+        //
+        // The concept's menu is Server Boost / Invite People / Server Settings /
+        // Notification Settings / Leave Server — all Discord product actions.
+        // Orbit can honestly perform one of those (Invite) and, where the layout
+        // offers it, Create a room. The rest are not rows of "unavailable": they
+        // are not rendered at all, because a menu item that cannot do anything is
+        // worse than a missing one.
+        val serverMenuEntries: List<ServerMenuEntry> = if (server.isDM) {
+            emptyList()
+        } else {
+            buildList {
+                add(ServerMenuEntry(label = "Invite people") { showInviteDialog = true })
+                onCreateRoomClick?.let { createRoom ->
+                    add(ServerMenuEntry(label = "Create a room") { createRoom() })
+                }
+            }
+        }
         ServerHeader(
             server = server,
             showArrow = !server.isDM,
-            // Clicking the server name opens Invite, which is where Discord
-            // puts it too (the server-name dropdown). It used to open Invite
-            // as well, but only after three full-width buttons had already
-            // claimed a third of the sidebar to say the same three things.
-            onHeaderClick = { if (!server.isDM) showInviteDialog = true },
-            // "Create a room" also hangs off the last category header in the
-            // list below, so the ServerHeader "+" is redundant with it.
-            onCreateRoomClick = if (server.isDM) null else onCreateRoomClick
+            menuEntries = serverMenuEntries
         )
-        HorizontalDivider(color = t.Separator, thickness = 1.dp)
 
         // The "Invite people / Roles & permissions / Create a room" stack is
         // gone. It was three permanent 32dp rows above the room list, roughly
@@ -155,9 +175,9 @@ fun ChannelDrawer(
         // are reachable when you need them.
         //
         // Reachability is preserved, not removed:
-        //   Invite   -> click the server name (wired above).
-        //   Create   -> the "+" on the last category header, and the "+" on
-        //               the server header (wired above).
+        //   Invite   -> the server-name dropdown (wired above).
+        //   Create   -> the "+" on the last category header, and the same row in
+        //               the server-name dropdown.
         //   Roles    -> onOpenRolesClick still reaches the roles screen from
         //               the layout above; see the note in ExpandedAppLayout.
         if (!server.isDM && onOpenRolesClick != null) {
@@ -167,23 +187,28 @@ fun ChannelDrawer(
                     .padding(horizontal = OrbitSpace.sm, vertical = 1.dp),
                 horizontalArrangement = Arrangement.End
             ) {
-                Text(
+                androidx.compose.material3.Text(
                     text = "Roles & permissions",
-                    style = MaterialTheme.typography.labelSmall.copy(
+                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall.copy(
                         color = t.Text_Subtle,
                         fontSize = 10.sp,
                         letterSpacing = 0.3.sp
                     ),
                     modifier = Modifier
                         .clip(OrbitRadius.xsShape)
-                        .clickableNoIndication(onOpenRolesClick)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            role = Role.Button,
+                            onClick = onOpenRolesClick
+                        )
                         .padding(horizontal = 6.dp, vertical = 3.dp)
                 )
             }
         }
 
         if (server.isDM) {
-            val callManager = webrtc.LocalCallManager.current
+            val callManager = LocalCallManager.current
             Column(modifier = Modifier.padding(horizontal = OrbitSpace.sm, vertical = OrbitSpace.sm)) {
                 OrbitSearchField(
                     value = channelQuery,
@@ -197,6 +222,8 @@ fun ChannelDrawer(
                 selectedChannelId = selectedChannelId,
                 unreadCounts = unreadCounts,
                 onChannelClick = onChannelClick,
+                friendsTabActive = friendsTabActive,
+                onSelectFriendsTab = onSelectFriendsTab,
                 onVoiceCall = { callManager?.startCall(it, false) },
                 onVideoCall = { callManager?.startCall(it, true) },
                 repository = repository,
@@ -212,8 +239,8 @@ fun ChannelDrawer(
                 )
             }
             val joinCallScope = rememberCoroutineScope()
-            val joinCallManager = webrtc.LocalCallManager.current
-            val matrixRepository = repository as? repository.MatrixOrbitRepository
+            val joinCallManager = LocalCallManager.current
+            val matrixRepository = repository as? MatrixOrbitRepository
             ChannelListContent(
                 categories = categories,
                 channels = visibleChannels,
@@ -292,7 +319,14 @@ fun ChannelDrawer(
             )
         }
 
-        HorizontalDivider(color = t.Separator, thickness = 1.dp)
+        // `.mini-screen-preview-card` — between the channel list and the user
+        // bar, and only while a share is running, which is what the concept
+        // gates it on (`voiceState.connected`).
+        MiniScreenPreviewSlot(
+            callManager = LocalCallManager.current,
+            modifier = Modifier.fillMaxWidth()
+        )
+
         val drawerScope = rememberCoroutineScope()
         val drawerSettings = remember { SettingsManager() }
         UserProfileBar(
@@ -313,3 +347,94 @@ fun ChannelDrawer(
     }
 }
 
+/**
+ * `.mini-screen-preview-card { margin: 6px 8px; background-color: var(--bg-secondary);
+ * border: 1px solid var(--border-subtle); border-radius: 6px; padding: 8px 10px }`.
+ *
+ * Rendered only while a screen share is running, exactly as the concept gates
+ * it on `voiceState.connected`.
+ *
+ * The whole card is the button: the concept puts `onClick={onFocusStream}` on
+ * the card and a second, stop-propagating button on the popout glyph. There is
+ * no separate popout in Orbit — the share already fills the main column — so
+ * both are the same action here and one hit target is the honest rendering of
+ * it. `Role.Button` plus the "Go to the shared screen" label keeps it
+ * announceable.
+ */
+@Composable
+private fun MiniScreenPreviewSlot(
+    callManager: webrtc.CallManager?,
+    modifier: Modifier = Modifier
+) {
+    // Hoisted so the number of remembered slots does not change when
+    // callManager flips between null and non-null.
+    val sharingFlow = remember(callManager) { callManager?.isScreenSharing ?: flowOf(false) }
+    val isSharing by sharingFlow.collectAsState(initial = false)
+
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+
+    // An `if` rather than an early `return`: returning above the two remembered
+    // interaction sources would change the number of composed children the moment
+    // a share started or stopped.
+    if (isSharing) {
+        Row(
+            modifier = modifier
+                .padding(horizontal = 8.dp, vertical = 6.dp)
+                .clip(OrbitRadius.smShape)
+                .background(if (hovered) conceptHoverOverlay() else conceptSecondarySurface())
+                .border(
+                    1.dp,
+                    if (hovered) conceptBorderStrong() else conceptBorderSubtle(),
+                    OrbitRadius.smShape
+                )
+                .hoverable(interaction)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    role = Role.Button,
+                    onClickLabel = "Go to the shared screen",
+                    onClick = { callManager?.expandCallSurface() }
+                )
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // `.screen-icon-box { width: 24px; height: 24px; border-radius: 4px;
+            // background-color: rgba(26, 188, 156, 0.15) }`.
+            Box(
+                modifier = Modifier
+                    .size(24.dp)
+                    .clip(OrbitRadius.xsShape)
+                    .background(SidebarConcept.screenShareTealWash),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = OrbitIcons.ScreenShare,
+                    contentDescription = null,
+                    tint = SidebarConcept.screenShareTeal,
+                    modifier = Modifier.size(15.dp)
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            androidx.compose.material3.Text(
+                text = "Screen 1",
+                style = androidx.compose.material3.MaterialTheme.typography.labelLarge.copy(
+                    color = conceptHeaderPrimary(),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            Icon(
+                imageVector = Icons.Default.OpenInNew,
+                contentDescription = null,
+                // `.screen-popout-btn { color: var(--interactive-normal) }`,
+                // hover `#ffffff`.
+                tint = if (hovered) conceptInteractiveActive() else conceptInteractiveNormal(),
+                modifier = Modifier.size(14.dp)
+            )
+        }
+    }
+}
