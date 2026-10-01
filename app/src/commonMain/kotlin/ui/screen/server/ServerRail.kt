@@ -2,7 +2,6 @@ package ui.screen.server
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
@@ -10,13 +9,11 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -35,13 +32,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import ui.assets.OrbitBrandMark
 import ui.assets.OrbitServerAssetIcon
@@ -49,6 +43,8 @@ import ui.components.HoverTooltip
 import ui.components.OrbitCountBadge
 import ui.components.OrbitScrollbar
 import ui.model.OrbitServer
+import ui.theme.OrbitConceptMetrics
+import ui.theme.OrbitConceptStatus
 import ui.theme.OrbitMotion
 import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
@@ -56,15 +52,29 @@ import ui.theme.rememberCosmicTokens
 /**
  * The server rail.
  *
- * Discord's rail is good and worth keeping: a 68px column of squircles with a
- * selection pill. What was wrong here was the execution — the pill was
- * hard-coded to a neon red for unread counts, the "add" and "discover" tiles
- * used a background that did not exist in the token set, hovering animated the
- * corner radius of a shape the user could not see, and there was no way to
- * find out which space a tile was without clicking it.
+ * Rebuilt against the concept's `.server-rail`. The previous version was a
+ * Discord-flavoured rail rather than Discord's, and the differences were all
+ * visible:
  *
- * Now: labelled on hover, one accent, a real token for every surface, and a
- * scrollbar that only shows up when there are more spaces than fit.
+ *  - Hovering a tile animated only the corner radius. Discord also floods the
+ *    whole tile with blurple and turns the glyph white. That colour flood is the
+ *    single most recognisable thing about the rail and it was simply missing.
+ *  - The pill was inset 3dp from the edge, 3dp wide, and rounded on all corners.
+ *    Discord's is flush to the edge at 4dp, rounded only on its right side, so it
+ *    reads as a tab rather than a floating stick.
+ *  - Pill heights were 30/16/0 against the concept's 40/20/0, and there was no
+ *    8px unread state at all -- an unread space looked identical to a read one
+ *    until you opened it.
+ *  - The pill was accent-coloured when selected. Discord's is white in every
+ *    state, which is what keeps it from competing with the tile fill.
+ *  - Tiles were 42dp against the concept's 48dp, in a 68dp rail against 72dp.
+ *  - Unselected tiles were dimmed to 82% alpha. There is no dimming in the
+ *    concept; the pill alone indicates selection.
+ *  - Action tiles were grey with an accent hover. The concept's are green, so
+ *    "add" and "discover" read as creation rather than as another destination.
+ *  - The tooltip was mounted TWICE, nested, with the outer one wrapping the inner
+ *    one. The inner popup resolved its offset against the outer's zero-content
+ *    wrapper, which is why the tooltip was unreliable here.
  */
 @Composable
 fun ServerRail(
@@ -72,6 +82,7 @@ fun ServerRail(
     selectedServerId: String?,
     onServerClick: (String) -> Unit,
     onAddServerClick: () -> Unit = {},
+    onExploreClick: () -> Unit = {},
     unreadByServer: Map<String, Int> = emptyMap(),
     modifier: Modifier = Modifier
 ) {
@@ -83,20 +94,19 @@ fun ServerRail(
     Box(
         modifier = modifier
             .fillMaxHeight()
-            .width(ui.theme.OrbitMetrics.railWidth)
+            .width(OrbitConceptMetrics.railWidth)
             .background(t.Rail_Bg)
     ) {
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxHeight(),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+            contentPadding = PaddingValues(
                 top = OrbitSpace.md,
                 bottom = OrbitSpace.md
             ),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(OrbitSpace.xs)
+            verticalArrangement = Arrangement.spacedBy(OrbitSpace.sm)
         ) {
-            // ── Home / DMs ─────────────────────────────────────────
             if (dmServer != null) {
                 item(key = "home") {
                     ServerRailItem(
@@ -104,30 +114,18 @@ fun ServerRail(
                         unreadCount = unreadByServer[dmServer.id] ?: 0,
                         onClick = { onServerClick(dmServer.id) },
                         label = dmServer.name
-                    ) { hovered ->
+                    ) { hovered, shape ->
                         OrbitBrandMark(
                             modifier = Modifier
-                                .size(42.dp)
-                                .clip(
-                                    RoundedCornerShape(
-                                        animateRailCorner(selected = dmServer.id == selectedServerId, hovered = hovered)
-                                    )
-                                ),
+                                .size(48.dp)
+                                .clip(shape),
                             showGlow = dmServer.id == selectedServerId
                         )
                     }
                 }
             }
 
-            item(key = "divider") {
-                Box(
-                    modifier = Modifier
-                        .width(30.dp)
-                        .height(1.5.dp)
-                        .clip(CircleShape)
-                        .background(t.Separator)
-                )
-            }
+            item(key = "divider") { RailDivider() }
 
             items(spaces, key = { it.id }, contentType = { "space" }) { server ->
                 val isSelected = server.id == selectedServerId
@@ -136,38 +134,20 @@ fun ServerRail(
                     unreadCount = unreadByServer[server.id] ?: 0,
                     onClick = { onServerClick(server.id) },
                     label = server.name
-                ) { hovered ->
-                    val shape = RoundedCornerShape(
-                        animateRailCorner(selected = isSelected, hovered = hovered)
-                    )
-                    Box(
-                        modifier = Modifier
-                            .size(42.dp)
-                            .clip(shape)
-                            .background(
-                                Brush.linearGradient(
-                                    listOf(
-                                        Color(server.iconColor),
-                                        Color(server.iconColor).copy(alpha = 0.78f)
-                                    )
-                                )
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (server.avatarUrl != null) {
-                            coil3.compose.AsyncImage(
-                                model = server.avatarUrl,
-                                contentDescription = server.name,
-                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                                modifier = Modifier.fillMaxWidth().size(42.dp)
-                            )
-                        } else {
-                            OrbitServerAssetIcon(
-                                label = initialsOf(server.name),
-                                color = Color(server.iconColor),
-                                modifier = Modifier.size(42.dp)
-                            )
-                        }
+                ) { hovered, shape ->
+                    if (server.avatarUrl != null) {
+                        coil3.compose.AsyncImage(
+                            model = server.avatarUrl,
+                            contentDescription = server.name,
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                            modifier = Modifier.size(48.dp).clip(shape)
+                        )
+                    } else {
+                        OrbitServerAssetIcon(
+                            label = initialsOf(server.name),
+                            color = Color(server.iconColor),
+                            modifier = Modifier.size(48.dp).clip(shape)
+                        )
                     }
                 }
             }
@@ -183,7 +163,7 @@ fun ServerRail(
                 RailActionTile(
                     icon = Icons.Default.Explore,
                     description = "Discover servers",
-                    onClick = onAddServerClick
+                    onClick = onExploreClick
                 )
             }
         }
@@ -192,130 +172,127 @@ fun ServerRail(
     }
 }
 
-/**
- * The rail's signature shape change: a rounded square at rest that tightens
- * toward a squircle when the tile is selected or hovered. It is the one place
- * in the app where animating the *shape* is the point, so it gets its own
- * spec rather than a generic duration.
- */
+/** 32x2 hairline, `--border-subtle`, per the concept's `.server-divider`. */
 @Composable
-private fun animateRailCorner(selected: Boolean, hovered: Boolean) =
-    animateDpAsState(
-        targetValue = if (selected || hovered) 14.dp else 18.dp,
-        animationSpec = OrbitMotion.BouncyDp,
-        label = "railCorner"
-    ).value
+private fun RailDivider() {
+    val t = rememberCosmicTokens()
+    Box(
+        modifier = Modifier
+            .width(32.dp)
+            .height(2.dp)
+            .clip(CircleShape)
+            .background(t.Separator)
+    )
+}
 
+/**
+ * A rail tile: the selection pill, and the tile that floods on hover.
+ *
+ * One composable rather than a wrapper with an empty content lambda. The previous
+ * version nested the tooltip inside itself, so the popup measured against a
+ * zero-content parent and landed in the wrong place.
+ */
 @Composable
 private fun ServerRailItem(
     selected: Boolean,
     unreadCount: Int,
     onClick: () -> Unit,
     label: String,
-    content: @Composable (hovered: Boolean) -> Unit
+    content: @Composable (hovered: Boolean, shape: androidx.compose.ui.graphics.Shape) -> Unit
 ) {
     val t = rememberCosmicTokens()
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
 
-    // Left selection pill.
+    // Concept heights: 40 selected, 20 hover, 8 unread-and-idle, 0 otherwise.
+    // The 8dp state is the one Orbit had no equivalent for at all, so an unread
+    // space was indistinguishable from a read one until opened.
     val pillHeight by animateDpAsState(
         targetValue = when {
-            selected -> 30.dp
-            hovered -> 16.dp
+            selected -> 40.dp
+            hovered -> 20.dp
+            unreadCount > 0 -> 8.dp
             else -> 0.dp
         },
         animationSpec = OrbitMotion.BouncyDp,
         label = "railPillHeight"
     )
-    val pillColor by animateColorAsState(
-        targetValue = when {
-            selected -> t.Accent
-            hovered -> t.Text_Muted
-            else -> Color.Transparent
-        },
-        animationSpec = OrbitMotion.SnappyColor,
-        label = "railPillColor"
-    )
-    // Mute a non-selected tile slightly so the active one carries the eye.
-    val tileAlpha by animateFloatAsState(
-        targetValue = if (selected) 1f else 0.82f,
-        animationSpec = OrbitMotion.Snappy,
-        label = "railTileAlpha"
-    )
+
+    // White in every state. The old version tinted it with the accent when
+    // selected, which made it compete with the tile fill it is meant to sit beside.
+    val pillVisible = pillHeight > 0.dp
 
     HoverTooltip(
         text = label,
         visible = hovered,
         modifier = Modifier
             .fillMaxWidth()
-            .height(50.dp)
+            .height(58.dp)
     ) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            // Flush to the rail's left edge, rounded only on the right, so it reads
+            // as a tab cut into the rail rather than a stick floating in it.
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterStart)
-                    .padding(start = 3.dp)
-                    .width(3.dp)
+                    .width(4.dp)
                     .height(pillHeight)
-                    .clip(RoundedCornerShape(topEnd = 3.dp, bottomEnd = 3.dp))
-                    .background(pillColor)
+                    .clip(RoundedCornerShape(topEnd = 4.dp, bottomEnd = 4.dp))
+                    .background(if (pillVisible) Color.White else Color.Transparent)
             )
 
-            // Hover names the space.
-            //
-            // The rail tile only ever draws `initialsOf(name)` when a space has no
-            // avatar, so three spaces can all read as "G" and nothing on screen
-            // identifies them. There was NO tooltip here at all — the comment
-            // below used to claim there was one, and the wrapper it referred to
-            // had been left with an empty content lambda, which measured 0x0 and
-            // so resolved its offset against nothing.
-            //
-            // The tile keeps the full 50dp height as the tooltip's anchor box so
-            // the popup appears beside the icon rather than through it.
-            ui.components.HoverTooltip(
-                text = label,
-                visible = hovered,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(50.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(50.dp)
-                        .alpha(tileAlpha)
-                        .hoverable(interaction)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            role = Role.Button,
-                            onClick = onClick
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    content(hovered)
+            // Discord's signature shape change: a full circle at rest that squares
+            // off to 16dp on hover or selection. It is the one place in the app
+            // where animating the shape is the point.
+            val shape = RoundedCornerShape(
+                animateDpAsState(
+                    targetValue = if (selected || hovered) 16.dp else 24.dp,
+                    animationSpec = OrbitMotion.BouncyDp,
+                    label = "railCorner"
+                ).value
+            )
 
-                    if (unreadCount > 0) {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(end = 3.dp, top = 2.dp)
-                        ) {
-                            OrbitCountBadge(count = unreadCount, color = t.Danger)
-                        }
+            val fill by animateColorAsState(
+                // The flood. This is the change that was missing: hover fills the
+                // whole tile with blurple rather than only reshaping it.
+                targetValue = if (selected || hovered) t.Accent else t.Rail_Idle,
+                animationSpec = OrbitMotion.SnappyColor,
+                label = "railTileFill"
+            )
+
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(shape)
+                    .background(fill)
+                    .hoverable(interaction)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        role = Role.Button,
+                        onClick = onClick
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                content(hovered, shape)
+
+                if (unreadCount > 0) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = 2.dp, bottom = 2.dp)
+                    ) {
+                        OrbitCountBadge(count = unreadCount, color = OrbitConceptStatus.dnd)
                     }
                 }
             }
         }
     }
-    // The tooltip is the only way to name a space without opening it, so the
-    // tile itself is now its content: an empty content lambda left the wrapper
-    // 0x0 and the 54dp offset resolved against nothing.
 }
 
 @Composable
 private fun RailActionTile(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     description: String,
     onClick: () -> Unit
 ) {
@@ -323,58 +300,58 @@ private fun RailActionTile(
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
 
-    val bg by animateColorAsState(
-        // Quiet at rest like every other button. This tile used to be a filled
-        // rounded square with a 1dp ring permanently drawn on it, and switched
-        // the ring to accent on hover -- a box that changed colour under the
-        // cursor, which is the loudest possible way to say "button".
-        targetValue = if (hovered) t.Hover else Color.Transparent,
-        animationSpec = OrbitMotion.SnappyColor,
-        label = "railActionBg"
-    )
+    // Green at rest, per the concept's `.action-server-btn`. The previous tile was
+    // grey with an accent hover, so "add a server" read as just another place to
+    // go rather than as an action.
     val tint by animateColorAsState(
-        targetValue = if (hovered) t.AccentLight else t.Text_Muted,
+        targetValue = if (hovered) Color.White else OrbitConceptStatus.online,
         animationSpec = OrbitMotion.SnappyColor,
         label = "railActionTint"
     )
-    val scale by animateFloatAsState(
-        targetValue = if (hovered) 1.06f else 1f,
-        animationSpec = OrbitMotion.Snappy,
-        label = "railActionScale"
+
+    val fill by animateColorAsState(
+        targetValue = if (hovered) t.Accent else Color.Transparent,
+        animationSpec = OrbitMotion.SnappyColor,
+        label = "railActionFill"
     )
 
-    Box(modifier = Modifier.fillMaxWidth().height(50.dp), contentAlignment = Alignment.Center) {
-        ui.components.HoverTooltip(
+    val shape = RoundedCornerShape(
+        animateDpAsState(
+            targetValue = if (hovered) 16.dp else 24.dp,
+            animationSpec = OrbitMotion.BouncyDp,
+            label = "railActionCorner"
+        ).value
+    )
+
+    Box(modifier = Modifier.fillMaxWidth().height(58.dp), contentAlignment = Alignment.Center) {
+        HoverTooltip(
             text = description,
             visible = hovered,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(50.dp)
+                .height(58.dp)
         ) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Box(
-                    modifier = Modifier
-                        .size(42.dp)
-                        .scale(scale)
-                        .clip(RoundedCornerShape(animateRailCorner(selected = false, hovered = hovered)))
-                        .background(bg)
-                        .hoverable(interaction)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            role = Role.Button,
-                            onClick = onClick
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(icon, contentDescription = description, tint = tint, modifier = Modifier.size(18.dp))
-                }
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(shape)
+                    .background(fill)
+                    .hoverable(interaction)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        role = Role.Button,
+                        onClick = onClick
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, contentDescription = description, tint = tint, modifier = Modifier.size(22.dp))
             }
         }
     }
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────
 
 /** Word-boundary split for initials; compiled once instead of per call. */
 private val WhitespaceRun = Regex("\\s+")
