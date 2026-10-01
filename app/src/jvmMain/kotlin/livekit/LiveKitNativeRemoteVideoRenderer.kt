@@ -12,7 +12,11 @@ object LiveKitNativeRemoteVideoRenderer : NativeRemoteVideoSink {
             "DEBUG [LiveKitNativeRemoteVideoRenderer] remote participant connected " +
                 "sessionId=$sessionId epoch=$epoch participantIdentity=$participantIdentity participantSid=$participantSid"
         )
-        NativeParticipantLedger.onConnect(participantIdentity)
+        // The sid is passed through because it, not the identity, identifies the
+        // arrival. A rejoin keeps the identity and changes the sid, so keying on
+        // identity would fold every rejoin after the first into a duplicate and
+        // report a healthy call as balanced.
+        NativeParticipantLedger.onConnect(participantIdentity, participantSid)
         LiveKitRemoteVideoFrameStore.participantConnected(participantIdentity)
     }
 
@@ -27,7 +31,10 @@ object LiveKitNativeRemoteVideoRenderer : NativeRemoteVideoSink {
             "DEBUG [LiveKitNativeRemoteVideoRenderer] remote participant disconnected " +
                 "sessionId=$sessionId epoch=$epoch participantIdentity=$participantIdentity participantSid=$participantSid"
         )
-        NativeParticipantLedger.onDisconnect(participantIdentity)
+        // Same key derivation as the connect path -- see onConnect. If these two
+        // disagreed, a participant would be announced under one key and removed
+        // under another, leaving a phantom in the ledger forever.
+        NativeParticipantLedger.onDisconnect(participantIdentity, participantSid)
         LiveKitRemoteVideoFrameStore.participantDisconnected(participantIdentity)
     }
 
