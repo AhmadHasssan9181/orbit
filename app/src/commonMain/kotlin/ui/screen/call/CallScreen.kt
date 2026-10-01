@@ -1493,7 +1493,8 @@ data class RenderNode(
     // the SFU session instead of sitting there blank.
     val isStuckShare: Boolean = false,
     /**
-     * False while this participant's video is still inside its grace window.
+     * Whether this participant's video is still expected, and the renderer should
+     * be drawn rather than the avatar.
      *
      * A camera-off participant still arrives as a tile with a renderer, because
      * LiveKit announces the publication regardless of whether it will ever carry a
@@ -1501,11 +1502,14 @@ data class RenderNode(
      * on the 1:1 path, the words "Starting video") for someone whose camera is off
      * and never going to produce anything.
      *
-     * Derived from [videoPlaceholder], and the tile falls back to the avatar the
-     * moment this goes false -- so "working on it" and "there is nothing here"
-     * finally look different.
+     * True by default, so a node nobody has thought about draws its video. That
+     * default matters more than it looks: this field was briefly named
+     * `hasVideoFrameYet` and read as `!node.hasVideoFrameYet`, which inverted it.
+     * A working frame set it true, the negation became false, and every video in
+     * every call silently fell through to the avatar branch. Defaulting to "draw
+     * the video" means an unset field cannot hide anybody.
      */
-    val hasVideoFrameYet: Boolean = true
+    val isVideoExpected: Boolean = true
 )
 
 /**
@@ -1691,7 +1695,7 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
         // spinning forever behind "can't be received" says the opposite of what
         // is true -- Orbit has stopped trying and is offering the one thing that
         // still works.
-        if (node.renderer != null && !node.isStuckShare && !node.hasVideoFrameYet) {
+        if (node.renderer != null && !node.isStuckShare && node.isVideoExpected) {
             VideoRenderer(renderer = node.renderer, modifier = Modifier.fillMaxSize().clip(CallTileShape))
         } else if (node.isStuckShare) {
             Box(modifier = Modifier.fillMaxSize().background(tokens.Sunken))
