@@ -653,6 +653,9 @@ private fun ChatTimeline(
                 messages = displayMessages,
                 currentUser = currentUser,
                 channelName = if (directProfile != null) directProfile.displayName else channel.name,
+                // directProfile only exists for a DM, so it is already the app's
+                // answer to "is this one-to-one" -- no second lookup needed.
+                isDirect = directProfile != null,
                 isLoading = isLoadingMessages,
                 modifier = Modifier.fillMaxSize(),
                 firstUnreadId = firstUnreadId,

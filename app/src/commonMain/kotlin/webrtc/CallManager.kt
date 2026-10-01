@@ -1487,13 +1487,26 @@ class CallManager(
     fun setPushToTalkActive(active: Boolean) {
         if (!pushToTalkMode || _callState.value == CallState.IDLE) return
         if (active) {
+            // A press that arrives while a previous press was never released is
+            // ignored rather than re-stacking. Previously this silently wedged PTT:
+            // every later press returned here too, so the key stopped opening the mic
+            // entirely and only the explicit mute button could recover.
             if (pttPreHoldAudioEnabled != null) return
             pttPreHoldAudioEnabled = isLocalAudioEnabled.value
-            if (!isLocalAudioEnabled.value) toggleMute(true)
+            // Open the mic. This used to read `if (!isLocalAudioEnabled.value)
+            // toggleMute(true)`, which muted on press and unmuted on release -- the
+            // exact opposite of what holding a talk key is for. With audio already
+            // off, pressing to talk did nothing at all and releasing turned the mic
+            // ON, so the user's one chance to speak while muted was the one gesture
+            // guaranteed to leave them silent.
+            if (!isLocalAudioEnabled.value) toggleMute(false)
         } else {
             val restore = pttPreHoldAudioEnabled ?: return
             pttPreHoldAudioEnabled = null
-            if (!restore) toggleMute(false)
+            // Put the mic back the way it was before the key went down. The old
+            // `if (!restore)` inverted this as well, so a release left the mic open
+            // for a user who had deliberately muted it.
+            if (!restore) toggleMute(true)
         }
     }
 

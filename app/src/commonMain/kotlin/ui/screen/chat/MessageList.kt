@@ -91,6 +91,17 @@ internal fun MessageList(
      * — the list is handed a message list, and a name is all the banner needs.
      */
     channelName: String = "general",
+    /**
+     * Whether this list is a one-to-one DM rather than a room channel.
+     *
+     * The welcome banner used to speak in channel terms unconditionally, so opening
+     * a private conversation greeted you with "Welcome to #someone!" and "This is
+     * the start of the #someone channel" -- a hash prefix and the word "channel" for
+     * a room that has neither. The name came from [directProfile.displayName], which
+     * is why the private conversation was addressed by the other person's name and
+     * still described as a text channel.
+     */
+    isDirect: Boolean = false,
     isLoading: Boolean = false,
     firstUnreadId: String? = null,
     onSeen: (String) -> Unit = {},
@@ -252,7 +263,7 @@ internal fun MessageList(
             // count — are untouched.
             if (rows.isEmpty() && !isLoading) {
                 item(key = "channel_welcome") {
-                    ChannelWelcomeHeader(channelName = channelName)
+                    ChannelWelcomeHeader(channelName = channelName, isDirect = isDirect)
                 }
             }
 
@@ -500,7 +511,7 @@ private fun dayLabel(ts: Instant): String {
  * hash, so it does not read as a hole punched in the canvas.
  */
 @Composable
-private fun ChannelWelcomeHeader(channelName: String) {
+private fun ChannelWelcomeHeader(channelName: String, isDirect: Boolean = false) {
     val t = rememberCosmicTokens()
     val light = isLightChatSurface(t)
     Column(
@@ -522,7 +533,10 @@ private fun ChannelWelcomeHeader(channelName: String) {
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = OrbitIcons.TextChannel,
+                // The concept's roundel carries a `#` for a room channel. There is no
+                // person icon in the set yet, and a hash is the one thing that must
+                // not appear in a DM, so members stands in until one is drawn.
+                imageVector = if (isDirect) OrbitIcons.Members else OrbitIcons.TextChannel,
                 contentDescription = null,
                 tint = if (light) t.Accent else Color.White,
                 modifier = Modifier.size(40.dp)
@@ -530,7 +544,11 @@ private fun ChannelWelcomeHeader(channelName: String) {
         }
         Spacer(Modifier.height(12.dp))
         Text(
-            text = "Welcome to #$channelName!",
+            // No "#" in a DM. A hash prefix is how every other surface in the app
+            // marks a room channel, so keeping it here told the reader this was a
+            // text channel when it is a private conversation with one person -- and
+            // the name in it is that person's, not a room's.
+            text = if (isDirect) channelName else "Welcome to #$channelName!",
             style = MaterialTheme.typography.displaySmall.copy(
                 fontSize = 32.sp,
                 lineHeight = 38.sp,
@@ -540,7 +558,14 @@ private fun ChannelWelcomeHeader(channelName: String) {
         )
         Spacer(Modifier.height(6.dp))
         Text(
-            text = "This is the start of the #$channelName channel. Send a message, share code, or jump into voice!",
+            // The channel copy is written for a shared room: "share code" and "jump
+            // into voice" are things you do with a group, and both read as
+            // non-secrets when the room holds exactly two people.
+            text = if (isDirect) {
+                "This is the start of your conversation with $channelName. Messages and calls are end-to-end encrypted."
+            } else {
+                "This is the start of the #$channelName channel. Send a message, share code, or jump into voice!"
+            },
             style = MaterialTheme.typography.bodyMedium.copy(
                 fontSize = 15.sp,
                 lineHeight = 20.sp,
