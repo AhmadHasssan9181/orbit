@@ -300,6 +300,56 @@ class CallMediaKeyExchange(
                         "$overdue present >=${LATECOMER_GRACE_MS / 1000}s without sending a key; " +
                         "refreshing membership attempt=$nudgesFired/$NUDGE_MAX_PER_CALL"
                 )
+                // Re-deliver the CURRENT key to each overdue peer BEFORE the
+                // membership nudge, and never rotate on suspicion alone.
+                //
+                // This path used to go straight to the membership cycle, and that is
+                // what desynced a peer who had simply dropped their connection.
+                //
+                // Run 66, hellishsaa cut the call and rejoined. A hard cut publishes
+                // NO leave event, so his m.call.member stays on the server as a
+                // ghost (docs/planning/ESCAPE_FROM_HELL.md H8-V2) -- and a ghost is
+                // indistinguishable from a latecomer: present, no key. The nudge
+                // fired, the membership cycle saw a leaver, and rotated:
+                //
+                //   ORBIT SENDS index=0
+                //   HE INSTALLS keyIndex=3          (correct, from before the cut)
+                //   remote participant disconnected
+                //   remote participant connected
+                //   ORBIT SENDS index=1             (rotated)
+                //   HE INSTALLS keyIndex=0          (never caught up)
+                //
+                // Orbit then encrypted with index 1 while he decrypted with 0. Every
+                // frame arrived and every frame was undecodable, so he heard nothing
+                // while Orbit's own counters -- TXSTAT sending, mic.read=500, no
+                // jitter -- all read perfectly healthy. A ring lit up, because that
+                // is measured pre-decryption.
+                //
+                // The latecomer rule ("present without a key") is a statement about
+                // what we have NOT heard from them. It is never evidence that
+                // anything about OUR key should change. Rotating on that inference
+                // breaks every peer already in sync to fix one that may not be.
+                //
+                // Re-delivering the current index cannot desync anyone: it is the key
+                // we are already using, so a peer receiving it lands on the index we
+                // are transmitting with.
+                val (resendPayload, resendIndex) = mutex.withLock { currentPayload() to ring.currentIndex }
+                val resendTargets = overdue.mapNotNull { identity ->
+                    callDeviceFromParticipantIdentity(identity)
+                }.toSet()
+                if (resendTargets.isNotEmpty()) {
+                    println(
+                        "DEBUG [CallMediaKeyExchange] latecomer re-delivering CURRENT key " +
+                            "index=$resendIndex to ${resendTargets.size} keyless peer(s) " +
+                            "(no rotation)"
+                    )
+                    distribute(resendPayload, resendTargets, resendIndex)
+                } else {
+                    println(
+                        "WARN [CallMediaKeyExchange] latecomer(s) $overdue could not be " +
+                            "resolved to a device; relying on the membership nudge alone"
+                    )
+                }
                 runCatching { callback() }
                     .onFailure { println("WARN [CallMediaKeyExchange] latecomer nudge failed: ${it.message}") }
             }
