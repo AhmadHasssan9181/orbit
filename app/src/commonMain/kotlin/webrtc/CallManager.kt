@@ -498,6 +498,11 @@ class CallManager(
             println("DEBUG [CallManager] Join already in progress for $callId, ignoring redundant request")
             return
         }
+        // NOTE: the wait for any in-flight native teardown is NOT here. These
+        // entry points are called from Compose onClick lambdas and cannot be made
+        // suspend without breaking every caller. It lives in
+        // LiveKitNativeMediaSession instead, on the suspend native-start path, so
+        // it covers every entry point rather than the two patched here.
         if (callState.value != CallState.IDLE) {
             // A DIFFERENT call is already live. The old code only guarded "same
             // callId" and "a join is in flight", so a group join from a chat
@@ -951,6 +956,13 @@ class CallManager(
     fun startCall(roomId: String, isVideo: Boolean) {
         val newCallId = "call_${System.currentTimeMillis()}"
         beginCall()
+        // NOTE: waiting on any in-flight native teardown is deliberately NOT done
+        // here. These entry points are called from Compose onClick lambdas and
+        // cannot be made suspend without breaking every caller. The equivalent
+        // guarantee lives in LiveKitNativeMediaSession's start path, which only
+        // reuses a native session while it is actually connected and otherwise
+        // replaces a stale one -- so the outcome no longer depends on teardown
+        // having finished first.
         activeRoomId = roomId
         callId = newCallId
         isIncomingCall.value = false
@@ -1417,31 +1429,31 @@ class CallManager(
         groupCallLivekitIdentity = null
     }
 
+
     /**
-     * Tears down the native media session off the caller's thread.
-     *
-     * `endCall` runs on `rememberCoroutineScope()`, which is the Compose/EDT
-     * dispatcher, and both of these block: disconnectFromLiveKit drives the
-     * native teardown (player job join, device line close, factory dispose --
-     * six-plus JNI calls, the last tearing down WebRTC worker threads), and
-     * webRtcClient.endCall() does the same for the P2P engine. Leaving that
-     * synchronous meant every hangup and every failed join froze the window,
-     * on the same thread the H12 "Joining… hangs" and H13 zombie-JVM write-ups
-     * both care about.
-     *
-     * The `Dispatchers.IO` is load-bearing and was previously missing. `launch`
-     * with no dispatcher INHERITS its context, and this `scope` is
-     * `rememberCoroutineScope()` -- whose dispatcher on Compose Desktop is the
-     * AWT event thread. So the comment above described the opposite of what the
-     * code did. Worse, the teardown holds `g_sessionMutex` while it joins the
-     * mixer thread, which is itself contending for that same mutex ~200x/sec
-     * (see orbit_livekit_audio.cpp:1231), so the freeze could last as long as
-     * the hold rather than being momentary.
-     *
-     * `scope` is still the right parent: the work is cancelled with the
-     * composition, which is what we want. Only the thread is wrong.
-     */
-    private fun teardownNativeMedia() {
+ * Tears down the native media session off the caller's thread.
+ *
+ * `endCall` runs on `rememberCoroutineScope()`, which is the Compose/EDT
+ * dispatcher, and both of these block: disconnectFromLiveKit drives the native
+ * teardown (player job join, device line close, factory dispose -- six-plus JNI
+ * calls, the last tearing down WebRTC worker threads), and webRtcClient.endCall()
+ * does the same for the P2P engine. Leaving that synchronous meant every hangup
+ * and every failed join froze the window.
+ *
+ * The `Dispatchers.IO` is load-bearing. `launch` with no dispatcher INHERITS its
+ * context, and `scope` is `rememberCoroutineScope()` -- whose dispatcher on
+ * Compose Desktop is the AWT event thread. `scope` is still the right parent: the
+ * work is cancelled with the composition. Only the thread is wrong.
+ *
+ * This is fire-and-forget, so a rejoin can begin before it finishes -- the
+ * rejoin used to read the outgoing session's id and connect against a session
+ * being destroyed underneath it, stalling at "Group-call join stalled at
+ * Joined". That is now handled downstream in LiveKitNativeMediaSession, which
+ * only reuses a session while it is actually connected and otherwise replaces a
+ * stale one, so correctness no longer depends on this coroutine having been
+ * scheduled first.
+ */
+private fun teardownNativeMedia() {
         scope.launch(Dispatchers.IO) {
             runCatching { livekit.disconnectFromLiveKit(userInitiated = true) }
                 .onFailure { println("WARN [CallManager] native disconnect during teardown failed: ${it.message}") }

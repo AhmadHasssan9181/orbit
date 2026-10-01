@@ -242,24 +242,42 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             )
         }
 
-        if (sessionId == 0L) {
+        // A non-zero sessionId is only safe to reuse while that session is still
+        // CONNECTED. After a disconnect the id can linger -- disconnect() clears
+        // it, but the teardown is launched on Dispatchers.IO and a rejoin can
+        // arrive first -- and reusing a torn-down session is what stalled the
+        // rejoin:
+        //
+        //     WARN reusing live native session 1 for a new join
+        //     ERROR Group-call join stalled at Joined, giving up visibly
+        //
+        // Every later guard in this file tests only `sessionId == 0L`, so a stale
+        // id made all of them pass against a dead session instead of failing
+        // loudly. Gating on liveness rather than on the id alone removes the
+        // dependency on teardown having finished first: a joined session is
+        // reused, anything else gets a fresh one.
+        val sessionIsLive = sessionId != 0L && readinessCache.connected
+        if (sessionIsLive) {
+            println("DEBUG [LiveKitNativeMediaSession] reusing connected native session $sessionId")
+        } else {
+            if (sessionId != 0L) {
+                // Stale id from a session that is no longer connected. Drop it so
+                // the guards below see the truth, and destroy the dead native
+                // session so it cannot leak WebRTC threads.
+                println(
+                    "DEBUG [LiveKitNativeMediaSession] stale native session $sessionId is not connected; " +
+                        "replacing it for this join"
+                )
+                runCatching { bridge.destroySession(sessionId) }
+                    .onFailure { println("WARN [LiveKitNativeMediaSession] destroySession(stale $sessionId) failed: ${it.message}") }
+                sessionId = 0L
+            }
             val created = bridge.createSession()
             if (!created.ok || created.value == null) {
                 return NativeResult.failure(created.error ?: unknownError("Native session creation failed", "nativeCreateSession"))
             }
             sessionId = created.value
             println("DEBUG [LiveKitNativeMediaSession] native session created: $sessionId")
-        } else {
-            // Reaching here on a REJOIN meant the previous session was being
-            // reused after teardown -- every `if (sessionId == 0L)` guard in this
-            // file then passed against a dead session. disconnect() clears the id
-            // now, so this branch is reachable only when a session is genuinely
-            // still live. Said out loud rather than silently tolerated, because
-            // that silence is what made the rejoin hang undiagnosable.
-            println(
-                "WARN [LiveKitNativeMediaSession] reusing live native session $sessionId for a new join; " +
-                    "disconnect() is expected to have cleared it"
-            )
         }
 
         nextEpoch()
