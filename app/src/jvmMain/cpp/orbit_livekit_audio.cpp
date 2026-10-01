@@ -5116,7 +5116,38 @@ void resetRoomLocked() {
     g_audioTrack.reset();
     g_audioSource.reset();
     g_delegate.reset();
-    g_room.reset();
+    // Destroy the Room on a thread that does NOT hold g_sessionMutex.
+    //
+    // g_room is a unique_ptr<Room>. Resetting it inline ran ~Room() with
+    // g_sessionMutex held, and ~Room tears down the LiveKit connection -- which
+    // waits on SDK callbacks that dispatch back into this file, each of which
+    // takes g_sessionMutex. The destructor was therefore waiting for a lock the
+    // thread running it already held.
+    //
+    // That is the deadlock behind "disconnect from Orbit, connect again, and the
+    // app stays on Connecting", and it is why ten rounds of fixes to CALLERS of
+    // disconnect() never moved it:
+    //
+    //     disconnect step=bridge.disconnect atMs=3      (never returns)
+    //
+    // Every other fix removed a waiter -- the audio readers, the video readers --
+    // and the Room destructor was waiting too.
+    //
+    // Moved out and destroyed on its own thread so the teardown's callbacks can
+    // take the lock freely. g_room is nulled here, so no caller can reach the
+    // half-destroyed object; only the destructor outlives this scope, and it
+    // touches nothing else in this file.
+    if (g_room != nullptr) {
+        std::unique_ptr<livekit::Room> roomToDestroy = std::move(g_room);
+        std::thread([room = std::move(roomToDestroy)]() mutable {
+            try {
+                room.reset();
+            } catch (...) {
+                // Nothing actionable: the room is going away regardless, and this
+                // thread exists only so its destructor is not holding the mutex.
+            }
+        }).detach();
+    }
     g_connected = false;
     g_micPublished = false;
     g_matrixRtcMemberId.clear();
