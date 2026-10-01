@@ -1007,9 +1007,26 @@ object LiveKitNativeAudioCapture {
     private fun openLineForCandidate(format: AudioFormat, candidate: InputMixerCandidate): TargetDataLine? {
         val desiredInfo = DataLine.Info(TargetDataLine::class.java, format)
         val mixer = runCatching { AudioSystem.getMixer(candidate.mixerInfo) }.getOrNull() ?: return null
+        // Announced before the call, not after. `mixer.getLine` and `line.open`
+        // are both blocking and both can stall indefinitely -- Java sound
+        // serialises access per mixer, so a line the previous call has not fully
+        // released makes the next open wait with no timeout and no error. Without
+        // a line printed BEFORE the call, a stall here is indistinguishable from
+        // the process simply stopping, which is exactly how the rejoin hang
+        // presented: a healthy self-test, then silence.
+        println(
+            "DEBUG [LiveKitNativeAudioCapture] opening capture line mixer=${candidate.mixerInfo.name} " +
+                "desc=${candidate.mixerInfo.description} format=${format.sampleRate}Hz/" +
+                "${format.channels}ch thread=${Thread.currentThread().name} priorLineOpen=${activeLine != null}"
+        )
         return runCatching { mixer.getLine(desiredInfo) as? TargetDataLine }
             .onFailure { error ->
                 println("WARN [LiveKitNativeAudioCapture] Could not open candidate input mixer ${candidate.mixerInfo.name}: ${error.message}")
+            }
+            .also { line ->
+                if (line != null) {
+                    println("DEBUG [LiveKitNativeAudioCapture] capture line obtained mixer=${candidate.mixerInfo.name}")
+                }
             }
             .getOrNull()
     }
