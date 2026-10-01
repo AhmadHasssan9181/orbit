@@ -2318,6 +2318,13 @@ void stopReader(const std::shared_ptr<RemoteAudioReader>& reader) {
 // Readers removed from the map but not yet joined. Populated under
 // g_sessionMutex, drained by the reaper thread below with no lock held.
 std::vector<std::shared_ptr<RemoteAudioReader>> g_pendingReaderJoins;
+// Defined further down; the reaper below drains both queues and must be able to
+// call it.
+void stopVideoReader(const std::shared_ptr<RemoteVideoReader>& reader, const std::string& reason);
+// Video readers pending the same treatment, with their stop reason carried along
+// because stopVideoReader publishes a track-removed notification to Java and
+// that must not run with g_sessionMutex held.
+std::vector<std::pair<std::shared_ptr<RemoteVideoReader>, std::string>> g_pendingVideoReaderJoins;
 std::atomic<bool> g_readerReaperRunning{false};
 
 // Joins readers that were already signalled and removed from the map.
@@ -2338,13 +2345,21 @@ std::atomic<bool> g_readerReaperRunning{false};
 // destroyed while its own thread is still running.
 void drainPendingReaderJoins() {
     std::vector<std::shared_ptr<RemoteAudioReader>> readers;
+    std::vector<std::pair<std::shared_ptr<RemoteVideoReader>, std::string>> videoReaders;
     {
         SessionLock lock;
         readers.swap(g_pendingReaderJoins);
+        videoReaders.swap(g_pendingVideoReaderJoins);
         g_audioMixer.clearParticipants();
     }
     for (const auto& reader : readers) {
         stopReader(reader);
+    }
+    // Joined here, with no lock held. This is the whole point for video: the
+    // reader's own exit path needs g_sessionMutex, so joining it from inside a
+    // caller that holds the mutex cannot complete. See the KDoc above.
+    for (const auto& entry : videoReaders) {
+        stopVideoReader(entry.first, entry.second);
     }
 }
 
@@ -2357,13 +2372,13 @@ void ensureReaderReaper() {
         try {
             while (true) {
                 drainPendingReaderJoins();
-                if (g_pendingReaderJoins.empty()) {
+                if (g_pendingReaderJoins.empty() && g_pendingVideoReaderJoins.empty()) {
                     // Nothing left to do. Sleep briefly rather than spinning:
                     // this thread exists only for the rare teardown path.
                     std::this_thread::sleep_for(std::chrono::milliseconds(50));
                     {
                         SessionLock lock;
-                        if (g_pendingReaderJoins.empty()) {
+                        if (g_pendingReaderJoins.empty() && g_pendingVideoReaderJoins.empty()) {
                             g_readerReaperRunning.store(false, std::memory_order_release);
                             return;
                         }
@@ -3731,12 +3746,40 @@ void stopVideoReader(const std::shared_ptr<RemoteVideoReader>& reader, const std
     notifyRemoteVideoTrackRemoved(reader, reason);
 }
 
+// Signal every remote VIDEO reader and hand it to the reaper. Call with
+// g_sessionMutex held; the joining and the track-removed notification happen
+// later with no lock held.
+//
+// This is the same fix as stopAllRemoteReadersLocked, and it was missed there for
+// five rounds of debugging while the audio path was fixed and the video path was
+// left alone. The consequence was that disconnect() never completed on a rejoin,
+// because a video reader blocked on a full frame callback cannot reach the mutex
+// that teardown is holding:
+//
+//     WARN [LiveKitNativeMediaSession] teardown still running after 5000ms
+//     ERROR [CallManager] Group-call join stalled at Joined
+//
+// Video is the worse case: a frame callback takes far longer than a 10ms audio
+// read, so a video reader is far more likely to be mid-callback at the moment
+// teardown starts.
+//
+// notifyRemoteVideoTrackRemoved must also run without the lock -- it publishes
+// into Java, and a reentrant call back into this file would deadlock on a
+// non-recursive mutex. SessionLock defers such callbacks until unlock; moving the
+// call to the reaper achieves the same thing without depending on it.
 void stopAllRemoteVideoReadersLocked(const std::string& reason = "all") {
-    auto readers = std::move(g_remoteVideoReaders);
-    g_remoteVideoReaders.clear();
-    for (const auto& entry : readers) {
-        stopVideoReader(entry.second, reason);
+    for (const auto& entry : g_remoteVideoReaders) {
+        if (entry.second == nullptr) {
+            continue;
+        }
+        entry.second->running = false;
+        if (entry.second->stream != nullptr) {
+            entry.second->stream->close();
+        }
+        g_pendingVideoReaderJoins.emplace_back(entry.second, reason);
     }
+    g_remoteVideoReaders.clear();
+    ensureReaderReaper();
 }
 
 void stopRemoteVideoReaderLocked(const std::string& rawTrackSid, const std::string& reason) {
@@ -3751,7 +3794,16 @@ void stopRemoteVideoReaderLocked(const std::string& rawTrackSid, const std::stri
 
     auto reader = it->second;
     g_remoteVideoReaders.erase(it);
-    stopVideoReader(reader, reason);
+    // Same reasoning as stopAllRemoteVideoReadersLocked: the entry is already
+    // out of the map, so the reader cannot self-detach, and joining it here
+    // while the caller holds g_sessionMutex would wait on a thread that needs
+    // this mutex. Signal and hand it to the reaper instead.
+    reader->running = false;
+    if (reader->stream != nullptr) {
+        reader->stream->close();
+    }
+    g_pendingVideoReaderJoins.emplace_back(reader, reason);
+    ensureReaderReaper();
 }
 
 void stopRemoteVideoReaderForPublicationLocked(
