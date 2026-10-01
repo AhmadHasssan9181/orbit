@@ -20,6 +20,15 @@ expect fun setLiveKitReconnectedListener(listener: (() -> Unit)?)
 expect fun disconnectFromLiveKit(userInitiated: Boolean)
 
 /**
+ * Announce synchronously that native teardown is starting, before it is launched.
+ *
+ * Cheap and non-blocking; called from the UI thread. Exists so a join that
+ * begins straight after the user leaves cannot observe the outgoing session as
+ * still connected and then connect against it.
+ */
+expect fun markNativeTeardownStarting()
+
+/**
  * Disconnects AND releases the native session, so the next account starts with
  * no inherited state. Distinct from [disconnectFromLiveKit], which ends the
  * call but leaves the native session (and its E2EE key map and per-participant

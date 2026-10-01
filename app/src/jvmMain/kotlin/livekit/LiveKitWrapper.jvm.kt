@@ -56,6 +56,10 @@ actual fun disconnectFromLiveKit(userInitiated: Boolean) {
     LiveKitNativeMediaSession.disconnect(userInitiated = userInitiated)
 }
 
+actual fun markNativeTeardownStarting() {
+    LiveKitNativeMediaSession.markDisconnecting()
+}
+
 actual fun releaseNativeLiveKitSession() {
     LiveKitNativeMediaSession.releaseNativeSession()
 }

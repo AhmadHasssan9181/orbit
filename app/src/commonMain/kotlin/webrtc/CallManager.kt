@@ -1454,6 +1454,12 @@ class CallManager(
  * scheduled first.
  */
 private fun teardownNativeMedia() {
+        // Publish the barrier SYNCHRONOUSLY, on this thread, before the async
+        // work is launched. This is the whole point: the join path must not be
+        // able to observe the outgoing session as still connected, and the only
+        // way to guarantee that is to announce the teardown before it starts
+        // rather than after. Runs on the UI thread and is a field assignment.
+        livekit.markNativeTeardownStarting()
         scope.launch(Dispatchers.IO) {
             runCatching { livekit.disconnectFromLiveKit(userInitiated = true) }
                 .onFailure { println("WARN [CallManager] native disconnect during teardown failed: ${it.message}") }
