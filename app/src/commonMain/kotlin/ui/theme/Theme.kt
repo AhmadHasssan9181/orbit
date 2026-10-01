@@ -174,6 +174,8 @@ data class CosmicTokens(
     val Input_Bg: Color,
     val Members_Bg: Color,
     val Rail_Bg: Color,
+    /** The resting fill of a rail tile, before hover floods it with accent. */
+    val Rail_Idle: Color,
     val Rail_Active: Color,
     val Pill_Color: Color,
     val Drawer_Bg: Color,
@@ -266,6 +268,10 @@ private fun darkTokens(cs: androidx.compose.material3.ColorScheme) = CosmicToken
     Input_Bg = Ink780,
     Members_Bg = Ink800,
     Rail_Bg = Ink950,
+    // The concept's .server-icon-btn background is --bg-sidebar, i.e. Ink850.
+    // It was never given a token and the rail drew a per-server gradient instead,
+    // which meant no idle fill existed to flood away from on hover.
+    Rail_Idle = Ink850,
     Rail_Active = Ink650,   // flat grey, not an accent wash — Discord's server rail
     Pill_Color = DarkFgStrong,
     Drawer_Bg = Ink850,
@@ -339,6 +345,7 @@ private fun lightTokens(cs: androidx.compose.material3.ColorScheme) = CosmicToke
     Input_Bg = Paper100,
     Members_Bg = Paper0,
     Rail_Bg = Paper100,
+    Rail_Idle = Paper200,
     Rail_Active = cs.primary.copy(alpha = 0.12f),
     Pill_Color = LightFgStrong,
     Drawer_Bg = Paper50,
