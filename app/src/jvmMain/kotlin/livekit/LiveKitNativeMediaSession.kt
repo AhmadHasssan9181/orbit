@@ -11,6 +11,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicInteger
 
 object LiveKitNativeMediaSession : NativeMediaEventSink {
@@ -18,6 +19,16 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
     private const val PUBLISH_TIMEOUT_MS = 10_000L
     private const val RECONNECT_TIMEOUT_MS = 15_000L
     private const val MAX_CONSECUTIVE_RECONNECTS = 3
+
+    /**
+     * How long a join waits for an announced teardown before proceeding anyway.
+     *
+     * Generous against the teardown itself (a handful of JNI calls, the last
+     * joining WebRTC worker threads) and short against a user concluding the app
+     * is broken. Past it the join continues and the stale-session replacement
+     * still applies, so a slow teardown costs latency rather than correctness.
+     */
+    private const val TEARDUARD_BARRIER_TIMEOUT_MS = 5_000L
     private const val REMOTE_VIDEO_RESCAN_INTERVAL_MS = 2_000L
 
     private val bridge = OrbitLiveKitNativeBridge()
@@ -30,6 +41,58 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
     // connect coroutine then reports as a 15 s CONNECT_TIMEOUT on a healthy join.
     // A JNI call does not establish a JMM edge.
     @Volatile private var sessionId: Long = 0L
+
+    /**
+     * Completed when the in-flight teardown, if any, has finished.
+     *
+     * Published synchronously by [markDisconnecting] on the caller's thread --
+     * before the teardown itself is launched -- so a join that begins after the
+     * user left cannot miss it and cannot observe half-updated session state.
+     */
+    @Volatile
+    private var teardownBarrier: CompletableDeferred<Unit>? = null
+
+    /**
+     * Announce, on the calling thread, that a teardown is about to start.
+     *
+     * Cheap and non-blocking on purpose: it runs on the UI thread from endCall.
+     * The point is to publish the barrier BEFORE the async work begins, so the
+     * ordering the join depends on is established by a synchronous step rather
+     * than by whichever coroutine the scheduler happens to run first.
+     */
+    fun markDisconnecting() {
+        teardownBarrier = CompletableDeferred()
+    }
+
+    /**
+     * Waits for any announced teardown to complete, bounded.
+     *
+     * Sampling sessionId or readinessCache mid-teardown is what produced the run
+     * 77 failure: both are written at the END of disconnect(), so during teardown
+     * they still describe the outgoing call, and the join read
+     * "reusing connected native session 1" and then hung.
+     *
+     * Bounded because an unbounded wait here would be a new hang on the join path.
+     * Past the timeout the join proceeds and the stale-session replacement below
+     * still applies, so a slow teardown degrades to a slow join rather than a
+     * broken one.
+     */
+    private suspend fun awaitTeardownBarrier() {
+        val barrier = teardownBarrier ?: return
+        if (barrier.isCompleted) {
+            teardownBarrier = null
+            return
+        }
+        val finished = withTimeoutOrNull(TEARDUARD_BARRIER_TIMEOUT_MS) { barrier.await() }
+        if (finished != null) {
+            teardownBarrier = null
+            return
+        }
+        println(
+            "WARN [LiveKitNativeMediaSession] teardown still running after " +
+                "${TEARDUARD_BARRIER_TIMEOUT_MS}ms; continuing and replacing its session if stale"
+        )
+    }
     @Volatile private var epoch: Long = 0L
 
     /**
@@ -256,8 +319,30 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         // loudly. Gating on liveness rather than on the id alone removes the
         // dependency on teardown having finished first: a joined session is
         // reused, anything else gets a fresh one.
-        val sessionIsLive = sessionId != 0L && readinessCache.connected
-        if (sessionIsLive) {
+        // A teardown may be in flight right now. Both signals this check reads --
+        // sessionId and readinessCache.connected -- are written at the END of
+        // disconnect(), so while that runs they still describe the call that is
+        // on its way out. Run 77 showed that reading them mid-teardown is worse
+        // than useless: it reported
+        //
+        //     reusing connected native session 1
+        //
+        // and then stalled at "Group-call join stalled at Joined", because
+        // "connected" was simply not true yet.
+        //
+        // So wait for the teardown rather than sampling state it is in the middle
+        // of changing. The barrier is published synchronously by
+        // markDisconnecting() on the calling thread, before the async teardown is
+        // even launched, so a join that starts after the user left cannot miss it.
+        awaitTeardownBarrier()
+        if (sessionId == 0L) {
+            println(
+                "DEBUG [LiveKitNativeMediaSession] native session released by teardown " +
+                    "during this join's setup"
+            )
+        }
+        val sessionIsLiveNow = sessionId != 0L && readinessCache.connected
+        if (sessionIsLiveNow) {
             println("DEBUG [LiveKitNativeMediaSession] reusing connected native session $sessionId")
         } else {
             if (sessionId != 0L) {
@@ -683,6 +768,11 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         // gets a live session with a live room. The native side keeps its own
         // generation counter, so a fresh id cannot be confused with the old one.
         sessionId = 0L
+
+        // Release anyone waiting on this teardown (see awaitTeardownBarrier).
+        // Completed here, at the very end, so a waiter resumes only once every
+        // field above has been brought to its post-teardown value.
+        teardownBarrier?.complete(Unit)
 
         cancelPendingDeferreds(
             NativeError(
