@@ -145,7 +145,9 @@ compose.desktop {
         nativeDistributions {
             targetFormats(org.jetbrains.compose.desktop.application.dsl.TargetFormat.Msi)
             packageName = "Orbit"
-            packageVersion = "0.2.0"
+            // Bump per release. The MSI filename carries this, so a stale value
+            // silently uploads an asset that contradicts the tag it ships under.
+            packageVersion = "0.2.1"
             description = "Orbit — Matrix voice/video calls client"
             vendor = "Orbit"
 
