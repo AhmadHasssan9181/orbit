@@ -680,6 +680,23 @@ public:
         return true;
     }
 
+    /**
+     * Frames this worker has produced and handed onward.
+     *
+     * Exposed for the TXSTAT sender-side diagnostic, which has to be able to say
+     * "captured N frames, sent M packets" and let a reader check whether those two
+     * are consistent. Without this the sender could only report the packet side,
+     * and "my mic is dead" and "my encoder is dead" were indistinguishable from the
+     * outside -- which is exactly why every "he can't hear me" report in this
+     * project was unfalsifiable from the sender's own logs.
+     *
+     * Reads the same counter the `audio source stats` line reports, so the two
+     * cannot drift by counting different things.
+     */
+    std::uint64_t workerFramesCaptured() const {
+        return workerFramesCaptured_.load(std::memory_order_relaxed);
+    }
+
 private:
     // C2: backpressure drops used to be silent counters — a stalled JVM capture
     // thread looked like "connected but silent". Alarm (throttled to 1/s) on every drop.
@@ -723,6 +740,7 @@ private:
         formatDiagnosticsLogged_ = 0;
         captureFrameStatsLogged_ = 0;
         preCaptureDiagnosticsLogged_ = 0;
+        lastMuteGateWarnNs_ = 0;
         workerFrameSequence_ = 0;
         lastFrameTimestampNs_ = 0;
         setLastCaptureError("");
@@ -801,22 +819,65 @@ private:
                 // mutex is only tried opportunistically to refresh the track-mute cache;
                 // on contention we fall back to the last known mute intent instead of
                 // defaulting to "capture anyway".
+                //
+                // THE CACHE IS NOT REFRESHED HERE ANY MORE.
+                //
+                // It used to be, from g_audioTrack->muted(), and that was the bug:
+                // the refresh is a READ of LiveKit's track state, while the mute
+                // setter's write to g_micTrackMutedCache is the AUTHORITATIVE one
+                // (see nativeSetAudioMuted, which stores it right beside
+                // track->mute()). The two disagree in a window, and the worker won
+                // that window often enough to run for a whole call with the gate
+                // inverted.
+                //
+                // Observed in run 64, with the mic unmuted the entire time
+                // (native mic muted=false, CallPathStats muted=0, no native mute
+                // event at all):
+                //
+                //     workerFramesSkippedMuted:  0 -> 325 -> ... -> 35,244
+                //
+                // 35,244 discarded frames out of 66,771 captured. Over half the
+                // microphone thrown away, so peers heard chopped fragments --
+                // enough for Element's speaking indicator to light (it only needs
+                // non-zero level) while producing no audible speech. That is the
+                // exact shape of "his card lit up but he heard nothing".
+                //
+                // Reading g_audioTrack->muted() here cannot be a refresh, because
+                // LiveKit's track state is set by the same setter but observed
+                // through a shared_ptr whose mute flag can lag or be replaced on
+                // reconnect. The setter already writes the truth; this gate just
+                // has to read it.
                 const bool acceptingFrames = g_acceptingFrames.load(std::memory_order_relaxed);
                 const bool micPublished = g_micPublished.load(std::memory_order_relaxed);
-                bool trackMuted;
-                {
-                    std::unique_lock<std::timed_mutex> sessionLock(g_sessionMutex, std::try_to_lock);
-                    if (sessionLock.owns_lock() && g_audioTrack != nullptr) {
-                        trackMuted = g_audioTrack->muted();
-                        g_micTrackMutedCache.store(trackMuted, std::memory_order_relaxed);
-                    } else {
-                        trackMuted = g_micTrackMutedCache.load(std::memory_order_relaxed);
-                    }
-                }
+                const bool trackMuted = g_micTrackMutedCache.load(std::memory_order_relaxed);
 
                 if (trackMuted || !acceptingFrames || !micPublished) {
                     if (trackMuted) {
                         workerFramesSkippedMuted_.fetch_add(1, std::memory_order_relaxed);
+                        // A gate stuck closed is now diagnosable in one line instead
+                        // of only being visible as a rising counter nobody knows the
+                        // meaning of. Deliberately rate-limited to once per second:
+                        // every skipped frame is a log line otherwise.
+                        //
+                        // 30s at 10ms per frame is ~3,000 discarded frames with no
+                        // mute event ever logged, which is far past anyone actually
+                        // holding a mute button and squarely in "this is broken".
+                        const auto skipped = workerFramesSkippedMuted_.load(std::memory_order_relaxed);
+                        const auto nowNs = std::chrono::steady_clock::now().time_since_epoch().count();
+                        // nowNs is a raw steady_clock count in NANOSECONDS, so the interval has to be
+                        // expressed in nanoseconds too -- comparing against
+                        // std::chrono::seconds is a unit mismatch and does not compile.
+                        if (nowNs - lastMuteGateWarnNs_ >=
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                std::chrono::seconds(1))
+                                .count()) {
+                            lastMuteGateWarnNs_ = nowNs;
+                            std::cout << "WARN [OrbitLiveKitAudio] mic frames being discarded as MUTED: "
+                                      << "consecutiveSkipped=" << skipped
+                                      << " acceptingFrames=" << (acceptingFrames ? "true" : "false")
+                                      << " micPublished=" << (micPublished ? "true" : "false")
+                                      << std::endl;
+                        }
                     }
                     if (preCaptureDiagnosticsLogged_ < 20) {
                         preCaptureDiagnosticsLogged_ += 1;
@@ -1005,6 +1066,9 @@ private:
     std::atomic<std::uint64_t> workerFramesSilent_{0};
     std::atomic<std::uint64_t> workerFramesCaptured_{0};
     std::atomic<std::uint64_t> workerFramesSkippedMuted_{0};
+    // Rate limiter for the "mic frames discarded as muted" warning. Steady clock so
+    // a wall-clock jump cannot stall the warning permanently or fire it in a burst.
+    std::atomic<std::int64_t> lastMuteGateWarnNs_{0};
     std::atomic<std::uint64_t> captureTotalNs_{0};
     std::atomic<std::uint64_t> captureMaxNs_{0};
     std::atomic<std::uint32_t> captureCount_{0};
@@ -2586,6 +2650,143 @@ void stopRemoteReadersForParticipantLocked(const std::string& participantIdentit
 }
 
 std::string trackSourceLabel(livekit::TrackSource source);
+
+// ---------------------------------------------------------------------------
+// TXSTAT -- the sender's half of the story.
+//
+// RXSTAT has existed all along and is what exposed the silentConcealed problem:
+// it proved packets were ARRIVING and the jitter buffer was filling them with
+// silence. That is a receive-side statement, though, and it says nothing about
+// whether the sender ever produced audio worth receiving.
+//
+// So every "he can't hear me" in this project has been debugged from the wrong
+// side of the wire. The sender's own logs showed frames captured, submitted and
+// accepted -- all true, all pre-encoder -- and NOT ONE of those counters proves
+// anything left the machine. There is no outbound stat, no bytesSent, no
+// packetsSent anywhere in the codebase:
+//
+//     bytesSent    0 occurrences
+//     packetsSent  0 occurrences
+//     outbound     0 occurrences
+//
+// That gap is why an Orbit peer's audio could be unfalsifiable from their side:
+// their log would look identical whether they published perfect audio or none at
+// all. This closes it. Whatever a peer's sender-side numbers say, they can send
+// them, and the question stops being a guess.
+//
+// The chain that has to be proven end to end, and where each link shows up:
+//   capture   peak/rms   -- is the mic hearing anything
+//   frames    this line  -- did the encoder actually emit RTP
+//   decrypt   RXSTAT     -- did the far end turn it back into audio
+// ---------------------------------------------------------------------------
+
+std::atomic<bool> g_txStatsRunning{false};
+std::thread g_txStatsThread;
+
+void logTxStatsIfDue() {
+    while (g_txStatsRunning.load(std::memory_order_relaxed)) {
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+
+        std::shared_ptr<livekit::LocalAudioTrack> track;
+        bool muted = false;
+        bool accepting = false;
+        long long captureFrames = 0;
+        {
+            // g_sessionMutex is a timed_mutex, and the rest of this file takes it
+            // with SessionLock. A plain lock_guard<std::mutex> does not bind to it.
+            SessionLock lock;
+            track = g_audioTrack;
+            accepting = g_acceptingFrames;
+            // workerFramesCaptured_ is the counter the existing `audio source stats` line
+                    // already reports, so TXSTAT and that line agree by
+                    // construction. captureCount_ is private and has no accessor.
+                    captureFrames = g_audioSourceWorker.workerFramesCaptured();
+        }
+        if (track == nullptr) {
+            std::cout << "DEBUG [OrbitLiveKitAudio] TXSTAT verdict=no-local-track accepting="
+                      << (accepting ? "true" : "false")
+                      << " captured=" << captureFrames << std::endl;
+            continue;
+        }
+        muted = track->muted();
+
+        try {
+            auto statsFuture = track->getStats();
+            if (statsFuture.wait_for(std::chrono::milliseconds(50)) != std::future_status::ready) {
+                // NOT an error worth a WARN: the stats future can simply not be
+                // ready inside 50ms on a busy call, and a warning here would train
+                // everyone to ignore the line that matters.
+                std::cout << "DEBUG [OrbitLiveKitAudio] TXSTAT verdict=stats-not-ready"
+                          << " muted=" << (muted ? "true" : "false")
+                          << " accepting=" << (accepting ? "true" : "false")
+                          << " captured=" << captureFrames << std::endl;
+                continue;
+            }
+            long long packetsSent = -1;
+            long long bytesSent = -1;
+            long long retransmitted = -1;
+            for (const auto& stat : statsFuture.get()) {
+                const auto* outbound = std::get_if<livekit::RtcOutboundRtpStats>(&stat.stats);
+                if (outbound != nullptr) {
+                    // packets_sent/bytes_sent live in SentRtpStreamStats (`.sent`),
+                    // not OutboundRtpStreamStats -- the outbound struct carries
+                    // frames_encoded, encoder_implementation, quality_limitation_*
+                    // and the retransmit counters instead.
+                    packetsSent = static_cast<long long>(outbound->sent.packets_sent);
+                    bytesSent = static_cast<long long>(outbound->sent.bytes_sent);
+                    retransmitted = static_cast<long long>(outbound->outbound.retransmitted_packets_sent);
+                }
+            }
+
+            // The verdict is the point. Every field above can look healthy while a
+            // peer hears nothing, so this names the outcome in one word instead of
+            // leaving four numbers to be interpreted:
+            //   muted            -- we are transmitting silence by intent
+            //   not-accepting    -- frames are being captured but refused downstream
+            //   no-outbound      -- track exists but no outbound-rtp entry yet
+            //   sending          -- packets and bytes are actually on the wire
+            //   stalled          -- was sending, packets frozen (encoder wedged)
+            const char* verdict = "unknown";
+            if (muted) {
+                verdict = "muted";
+            } else if (!accepting) {
+                verdict = "not-accepting";
+            } else if (packetsSent < 0) {
+                verdict = "no-outbound";
+            } else if (packetsSent == 0) {
+                verdict = "stalled";
+            } else {
+                verdict = "sending";
+            }
+
+            std::cout << "DEBUG [OrbitLiveKitAudio] TXSTAT verdict=" << verdict
+                      << " packetsSent=" << packetsSent
+                      << " bytesSent=" << bytesSent
+                      << " retransmitted=" << retransmitted
+                      << " muted=" << (muted ? "true" : "false")
+                      << " accepting=" << (accepting ? "true" : "false")
+                      << " captured=" << captureFrames
+                      << " trackSid=" << track->sid()
+                      << std::endl;
+        } catch (const std::exception& error) {
+            std::cout << "DEBUG [OrbitLiveKitAudio] TXSTAT verdict=stats-threw what="
+                      << error.what() << std::endl;
+        } catch (...) {
+            std::cout << "DEBUG [OrbitLiveKitAudio] TXSTAT verdict=stats-threw unknown" << std::endl;
+        }
+    }
+}
+
+void stopTxStats() {
+    g_txStatsRunning.store(false, std::memory_order_relaxed);
+    if (g_txStatsThread.joinable()) {
+        if (g_txStatsThread.get_id() == std::this_thread::get_id()) {
+            g_txStatsThread.detach();
+        } else {
+            g_txStatsThread.join();
+        }
+    }
+}
 std::string optionalTrackSourceLabel(const std::optional<livekit::TrackSource>& source);
 std::string trackKindLabel(livekit::TrackKind kind);
 std::string streamStateLabel(livekit::StreamState state);
@@ -4480,6 +4681,10 @@ void shareAudioLoopbackMain(std::shared_ptr<livekit::AudioSource> source) {
 }
 
 void resetRoomLocked() {
+    // The TXSTAT thread reads g_audioTrack, which this function clears. A stale
+    // thread would keep printing a verdict for a track that is no longer published,
+    // which is worse than no line at all -- it would look like live evidence.
+    stopTxStats();
     g_acceptingFrames = false;
     // Per-room subscribe bookkeeping. Left set, a reconnect would refuse to retry
     // a publication whose SID the new room happens to reuse, and the
@@ -5345,6 +5550,10 @@ Java_livekit_LiveKitNativeAudioBridge_nativeConnect(JNIEnv* env, jclass, jstring
 extern "C" JNIEXPORT void JNICALL
 Java_livekit_LiveKitNativeAudioBridge_nativeDisconnect(JNIEnv*, jclass) {
     g_callbackShutdown = true;
+    // Before resetRoomLocked, which clears g_audioTrack: the TXSTAT thread holds a
+    // shared_ptr to it and calls getStats() on it, so clearing first would leave
+    // the thread querying a half-torn-down track.
+    stopTxStats();
     g_audioMixer.stop();
     // SessionLock: resetRoomLocked publishes per-track removals into Java,
     // which must not happen with g_sessionMutex held.
@@ -5461,6 +5670,12 @@ Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(
         g_acceptingFrames = true;
         g_publishedAudioChannels = static_cast<int>(channels);
         std::cout << "DEBUG [OrbitLiveKitAudio] mic publish succeeded" << std::endl;
+        // TX telemetry thread: see logTxStatsIfDue for why the sender needs its own.
+        g_txStatsRunning.store(true, std::memory_order_relaxed);
+        if (g_txStatsThread.joinable()) {
+            g_txStatsThread.join();
+        }
+        g_txStatsThread = std::thread([] { logTxStatsIfDue(); });
         const auto trackSource = g_audioTrack->source();
         std::cout << "DEBUG [OrbitLiveKitAudio] local microphone track details "
                   << "trackName=" << g_audioTrack->name()
