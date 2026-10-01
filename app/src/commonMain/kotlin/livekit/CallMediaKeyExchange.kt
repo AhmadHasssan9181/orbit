@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import repository.ConfirmedLeaveLedger
 
 /** How long after a self-nudge the call UI shows calm "repairing" copy instead
  *  of alarming reconnect/waiting states — covers the 2.5s membership gap plus
@@ -849,10 +850,52 @@ class CallMediaKeyExchange(
                         ghosts.map { CallMediaKeys.participantIdentity(it.userId, it.deviceId) }
                 )
             }
-            when (CallMediaKeys.decideMembershipReaction(leavers.size, joiners.size, ring.ageMs())) {
+
+            // A device vanishing from the roster is NOT evidence that it left. It is
+            // evidence only that it is no longer listed, and those are different
+            // things: a participant whose connection dropped leaves its membership on
+            // the server and stops being counted by the roster within seconds, while
+            // a genuine departure publishes an explicit leave event. The roster parser
+            // drops leave events (they must not appear in a list of who is present),
+            // so until it recorded them separately every disappearance looked
+            // identical and Orbit treated a dropped connection as a departure.
+            //
+            // This matters because rotation is the one action here that desynchronises
+            // everyone at once. It is justified for a real departure -- it revokes the
+            // departed member's ability to decrypt anything sent after they left. It is
+            // not justified for a network blip: nothing about the key material changed
+            // and there is nothing to revoke, while every peer in the call is moved to
+            // a new index and each has to learn it before audio resumes. A peer that
+            // misses that window is deaf, and the only repair is another rotation,
+            // which is the same trap again.
+            //
+            // Rejoin is the case that actually bit: a peer cuts and rejoins, the ghost
+            // membership reconciles away, and Orbit rotated the shared key on the
+            // strength of a transport event Element never treats as a departure.
+            val unconfirmed = departing.filter { dev ->
+                val identity = CallMediaKeys.participantIdentity(dev.userId, dev.deviceId)
+                identity in exchangePeers &&
+                    !ConfirmedLeaveLedger.isConfirmedLeaver(identity)
+            }
+            if (unconfirmed.isNotEmpty()) {
+                println(
+                    "DEBUG [CallMediaKeyExchange] ${unconfirmed.size} device(s) vanished from the roster " +
+                        "with NO leave event -- treating as a drop, not a departure; " +
+                        "no rotation, re-delivering current key index=${ring.currentIndex} instead"
+                )
+                val resendTargets = unconfirmed.toSet()
+                if (resendTargets.isNotEmpty()) {
+                    distribute(currentPayload(), resendTargets, ring.currentIndex)
+                }
+            }
+            val realLeavers = departing.filter { dev ->
+                val identity = CallMediaKeys.participantIdentity(dev.userId, dev.deviceId)
+                ConfirmedLeaveLedger.isConfirmedLeaver(identity)
+            }
+            when (CallMediaKeys.decideMembershipReaction(realLeavers.size, joiners.size, ring.ageMs())) {
                 CallMediaKeys.MembershipReaction.Rotate -> {
                     println(
-                        "DEBUG [CallMediaKeyExchange] rotating key: leavers=${leavers.size} " +
+                        "DEBUG [CallMediaKeyExchange] rotating key: confirmedLeavers=${realLeavers.size} " +
                             "joiners=${joiners.size} keyAgeMs=${ring.ageMs()}"
                     )
                     rotateAndDistribute(targets)

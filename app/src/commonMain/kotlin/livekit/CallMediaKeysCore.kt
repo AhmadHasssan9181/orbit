@@ -199,6 +199,59 @@ object CallMediaKeys {
         fun ageMs(): Long = nowMs() - createdAtMs
     }
 
+    /**
+     * Devices that published a REAL `membership: leave` for their call.
+     *
+     * The roster deliberately drops leave events (MatrixRtcMembership skips them), so
+     * a vanished device and a departed device are indistinguishable from the roster
+     * alone. Every disappearance was therefore treated as a leaver -- including a
+     * participant whose connection merely dropped, who leaves a ghost membership
+     * behind and vanishes from the roster when it reconciles.
+     *
+     * That inference is what made Orbit rotate on a cut call. Rotation is a shared
+     * mutation: every peer must learn the new index before audio resumes, and a peer
+     * that misses it is deaf with no recovery. It is worth doing for a real departure,
+     * where it revokes a departed member's ability to decrypt anything sent later. It
+     * is not worth doing for a network blip, where nothing about the key material
+     * changed and there is nothing to revoke.
+     *
+     * This records the positive evidence that Element itself acts on: an explicit
+     * leave event. Rotation is then gated on that rather than on absence.
+     */
+    class ConfirmedLeavers(private val nowMs: () -> Long) {
+        private val left = java.util.Collections.synchronizedMap(mutableMapOf<String, Long>())
+
+        /** Record that [membershipId] published a leave event. */
+        fun record(membershipId: String) {
+            left[membershipId] = nowMs()
+        }
+
+        /** Whether [membershipId] was seen leaving, within a recent window. */
+        fun isConfirmedLeaver(membershipId: String): Boolean {
+            val at = left[membershipId] ?: return false
+            if (nowMs() - at > LEAVE_MEMORY_MS) {
+                left.remove(membershipId)
+                return false
+            }
+            return true
+        }
+
+        /** Drop anything older than the window so the map cannot grow unbounded. */
+        fun prune() {
+            val cutoff = nowMs() - LEAVE_MEMORY_MS
+            left.entries.removeAll { it.value < cutoff }
+        }
+
+        private companion object {
+            /**
+             * How long a leave stays authoritative. Long enough to cover a slow
+             * roster reconciliation landing after the leave, short enough that a
+             * device which rejoins and leaves again is judged on its latest event.
+             */
+            const val LEAVE_MEMORY_MS = 120_000L
+        }
+    }
+
     sealed class MembershipReaction {
         object None : MembershipReaction()
         object Rotate : MembershipReaction()

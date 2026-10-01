@@ -39,7 +39,7 @@ internal object MatrixRtcMembership {
      */
     const val CALL_START_SKEW_MS = 120_000L
 
-    private fun jsonString(content: JsonObject, key: String): String? =
+private fun jsonString(content: JsonObject, key: String): String? =
         runCatching { (content[key] as? JsonPrimitive)?.content }.getOrNull()
 
     private fun jsonLong(content: JsonObject, key: String): Long? =
@@ -79,7 +79,16 @@ internal object MatrixRtcMembership {
         if (memberships != null) {
             for (elem in memberships) {
                 val obj = elem as? JsonObject ?: continue
-                if (jsonString(obj, "membership") == "leave") continue
+                if (jsonString(obj, "membership") == "leave") {
+                    // Dropped from the roster, but not from the record. The key
+                    // exchange needs to tell a real departure from a participant
+                    // whose connection merely dropped, and this event is the only
+                    // evidence that distinguishes them.
+                    jsonString(obj, "membershipID")
+                        ?: jsonString(obj, "membership_id")
+                        ?.let { ConfirmedLeaveLedger.record(it) }
+                    continue
+                }
                 val createdTs = jsonLong(obj, "created_ts")
                 val expires = jsonLong(obj, "expires")
                 if (createdTs != null && expires != null && createdTs + expires <= now) continue
@@ -96,7 +105,12 @@ internal object MatrixRtcMembership {
         }
 
         // Legacy flat shape: the fields sit directly on the event content.
-        if (jsonString(content, "membership") == "leave") return emptyList()
+        if (jsonString(content, "membership") == "leave") {
+            // See above: excluded from the roster, retained as departure evidence.
+            (jsonString(content, "membershipID") ?: jsonString(content, "membership_id"))
+                ?.let { ConfirmedLeaveLedger.record(it) }
+            return emptyList()
+        }
         val flatCreated = jsonLong(content, "created_ts")
         val flatExpires = jsonLong(content, "expires")
         if (flatCreated != null && flatExpires != null && flatCreated + flatExpires <= now) {
@@ -129,5 +143,31 @@ internal object MatrixRtcMembership {
             val expires = jsonLong(obj, "expires") ?: return@mapNotNull null
             createdTs + expires - now
         }.maxOrNull() ?: 3_600_000L
+    }
+}
+
+/**
+ * Departure evidence gathered while parsing the roster.
+ *
+ * Membership parsing is the only place that ever sees a `membership: leave` event,
+ * and it must not keep them -- the roster is a list of who is present, so a leave
+ * belongs nowhere in it. The key exchange, however, cannot tell a genuine departure
+ * from a dropped connection by watching the roster alone, because a dropped
+ * connection produces exactly the same disappearance: the membership is still on
+ * the server, but the roster reconciliation stops counting the device.
+ *
+ * So the leave is recorded here rather than discarded, and the key exchange reads it
+ * as positive evidence that a participant actually left rather than merely vanished.
+ */
+object ConfirmedLeaveLedger {
+    private val leavers = livekit.CallMediaKeys.ConfirmedLeavers { getTimeMillis() }
+
+    fun record(membershipId: String) {
+        leavers.record(membershipId)
+    }
+
+    fun isConfirmedLeaver(membershipId: String): Boolean {
+        leavers.prune()
+        return leavers.isConfirmedLeaver(membershipId)
     }
 }
