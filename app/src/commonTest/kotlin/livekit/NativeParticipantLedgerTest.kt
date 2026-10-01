@@ -24,6 +24,97 @@ class NativeParticipantLedgerTest {
     @AfterTest
     fun clean() = NativeParticipantLedger.reset()
 
+    /**
+     * Captures stdout for one call.
+     *
+     * Three of these tests assert on what the teardown report PRINTS, and the
+     * printed line is the entire product -- a correct tally that nobody reads
+     * because it is mislabelled is a bug the arithmetic tests cannot see. Run 83
+     * shipped one: `UNBALANCED identities=PA_NoTSngNzpkyh`, a sid on a line
+     * labelled "identities".
+     *
+     * ByteArrayOutputStream rather than System.setOut because the ledger writes to
+     * the JVM's original stdout, which is what a packaged app's log file captures.
+     */
+    private fun captureOutput(block: () -> Unit = {}): String {
+        val buffer = java.io.ByteArrayOutputStream()
+        val original = System.out
+        System.setOut(java.io.PrintStream(buffer, true, "UTF-8"))
+        try {
+            block()
+        } finally {
+            System.setOut(original)
+        }
+        return buffer.toString("UTF-8")
+    }
+
+    @Test
+    fun `the teardown report names a person and not a sid`() {
+        // Run 83 printed:
+        //
+        //     PARTLEDGER final UNBALANCED identities=PA_NoTSngNzpkyh
+        //
+        // A sid, on a line labelled "identities". Nobody can look up PA_NoTSngNzpkyh
+        // in Matrix, so the line that exists to tell you who is stuck in the room
+        // names something you cannot act on -- which is worse than printing nothing,
+        // because it teaches you to skip the line that would have caught a real leak.
+        //
+        // The report has to name the identity the peer is known by.
+        val out = captureOutput {
+            NativeParticipantLedger.onConnect("@hellishsaa:matrix.org", "PA_NoTSngNzpkyh")
+            NativeParticipantLedger.report()
+        }
+
+        assertTrue(
+            out.contains("@hellishsaa:matrix.org"),
+            "the report did not name the identity: $out"
+        )
+        assertTrue(
+            !out.contains("PA_NoTSngNzpkyh"),
+            "the report still names the sid: $out"
+        )
+    }
+
+    @Test
+    fun `a peer still in the room at teardown is not called unbalanced`() {
+        // Run 83: @hellishsaa left and rejoined, and was legitimately in the room
+        // when the user hung up. The old wording said UNBALANCED for a correct
+        // state. A diagnostic that cries wolf on the healthy case gets skipped, and
+        // then it misses the real one -- which is the only reason it exists.
+        val out = captureOutput {
+            NativeParticipantLedger.onConnect("@hellishsaa:matrix.org", "PA_NoTSngNzpkyh")
+            NativeParticipantLedger.report()
+        }
+        assertTrue(out.contains("STILL PRESENT"), "the rejoin-at-hangup case is not reported: $out")
+        assertTrue(
+            !out.contains("UNBALANCED"),
+            "a peer who was still in the room was reported as a leak: $out"
+        )
+    }
+
+    @Test
+    fun `the teardown report clears per-call state so the next call starts clean`() {
+        // Otherwise every later report repeats this call's answer. The store's
+        // clear() is called on paths that are not a call ending at all, so a
+        // carried-over tally is not hypothetical.
+        NativeParticipantLedger.onConnect("@a", "PA_one")
+        NativeParticipantLedger.onDisconnect("@a", "PA_one")
+        NativeParticipantLedger.onConnect("@b", "PA_two")
+        assertEquals(1, NativeParticipantLedger.pending)
+
+        NativeParticipantLedger.report()
+        assertEquals(
+            0,
+            NativeParticipantLedger.pending,
+            "the report left state behind, so the next call starts with a phantom participant"
+        )
+        assertEquals(0, NativeParticipantLedger.connectsTotalForTest, "counters carried into the next call")
+
+        // And the second report is silent, rather than repeating the first.
+        val out = captureOutput { NativeParticipantLedger.report() }
+        assertTrue(!out.contains("STILL PRESENT"), "the second report repeated the first: $out")
+    }
+
     @Test
     fun balancedLifecycleReportsNothingPending() {
         NativeParticipantLedger.onConnect("@a")

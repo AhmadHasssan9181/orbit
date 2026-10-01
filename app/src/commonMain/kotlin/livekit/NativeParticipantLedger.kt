@@ -63,7 +63,18 @@ internal object NativeParticipantLedger {
      * call as balanced -- a diagnostic that lies in the safe direction, which is
      * worse than one that is merely wrong.
      */
-    private val present = LinkedHashSet<String>()
+    private val present = LinkedHashMap<String, String>()
+
+    /**
+     * Identity for each key currently in [present].
+     *
+     * Present at all only so the teardown report can name a person. The keys are
+     * sids, and `PARTLEDGER final UNBALANCED identities=PA_NoTSngNzpkyh` -- a
+     * sid, printed on a line that says "identities" -- is worse than no report at
+     * all: it reads like a leak, names something nobody can look up, and teaches
+     * the reader to ignore the line that would have caught a real one.
+     */
+    private fun identitiesStillPresent(): List<String> = present.values.toList()
 
     @Volatile
     private var duplicateConnects = 0
@@ -135,7 +146,8 @@ internal object NativeParticipantLedger {
     fun onConnect(identity: String, participantSid: String = "") {
         if (identity.isBlank()) return
         val key = arrivalKey(identity, participantSid)
-        val wasPresent = !present.add(key)
+        val wasPresent = present.containsKey(key)
+        present[key] = identity
         if (wasPresent) {
             duplicateConnects++
             println(
@@ -152,7 +164,11 @@ internal object NativeParticipantLedger {
     fun onDisconnect(identity: String, participantSid: String = "") {
         if (identity.isBlank()) return
         val key = departureKey(identity, participantSid)
-        if (!present.remove(key)) {
+        // `== null`, not `!present.remove(key)`. present is a Map, so remove()
+        // returns the stored identity rather than a Boolean -- and a truthiness
+        // test on it would be wrong twice over: "absent" (null) is falsy, which
+        // inverts the branch, and a present-but-blank identity is falsy too.
+        if (present.remove(key) == null) {
             // A departure for someone never announced as present. Counted in
             // neither total: a negative pending, or a disconnect cancelling a
             // real participant, would both mean something they do not mean.
@@ -209,7 +225,7 @@ internal object NativeParticipantLedger {
     }
 
     /**
-     * Print the final tally.
+     * Print the final tally, then clear the per-call state.
      *
      * Called at teardown, where an imbalance is most actionable: a call that ended
      * with pending participants names exactly who was left behind.
@@ -228,15 +244,28 @@ internal object NativeParticipantLedger {
         // `present` is the actual answer, because it is the state the callbacks
         // maintain: an identity in it at teardown is a participant Orbit still
         // believes is in the room.
-        if (present.isNotEmpty()) {
-            // Printed as identities, not keys. "sid:PA_xyz" is an implementation
-            // detail of the dedup and is not what a reader needs to go and look
-            // for in the room.
+        //
+        // Run 83 is why the wording is "STILL PRESENT" and not "UNBALANCED". A peer
+        // rejoined mid-call and was legitimately in the room when the user hung up,
+        // so the report printed UNBALANCED for a correct state. A diagnostic that
+        // cries wolf on the healthy case trains the reader to skip the line, and
+        // then it misses the real one -- which is the only reason it exists.
+        val stillPresent = identitiesStillPresent()
+        if (stillPresent.isNotEmpty()) {
             println(
-                "PARTLEDGER final UNBALANCED identities=" +
-                    present.joinToString(",") { it.substringAfter(':', it) }
+                "PARTLEDGER final STILL PRESENT identities=${stillPresent.joinToString(",")} " +
+                    "(left the room while we were connected; expected if the call ended with them in it)"
             )
         }
+        // Cleared AFTER the report, so the state is reported and then dropped.
+        // Leaving it set makes every later report repeat this call's answer, and the
+        // store's clear() is called on paths that are not a call ending at all.
+        present.clear()
+        connects.clear()
+        connectsTotal = 0
+        disconnectsTotal = 0
+        duplicateConnects = 0
+        duplicateDisconnects = 0
     }
 
     /** Test seam. Production never resets; a session teardown does. */
