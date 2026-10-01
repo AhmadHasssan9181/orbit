@@ -47,6 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -233,6 +234,20 @@ fun ChatScreen(
     // The header's Members button drives this; the panel itself is still gated
     // on the user setting and the window being wide enough to show it.
     var memberPanelOpen by remember(channel.id) { mutableStateOf(true) }
+
+    /**
+     * Whether the call-chat side panel is collapsed to its rail.
+     *
+     * The panel is mandatory during a call -- the conversation has to stay
+     * reachable -- but 380dp is a lot of window to give up to a transcript while
+     * the call itself is the thing being looked at, and there was no way to take
+     * it back. Collapsing leaves a 48dp rail carrying the channel glyph, the
+     * unread count and a button to bring it back.
+     *
+     * Keyed on the channel so a different room starts open, which matches
+     * `memberPanelOpen` rather than surprising you in a new conversation.
+     */
+    var callChatCollapsed by remember(channel.id) { mutableStateOf(false) }
     val memberPanelAvailable = ui.theme.LocalShowMemberList.current && windowSize.isExpanded
     // Opened by tapping a row in the member list. Kept separate from
     // `directProfile` (which only exists for DMs) so a group-room member can be
@@ -446,7 +461,7 @@ fun ChatScreen(
                         // during a call is not a thing you open, and putting it
                         // behind a Members toggle means the conversation is
                         // unreachable for exactly as long as the call lasts.
-                        callOwnsMainColumn -> 3
+                        callOwnsMainColumn -> if (callChatCollapsed) 4 else 3
                         shownProfile != null && windowSize.isExpanded -> 0
                         pinsActive -> 1
                         memberPanelAvailable && memberPanelOpen -> 2
@@ -525,6 +540,7 @@ fun ChatScreen(
                         3 -> ChatSidePanel(
                             channel = channel,
                             liveCallRosterSize = liveCallRoster.size,
+                            onCollapse = { callChatCollapsed = true },
                             modifier = Modifier.width(OrbitMetrics.callChatPanelWidth)
                         ) {
                             ChatTimeline(
@@ -562,6 +578,12 @@ fun ChatScreen(
                                 onLoadOlder = onLoadOlder
                             )
                         }
+                        // The collapsed rail. Same slot, 48dp instead of 380dp,
+                        // carrying enough to say what it is and to come back.
+                        4 -> CallChatCollapsedRail(
+                            channel = channel,
+                            onExpand = { callChatCollapsed = false }
+                        )
                         else -> Box(Modifier.fillMaxSize())
                     }
                 }
@@ -718,6 +740,7 @@ private fun ChatTimeline(
 private fun ChatSidePanel(
     channel: OrbitChannel,
     liveCallRosterSize: Int,
+    onCollapse: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit
 ) {
@@ -735,10 +758,72 @@ private fun ChatSidePanel(
             // this panel any more. Showing it here would be answering a question
             // the user is not looking at.
             count = null,
-            subtitle = if (liveCallRosterSize > 0) "$liveCallRosterSize in call" else null
+            subtitle = if (liveCallRosterSize > 0) "$liveCallRosterSize in call" else null,
+            trailing = onCollapse?.let { collapse ->
+                {
+                    // A chevron pointing INTO the panel, i.e. "take this away".
+                    // The concept's own collapse affordance is the panel-width
+                    // toggle in the call header; this is the same intent on the
+                    // panel itself, so it is reachable without going back there.
+                    OrbitIconButton(
+                        icon = OrbitIcons.ChevronRight,
+                        contentDescription = "Collapse chat panel",
+                        onClick = collapse
+                    )
+                }
+            }
         )
         HorizontalDivider(color = t.Separator, thickness = 1.dp)
         content()
+    }
+}
+
+/**
+ * The call-chat panel collapsed to a 48dp rail.
+ *
+ * The panel is not optional during a call -- the conversation has to stay
+ * reachable -- but 380dp is a lot of window to hand to a transcript while the
+ * call is the thing being looked at. This keeps the slot, the channel identity
+ * and a way back, and gives the width to the call.
+ */
+@Composable
+private fun CallChatCollapsedRail(
+    channel: OrbitChannel,
+    onExpand: () -> Unit
+) {
+    val t = rememberCosmicTokens()
+    Column(
+        modifier = Modifier
+            .width(48.dp)
+            .fillMaxHeight()
+            .background(t.Members_Bg)
+            .border(1.dp, t.Separator),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        OrbitIconButton(
+            icon = OrbitIcons.ChevronLeft,
+            contentDescription = "Show chat panel",
+            onClick = onExpand
+        )
+        HorizontalDivider(color = t.Separator, thickness = 1.dp)
+        // Rotated a full 90 degrees so the channel name reads top-to-bottom, which
+        // is the only way a name fits in 48dp without truncating to nothing.
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            contentAlignment = Alignment.TopCenter
+        ) {
+            Text(
+                text = "#${channel.name}",
+                color = t.Text_Muted,
+                fontSize = 11.sp,
+                maxLines = 1,
+                modifier = Modifier
+                    .padding(top = OrbitSpace.md)
+                    .graphicsLayer(rotationZ = 90f)
+            )
+        }
     }
 }
 

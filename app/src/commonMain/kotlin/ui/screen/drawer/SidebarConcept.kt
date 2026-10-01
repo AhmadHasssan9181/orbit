@@ -142,7 +142,15 @@ internal object SidebarConcept {
      * are the two `--status-*` values, so they are read from the token object
      * rather than copied.
      */
-    val liveBadge = OrbitConceptStatus.dnd
+    // The concept's `.channel-live-badge` has no counterpart here. It marks a
+    // streamer in the voice roster, and Matrix has no streaming presence for
+    // Orbit to read -- OrbitUser carries no such field -- so there was nothing
+    // real to drive it. The token was declared and never used, which is dead code
+    // of exactly the kind this file's own comments complain about elsewhere, so
+    // it is gone rather than left as a promise nothing delivers.
+    //
+    // If streaming presence is ever plumbed through, the colour is already
+    // OrbitConceptStatus.streaming (#593695, --status-streaming).
 
     /**
      * `.screen-icon-box { background-color: rgba(26, 188, 156, 0.15) }` and the

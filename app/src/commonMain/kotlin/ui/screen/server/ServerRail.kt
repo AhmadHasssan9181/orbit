@@ -181,7 +181,10 @@ private fun RailDivider() {
             .width(32.dp)
             .height(2.dp)
             .clip(CircleShape)
-            .background(t.Separator)
+            // The concept's .server-divider is a white@8% hairline, not a ramp
+            // step. t.Separator is opaque #3F4147, so the divider read as a hard
+            // rule rather than a hairline between sections.
+            .background(t.ServerDivider)
     )
 }
 

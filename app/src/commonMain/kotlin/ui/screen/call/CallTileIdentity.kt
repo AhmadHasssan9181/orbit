@@ -12,7 +12,7 @@ package ui.screen.call
  * group.
  */
 private val tileAvatarPalette = listOf(
-    0xFF7B74E8, 0xFF23A559, 0xFFEB459E, 0xFFFAA61A, 0xFF00A8FC, 0xFFD65A54
+    0xFF7B74E8, 0xFF23A55A, 0xFFEB459E, 0xFFFAA61A, 0xFF00A8FC, 0xFFD65A54
 ).map { it.toInt() }
 
 /**
