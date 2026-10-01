@@ -143,6 +143,16 @@ jmethodID g_remoteVideoTrackRemovedMethod = nullptr;
 std::mutex g_announcedParticipantsMutex;
 std::set<std::string> g_announcedParticipantSids;
 
+// Releases a reservation taken by dispatchRemoteParticipantConnected when the
+// JNI upcall turned out to be undeliverable, so a later attempt (the rescan) can
+// still announce the participant. Deliberately not a "was it ours" check: the
+// only caller holds the reservation it just took, and the alternative -- tracking
+// ownership per key -- would be a second source of truth for one boolean.
+void unreserveParticipantAnnouncement(const std::string& announceKey) {
+    std::lock_guard<std::mutex> announcedLock(g_announcedParticipantsMutex);
+    g_announcedParticipantSids.erase(announceKey);
+}
+
 std::mutex g_mixedAudioSinkMutex;
 jobject g_mixedAudioSink = nullptr;
 jmethodID g_mixedAudioSinkMethod = nullptr;
@@ -3102,9 +3112,45 @@ void dispatchRemoteParticipantConnected(const std::string& participantIdentity, 
         return;
     }
 
+    // Exactly-once announcement, enforced HERE rather than at any one call site.
+    //
+    // Six sites dispatch a participant-connected: onParticipantConnected,
+    // onTrackPublished, onTrackSubscribed, the connect-time roster walk, the
+    // rescan, and the rescan's track loop. Only the rescan used to consult
+    // g_announcedParticipantSids, so a single peer was announced once per track
+    // per source. Run 82 measured it: one peer, three tracks, EIGHT connects and
+    // zero disconnects, which is what made PARTLEDGER report UNBALANCED.
+    //
+    // A dedup gate at the call site cannot work when there are six call sites and
+    // no shared funnel -- and the rescan's own check was a fifth opinion, not the
+    // rule. The invariant belongs at the dispatch.
+    //
+    // Check-and-reserve is done in one critical section rather than check-then-
+    // insert, because the six sites run on the LiveKit FFI event thread and a
+    // tick thread. Check-then-insert would let both observe "not announced" and
+    // both call up. The reservation is rolled back below if the JNI upcall turns
+    // out to be undeliverable, so a missing sink still gets retried by the rescan
+    // rather than being silently marked announced forever.
+    const std::string rawSid = normalizedSid(participantSid);
+    // A participant with no sid cannot be keyed by one, so fall back to the
+    // identity. Worse than a real sid as a key, but it still collapses the
+    // repeated announcements instead of letting them all through.
+    const std::string announceKey = rawSid.empty()
+        ? std::string("identity:") + participantIdentity
+        : rawSid;
+    {
+        std::lock_guard<std::mutex> announcedLock(g_announcedParticipantsMutex);
+        if (!g_announcedParticipantSids.insert(announceKey).second) {
+            // Already announced and not yet departed. Suppressed, not an error:
+            // this is the ordinary case for a peer with several tracks.
+            return;
+        }
+    }
+
     JNIEnv* env = nullptr;
     bool attached = false;
     if (!getJniEnv(&env, &attached, "remote-participant-connected") || env == nullptr) {
+        unreserveParticipantAnnouncement(announceKey);
         return;
     }
     logJniAttachSuccess("remote-participant-connected", attached);
@@ -3121,7 +3167,7 @@ void dispatchRemoteParticipantConnected(const std::string& participantIdentity, 
 
     if (sink != nullptr && method != nullptr) {
         jstring jIdentity = env->NewStringUTF(participantIdentity.c_str());
-        jstring jSid = env->NewStringUTF(participantSid.c_str());
+        jstring jSid = env->NewStringUTF(rawSid.c_str());
         env->CallVoidMethod(
             sink,
             method,
@@ -3136,10 +3182,12 @@ void dispatchRemoteParticipantConnected(const std::string& participantIdentity, 
         if (jIdentity != nullptr) env->DeleteLocalRef(jIdentity);
         if (jSid != nullptr) env->DeleteLocalRef(jSid);
         env->DeleteLocalRef(sink);
-        {
-            std::lock_guard<std::mutex> announcedLock(g_announcedParticipantsMutex);
-            g_announcedParticipantSids.insert(normalizedSid(participantSid));
-        }
+    } else {
+        // No sink registered, so nothing was actually told. Hand the reservation
+        // back, otherwise the rescan would see the participant as "already
+        // announced" and never deliver it -- a participant who silently never
+        // appears, which is worse than a duplicate.
+        unreserveParticipantAnnouncement(announceKey);
     }
 
     releaseJniEnv(attached);
@@ -3185,8 +3233,15 @@ void dispatchRemoteParticipantDisconnected(const std::string& participantIdentit
         if (jSid != nullptr) env->DeleteLocalRef(jSid);
         env->DeleteLocalRef(sink);
         {
+            // Same key derivation as the connect path, so the identity fallback
+            // for a sid-less participant is actually cleared on departure. Using
+            // normalizedSid() alone here would leave "identity:..." entries
+            // stranded forever, and a stranded key suppresses every later
+            // announcement for that peer -- a rejoin would never be announced.
             std::lock_guard<std::mutex> announcedLock(g_announcedParticipantsMutex);
-            g_announcedParticipantSids.erase(normalizedSid(participantSid));
+            const std::string rawSid = normalizedSid(participantSid);
+            g_announcedParticipantSids.erase(
+                rawSid.empty() ? std::string("identity:") + participantIdentity : rawSid);
         }
     }
 
@@ -7967,16 +8022,16 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeRescanRemoteVideoTracks(JNIEnv*, jclass
         if (participant == nullptr) {
             continue;
         }
-        bool announced;
-        {
-            std::lock_guard<std::mutex> announcedLock(g_announcedParticipantsMutex);
-            announced = g_announcedParticipantSids.find(normalizedSid(participant->sid())) != g_announcedParticipantSids.end();
-        }
-        if (!announced) {
-            const std::string identity = participant->identity();
-            const std::string sid = normalizedSid(participant->sid());
-            deferDispatchIfSessionLockHeld([identity, sid] { dispatchRemoteParticipantConnected(identity, sid); });
-        }
+        // The pre-check that used to live here is gone. It duplicated the dedup
+        // rule at a fifth call site, used a different key derivation than the
+        // dispatch (no identity fallback), and therefore disagreed with it --
+        // which is how one peer produced eight announcements. The dispatch is now
+        // the only place that decides, and it returns without side effects when
+        // the participant is already announced, so calling it unconditionally
+        // costs a set lookup and cannot double-announce.
+        const std::string identity = participant->identity();
+        const std::string sid = normalizedSid(participant->sid());
+        deferDispatchIfSessionLockHeld([identity, sid] { dispatchRemoteParticipantConnected(identity, sid); });
         for (const auto& publicationEntry : participant->trackPublications()) {
             const auto& publication = publicationEntry.second;
             if (publication == nullptr) {

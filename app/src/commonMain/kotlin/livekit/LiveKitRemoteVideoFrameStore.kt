@@ -131,6 +131,41 @@ object LiveKitRemoteVideoFrameStore {
     // is dropped then shows "Video startingÃ¢â‚¬Â¦" forever) and hand out duplicate
     // sequence numbers.
     private val sequence = AtomicLong(0L)
+
+    /**
+     * Smallest width or height a frame may claim.
+     *
+     * Set far below anything real. See the comment at the check in [updateFrame] for
+     * why a size floor is needed at all when a buffer-size check exists: a
+     * degenerate frame can be perfectly self-consistent, so only a floor on the
+     * dimensions catches it.
+     */
+    private const val MIN_FRAME_EDGE = 16
+
+    /**
+     * Frames rejected because they were degenerate or their buffer could not hold
+     * the picture they claimed.
+     *
+     * Atomic because [updateFrame] runs on one native reader thread per remote
+     * video track, and a plain `var` would lose counts -- which for a counter whose
+     * entire job is to prove a fault is rare is the one failure mode that matters.
+     */
+    private val rejectedFrames = AtomicLong(0L)
+
+    /**
+     * The rejection tally, as one line, appended to each rejection.
+     *
+     * The point is the rate, not the total. A handful of rejected frames on a long
+     * call is a decoder hiccup; the same rejections every second is a broken track
+     * that a user would describe as "the video is stuck". The cumulative count
+     * alongside it is what separates those two without a second log grep.
+     */
+    private fun rejectionLine(): String {
+        val total = rejectedFrames.get()
+        val accepted = sequence.get() - total
+        return "frames accepted=$accepted rejected=$total"
+    }
+
     @Volatile private var activeTrackSid: String? = null
 
     // Session/epoch the store is currently showing. Native reader threads can
@@ -293,6 +328,66 @@ object LiveKitRemoteVideoFrameStore {
         // resets") protected against exactly this. Ordering does not help when
         // the other side has already passed its check; only mutual exclusion does.
         val frameSequence = sequence.incrementAndGet()
+
+        // Reject a frame whose buffer cannot hold the picture it claims to.
+        //
+        // Shipped in 0.2.1: a run logged `width=8 height=8 bytes=256 format=0`, a
+        // frame eight pixels on a side, and it was accepted and published. Nothing
+        // downstream checks the arithmetic, so an 8x8 frame reaches the renderer,
+        // which allocates an 8x8 image and stretches it across the tile -- a
+        // frozen, blocky smear of whatever the previous frame left behind, on a
+        // track that is otherwise live and delivering.
+        //
+        // The existing guard in onRemoteVideoFrame only caught width<=0, height<=0
+        // and an empty buffer, and this frame cleared all three. A non-positive
+        // dimension is a missing frame; this is a frame that contradicts itself,
+        // which is a different fault and needs its own check.
+        //
+        // THE ORDER MATTERS, and getting it wrong is instructive.
+        //
+        // The first attempt at this fix was the buffer arithmetic alone --
+        // `buffer.size >= strideY * height`. It is a real check, and it does not
+        // catch the frame it was written for. The 8x8 frame came with 256 bytes
+        // and strideY=32, and 32 * 8 == 256, so it is arithmetically PERFECT. A
+        // frame that claims to be 8x8 and carries exactly 8 rows of 32 bytes has
+        // nothing wrong with it by that test, and it was still published.
+        //
+        // The fault is not a mismatch between the buffer and the dimensions. It is
+        // that the dimensions are not a picture. So the floor has to be on size,
+        // and it has to come first, because a degenerate frame can be
+        // self-consistent and the arithmetic check will wave it through.
+        //
+        // 16 is deliberately far below anything real. The smallest thing a capture
+        // device or a software encoder produces is orders of magnitude larger, so
+        // 16 cannot reject a genuine frame, while every degenerate size in the
+        // field is under it. A floor set at something like 64 would have looked
+        // more decisive and would eventually eat a real low-resolution stream.
+        //
+        // The arithmetic check below is kept because it catches a different real
+        // fault -- a caller that under-allocates by a byte -- which the size floor
+        // cannot see.
+        if (width < MIN_FRAME_EDGE || height < MIN_FRAME_EDGE) {
+            rejectedFrames.incrementAndGet()
+            println(
+                "WARN [RemoteVideo] rejected degenerate frame " +
+                    "participantIdentity=$participantIdentity trackSid=$trackSid " +
+                    "width=$width height=$height strideY=$strideY format=$format " +
+                    "bytes=${buffer.size} minEdge=$MIN_FRAME_EDGE ${rejectionLine()}"
+            )
+            return
+        }
+        val lumaBytes = strideY.toLong() * height.toLong()
+        if (buffer.size.toLong() < lumaBytes || lumaBytes > Int.MAX_VALUE.toLong()) {
+            rejectedFrames.incrementAndGet()
+            println(
+                "WARN [RemoteVideo] rejected frame whose buffer cannot hold its picture " +
+                    "participantIdentity=$participantIdentity trackSid=$trackSid " +
+                    "width=$width height=$height strideY=$strideY format=$format " +
+                    "bytes=${buffer.size} lumaBytes=$lumaBytes ${rejectionLine()}"
+            )
+            return
+        }
+
         // Frame-before-trackAdded race (or a late frame after trackStopped): register
         // the track so the tile is addressable and the entry can be cleaned up later.
         //
@@ -387,6 +482,7 @@ object LiveKitRemoteVideoFrameStore {
         // Disarm and reset atomically with respect to a frame commit. See the note
         // in updateFrame: ordering alone never protected the empty maps, because the
         // reader thread had already passed its check.
+        var framesThisCall = 0L
         synchronized(commitLock) {
             if (_latestFrame.value != null || activeTrackSid != null) {
                 println("DEBUG [RemoteVideoUI] render stopped reason=$reason trackSid=${activeTrackSid ?: "<none>"}")
@@ -402,11 +498,31 @@ object LiveKitRemoteVideoFrameStore {
             _latestFrame.value = null
             _latestCameraFrame.value = null
             _latestScreenShareFrame.value = null
+            // Read BEFORE the reset below, or the tally printed for this call is
+            // always zero -- which is the one number that must not be wrong here.
+            //
+            // Both counters are call-scoped, not process-scoped. Left across
+            // sessions they would make the second call's tally a running total
+            // including the first, which is how a per-call fault rate becomes a
+            // number nobody can act on.
+            framesThisCall = rejectedFrames.get()
+            rejectedFrames.set(0L)
+            sequence.set(0L)
         }
         // Printed at teardown, where an imbalance names exactly who was left behind.
         // Run 62 ended a call with 16 participant-connects against 1 disconnect and
         // nothing anywhere saying so. A leak that only shows up in a log you have to
         // grep and count is a leak nobody reports.
+        //
+        // The frame tally is printed alongside it for the same reason: a track that
+        // rejected every frame it was sent looks identical to a track that never
+        // delivered any, and "the video is stuck" is the same sentence either way.
+        if (framesThisCall > 0L) {
+            println(
+                "WARN [RemoteVideoUI] frames were rejected during this call " +
+                    "rejected=$framesThisCall reason=$reason"
+            )
+        }
         NativeParticipantLedger.report()
     }
 }

@@ -4,6 +4,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -56,26 +57,168 @@ class RemoteVideoTrackClassificationTest {
         LiveKitRemoteVideoFrameStore.clear("test-teardown")
     }
 
-    private fun pushFrame(trackSource: String, track: String, width: Int = 1280, height: Int = 720) {
+    /**
+     * Pushes a frame with a buffer sized to match the stride, which is what the
+     * store requires. The default stays one-byte-per-pixel so these tests remain
+     * about classification rather than about pixel data; [bufferBytes] is the
+     * override for the validation tests.
+     */
+    private fun pushFrame(
+        trackSource: String,
+        track: String,
+        width: Int = 1280,
+        height: Int = 720,
+        strideY: Int = width * 4,
+        bufferBytes: Int = maxOf(1, strideY * height)
+    ) {
         LiveKitRemoteVideoFrameStore.updateFrame(
             sessionId = sessionId,
             epoch = epoch,
             participantIdentity = identity,
             trackSid = track,
             trackSource = trackSource,
-            // The store does not inspect pixel contents, so a one-byte-per-pixel
-            // buffer is enough to make the frame non-empty and keep this test about
-            // classification rather than about pixel data.
-            buffer = ByteArray(maxOf(1, width * height)),
+            // The store does not inspect pixel contents, only that the buffer is
+            // large enough to hold the picture, so the bytes are zeros either way.
+            buffer = ByteArray(bufferBytes),
             width = width,
             height = height,
             format = 0,
-            strideY = width * 4,
+            strideY = strideY,
             strideU = 0,
             strideV = 0,
             timestampNs = 1_000L,
             rotation = 0
         )
+    }
+
+    @Test
+    fun `an 8x8 frame is rejected rather than published`() {
+        // Shipped in 0.2.1: a run logged `width=8 height=8 bytes=256` and the frame
+        // was accepted. Nothing downstream checks the arithmetic, so the renderer
+        // allocated an 8x8 image and stretched it across the tile -- a frozen blocky
+        // smear on a track that was otherwise live and delivering. To a user that
+        // is "the video is stuck", and there is no way to tell that from a stalled
+        // network.
+        //
+        // 256 bytes is 4 bytes per pixel for 8x8, so the buffer is not obviously
+        // empty -- which is the whole point. The fault is the frame contradicting
+        // itself, not a missing buffer, and the pre-0.2.2 guard only caught
+        // width<=0 / height<=0 / empty buffer. This one cleared all three.
+        pushFrame(
+            trackSource = "screenshare",
+            track = shareTrackSid,
+            width = 8,
+            height = 8,
+            strideY = 32,
+            bufferBytes = 256
+        )
+
+        assertNull(
+            LiveKitRemoteVideoFrameStore.latestFrame.value,
+            "an 8x8 frame was published as a real picture"
+        )
+        assertTrue(
+            LiveKitRemoteVideoFrameStore.activeTracks.value[shareTrackSid] == null,
+            "a rejected frame must not register the track either -- otherwise a " +
+                "track that only ever sends degenerate frames shows a live tile " +
+                "that never has a picture"
+        )
+    }
+
+    @Test
+    fun `a frame whose buffer is one byte short of its stride is rejected`() {
+        // The arithmetic check rather than a magic pixel count: 1279*720*4 - 1
+        // bytes for a frame claiming 1279x720. A caller that under-allocates by a
+        // single byte would otherwise hand the renderer a buffer it reads past the
+        // end of.
+        val width = 1279
+        val height = 720
+        pushFrame(
+            trackSource = "camera",
+            track = cameraTrackSid,
+            width = width,
+            height = height,
+            strideY = width * 4,
+            bufferBytes = width * height * 4 - 1
+        )
+
+        assertNull(
+            LiveKitRemoteVideoFrameStore.latestFrame.value,
+            "a buffer one byte short of the luma plane was accepted"
+        )
+    }
+
+    @Test
+    fun `a frame exactly at the minimum edge is accepted`() {
+        // The boundary that could actually hurt.
+        //
+        // The floor exists to reject degenerate frames, and the failure mode of a
+        // floor that is too high is not a bad-looking tile -- it is a real video
+        // stream that silently never displays, which is the bug this whole change
+        // was made to fix. So the exact boundary is pinned rather than left
+        // implied: at the floor it goes through, one pixel under it does not.
+        pushFrame(
+            trackSource = "camera",
+            track = cameraTrackSid,
+            width = 16,
+            height = 16,
+            strideY = 64,
+            bufferBytes = 64 * 16
+        )
+        assertNotNull(
+            LiveKitRemoteVideoFrameStore.latestFrame.value,
+            "a frame exactly at the minimum edge was rejected; the floor is too high"
+        )
+
+        LiveKitRemoteVideoFrameStore.clear("test-boundary")
+        pushFrame(
+            trackSource = "camera",
+            track = cameraTrackSid,
+            width = 15,
+            height = 15,
+            strideY = 60,
+            bufferBytes = 60 * 15
+        )
+        assertNull(
+            LiveKitRemoteVideoFrameStore.latestFrame.value,
+            "a frame one pixel under the minimum edge was accepted"
+        )
+    }
+
+    @Test
+    fun `a frame whose buffer exactly holds its stride is accepted`() {
+        // The boundary case, pinned because a validation check is only correct if
+        // the exact-fit frame still gets through. An off-by-one here would reject
+        // every real frame, which looks exactly like "video never works".
+        val width = 320
+        val height = 240
+        pushFrame(
+            trackSource = "camera",
+            track = cameraTrackSid,
+            width = width,
+            height = height,
+            strideY = width * 4,
+            bufferBytes = width * 4 * height
+        )
+
+        assertNotNull(
+            LiveKitRemoteVideoFrameStore.latestFrame.value,
+            "an exactly-sized frame was rejected"
+        )
+    }
+
+    @Test
+    fun `a real frame still lands after a degenerate one was rejected`() {
+        // The ordering that matters. If the rejection is implemented by arming
+        // state that the next frame has to clear, a rejected frame would leave the
+        // store disarmed and the following good frame would vanish too. Rejecting
+        // has to cost exactly one frame.
+        pushFrame(trackSource = "screenshare", track = shareTrackSid, width = 8, height = 8, strideY = 32, bufferBytes = 256)
+        pushFrame(trackSource = "screenshare", track = shareTrackSid)
+
+        val frame = LiveKitRemoteVideoFrameStore.latestFrame.value
+        assertNotNull(frame, "the frame after a rejected one did not get through")
+        assertEquals(1280, frame!!.width, "the rejected frame's dimensions leaked into the good frame")
     }
 
     @Test
