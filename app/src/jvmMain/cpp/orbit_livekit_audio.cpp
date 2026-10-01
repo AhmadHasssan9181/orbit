@@ -2321,11 +2321,16 @@ std::vector<std::shared_ptr<RemoteAudioReader>> g_pendingReaderJoins;
 // Defined further down; the reaper below drains both queues and must be able to
 // call it.
 void stopVideoReader(const std::shared_ptr<RemoteVideoReader>& reader, const std::string& reason);
+// Defined further down; see the KDoc there for why the join cannot happen inline.
+void joinTxStatsThread();
 // Video readers pending the same treatment, with their stop reason carried along
 // because stopVideoReader publishes a track-removed notification to Java and
 // that must not run with g_sessionMutex held.
 std::vector<std::pair<std::shared_ptr<RemoteVideoReader>, std::string>> g_pendingVideoReaderJoins;
 std::atomic<bool> g_readerReaperRunning{false};
+// Set when stopTxStats() has signalled the TXSTAT thread but not yet joined it,
+// because both of its callers hold g_sessionMutex. Drained by the reaper.
+std::atomic<bool> g_txStatsJoinPending{false};
 
 // Joins readers that were already signalled and removed from the map.
 //
@@ -2346,6 +2351,10 @@ std::atomic<bool> g_readerReaperRunning{false};
 void drainPendingReaderJoins() {
     std::vector<std::shared_ptr<RemoteAudioReader>> readers;
     std::vector<std::pair<std::shared_ptr<RemoteVideoReader>, std::string>> videoReaders;
+    // Joined FIRST, and with no lock held -- see joinTxStatsThread(). The TXSTAT
+    // thread blocks on g_sessionMutex at the top of every iteration, so it is the
+    // one reader most likely to be mid-iteration when teardown starts.
+    joinTxStatsThread();
     {
         SessionLock lock;
         readers.swap(g_pendingReaderJoins);
@@ -2372,13 +2381,15 @@ void ensureReaderReaper() {
         try {
             while (true) {
                 drainPendingReaderJoins();
-                if (g_pendingReaderJoins.empty() && g_pendingVideoReaderJoins.empty()) {
+                if (g_pendingReaderJoins.empty() && g_pendingVideoReaderJoins.empty() &&
+                    !g_txStatsJoinPending.load(std::memory_order_acquire)) {
                     // Nothing left to do. Sleep briefly rather than spinning:
                     // this thread exists only for the rare teardown path.
                     std::this_thread::sleep_for(std::chrono::milliseconds(50));
                     {
                         SessionLock lock;
-                        if (g_pendingReaderJoins.empty() && g_pendingVideoReaderJoins.empty()) {
+                        if (g_pendingReaderJoins.empty() && g_pendingVideoReaderJoins.empty() &&
+                            !g_txStatsJoinPending.load(std::memory_order_acquire)) {
                             g_readerReaperRunning.store(false, std::memory_order_release);
                             return;
                         }
@@ -3037,8 +3048,39 @@ void stopTxStats() {
         if (g_txStatsThread.get_id() == std::this_thread::get_id()) {
             g_txStatsThread.detach();
         } else {
-            g_txStatsThread.join();
+            // Do NOT join here. Both callers (resetRoomLocked and the connect
+            // path) hold g_sessionMutex, and the TXSTAT thread's body opens with
+            // SessionLock to read g_audioTrack -- so a join here waits for a lock
+            // the joining thread already holds:
+            //
+            //     disconnect step=bridge.disconnect atMs=10   (never returns)
+            //     WARN remote audio reader self-cleanup deferred
+            //          (g_sessionMutex held by joiner)
+            //
+            // This is the fourth instance of the same rule in this file, which
+            // the file states twice already: never join a thread while holding
+            // g_sessionMutex. The audio readers, the video readers and ~Room were
+            // the other three; TXSTAT was the one place it had not reached, and
+            // it was the last waiter, which is why each earlier fix moved the
+            // stall to the next call instead of ending it.
+            //
+            // Signal here (running=false is what makes the thread exit its 5s
+            // sleep) and let the reader reaper do the join with no lock held.
+            g_txStatsJoinPending.store(true, std::memory_order_release);
+            ensureReaderReaper();
         }
+    }
+}
+
+// Performs the deferred TXSTAT join. Called from the reaper with g_sessionMutex
+// released, which is the whole point: the thread being joined needs that mutex
+// to finish its current iteration.
+void joinTxStatsThread() {
+    if (!g_txStatsJoinPending.exchange(false, std::memory_order_acq_rel)) {
+        return;
+    }
+    if (g_txStatsThread.joinable()) {
+        g_txStatsThread.join();
     }
 }
 std::string optionalTrackSourceLabel(const std::optional<livekit::TrackSource>& source);
