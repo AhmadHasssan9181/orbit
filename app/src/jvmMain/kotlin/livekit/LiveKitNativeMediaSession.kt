@@ -712,6 +712,24 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
     }
 
     fun disconnect(userInitiated: Boolean) {
+        // Per-step tracing, announced BEFORE each blocking call.
+        //
+        // Six fixes have been aimed at callers of this function and none moved
+        // it: the barrier added to catch exactly this keeps timing out --
+        //
+        //     WARN teardown still running after 5000ms
+        //
+        // -- which means the block is INSIDE here, and the log has never said
+        // where. Every blocking step below is announced first, so the last line
+        // printed before the stall names the call responsible. Announcing before
+        // the call rather than after is the only way to catch a call that never
+        // returns.
+        val disconnectStartedNs = System.nanoTime()
+        fun step(name: String) {
+            val elapsedMs = (System.nanoTime() - disconnectStartedNs) / 1_000_000L
+            println("DEBUG [LiveKitNativeMediaSession] disconnect step=$name atMs=$elapsedMs")
+        }
+        step("begin")
         // Any explicit teardown — user leave OR owner give-up — kills auto-resume;
         // otherwise a give-up disconnect could race the owner with a token-refresh
         // reconnect (H1).
@@ -724,20 +742,27 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         refreshJob = null
         remoteVideoRescanJob?.cancel()
         remoteVideoRescanJob = null
+        step("videoCapture.stopAndJoin")
         runCatching { LiveKitNativeVideoCapture.stopAndJoin() }
         cameraPushEnabled = false
         publishedCameraWidth = 0
         publishedCameraHeight = 0
+        step("setAcceptingFrames(false)")
         runCatching { LiveKitNativeAudioBridge.nativeSetAcceptingFrames(false) }
+        step("audioCapture.stopAndJoin")
         runCatching { LiveKitNativeAudioCapture.stopAndJoin() }
+        step("audioPlayer.stop")
         runCatching { LiveKitNativeAudioPlayer.stop() }
+        step("disableRemoteVideoSink")
         disableRemoteVideoSink("disconnect")
         screenShareArmed = false
         screenShareWidth = 0
         screenShareHeight = 0
+        step("bridge.disconnect")
         if (sessionId != 0L) {
             bridge.disconnect(sessionId, epoch, userInitiated)
         }
+        step("bridge.disconnect returned")
 
         // The native session does not survive the call that used it.
         //
@@ -773,6 +798,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         // Completed here, at the very end, so a waiter resumes only once every
         // field above has been brought to its post-teardown value.
         teardownBarrier?.complete(Unit)
+        step("done")
 
         cancelPendingDeferreds(
             NativeError(
