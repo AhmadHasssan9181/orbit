@@ -249,6 +249,17 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             }
             sessionId = created.value
             println("DEBUG [LiveKitNativeMediaSession] native session created: $sessionId")
+        } else {
+            // Reaching here on a REJOIN meant the previous session was being
+            // reused after teardown -- every `if (sessionId == 0L)` guard in this
+            // file then passed against a dead session. disconnect() clears the id
+            // now, so this branch is reachable only when a session is genuinely
+            // still live. Said out loud rather than silently tolerated, because
+            // that silence is what made the rejoin hang undiagnosable.
+            println(
+                "WARN [LiveKitNativeMediaSession] reusing live native session $sessionId for a new join; " +
+                    "disconnect() is expected to have cleared it"
+            )
         }
 
         nextEpoch()
@@ -583,9 +594,15 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
      * on and the next login inherited the previous account's native state.
      */
     fun releaseNativeSession() {
+        // Captured before disconnect(), which now clears the id: this is the
+        // native session that needs destroying, and reading sessionId afterwards
+        // would always yield 0 and leak the session on logout -- exactly the
+        // "next login inherits the previous account's native state" problem this
+        // function exists to prevent.
+        val sessionToDestroy = sessionId
         disconnect(userInitiated = true)
-        if (sessionId != 0L) {
-            runCatching { bridge.destroySession(sessionId) }
+        if (sessionToDestroy != 0L) {
+            runCatching { bridge.destroySession(sessionToDestroy) }
                 .onFailure { println("WARN [LiveKitNativeMediaSession] destroySession failed: ${it.message}") }
             sessionId = 0L
         }
@@ -618,6 +635,37 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         if (sessionId != 0L) {
             bridge.disconnect(sessionId, epoch, userInitiated)
         }
+
+        // The native session does not survive the call that used it.
+        //
+        // Reported as "disconnect from Orbit, connect again, and the app is
+        // stuck". The rejoin walked the whole connect path and then sat there:
+        //
+        //     microphone self-test selected mixer=... allInputsTooLow=false
+        //     ERROR [CallManager] Group-call join stalled at Joined
+        //
+        // with mic.read=0 for the rest of the run. The self-test had already
+        // succeeded, so the stall was downstream of it, and the next statement is
+        // this:
+        //
+        //     if (sessionId == 0L) { val created = bridge.createSession() ... }
+        //
+        // On a rejoin sessionId was still the previous call's id, so the session
+        // was never recreated. `native session created:` never printed -- not once,
+        // in any run -- which is the proof. Orbit then connected against a session
+        // whose room and delegate had already been torn down, and every later
+        // guard in this file (`if (sessionId == 0L) return`) passed against a dead
+        // session instead of failing loudly.
+        //
+        // Only releaseNativeSession() used to clear this, and that runs on logout.
+        // disconnect() ends the call but left the id in place, so every rejoin in
+        // a session reused a dead session.
+        //
+        // Clearing it here means the next join takes the createSession() path and
+        // gets a live session with a live room. The native side keeps its own
+        // generation counter, so a fresh id cannot be confused with the old one.
+        sessionId = 0L
+
         cancelPendingDeferreds(
             NativeError(
                 code = if (userInitiated) NativeErrorCode.USER_LEFT else NativeErrorCode.DISCONNECTED,
