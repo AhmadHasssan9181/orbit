@@ -16,6 +16,7 @@ import dev.onvoid.webrtc.RTCPeerConnectionState
 import dev.onvoid.webrtc.RTCRtpReceiver
 import dev.onvoid.webrtc.RTCRtpSender
 import dev.onvoid.webrtc.RTCRtpTransceiver
+import dev.onvoid.webrtc.RTCRtpTransceiverDirection
 import dev.onvoid.webrtc.RTCSdpType
 import dev.onvoid.webrtc.RTCSessionDescription
 import dev.onvoid.webrtc.RTCSignalingState
@@ -187,6 +188,35 @@ class JvmWebRtcClient : WebRtcClient {
     }
 
     /**
+     * Drop remote tiles whose tracks the peer's latest SDP no longer declares.
+     *
+     * Called on every remote description, so it catches the one thing
+     * `addTrackEndedListener` cannot: Element stopping a screen share by
+     * renegotiating rather than by ending the track. The track object stays alive
+     * locally, the listener never fires, and without this the share tile holds the
+     * spotlight on a frozen last frame until hangup.
+     *
+     * A tile is only dropped when the SDP positively contradicts it. See
+     * [RemoteVideoSdpLiveness.survives] for why every unparseable case keeps the
+     * tile rather than destroying a working video over an SDP we did not read.
+     */
+    private fun clearTracksAbsentFromSdp(sdp: String) {
+        val hasVideo = RemoteVideoSdpLiveness.hasVideoSection(sdp)
+        remoteScreenVideoTrack?.let { track ->
+            if (!RemoteVideoSdpLiveness.survives(sdp, track.getId(), hasVideo)) {
+                clearRemoteScreenShare(track)
+                println("DEBUG: [WebRTC] remote share withdrawn by renegotiation, tile cleared")
+            }
+        }
+        remoteVideoTrack?.let { track ->
+            if (!RemoteVideoSdpLiveness.survives(sdp, track.getId(), hasVideo)) {
+                clearRemoteCamera(track)
+                println("DEBUG: [WebRTC] remote camera withdrawn by renegotiation, tile cleared")
+            }
+        }
+    }
+
+    /**
      * Track ids belonging to [streamIds], per `a=msid:<stream> <track>`.
      *
      * The track id is the second token. That is the value the native layer
@@ -254,6 +284,44 @@ class JvmWebRtcClient : WebRtcClient {
 
         if (reused != null) {
             println("DEBUG: [WebRTC] reusing negotiated video m-line instead of adding one")
+            // The reuse above is necessary but was not sufficient, which is why
+            // run 58 still failed four times with the same mid='1' error it was
+            // written to fix.
+            //
+            // When Orbit answered Element's offer it had no camera to send, so it
+            // answered that m-line `a=recvonly`. libwebrtc records that as the
+            // transceiver's *direction*, and that is a hard constraint: it persists
+            // for the life of the m-line and is not re-read from the attached track.
+            // So `replaceTrack(screenTrack)` swapped the camera for a share on a
+            // sender that was still legally forbidden to send, and setLocalDescription
+            // rejected the resulting offer:
+            //
+            //   Failed to set local video description recv parameters for m-section with mid='1'
+            //
+            // The receiver half must be kept, because that m-line is also how the peer's
+            // video reaches Orbit -- dropping to SEND_ONLY would silently cost us their
+            // camera, which is the bug this whole path was fighting.
+            //
+            // getCurrentDirection() is the *negotiated* direction and is read-only;
+            // getDirection() is the desired one and is what we are correcting. Preferring
+            // getCurrentDirection() here would pick up recvonly again and change nothing.
+            val transceiver = runCatching {
+                pConn.transceivers?.filterNotNull()?.firstOrNull { it.sender == reused }
+            }.getOrNull()
+            if (transceiver != null) {
+                runCatching {
+                    val before = transceiver.direction
+                    if (before != RTCRtpTransceiverDirection.SEND_RECV) {
+                        transceiver.direction = RTCRtpTransceiverDirection.SEND_RECV
+                        println(
+                            "DEBUG: [WebRTC] video m-line direction $before -> SEND_RECV " +
+                                "(was not sending; the share could never be published)"
+                        )
+                    }
+                }.onFailure {
+                    println("DEBUG: [WebRTC] could not set video m-line direction: ${it.message}")
+                }
+            }
             return reused
         }
 
@@ -1210,6 +1278,10 @@ private fun watchTrackEnd(track: MediaStreamTrack, onEnd: () -> Unit) {
             // a camera or a screen share" -- track ids are bare UUIDs from
             // Element, so there is nothing in the id to read.
             noteRemoteScreenShareTracks(sessionDescription.sdp)
+            // After, not before: noteRemoteScreenShareTracks is what populates
+            // _remoteScreenTrackIds, and clearing first would race against it on a
+            // renegotiation that legitimately re-labels the track as a share.
+            clearTracksAbsentFromSdp(sessionDescription.sdp)
             val sdp = RTCSessionDescription(type, sessionDescription.sdp)
             val observer = object : SetSessionDescriptionObserver {
                 override fun onSuccess() { onSuccess() }
