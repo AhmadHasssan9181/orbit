@@ -1188,10 +1188,37 @@ void raiseCurrentThreadPriority() {
             // Falls back to the track SID only when the identity is genuinely
             // unknown, because the mixer pushes this value into the active-speaker
             // event the UI matches on and an empty string would never match.
-            const std::string key = participantIdentity.empty() ? trackSid : participantIdentity;
-            auto& existing = participants_[key];
+            // KEY BY TRACK SID. This is deliberate, and an earlier commit changed it to
+            // identity -- which was wrong, and the struct's own comment above says
+            // why:
+            //
+            //   "They must stay separate because the queues are keyed by track SID on
+            //    purpose ... one participant sharing screen-with-audio has TWO audio
+            //    tracks, and collapsing them into an identity-keyed queue doubles
+            //    that participant's inflow and lets either track's teardown destroy
+            //    the shared buffer."
+            //
+            // Two queues per participant is the CORRECT design here, not a bug. The
+            // mixer drains each independently, so a screen-share track and a mic
+            // track must not share a buffer. Identity-keying merged them, which is
+            // what produced run 64's split voice.
+            //
+            // Identity-keyed operations (gain, removal) are handled by
+            // setParticipantGainEverywhere, which already fans ONE identity out to
+            // EVERY track SID belonging to it, and by removeParticipant call sites
+            // which iterate readers rather than assuming a single key.
+            //
+            // So the volume/mute bug was never "the map is keyed wrongly". It was
+            // that applyParticipantGain was reached with an identity, and the
+            // fan-out's own identity matcher is what was fixed. This key was
+            // reverted.
+            auto& existing = participants_[trackSid];
             if (existing == nullptr) {
-                existing = std::make_shared<ParticipantPcmQueue>(key, trackSid);
+                // Report the PARTICIPANT identity, not the track SID: this value is
+                // pushed into the active-speaker event the UI matches on, and an
+                // empty string there silently never matches anything.
+                existing = std::make_shared<ParticipantPcmQueue>(
+                    participantIdentity.empty() ? trackSid : participantIdentity, trackSid);
                 std::cout << "DEBUG [OrbitLiveKitAudio] remote audio participant added: trackSid="
                           << trackSid << " identity=" << existing->participantIdentity << std::endl;
             }
@@ -1222,13 +1249,21 @@ void raiseCurrentThreadPriority() {
         }
     }
 
-    void applyParticipantGain(const std::string& identity, float gain) {
-        if (identity.empty()) {
+    void applyParticipantGain(const std::string& trackSid, float gain) {
+        // PARAMETER IS A TRACK SID, and it must stay named that way.
+        //
+        // It was called `identity`, which is how this whole bug class formed:
+        // participants_ is keyed by track SID, callers passed identities "because
+        // the parameter said identity", and every such lookup missed in silence.
+        // setParticipantGainEverywhere is the ONLY caller, and it fans one identity
+        // out to every track SID first -- this function therefore only ever sees a
+        // track SID.
+        if (trackSid.empty()) {
             return;
         }
 
         std::lock_guard<std::mutex> lock(mutex_);
-        auto it = participants_.find(identity);
+        auto it = participants_.find(trackSid);
         if (it == participants_.end() || it->second == nullptr) {
             // Logged rather than swallowed. This used to `return` in silence, which
             // is how a keying mismatch hid for so long: the setter was called, the
@@ -1237,7 +1272,7 @@ void raiseCurrentThreadPriority() {
             //
             // The known keys are printed because "not found" is only actionable if
             // you can see what IS in the map.
-            std::cout << "WARN [OrbitLiveKitAudio] applyParticipantGain MISS identity=" << identity
+            std::cout << "WARN [OrbitLiveKitAudio] applyParticipantGain MISS trackSid=" << trackSid
                       << " gain=" << gain << " knownKeys=";
             for (const auto& entry : participants_) {
                 std::cout << "[" << entry.first << "]";
@@ -1249,22 +1284,28 @@ void raiseCurrentThreadPriority() {
         it->second->gain = gain;
     }
 
-    void removeParticipant(const std::string& identity) {
-        if (identity.empty()) {
+    void removeParticipant(const std::string& trackSid) {
+        // A TRACK SID, for the same reason as applyParticipantGain. All three
+        // call sites pass reader->trackSid.
+        //
+        // One of those three briefly passed reader->participantIdentity, which
+        // cannot match a track-SID-keyed map -- so the removal found nothing,
+        // returned quietly, and left the queue alive for the rest of the call. That
+        // is the leak behind PARTLEDGER reporting connects without disconnects, and
+        // behind remote audio readers never being reaped.
+        if (trackSid.empty()) {
             return;
         }
 
         std::shared_ptr<ParticipantPcmQueue> removed;
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            auto it = participants_.find(identity);
+            auto it = participants_.find(trackSid);
             if (it == participants_.end()) {
-                // Same reasoning as applyParticipantGain: a removal that finds
-                // nothing is exactly the failure that leaves a queue alive for the
-                // rest of the call, and it used to pass without a sound. This is the
-                // path that would have surfaced the keying mismatch as a leak
-                // instead of as silence.
-                std::cout << "WARN [OrbitLiveKitAudio] removeParticipant MISS identity=" << identity
+                // A removal that finds nothing is exactly the failure that leaves a
+                // queue alive for the rest of the call, so it is logged rather than
+                // swallowed.
+                std::cout << "WARN [OrbitLiveKitAudio] removeParticipant MISS trackSid=" << trackSid
                           << " (queue left in place) knownKeys=";
                 for (const auto& entry : participants_) {
                     std::cout << "[" << entry.first << "]";
@@ -1337,13 +1378,18 @@ inline std::vector<std::int16_t> resampleLinear(
 }
 
     void pushParticipantFrame(
-        const std::string& identity,
+        // NAMED trackSid, and it IS the map key (see addParticipant). It was called
+        // `identity`, which is how three call sites ended up passing the wrong thing:
+        // a track SID where an identity was expected and vice versa. Both are
+        // plausible-looking strings, so nothing failed loudly -- queues were just
+        // created under keys no other operation could find.
+        const std::string& trackSid,
         const std::int16_t* pcm,
         int sampleRate,
         int samplesPerChannel,
         int channels,
         std::int64_t timestampNs) {
-        if (identity.empty() ||
+        if (trackSid.empty() ||
             pcm == nullptr ||
             sampleRate <= 0 ||
             samplesPerChannel <= 0 ||
@@ -1354,16 +1400,21 @@ inline std::vector<std::int16_t> resampleLinear(
         std::shared_ptr<ParticipantPcmQueue> queue;
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            auto& existing = participants_[identity];
+            auto& existing = participants_[trackSid];
             if (existing == nullptr) {
-                // Keyed by identity, which is what addParticipant now does too.
-                // Both writers previously disagreed -- this one by identity, that
-                // one by track SID -- so the two could create separate queues for
-                // the same person and the identity-keyed lookups only ever reached
-                // this path's queue.
-                existing = std::make_shared<ParticipantPcmQueue>(identity, identity);
+                // Same key as addParticipant, so this REUSES the queue it created
+                // instead of minting a second one for the same audio track. That
+                // reuse is the whole point: two queues for one track meant the
+                // mixer drained each independently and split one voice across two
+                // buffers too thin to clear kStarvationReprimeSamples.
+                //
+                // The identity is unknown on this path, so it falls back to the
+                // track SID -- which is what the active-speaker UI would see, and
+                // why the LiveKit path (which knows the identity) must be the one
+                // that creates the queue.
+                existing = std::make_shared<ParticipantPcmQueue>(trackSid, trackSid);
                 std::cout << "DEBUG [OrbitLiveKitAudio] remote audio participant added: "
-                          << identity << " inSampleRate=" << sampleRate << " inChannels=" << channels << std::endl;
+                          << trackSid << " inSampleRate=" << sampleRate << " inChannels=" << channels << std::endl;
             }
             existing->active = true;
             queue = existing;
@@ -1408,7 +1459,9 @@ inline std::vector<std::int16_t> resampleLinear(
                 if (nowMs - lastWarnMs >= 1000 &&
                     lastOverflowWarnMs_.compare_exchange_strong(lastWarnMs, nowMs)) {
                     std::cout << "WARN [OrbitLiveKitAudio] remote audio queue overflow for "
-                              << identity << " droppedSamples=" << overflowDropped << std::endl;
+                              << queue->participantIdentity
+                              << " trackSid=" << queue->trackSid
+                              << " droppedSamples=" << overflowDropped << std::endl;
                 }
             }
             queue->pcm.insert(queue->pcm.end(), finalSamples, finalSamples + finalCount);
@@ -1774,7 +1827,16 @@ void setParticipantGainEverywhere(const std::string& identity, float gain) {
         std::lock_guard<std::mutex> lock(g_participantGainsMutex);
         g_participantGains[identity] = gain;
     }
-    g_audioMixer.applyParticipantGain(identity, gain);
+    // The direct applyParticipantGain(identity, ...) that used to sit here was
+    // dead against a track-SID-keyed map and was removed. It silently did nothing,
+    // and its presence was actively misleading: the fan-out 30-odd lines below
+    // already walks every reader belonging to this identity and applies the gain
+    // to each of their track SIDs, which is the only thing that can work when a
+    // participant has more than one audio track.
+    //
+    // Leaving both in meant the visible line (setParticipantGainEverywhere ...,
+    // logging matchedTracks) reported success while the queue actually being played
+    // was never touched.
 
     std::vector<std::string> trackSidsToUpdate;
     {
@@ -2356,7 +2418,27 @@ void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track, const
                     const auto timestampNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
                         std::chrono::steady_clock::now().time_since_epoch()).count();
                     g_audioMixer.pushParticipantFrame(
-                        reader->trackSid,
+                        // reader->participantIdentity, NOT reader->trackSid.
+                        //
+                        // pushParticipantFrame's first parameter is `identity`, and
+                        // this call site passed a track SID into it. Since
+                        // addParticipant creates the queue under the identity key,
+                        // this enqueued into a DIFFERENT queue -- one created purely
+                        // by this write, keyed by the track SID, and never drained
+                        // from the same pair as the queue addParticipant made.
+                        //
+                        // One participant therefore ended up with two queues, and the
+                        // mixer drains them independently (480 samples from each per
+                        // 10ms tick), splitting one voice across two buffers too thin
+                        // to clear kStarvationReprimeSamples. Observed in run 64 as
+                        // MIXSTAT starved climbing in EXACTLY 1000-per-5s steps: one
+                        // starvation event per mixer tick, i.e. one queue permanently
+                        // empty while the other played.
+                        //
+                        // Same person, two audio tracks:
+                        //   TR_AMWQpDJLYWtw4D  addParticipant  -> keyed by identity
+                        //   TR_AMhanQNtMPc3aW  this call site  -> keyed by track SID
+                        reader->participantIdentity,
                         samples.data(),
                         event.frame.sampleRate(),
                         event.frame.samplesPerChannel(),
