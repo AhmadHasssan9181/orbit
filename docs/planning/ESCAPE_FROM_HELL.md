@@ -67,22 +67,26 @@ against Element sources), `docs/planning/headache_medicine.md` (UI architecture 
 
 | Symptom | Go to |
 |---|---|
-| Peer can't hear us (TX dead) | [H8-TX](#h8-tx-tx-dead-peers-cant-hear-us) |
-| We can't hear a peer who joined later | [H8-RX](#h8-v3-rx-dead-for-latecomers) / [H7](#h7-settle-nudge-silent-element-peers) |
-| Audio works, then garbles/chops | [BUG-D](#bug-d-robotic-garbled-audio-in-one-room) |
+| Peer can't hear us (TX dead) | [H8-TX](#h8-tx--tx-dead-peers-cant-hear-us) — **SOLVED, was a key-ROTATION bug, not a key-DISTRIBUTION bug** |
+| We can't hear a peer who joined later | [H8-RX](#h8-v3--rx-dead-for-latecomers-specifically) / [H7](#h7--settle-nudge-silent-element-peers) |
+| Audio works, then garbles/chops | [BUG-D](#bug-d--robotic-garbled-audio-in-one-specific-room) |
 | One person too loud/quiet, or mute ONE person's playback | [H15](#h15--per-participant-volume--the-local-mute) |
-| **Can hear SOME peers and not others, same build** | **[H20](#h20--the-two-key-same-map--why-volume-and-mute-were-dead)** |
-| No visual indicator of who is speaking | [H16](#h16--the-speaking-glow--native-rms-to-the-tile-ring) |
+| **Can hear SOME peers and not others, same build** | **[H20](#h20---the-two-key-same-map-why-volume-and-mute-were-dead)** |
+| No visual indicator of who is speaking | [H16](#h16--the-speaking-glow-native-rms--the-tile-ring) |
 | Key delivery to one device keeps failing long-session | [H8-V4](#h8-v4--one-bad-device-poisoned-the-whole-batch) |
 | Everything is ~2s late for minutes | [H6](#h6--2s-end-to-end-latency-that-never-recovers) |
-| Join hangs forever, or fails then stays connected | [H12](#h12-join-stall--the-watchdog-zombie) |
-| Can't navigate while in a call | [H10](#h10-the-overlay-trap--random-call-closes) |
-| Screen share stops but system audio keeps flowing | [H9](#h9-screen-share-stop-leaves-system-audio-publishing) |
-| RAM eats 20 GB in calls | [H11](#h11-the-20gb-ram-hog) |
-| Closing the app leaves a 3–4 GB java.exe | [H13](#h13-the-window-close-zombie-jvm) |
-| Packaging/build fails or MSI acts weird | [Circle V](#circle-v-packaging-and-release) |
+| Join hangs forever, or fails then stays connected | [H12](#h12--join-stall--the-watchdog-zombie) |
+| Can't navigate while in a call | [H10](#h10--the-overlay-trap--random-call-closes) |
+| Screen share stops but system audio keeps flowing | [H9](#h9--screen-share-stop-leaves-system-audio-publishing) |
+| RAM eats 20 GB in calls | [H11](#h11--the-20gb-ram-hog) |
+| Closing the app leaves a 3–4 GB java.exe | [H13](#h13---the-window-close-zombie-jvm) |
+| Packaging/build fails or MSI acts weird | [Circle V](#circle-v--packaging-and-release) |
 | Audio works but a peer's video never renders | [Rounds 6–7](#rounds-67--heard-but-not-seen-the-downgrade-mystery) |
-| Log line looks terrifying | [The Bestiary](#the-bestiary-benign-log-noise) first |
+| Log line looks terrifying | [The Bestiary](#the-bestiary--benign-log-noise) first |
+| Hang up, rejoin, stuck on "Connecting" forever | [H21](#h21--the-rejoin-hang-one-rule-broken-five-times) |
+| A peer's video is frozen / blocky / smeared | [H22](#h22--the-degenerate-frame-stretched-across-the-tile) |
+| A peer shows up once but the log announces them 8 times | [H23](#h23--one-person-announced-eight-times) |
+| App exits with `0xC0000409` / "VM attach current thread failed" | [H24](#h24--the-0xc0000409-termination-abort-native-threads-outlived-the-jvm) |
 | What's still broken or unbuilt? | [Unfinished Business](#unfinished-business) |
 
 ---
@@ -100,7 +104,7 @@ Implement THIS, not MSC4143's future branch text.*
 ## The join network chain
 
 Joining an encrypted group call touches FOUR services in order. Any stall
-here used to kill the whole join — see [H12](#h12-join-stall--the-watchdog-zombie):
+here used to kill the whole join — see [H12](#h12--join-stall--the-watchdog-zombie):
 
 1. **ICE servers** — fetched from room metadata / well-known.
 2. **OpenID token** — `POST /_matrix/client/v3/user/{userId}/openid/request_token` from YOUR homeserver.
@@ -288,6 +292,14 @@ leaver+joiner key paths without touching the LiveKit connection).
 
 ## H8-TX — TX dead (peers can't hear us)
 
+> 🕯️ **SOLVED (v0.2.2). The entry below was a beautiful wrong theory, and it is
+> kept in full because the wrong theory is the part that cost the time.**
+>
+> Everything written under "It is" and "Fix" is **HISTORICAL**. It describes a
+> plausible and *partly real* set of distribution gaps — and fixing all of them
+> did not make the symptom go away, because the symptom was never about
+> distribution. Read the closing section before touching key delivery again.
+
 **You see:** You join a room with many participants. You hear everyone. Nobody
 hears you. Mic publishes fine, your own E2EE says Ok.
 
@@ -322,6 +334,58 @@ private fun maybeReplyWithOwnKey(sender: String, claimedDevice: String)
 our current index within seconds of sending us anything.
 
 **Files:** `CallMediaKeyExchange.kt`.
+
+### The actual cause (v0.2.2) — it was ROTATION, not distribution
+
+> 🕯️ *Every fix above is real code that works. None of them fixed the reported
+> symptom. Here is what did, and the one observation that cracked it.*
+
+**It is:** We rotated the shared media key for reasons that are not a departure.
+Rotation moves `currentIndex` 0 → 1, and any peer still holding index 0 cannot
+decrypt anything we send. If a rotation happens for a bogus reason, everyone
+silently goes deaf to us **while their own TX to us keeps working** — which is
+precisely the reported asymmetry, and precisely why every distribution-side
+theory above was consistent with the symptom and none of them was the cause.
+
+**The observation that cracked it:** Element↔Element never has to *infer* a
+departure. Element sees a membership diff and reacts to it. Orbit was inferring
+departures from six different signals, and three of those signals fire during a
+perfectly normal call. Element therefore never enters the divergent path, which
+is why "it works on Element, it doesn't work on us" was the clue rather than a
+coincidence.
+
+**It was never a regression.** Bisecting to `8ac6ca1` (packageVersion 0.1.5)
+reproduced the symptom identically, so the defect is original. The git history
+cannot date it: an author-rewrite flattened all 60 commits to one author and two
+dates. If you go looking for "the commit that broke audio", you will find
+nothing, because there isn't one.
+
+**Three wrong rotation triggers, each found from log evidence, not by reasoning:**
+
+| Trigger | What it really was | Commit |
+|---|---|---|
+| A peer "appears" without an announce | A **latecomer sighting** — a peer already present got re-observed, not a new arrival | `226248f` |
+| A roster entry vanishes from the LiveKit room | A **ghost membership** — `@nfak_ism`, a stale MatrixRTC record that never had keys | `da335e7` / `c922681` |
+| A joiner appears during the grace window | A **rejoin** — `Element`'s `RESEND_GRACE_PERIOD_MS` branch was unreachable in any real call, so *every* rejoin rotated | `5c664ee` |
+
+**Fix:** Rotation is now reachable from exactly one place — a **confirmed
+departure** (`membership: leave`). `ConfirmedLeavers` + `ConfirmedLeaveLedger`
+stop a ghost from counting as a leaver, and leave events are **recorded** in
+`MatrixRtcMembership.kt` rather than discarded, so there is something to confirm
+against. Joiners always receive the *current* index; they never cause a rotation.
+
+**On the nudges:** `nudgeOwnMembership` republishes with the **same
+membershipID and state_key** — a byte-identical event. Element sees no diff and
+ignores it. **The nudge has never done anything on the Element side.** It is kept
+because it provably works against Orbit peers (who react to the republication),
+but do not read its existence as evidence that Element is being prodded.
+
+**Prove it:** Element↔Orbit and Element↔Element must behave identically across
+a rotation. Verified by the user in v0.2.2.
+
+**Files:** `CallMediaKeyExchange.kt` (rotation policy, `ConfirmedLeaveLedger`),
+`CallMediaKeysCore.kt` (`decideMembershipReaction`, `ConfirmedLeavers`),
+`MatrixRtcMembership.kt` (leave events recorded at ~L43–66).
 
 ## H8-V2 — Ghost memberships burn the nudge budget
 
@@ -725,7 +789,7 @@ be born inside the mixer queue itself.
    the contribution is zeroed, so starvation/jitter-depth bookkeeping is
    untouched (muting must not re-trigger the cold-buffer gate).
    ⚠️ **`participants_` is keyed by PARTICIPANT IDENTITY. Do not key it by track
-   SID.** See [H20](#h20--the-two-key-same-map--why-volume-and-mute-were-dead).
+   SID.** See [H20](#h20---the-two-key-same-map-why-volume-and-mute-were-dead).
 2. **JNI**: `Java_livekit_LiveKitNativeAudioBridge_nativeSetParticipantGain(JNIEnv*, jclass, jstring, jfloat)`
    → `setParticipantGainEverywhere()` (writes map + live queue).
 3. **Kotlin bridge**: `LiveKitNativeAudioBridge.nativeSetParticipantGain`
@@ -981,6 +1045,224 @@ Post to the VISIBLE window instead:
 > resident, sipping 4 GB from the tray like a polite poltergeist.
 > Follow the rituals below or join them.*
 
+## H21 — The rejoin hang: one rule broken five times
+
+> 🕯️ *Eleven runs. The same symptom. Four correct fixes. The bug was not four
+> bugs, and it was never where any of the four fixes were looking.*
+
+**You see:** Hang up from a call, rejoin immediately, and the app sits on
+**"Connecting"** forever. The mic works, the window is responsive, the UI is
+alive. Nothing in the log ever says what went wrong.
+
+**It is:** One rule, stated twice in comments at the top of
+`orbit_livekit_audio.cpp` and broken in five places:
+
+> **never `join()` a thread while holding `g_sessionMutex`**
+
+Every one of the five joined a thread whose body opens with `SessionLock` to read
+`g_audioTrack` / `g_room`. So teardown waited for a lock the joining thread was
+itself holding. Five sites:
+
+| # | Site | Stuck on |
+|---|---|---|
+| 1 | audio reader self-cleanup | the `join()` in the reader's own exit path |
+| 2 | video reader self-cleanup | same, via `g_pendingVideoReaderJoins` |
+| 3 | `~Room()` destructor | Room teardown needs the session state |
+| 4 | `stopTxStats()` → `resetRoomLocked()` | TXSTAT thread opens each iteration with `SessionLock` |
+| 5 | `nativePublishAudio` | **not on the teardown path at all** — mic re-publish |
+
+**Why it took eleven runs:** each fix was correct, necessary, and **moved the
+stall to the next waiter** rather than ending it. Six separate rounds blamed the
+*callers* of `disconnect()`, and each removed one waiter while others waited too.
+The symptom is identical whichever waiter you are on, so the trace never pointed
+at the cause.
+
+**The fix shape** is the same in all five: signal under the lock, **join with the
+lock released**. The file already had a reaper thread for exactly this class of
+join; sites 1, 2, 4 and 5 now hand their joins to it.
+
+**Site 5 is why the reaper needed changing too.** `nativePublishAudio` must stop
+the old TXSTAT thread and *immediately* start a new one, and assigning a fresh
+`std::thread` over a still-joinable one is undefined behaviour — so the handle is
+**moved** to a `g_txStatsRetiredThread` slot. The reaper used to join
+`g_txStatsThread`, and after this change that slot can already hold the *new*
+thread, so joining it would block the reaper for the entire next call.
+
+**Prove it:** the line that ends the hunt is
+
+```
+disconnect step=bridge.disconnect returned atMs=<n>
+```
+
+It had **never appeared in any run**. Its absence is what kept pointing at a
+waiter rather than at a caller. Verified in v0.2.2: `returned atMs=8`, `done
+atMs=8`, four disconnects in a row, all single-digit milliseconds.
+
+**Files:** `orbit_livekit_audio.cpp` — `stopTxStats` / `retireTxStatsThread` /
+`joinTxStatsThread` / `drainPendingReaderJoins` / `ensureReaderReaper`,
+`nativePublishAudio`, `JNI_OnUnload`.
+
+## H22 — The degenerate frame stretched across the tile
+
+> 🕯️ *The video was not frozen. The video was a postage stamp, enlarged to fill
+> your screen.*
+
+**You see:** A peer's video — usually a screen share — goes frozen, blocky, or
+smeared while the call is otherwise healthy. Not black, not "connecting": the
+last picture, stretched and ugly. Users report it as "the video is stuck" or
+"their internet is bad".
+
+**It is:** Element emits an **8x8 frame** when its share stops. Orbit accepted it
+and published it, and the renderer — which allocates from `width`/`height` without
+re-checking the arithmetic — made an 8x8 image and stretched it over the tile.
+**This shipped in 0.2.1 and earlier.** Run 83 caught two of them on a live 1920x1080
+share that had already delivered 88 good frames:
+
+```
+width=8 height=8 strideY=32 format=0 bytes=256 minEdge=16 accepted=88 rejected=1
+```
+
+**The trap, and it is the whole reason this entry exists:** the obvious fix does
+not work. `bytes=256` for `strideY=32` is `32 * 8 == 256` — the frame is
+**exactly self-consistent**. A buffer-size check (`buffer.size >= strideY *
+height`) waves it straight through, and that was the first implementation, which
+failed its own test.
+
+**Fix:** a size floor of **16** on both dimensions, checked *first*, plus the
+buffer check kept alongside it for a different fault (a caller under-allocating by
+one byte). 16 is far below anything a capture device produces, so it cannot
+reject a real stream. Rejections are counted per call and printed at teardown,
+because a track that rejected every frame looks identical to one that delivered
+none.
+
+**Prove it:** `grep 'rejected degenerate frame' run.log`. The boundary is pinned
+by tests at exactly 16 (accepted) and 15 (rejected) — a floor set too high does
+not look like a bad tile, it looks like video that never works at all.
+
+**Files:** `LiveKitRemoteVideoFrameStore.kt` (`updateFrame`, `MIN_FRAME_EDGE`),
+tests in `commonTest`.
+
+## H23 — One person announced eight times
+
+> 🕯️ *The roster said eight participants. The room held one.*
+
+**You see:** Nothing visibly wrong on screen. You find it by reading the log:
+
+```
+PARTLEDGER final UNBALANCED identities=@hellishsaa:matrix.org (+8/-0)
+```
+
+Eight connects, zero disconnects, for a peer who was in the room the whole time.
+
+**It is:** **Five** independent native sites dispatch a participant-connected:
+
+```
+onParticipantConnected      onTrackPublished      onTrackSubscribed
+connect-time roster walk    periodic rescan
+```
+
+Only the **rescan** consulted `g_announcedParticipantSids`, so a peer with three
+tracks was announced once per track per source. A dedup gate at a call site
+cannot work when there are six call sites and no shared funnel — the rescan's
+check was a fifth opinion, not the rule.
+
+**Fix:** the gate moved into `dispatchRemoteParticipantConnected`, where the
+invariant belongs. Check-and-reserve in **one** critical section, not
+check-then-insert: the sites run on the LiveKit FFI event thread *and* a tick
+thread, and both could otherwise observe "not announced" and both call up. A
+reservation is released if the upcall turns out to be undeliverable, so a missing
+sink still gets retried rather than becoming a participant who never appears.
+
+**The ledger then had to stop lying.** It counted *callbacks*, so "announced eight
+times" and "eight participants" were the same number — which is the entire
+question the ledger exists to answer. It now counts **state**: `present` is a set
+keyed by **SID**, and `pending` is its size.
+
+**Keyed by SID, not identity, and that is load-bearing in both directions.** A
+genuine rejoin keeps the same identity and gets a fresh sid, so a sid key counts it
+as the new arrival it is:
+
+```
++connect           pending=1 dupConnects=0 present=1     <- @hellishsaa arrives
+-disconnect        pending=0 dupConnects=0 present=0     <- leaves
++connect           pending=1 dupConnects=0 present=1     <- rejoins, NEW sid
++connect DUPLICATE pending=1 dupConnects=1 present=1     <- rescan repeats it
+```
+
+An identity key would collapse every rejoin after the first into a "duplicate" and
+report a healthy churning call as **balanced**. A diagnostic that lies in the safe
+direction is worse than one that is merely wrong.
+
+Two follow-up bugs the live run exposed, both in the reporting:
+
+- `report()` printed **sids** on a line labelled `identities` —
+  `UNBALANCED identities=PA_NoTSngNzpkyh`. Nobody can look that up in Matrix. The
+  line whose entire job is to name who is stuck named something un-actionable.
+- The wording was wrong too. That peer rejoined and was **legitimately in the
+  room** when the user hung up, so `UNBALANCED` described a correct state. It now
+  says `STILL PRESENT` with the reason inline. A diagnostic that cries wolf on the
+  healthy case gets skipped, and then it misses the real one.
+- `report()` clears per-call state afterwards; `clear()` is called on paths that
+  are not a call ending at all, so a carried-over tally repeats into the next call.
+
+**Prove it:** `grep PARTLEDGER` in run 83 — 8 announcements for 2 real arrivals,
+now 2, with `dupConnects=1` naming the one the gate suppressed.
+
+**Files:** `orbit_livekit_audio.cpp` (`dispatchRemoteParticipantConnected`,
+`unreserveParticipantAnnouncement`, rescan), `NativeParticipantLedger.kt`,
+`LiveKitNativeRemoteVideoRenderer.kt`.
+
+## H24 — The 0xC0000409 termination abort: native threads outlived the JVM
+
+> 🕯️ *The demon was in the Bestiary. Filed as benign. It was not benign.*
+
+**You see:**
+
+```
+> Process 'java.exe' finished with non-zero exit value -1073740791
+```
+
+immediately after
+
+```
+VM attach current thread failed
+Failed to attach thread 24756
+```
+
+`0xC0000409` is `STATUS_STACK_BUFFER_OVERRUN` — a HotSpot **fail-fast**. It
+happens at process exit, after the call is over and the UI is gone.
+
+**It is:** `JNI_OnUnload` latched the shutdown flags but **joined nothing**. That
+stops the *next* upcall and does nothing about a thread already inside one, or one
+that outlives the library entirely. A LiveKit SDK thread then calls `getJniEnv` on
+a VM that is tearing down, HotSpot refuses the attach, and the abort is HotSpot's.
+
+**Why it was misfiled:** the Bestiary already listed `VM attach current thread
+failed` as benign noise from "native workers attaching to a dying JVM". Run 82 had
+the identical lines and **exited cleanly**. Same message, different outcome, which
+is the definition of a diagnostic that has been read as reassurance rather than
+evidence.
+
+**Fix:** `JNI_OnUnload` clears the running flags and joins the TXSTAT thread.
+Joining is safe **only here** — every join deferred elsewhere in this file was
+deferred because the joiner held `g_sessionMutex`, which the joined thread needs
+to finish. This function holds no lock at all, so the joins are immediate, and they
+have to be: a detached thread reaching the VM during teardown is the thing being
+fixed.
+
+The reader reaper is **detached**, so it cannot be joined. It now checks its
+running flag at the top of every iteration rather than only on the way out —
+previously clearing the flag was silently ignored, because the loop condition never
+looked at it. Detaching stays: making it joinable would reintroduce the exact
+requirement the thread exists to avoid.
+
+**Prove it:** `:app:run`, join a call, hang up, quit. The exit value should be 0.
+**Not yet verified** — the fix is reasoned and unit-tested, but no run has
+confirmed it since.
+
+**Files:** `orbit_livekit_audio.cpp` (`JNI_OnUnload`, `ensureReaderReaper`),
+and the Bestiary entry above, which was wrong.
+
 ## H20 - The two-key same map: why volume and mute were dead
 
 > 🕯️ *Three people, one build, and each of them heard a different subset. The
@@ -1227,7 +1509,7 @@ Do NOT file bugs against these:
 
 | Log line | Actually |
 |---|---|
-| `VM attach current thread failed` / `Failed to attach thread NNNN` | native workers attaching to a dying JVM at shutdown |
+| ~~`VM attach current thread failed` / `Failed to attach thread NNNN`~~ | **NO LONGER BENIGN — see [H24](#h24--the-0xc0000409-termination-abort-native-threads-outlived-the-jvm).** It used to be filed here as harmless shutdown noise, and run 82 had these lines and exited cleanly, which is exactly how a diagnostic becomes reassurance instead of evidence. It now precedes a `0xC0000409` fail-fast. **If you see it, check the exit code before dismissing it.** |
 | `WARN configureE2EE(true) failed:` (empty msg) | request raced session creation; nativeConfigureE2EE returns stale-event silently; recovery lines follow |
 | `local participant metadata update failed: NotAllowed` | token lacks canUpdateOwnMetadata |
 | `Gradle build daemon disappeared unexpectedly` after closing the app | benign artifact of `:app:run` wrapping when the app exits |
@@ -1287,6 +1569,13 @@ Do NOT file bugs against these:
 |---|---|---|
 | H6 resubscribe recovery | SHIPPED in native stats watcher — guarded one-shot unsubscribe/resubscribe per reader | Fires when jbTargetMs sustains >400ms (3 consecutive polls) with 20s warmup, 90s cooldown, 4-lifetime cap, 120s garbage cap; grep `JBWATCH firing resubscribe` / `JB-RESUB` in run logs to see it work |
 | H8-V3 latecomer nudge | Shipped + unit-tested, needs LIVE multi-peer verification | Join as latecomer to a busy encrypted room, measure deaf window |
+| H8-TX "peers can't hear us" | **SOLVED in v0.2.2** — it was key ROTATION on three bogus departure signals, not key distribution. Entry rewritten; the old theory is kept as a monument | Read the v0.2.2 section under H8-TX before touching key delivery |
+| H21 rejoin hang | **SOLVED in v0.2.2** — one rule broken in FIVE places, not five bugs | grep `disconnect step=bridge.disconnect returned` in a run log; the line appearing is the whole proof |
+| H23 8x participant announces | **SOLVED in v0.2.2**, verified live in run 83 — 8 announcements for 2 real arrivals, now 2 | grep `PARTLEDGER`; `dupConnects` counts what the gate suppressed |
+| H22 degenerate video frames | **SOLVED in v0.2.2**, verified live in run 83 — 2 real 8x8 frames caught on a 1080p share | grep `rejected degenerate frame` |
+| H24 0xC0000409 shutdown abort | Fixed in v0.2.2, **not yet live-verified** — launch once and confirm the exit code | `:app:run`, join, hang up, quit; read the exit value |
+| H21 fifth join site (mic publish) | Fixed in v0.2.2, **not yet live-verified** — stalls on mic re-publish, not on hangup | Mute/unmute the mic repeatedly mid-call and watch for a stall |
+| H8-V3 latecomer nudge still needs LIVE multi-peer | as above | — |
 | H10 random-close attribution | Instrumentation live, awaiting next incident | Grep `endCall invoked` chain from the run log |
 | Remote MIC-muted badge on tiles | SHIPPED ([H17](#h17--the-remote-mic-badge-livekit-track-truth-not-membership-lies)) — native LiveKit track-mute events + subscribe-time initial state; tiles AND sidebar rows | Verify live: mute in one client, badge appears instantly on the other; late joiner sees already-muted peers correctly |
 | Deafen-of-others badge | IMPOSSIBLE remotely by protocol design | Deafen is local output muting; no wire signal exists. Do not promise it |
@@ -1303,7 +1592,12 @@ Do NOT file bugs against these:
 | Keybinds-pane honesty audit | SHIPPED (H19) — Ctrl+Shift+S stream toggle + Ctrl+Shift+Alt+V return-to-call wired; Quick Switcher/Navigate/Mark-Read/Focus-Message cards deleted (features don't exist); dead Add-a-Keybind button removed | Build the actual features first, then re-add their cards |
 | Smoke-test WM_CLOSE ritual | AMENDED (H19) — taskkill hits hidden TrayMessageWindow now; post WM_CLOSE to the VISIBLE "Orbit" hwnd via EnumWindows+PostMessage | See H19 snippet |
 | "Navigation" polish (user ask) | AMBIGUOUS — awaiting user's meaning | In-app navigation vs nav-while-in-call vs something else; ask before building |
-| GitHub Release publication | Offered, awaiting go-ahead | Public action — upload Orbit-0.1.0.msi to a tagged release |
+| GitHub Release publication | **DONE — v0.2.2 published**, repo private. Tag `v0.2.2` → `b3af619` | `gh release create v0.2.2 <msi> --verify-tag`. Note `--cleanup-tag` deletes the LOCAL tag too; re-tag before recreating |
+| `isNativeE2eeArmed()` has no callers | Dead code, never wired | `LiveKitNativeMediaSession.kt:873` — either call it from the UI or delete it |
+| Dead UI controls | Known, untouched — deliberately left for the user | Ducking Strength (`CallControlsBar.kt:288-327`, `SettingsExtraPanes.kt:284`), Attenuation (`WebRtcEffects.kt:207`) |
+| `disconnect step=` tracing | Left IN on purpose — 6 lines per hangup, and it is the diagnostic that ended the eleven-run hunt | Remove only once the rejoin hang is trusted in the field |
+| H24 0xC0000409 shutdown abort | Fixed, **awaiting live verification** | `:app:run` → join → hang up → quit; read the exit value |
+| H21 mic-publish join site | Fixed, **awaiting live verification** | Mute/unmute the mic repeatedly mid-call; watch for a stall |
 | MSI upgrade path in the wild | Mechanism verified via upgradeUuid | Bump packageVersion, install over 0.1.0, confirm in-place upgrade |
 
 ---
@@ -1322,6 +1616,9 @@ Do NOT file bugs against these:
 - ✅ E2EE media keys: push-based distribution, per-device ledger, 10s
   convergence sweeper, latecomer nudge ≤11s (H8/V2/V3/V4) — EXCEEDS Element
   (which has no key-request mechanism at all; push-only + membership-driven).
+  **v0.2.2: distribution was never the bug. Rotation was — see the rewritten
+  [H8-TX](#h8-tx--tx-dead-peers-cant-hear-us). Rotation now fires on a CONFIRMED
+  departure only.**
 - ✅ Partial-deafness root causes: sticky-roster lies → LiveKit-truth sweeps;
   per-device send isolation; retry-unconfirmed devices.
 - ✅ JB resubscribe recovery on sustained jitter (H6).
@@ -1601,9 +1898,70 @@ Do NOT file bugs against these:
    boundaries, and tear down zombies even when the work "succeeded".
 9. Ship with a heap cap; assume GC will let garbage pile to ¼ of physical RAM.
 10. When a log line looks like a demon, check the Bestiary first — half of
-    hell is benign.
+    hell is benign. **But a line in the Bestiary is a claim, not a fact: if the
+    outcome ever changes, the entry is wrong. See [H24](#h24--the-0xc0000409-termination-abort-native-threads-outlived-the-jvm).**
+
+---
+
+# THE THREE COMMANDMENTS THAT COST THE MOST
+
+> 🕯️ *Added v0.2.2. These are not lessons — they are the shape of the eleven runs
+> that produced [H21](#h21--the-rejoin-hang-one-rule-broken-five-times).*
+
+**11. A fix that moves the symptom to the next line of the same trace is not a
+fix.** Five correct fixes each unstuck one waiter and produced an identical log.
+The trace never moved because every site had the same defect. **When the third fix
+for one symptom does not end the symptom, stop fixing symptoms and go count the
+sites.** The pattern was in the file the whole time, in a comment, twice.
+
+**12. Never `join()` a thread while holding a lock that thread needs to finish.**
+This is a rule about the whole file, not about the function you are editing. It
+was broken in five places and the file said so twice. **If you find yourself
+deferring a join, grep for every other `join()` and ask what each one's thread
+needs.**
+
+**13. Verify the bug is reachable before you fix its neighbours.** A dead
+`RESEND_GRACE_PERIOD_MS` branch in Element's flow was the smoking gun for the
+key-rotation bug — and it was unreach*able in Orbit, which is *why* every rejoin
+rotated. A line of code that cannot run is not a safety net. It is an accident
+waiting for a refactor to make it live.
+
+**Corollary — instrumentation beats reasoning, every time.** Six diagnoses this
+session came from reading an exact log line and were right. Five came from
+assuming a mechanism and were wrong. The `disconnect step=` trace ended a hunt
+that ten rounds of code reading had not touched, because it announced each
+blocking call *before* it ran, so a call that never returns still names itself.
 
 ---
 
 *Every entry above corresponds to a real shipped fix with a commit behind it.
 If you break something new, add its entry here. Future-you is the audience.*
+
+---
+
+> 🕯️ **A note on the entries that were WRONG, because they are the most useful
+> ones here.**
+>
+> [H8-TX](#h8-tx--tx-dead-peers-cant-hear-us) shipped a complete, plausible,
+> unit-tested theory of "peers can't hear us" that was not the cause. Every fix in
+> it is real code that works. None of them fixed the symptom. It stays in the book
+> **unedited in its wrongness**, with the correction appended, because a book that
+> only contains right answers teaches you nothing about how the wrong ones happen.
+>
+> Two failure shapes worth naming:
+>
+> 1. **A correct theory of the wrong layer.** "Keys aren't distributed" and "keys
+>    are distributed under the wrong index" feel identical from the symptom —
+>    their TX works, ours doesn't. The whole distribution stack was fine. The bug
+>    was one state machine upstream of it.
+> 2. **A dead branch mistaken for a safety net.** Element's
+>    `RESEND_GRACE_PERIOD_MS` looked like it handled rejoins. It was unreachable in
+>    Orbit, which is exactly why every rejoin rotated. Unreachable code is not a
+>    guard; it is an accident with a good comment above it.
+>
+> The thing that actually cracked H8-TX was not reasoning. It was a user
+> observation — *Element↔Element works, Element↔Orbit doesn't* — which said the
+> bug lived in whatever Orbit does that Element does not, and Element never has to
+> **infer** a departure. Six diagnoses from exact log lines were right; five from
+> assumed mechanisms were wrong. **Read the log line. Do not reason about the
+> mechanism.**
