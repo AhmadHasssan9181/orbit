@@ -108,6 +108,13 @@ object CallMediaKeys {
     const val KEY_BYTES = 16
     const val KEY_INDEX_MODULUS = 256
     const val USE_KEY_DELAY_MS = 1000L
+
+    /**
+     * Element's joiner grace period, kept only so the divergence from it is
+     * explicit rather than silent. Orbit no longer rotates on this boundary; a
+     * joiner is always handed the current index instead. See
+     * [decideMembershipReaction] for why.
+     */
     const val RESEND_GRACE_PERIOD_MS = 10_000L
     const val SESSION_APPLICATION = "m.call"
     const val SESSION_SCOPE = "m.room"
@@ -259,16 +266,54 @@ object CallMediaKeys {
     }
 
     /**
-     * Element Call RTCEncryptionManager rules:
-     * any leaver -> rotate immediately; joiner -> resend current key while it is
-     * younger than the grace period, otherwise rotate.
+     * Rotation rules.
+     *
+     * A confirmed leaver rotates immediately: it revokes a departed member's ability
+     * to decrypt anything sent afterwards, which is the one reason rotation exists.
+     *
+     * A joiner never rotates. Element Call resends the current key while it is
+     * younger than [RESEND_GRACE_PERIOD_MS] and rotates once it is older, on the
+     * reasoning that a long-lived key has been held by many participants including
+     * some who have since left, so a newcomer should not be handed it.
+     *
+     * That reasoning does not transfer here, and following it literally made rejoin
+     * impossible. The grace period is 10s, so in any call older than ten seconds --
+     * that is, every real call -- the condition can never be satisfied and
+     * "joiner within grace" is unreachable. Every rejoin therefore rotated.
+     *
+     * Which is precisely the reported failure. Run 73, after the drop-vs-departure
+     * fix removed the other trigger, left every remaining rotation reading
+     * `confirmedLeavers=0 joiners=1`:
+     *
+     *     rotating key: confirmedLeavers=0 joiners=1 keyAgeMs=27381
+     *     rotating key: confirmedLeavers=0 joiners=1 keyAgeMs=13459
+     *     rotating key: confirmedLeavers=0 joiners=1 keyAgeMs=25484
+     *
+     * One rotation per rejoin, every time. hellishsaa cut and rejoined three times
+     * and Orbit's index went 0 -> 1 -> 2 -> 3, matching the "first rejoin worked,
+     * the second and third did not" report exactly.
+     *
+     * The security argument for rotating does not actually apply. Rotation is
+     * load-bearing only for revoking someone who has LEFT, and that case is
+     * already covered above by the leaver rule -- when a participant departs, the
+     * key rotates and the departed member is left holding a key nothing further is
+     * encrypted under. A joiner who arrives afterwards is handed the current index
+     * by the ordinary delivery paths, and nobody who should be locked out gains
+     * anything from that index changing as well.
+     *
+     * Meanwhile the cost is the whole call. Rotation desynchronises every
+     * participant at once: each must learn the new index before audio resumes, and
+     * a peer that misses the window is deaf with no recovery of its own. So a rule
+     * whose only function was to hand a newcomer a fresher key was making rejoins
+     * -- a completely ordinary event, someone dropping and coming back -- the most
+     * dangerous thing that could happen in a call.
      */
     fun decideMembershipReaction(leaverCount: Int, joinerCount: Int, currentKeyAgeMs: Long): MembershipReaction =
         when {
             leaverCount > 0 -> MembershipReaction.Rotate
-            joinerCount > 0 ->
-                if (currentKeyAgeMs < RESEND_GRACE_PERIOD_MS) MembershipReaction.ResendCurrent
-                else MembershipReaction.Rotate
+            // A joiner gets the current index. Never a rotation -- see the KDoc for
+            // why that branch was unreachable in practice and what it cost.
+            joinerCount > 0 -> MembershipReaction.ResendCurrent
             else -> MembershipReaction.None
         }
 

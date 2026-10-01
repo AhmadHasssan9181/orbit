@@ -149,15 +149,76 @@ class CallMediaKeysCoreTest {
     }
 
     @Test
-    fun membershipReactionFollowsElementRules() {
+    fun membershipReactionRotatesOnConfirmedLeaverOnly() {
         val freshKeyAgeMs = 500L
         val staleKeyAgeMs = 30_000L
 
+        // Rotation is reserved for a departure. It is the only case where it
+        // revokes anything, and it desynchronises every participant at once.
         assertTrue(CallMediaKeys.decideMembershipReaction(1, 0, freshKeyAgeMs) is CallMediaKeys.MembershipReaction.Rotate)
         assertTrue(CallMediaKeys.decideMembershipReaction(2, 3, freshKeyAgeMs) is CallMediaKeys.MembershipReaction.Rotate)
-        assertTrue(CallMediaKeys.decideMembershipReaction(0, 1, freshKeyAgeMs) is CallMediaKeys.MembershipReaction.ResendCurrent)
-        assertTrue(CallMediaKeys.decideMembershipReaction(0, 2, staleKeyAgeMs) is CallMediaKeys.MembershipReaction.Rotate)
+
+        // A joiner never rotates, whatever the key age. The previous rule
+        // rotated once the key was older than the 10s grace period, which in any
+        // call older than ten seconds meant every single rejoin rotated -- the
+        // exact cause of "first rejoin works, the second and third do not".
+        assertTrue(
+            CallMediaKeys.decideMembershipReaction(0, 1, freshKeyAgeMs) is
+                CallMediaKeys.MembershipReaction.ResendCurrent
+        )
+        assertTrue(
+            CallMediaKeys.decideMembershipReaction(0, 2, staleKeyAgeMs) is
+                CallMediaKeys.MembershipReaction.ResendCurrent,
+            "a stale key must not make a joiner rotate; that made rejoin impossible"
+        )
+        assertTrue(
+            CallMediaKeys.decideMembershipReaction(0, 1, 60_000L) is
+                CallMediaKeys.MembershipReaction.ResendCurrent
+        )
+
         assertTrue(CallMediaKeys.decideMembershipReaction(0, 0, freshKeyAgeMs) is CallMediaKeys.MembershipReaction.None)
+    }
+
+    @Test
+    fun aJoinerNeverRotatesAtAnyKeyAge() {
+        // The grace period no longer gates anything, so a key of any age must
+        // behave identically for a joiner. Swept rather than sampled: this is the
+        // property the bug lived in, and a boundary case is not enough to pin it.
+        var ageMs = 0L
+        while (ageMs <= 120_000L) {
+            assertTrue(
+                CallMediaKeys.decideMembershipReaction(0, 1, ageMs) is
+                    CallMediaKeys.MembershipReaction.ResendCurrent,
+                "a joiner rotated at keyAgeMs=$ageMs"
+            )
+            ageMs += 250L
+        }
+    }
+
+    @Test
+    fun aConfirmedLeaverStillRotatesRegardlessOfKeyAge() {
+        // The guard must not become "never rotate", which would drop forward
+        // secrecy: a departed member holds the old key and could decrypt anything
+        // still encrypted under it.
+        var ageMs = 0L
+        while (ageMs <= 120_000L) {
+            assertTrue(
+                CallMediaKeys.decideMembershipReaction(1, 0, ageMs) is
+                    CallMediaKeys.MembershipReaction.Rotate,
+                "a departure failed to rotate at keyAgeMs=$ageMs"
+            )
+            ageMs += 250L
+        }
+    }
+
+    @Test
+    fun aLeaverTakesPrecedenceOverAJoiner() {
+        // Both present: the departure wins, because that is the case where
+        // rotation has a security purpose and must not be skipped.
+        assertTrue(
+            CallMediaKeys.decideMembershipReaction(1, 5, 60_000L) is
+                CallMediaKeys.MembershipReaction.Rotate
+        )
     }
 
     @Test
