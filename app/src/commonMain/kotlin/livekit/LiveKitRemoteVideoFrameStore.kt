@@ -403,6 +403,11 @@ object LiveKitRemoteVideoFrameStore {
             _latestCameraFrame.value = null
             _latestScreenShareFrame.value = null
         }
+        // Printed at teardown, where an imbalance names exactly who was left behind.
+        // Run 62 ended a call with 16 participant-connects against 1 disconnect and
+        // nothing anywhere saying so. A leak that only shows up in a log you have to
+        // grep and count is a leak nobody reports.
+        NativeParticipantLedger.report()
     }
 }
 
