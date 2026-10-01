@@ -1,18 +1,13 @@
 package ui.screen.drawer
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -21,53 +16,46 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
-import livekit.CallRosterReconciliation
-import livekit.LiveKitRemoteVideoFrameStore
-import repository.CredentialManager
 import kotlinx.coroutines.launch
 import ui.assets.OrbitDefaultAvatar
 import ui.components.OrbitCountBadge
-import ui.components.OrbitIconButton
-import ui.components.OrbitListRow
-import ui.components.OrbitRowLeading
 import ui.components.OrbitScrollbar
 import ui.icons.OrbitIcons
 import ui.model.ChannelCategory
@@ -76,25 +64,29 @@ import ui.model.ChannelType
 import ui.model.OrbitChannel
 import ui.model.OrbitUser
 import ui.theme.LocalReduceMotion
+import ui.theme.OrbitConceptStatus
 import ui.theme.OrbitMotion
 import ui.theme.OrbitRadius
 import ui.theme.OrbitSpace
-import ui.theme.rememberCosmicTokens
+import webrtc.LocalCallManager
 
 /**
- * The channel list.
+ * The channel list. The concept's `.channels-scrollable` plus every category and
+ * row inside it.
  *
- * Reworked around `OrbitListRow` so it shares geometry, hover behaviour and
- * the selection treatment with the DM list, the member list and the settings
- * sidebar.
+ * The rows are NOT [ui.components.OrbitListRow] any more. The concept's
+ * `.channel-row` has no selection bar at all — "you are reading this channel"
+ * is carried entirely by `--bg-modifier-selected` — and its own geometry is
+ * `padding: 6px 8px` with an 18px glyph, which makes it 30dp tall.
+ * `OrbitListRow` is a 3dp accent bar plus 34dp, so keeping it here meant every
+ * row was 4dp too tall and drew an edge the concept does not have. The shared
+ * row is still what the member list and the settings sidebar use; this panel has
+ * its own shape.
  *
- * The grouping is [ChannelGrouping]'s job, not this file's: it used to take a
- * `categories` list, ignore it entirely, and render one flat "Rooms" header above
- * every room -- so a space somebody had carefully arranged into groups read as a
- * single undifferentiated list. The groups are now built from the channels' own
- * `categoryId`/`categoryName`, so the header you see is the one the server
- * actually assigned, and a server with no categories still gets the Text
- * Channels / Voice Channels split rather than nothing.
+ * Everything else here is unchanged and still load-bearing: the grouping comes
+ * from [ChannelGrouping], the roster only subscribes for the room we are
+ * actually in a call in, and the roster that renders is the LiveKit-reconciled
+ * one rather than Matrix's membership record.
  */
 @Composable
 internal fun ChannelListContent(
@@ -131,7 +123,6 @@ internal fun ChannelListContent(
     // slot in the list.
     val collapsed = remember { mutableStateOf(setOf<String>()) }
     val listState = rememberLazyListState()
-    val t = rememberCosmicTokens()
 
     // `spaceName` is used for the single heading when the server reports no
     // categories, so the group is titled with the name the user gave the space
@@ -139,23 +130,29 @@ internal fun ChannelListContent(
     val groups = remember(channels, spaceName) { ChannelGrouping.group(channels, spaceName) }
 
     Box(modifier = modifier.fillMaxWidth()) {
-        androidx.compose.foundation.lazy.LazyColumn(
+        LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxWidth(),
+            // `.channels-scrollable { padding: 12px 8px }`.
             contentPadding = PaddingValues(
-                top = OrbitSpace.sm,
-                bottom = OrbitSpace.lg,
-                start = OrbitSpace.sm,
-                end = OrbitSpace.sm
+                top = 12.dp,
+                bottom = 12.dp,
+                start = 8.dp,
+                end = 8.dp
             ),
-            verticalArrangement = Arrangement.spacedBy(1.dp)
+            // `.channels-scrollable { gap: 16px }` — the gap BETWEEN groups. The
+            // 2px that separates a heading from its rows and the rows from each
+            // other is `.category-group { gap: 2px }` and lives inside the group
+            // block below, which is why each group is ONE lazy item rather than a
+            // header item followed by one item per channel.
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             if (groups.isEmpty()) {
                 item(key = "empty_rooms", contentType = "empty") {
                     Text(
                         text = "No rooms here yet",
                         style = MaterialTheme.typography.bodySmall.copy(
-                            color = t.Text_Subtle,
+                            color = conceptTextMuted(),
                             fontSize = 12.sp
                         ),
                         modifier = Modifier.padding(start = 26.dp, top = OrbitSpace.sm, bottom = OrbitSpace.sm)
@@ -165,48 +162,39 @@ internal fun ChannelListContent(
 
             groups.forEach { group ->
                 val isCollapsed = group.key in collapsed.value
-                item(key = "hdr_${group.key}", contentType = "header") {
-                    ChannelSectionHeader(
-                        name = group.label,
-                        isExpanded = !isCollapsed,
-                        onToggle = {
-                            collapsed.value = if (isCollapsed) {
-                                collapsed.value - group.key
-                            } else {
-                                collapsed.value + group.key
+                item(key = "grp_${group.key}", contentType = "group") {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        ChannelSectionHeader(
+                            name = group.label,
+                            isExpanded = !isCollapsed,
+                            onToggle = {
+                                collapsed.value = if (isCollapsed) {
+                                    collapsed.value - group.key
+                                } else {
+                                    collapsed.value + group.key
+                                }
+                            },
+                            // Only the LAST group offers "create". A "+" on every
+                            // heading reads as "create inside THIS category", which the
+                            // create flow cannot honour -- so it would be a button
+                            // that lies.
+                            onAddClick = if (group.key == groups.last().key) onCreateRoomClick else null
+                        )
+                        if (!isCollapsed) {
+                            group.channels.forEach { ch ->
+                                val chUnread = maxOf(unreadCounts[ch.id] ?: 0, unreadCounts[ch.matrixRoomId] ?: 0)
+                                ChannelItem(
+                                    channel = ch,
+                                    isSelected = ch.id == selectedChannelId,
+                                    currentUser = currentUser,
+                                    repository = repository,
+                                    unreadCount = chUnread,
+                                    onClick = { onChannelClick(ch.id) },
+                                    onJoinCall = onJoinCall
+                                )
                             }
-                        },
-                        // Only the LAST group offers "create". A "+" on every
-                        // heading reads as "create inside THIS category", which the
-                        // create flow cannot honour -- so it would be a button
-                        // that lies.
-                        onAddClick = if (group.key == groups.last().key) onCreateRoomClick else null
-                    )
-                }
-                if (isCollapsed) return@forEach
-
-                items(
-                    group.channels,
-                    // Composite key, not bare id. A duplicate key throws out of the
-                    // content lambda and kills the app, and the channel list really
-                    // can contain two entries with the same id (a synthetic voice
-                    // channel sharing a host text room's id). The repository now
-                    // gives the synthetic one a distinct id, but a list that can
-                    // crash the process on a data quirk should not depend on one
-                    // caller being careful.
-                    key = { "${it.id}#${it.type}#${it.categoryId}" },
-                    contentType = { "channel" }
-                ) { ch ->
-                    val chUnread = maxOf(unreadCounts[ch.id] ?: 0, unreadCounts[ch.matrixRoomId] ?: 0)
-                    ChannelItem(
-                        channel = ch,
-                        isSelected = ch.id == selectedChannelId,
-                        currentUser = currentUser,
-                        repository = repository,
-                        unreadCount = chUnread,
-                        onClick = { onChannelClick(ch.id) },
-                        onJoinCall = onJoinCall
-                    )
+                        }
+                    }
                 }
             }
         }
@@ -214,7 +202,14 @@ internal fun ChannelListContent(
     }
 }
 
-/** Collapsible section header. The add affordance only appears on hover. */
+/**
+ * `.category-header { padding: 6px 8px; font-size: 12px; font-weight: 700;
+ * color: var(--text-muted); letter-spacing: 0.02em; text-transform: uppercase;
+ * border-radius: 4px }`, hover `--header-secondary`.
+ *
+ * `letter-spacing: 0.02em` at 12px is 0.24sp. Compose's letterSpacing is in
+ * sp, not em, so that is what is spelled out here.
+ */
 @Composable
 internal fun ChannelSectionHeader(
     name: String,
@@ -222,83 +217,111 @@ internal fun ChannelSectionHeader(
     onToggle: () -> Unit,
     onAddClick: (() -> Unit)? = null
 ) {
-    val t = rememberCosmicTokens()
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
+    // `transform: rotate(-90deg)` when collapsed, `transition: transform 0.15s`.
     val rotation by animateFloatAsState(
         targetValue = if (isExpanded) 0f else -90f,
         animationSpec = OrbitMotion.Snappy,
         label = "sectionChevron"
     )
+    // `.category-header:hover { color: var(--header-secondary) }`.
+    val labelColor by animateColorAsStateCompat(
+        if (hovered) conceptHeaderSecondary() else conceptTextMuted()
+    )
 
-    Row(
+    // The hover wash and the click target are the HEADER's own box, padding
+    // included, which is what `padding: 6px 8px` on a clickable element means in
+    // CSS. Padding applied before `background`/`hoverable` would inset both, so
+    // the padding lives on the Row inside and the Box carries the surface.
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(30.dp)
-            .padding(start = OrbitSpace.xs, end = OrbitSpace.xxs)
-            .hoverable(interaction),
-        verticalAlignment = Alignment.CenterVertically
+            .clip(OrbitRadius.xsShape)
+            .background(if (hovered) conceptHoverOverlay() else Color.Transparent)
+            .hoverable(interaction)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                role = Role.Button,
+                onClickLabel = if (isExpanded) "Collapse $name" else "Expand $name",
+                onClick = onToggle
+            )
     ) {
         Row(
-            modifier = Modifier
-                .weight(1f)
-                .clip(OrbitRadius.xsShape)
-                .hoverable(interaction)
-                .clickableNoRipple(onToggle)
-                .padding(start = 6.dp, end = 6.dp, top = 5.dp, bottom = 5.dp),
-            verticalAlignment = Alignment.CenterVertically
+            modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            androidx.compose.material3.Icon(
-                imageVector = Icons.Default.KeyboardArrowDown,
-                contentDescription = null,
-                tint = if (hovered) t.Text_Secondary else t.Text_Subtle,
-                modifier = Modifier.size(14.dp).rotate(rotation)
-            )
-            Spacer(Modifier.width(2.dp))
-            Text(
-                text = name,
-                style = MaterialTheme.typography.labelSmall.copy(
-                    fontWeight = FontWeight.SemiBold,
-                    color = if (hovered) t.Text_Secondary else t.Text_Muted,
-                    fontSize = 11.sp,
-                    letterSpacing = 0.5.sp
-                ),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-
-        if (onAddClick != null) {
-            // Revealed on header hover, matching the documented behaviour. A
-            // permanently-visible "+" on every category reads as a per-category
-            // control and makes the drawer busier than it needs to be.
-            AnimatedVisibility(
-                visible = hovered,
-                enter = fadeIn(tween(120)) + scaleIn(tween(120), initialScale = 0.7f),
-                exit = fadeOut(tween(90))
+            // `.category-header-title { display: flex; align-items: center; gap: 4px }`.
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                OrbitIconButton(
-                    icon = OrbitIcons.Add,
-                    contentDescription = "Create a room in $name",
-                    onClick = onAddClick,
-                    size = 24.dp,
-                    iconSize = 14.dp,
-                    shape = CircleShape,
-                    modifier = Modifier.size(24.dp)
+                Icon(
+                    imageVector = Icons.Default.KeyboardArrowDown,
+                    contentDescription = null,
+                    // The concept does not colour the chevron separately; it
+                    // inherits the heading's own colour, which is why it steps to
+                    // `--header-secondary` with the label on hover.
+                    tint = labelColor,
+                    modifier = Modifier
+                        .size(12.dp)
+                        .rotate(rotation)
                 )
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    text = name.uppercase(),
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = FontWeight.Bold,
+                        color = labelColor,
+                        fontSize = 12.sp,
+                        letterSpacing = 0.24.sp
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            if (onAddClick != null) {
+                // `<Plus size={14} title="Create Channel" />`. Always present in
+                // the concept rather than revealed on hover, because the heading
+                // is a muted 12px and a hover-only control on it is a control
+                // nobody finds.
+                //
+                // `IconButton` rather than a bare `clickable`: its ripple is what
+                // makes a 20dp target feel pressable, and `size(20.dp)` on the
+                // modifier overrides its own minimum because the incoming
+                // constraints are then exact.
+                androidx.compose.material3.IconButton(
+                    onClick = onAddClick,
+                    modifier = Modifier.size(20.dp)
+                ) {
+                    Icon(
+                        imageVector = OrbitIcons.Add,
+                        contentDescription = "Create a room in $name",
+                        tint = conceptTextMuted(),
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
             }
         }
     }
 }
 
-@Composable
-private fun Modifier.clickableNoRipple(onClick: () -> Unit): Modifier =
-    this.clickable(
-        interactionSource = remember { MutableInteractionSource() },
-        indication = null,
-        onClick = onClick
-    )
-
+/**
+ * `.channel-row`, and everything that hangs off one room.
+ *
+ * The data plumbing below is unchanged from the version this replaced and is
+ * still the interesting part of the file:
+ *
+ *  - the roster belongs under a room with a LIVE call and only once the LiveKit
+ *    room has said who is in it ([showRoster]);
+ *  - only that one room is polled, because `observeCallMembers` is a 3-second
+ *    full-room-state fetch per subscription;
+ *  - the roster that renders is [webrtc.CallManager.displayCallMembers], which is
+ *    the same reconciled list the call surface tiles use.
+ */
 @Composable
 internal fun ChannelItem(
     channel: OrbitChannel,
@@ -309,8 +332,7 @@ internal fun ChannelItem(
     onClick: () -> Unit,
     onJoinCall: ((roomId: String, isActiveCall: Boolean) -> Unit)? = null
 ) {
-    val t = rememberCosmicTokens()
-    val callManager = webrtc.LocalCallManager.current
+    val callManager = LocalCallManager.current
     // Hoisted out of the `?:` so the number of remembered slots does not change
     // when callManager flips between null and non-null.
     val callStateFlow = remember(callManager) {
@@ -318,27 +340,20 @@ internal fun ChannelItem(
     }
     val callState by callStateFlow.collectAsState(initial = webrtc.CallState.IDLE)
     // The Matrix room id, NOT channel.id. A synthetic voice channel has
-    // id = "voice:<roomId>" (it needs a distinct id so the LazyColumn does not
-    // collide with the text room it borrows) while its matrixRoomId is the real
-    // room -- and CallManager.activeRoomId is always a MATRIX room id, set from
-    // the room the call was joined in. Comparing it against channel.id alone
-    // therefore never matched for a synthetic voice channel, so `isActiveCallInChannel`
-    // was false exactly where the local user IS in the call: no LiveDot, no
-    // "You" row, and (before the reconciliation below) no LiveKit truth applied.
+    // id = "voice:<roomId>" (it needs a distinct id so the list does not collide
+    // with the text room it borrows) while its matrixRoomId is the real room --
+    // and CallManager.activeRoomId is always a MATRIX room id, set from the room
+    // the call was joined in. Comparing it against channel.id alone therefore
+    // never matched for a synthetic voice channel, so `isActiveCallInChannel` was
+    // false exactly where the local user IS in the call.
     val roomId = channel.matrixRoomId.ifBlank { channel.id }
     // COLLECTED, not read as `.value`.
     //
-    // This was `callManager?.activeRoomIdFlow?.value` -- a plain property read on
-    // a StateFlow, outside any `collectAsState`. It returns whatever the flow
-    // held at the moment the row happened to compose and nothing ever
+    // Reading a StateFlow's value outside a `collectAsState` returns whatever the
+    // flow held at the moment the row happened to compose and nothing ever
     // recomposes it, so a row composed before the call started kept
     // `activeRoomId == null` for the whole call. That made
-    // `isActiveCallInChannel` false in exactly the situation it exists to detect,
-    // which skipped the LiveKit intersection below and rendered the raw
-    // six-record Matrix membership list while the call surface beside it showed
-    // two people. Confirmed from a screenshot: the drawer read "Voice · 6
-    // joined" under a call surface with two tiles, and the side panel's
-    // correctly-collected `displayCallMembers` read "2 in call".
+    // `isActiveCallInChannel` false in exactly the situation it exists to detect.
     val activeRoomIdFlow = remember(callManager) {
         callManager?.activeRoomIdFlow ?: flowOf<String?>(null)
     }
@@ -364,7 +379,7 @@ internal fun ChannelItem(
     // a text room ended up showing a call roster nobody was in. A text room cannot
     // have call participants at all: MatrixRTC calls live in the room state, but
     // Orbit surfaces the roster only on voice channels. Rendering it on a text
-    // row is never correct, so the condition is now the channel TYPE rather than
+    // row is never correct, so the condition is the channel TYPE rather than
     // "does this room happen to have stale membership records".
     //
     // `isVoice` no longer decides whether a roster may show.
@@ -393,8 +408,8 @@ internal fun ChannelItem(
     //
     // A run log caught the result: clicking a room during a call started a
     // poller for a room whose call had begun 121 days earlier, and it ran every
-    // three seconds for the rest of the session. Clicking a room is not a
-    // reason to start polling it.
+    // three seconds for the rest of the session. Clicking a room is not a reason
+    // to start polling it.
     //
     // So: subscribe only for the room we are actually IN a call in, which is the
     // only place the roster is both affordable and trustworthy. For a call
@@ -425,7 +440,7 @@ internal fun ChannelItem(
     // Deliberately NO DisposableEffect calling stopCallRosterPolling here. The
     // poller is repository-scoped and SHARED: it feeds the participant roster AND
     // the device roster that drives the E2EE media-key exchange. This row is a
-    // LazyColumn item, so scrolling the drawer would have cancelled the poller
+    // lazy-list item, so scrolling the drawer would have cancelled the poller
     // out from under the LIVE call and frozen its participant list. Hangup
     // already stops it, via CallManager.onGroupCallObserversStop.
 
@@ -434,33 +449,18 @@ internal fun ChannelItem(
     // withdrawn when the person actually leaves. Rendering it verbatim is what
     // put 4-8 names under every voice channel for a call with 2 people.
     //
-    // While OUR call is live in this room the LiveKit room is authoritative and
-    // is already reconciled for the E2EE key exchange (nudgeMissingPeers); apply
-    // the same intersection here. The `livekitIds.isEmpty() ||` guard mirrors
-    // that function exactly, so a native-wiring regression degrades to the old
-    // (imperfect) Matrix roster rather than blanking the list.
-    //
-    // Rooms we are NOT in keep the Matrix roster verbatim: there is no LiveKit
-    // room for them to be authoritative about, and the remote-participant set is
-    // global to the single active session, so intersecting would be meaningless.
-    val liveKitParticipantsFlow = remember(callManager) {
-        LiveKitRemoteVideoFrameStore.remoteParticipants
-    }
-    val liveKitParticipantIds by liveKitParticipantsFlow.collectAsState(emptySet())
-    // WHO IS IN THE CALL, and this is the only authority the drawer has for it.
-    //
-    // `displayCallMembers` is `CallManager`'s own reconciled roster -- the same
-    // value the call surface tiles and the side-panel header count read, so the
-    // drawer cannot disagree with either. It is emptied whenever no call is live
-    // and is gated on CONNECTED rather than merely "not idle", so a call that is
-    // still negotiating shows nobody instead of everybody who ever joined.
+    // `displayCallMembers` is `CallManager`'s own reconciled roster -- the LiveKit
+    // participant set intersected with the Matrix records, emptied whenever no
+    // call is live and gated on CONNECTED rather than merely "not idle". It is the
+    // same value the call surface tiles and the side-panel header count read, so
+    // the drawer cannot disagree with either. Nothing here intersects anything
+    // itself, which is the point: there is one reconciliation and this is not it.
     val displayCallMembersFlow = remember(callManager) {
         callManager?.displayCallMembers ?: flowOf(emptyList())
     }
     val displayCallMembers by displayCallMembersFlow.collectAsState(emptyList())
     val visibleMembers = when {
-        // Connected in this room: the LiveKit room is authoritative, and it is
-        // already intersected with the Matrix membership records upstream.
+        // Connected in this room: the LiveKit room is authoritative.
         isConnectedInChannel -> displayCallMembers
         // Joining: the LiveKit participant set is empty by definition, so any
         // roster we could render here would be the stale Matrix list -- the six
@@ -476,38 +476,13 @@ internal fun ChannelItem(
     }
 
     Column {
-        OrbitListRow(
-            title = displayName,
-            onClick = onClick,
-            selected = isSelected,
-            height = 32.dp,
-            horizontalPadding = 8.dp,
-            accentColor = if (isLive) t.Live else t.Accent,
-            // A live room carries its own selection bar, the same treatment a
-            // selected channel gets, because in Discord "you are in this call" and
-            // "you are reading this channel" are the same visual idea and share
-            // the same bar. Without it the only live signal was a 6dp dot
-            // floating at the end of the row, which read as decoration rather than
-            // as state.
-            showSelectionBar = isSelected || isLive,
-            // Every room is the same kind of thing — a room you can read and, when
-            // a call is on, talk in. So every row gets the room glyph, and voice
-            // is signalled by the live dot and the roster underneath instead of by
-            // a different icon. Two icons implied two kinds of room, which is the
-            // confusion this whole change exists to remove.
-            leading = OrbitRowLeading(icon = OrbitIcons.TextChannel),
-            trailing = {
-                if (isLive) {
-                    LiveDot(label = "Live", color = t.Live)
-                }
-                // Unreads show on any room, live or not. It used to be suppressed
-                // on voice channels, which was another small consequence of
-                // treating rooms as two kinds: a room with an active call could
-                // never show you that you had unread messages.
-                if (unreadCount > 0 && !isSelected) {
-                    OrbitCountBadge(count = unreadCount, color = t.Accent)
-                }
-            }
+        ConceptChannelRow(
+            channel = channel,
+            displayName = displayName,
+            isSelected = isSelected,
+            isLive = isLive,
+            unreadCount = unreadCount,
+            onClick = onClick
         )
 
         // The Voice row.
@@ -563,11 +538,123 @@ internal fun ChannelItem(
 }
 
 /**
+ * The row itself: `.channel-row`.
+ *
+ * Four values carry the whole interaction model and all four are the concept's:
+ *
+ * | state    | background                  | colour              |
+ * |----------|-----------------------------|---------------------|
+ * | rest     | transparent                 | interactive-normal  |
+ * | hover    | `--bg-modifier-hover`       | interactive-hover   |
+ * | selected | `--bg-modifier-selected`    | interactive-active  |
+ *
+ * and the selected row is weight 600 where the rest are 500. There is no
+ * selection bar: the concept's selected state is a wash across the full row
+ * width, not an accent edge.
+ */
+@Composable
+private fun ConceptChannelRow(
+    channel: OrbitChannel,
+    displayName: String,
+    isSelected: Boolean,
+    isLive: Boolean,
+    unreadCount: Int,
+    onClick: () -> Unit
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+
+    val bg by animateColorAsStateCompat(
+        when {
+            isSelected -> conceptSelectedOverlay()
+            hovered -> conceptHoverOverlay()
+            else -> Color.Transparent
+        }
+    )
+    val fg by animateColorAsStateCompat(
+        when {
+            isSelected -> conceptInteractiveActive()
+            hovered -> conceptInteractiveHover()
+            else -> conceptInteractiveNormal()
+        }
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            // `.channel-row { padding: 6px 8px; border-radius: 4px }`. The
+            // padding goes LAST so the wash, the hover and the click target are
+            // the row's full box rather than the box minus its own padding --
+            // 6 + 18 + 6 is the 30dp the concept's row occupies.
+            .defaultMinSize(minHeight = 30.dp)
+            .clip(OrbitRadius.xsShape)
+            .background(bg)
+            .hoverable(interaction)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                role = Role.Button,
+                onClickLabel = "Open $displayName",
+                onClick = onClick
+            )
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        // `.channel-row-content { display: flex; align-items: center; gap: 8px;
+        // overflow: hidden; text-overflow: ellipsis; white-space: nowrap }`.
+        Row(
+            modifier = Modifier.weight(1f, fill = false),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // `.channel-icon { color: var(--interactive-muted) }` at rest, and
+            // `--interactive-hover` on both hover and selected.
+            Icon(
+                imageVector = if (channel.type == ChannelType.VOICE) {
+                    OrbitIcons.VoiceChannel
+                } else {
+                    OrbitIcons.TextChannel
+                },
+                contentDescription = null,
+                tint = if (hovered || isSelected) {
+                    conceptInteractiveHover()
+                } else {
+                    SidebarConcept.interactiveMuted
+                },
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = displayName,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    color = fg,
+                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                    fontSize = 14.sp
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false)
+            )
+        }
+
+        // The concept also prints the live call's elapsed time here, in 11px
+        // `--status-online`, on the voice channel you are connected to. Orbit's
+        // `CallManager` exposes no per-call start timestamp, so the dot stands in
+        // for it rather than a number that would have to be invented.
+        if (isLive) {
+            LiveDot(label = "Live call in progress", color = OrbitConceptStatus.online)
+        }
+        if (unreadCount > 0 && !isSelected) {
+            OrbitCountBadge(count = unreadCount, color = conceptBrand)
+        }
+    }
+}
+
+/**
  * The `Voice` row under a room in the drawer.
  *
- * Indented 20dp to line its glyph up under the room row's own glyph, and one
- * step quieter: the room is the thing you navigate to, the voice row is the
- * thing you press once.
+ * Indented 8dp, one step quieter than the room above it: the room is the thing
+ * you navigate to, the voice row is the thing you press once.
  *
  * Three states, and no dead ones:
  *
@@ -597,7 +684,6 @@ private fun VoiceChannelRow(
     participantCount: Int,
     onClick: () -> Unit
 ) {
-    val t = rememberCosmicTokens()
     // Order matters: the connecting label is checked first so it cannot be
     // pre-empted by `isHere`, which is also true while connecting.
     val label = when {
@@ -617,27 +703,64 @@ private fun VoiceChannelRow(
         else -> "Join the call"
     }
     val tint = when {
-        isConnecting -> t.Text_Muted
-        isHere -> t.Accent
-        isLive -> t.Live
-        else -> t.Text_Subtle
+        isConnecting -> conceptTextMuted()
+        isHere -> conceptBrand
+        isLive -> OrbitConceptStatus.online
+        else -> SidebarConcept.interactiveMuted
     }
-    Column(modifier = Modifier.padding(start = 8.dp)) {
-        OrbitListRow(
-            title = label,
-            onClick = onClick,
-            onClickLabel = action,
-            selected = isHere,
-            height = 26.dp,
-            horizontalPadding = 8.dp,
-            accentColor = tint,
-            // A selection bar on BOTH the room and its voice row when you are in
-            // the call would read as two channels being selected. The room row
-            // already draws one; this one relies on its colour and label.
-            showSelectionBar = false,
-            leading = OrbitRowLeading(icon = OrbitIcons.VoiceChannel),
-            trailing = { if (isLive) LiveDot(label = "Live", color = t.Live) }
+
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+    val bg by animateColorAsStateCompat(
+        when {
+            isHere -> conceptSelectedOverlay()
+            hovered -> conceptHoverOverlay()
+            else -> Color.Transparent
+        }
+    )
+
+    Row(
+        modifier = Modifier
+            // Padding BEFORE fillMaxWidth: the indent then shrinks the width the
+            // row fills. The other way round, fillMaxWidth claims the parent's
+            // full width and the padding is drawn outside the row's own surface,
+            // so the hover wash would start 8dp in from a full-width edge.
+            .padding(start = 8.dp)
+            .fillMaxWidth()
+            .height(26.dp)
+            .clip(OrbitRadius.xsShape)
+            .background(bg)
+            .hoverable(interaction)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                role = Role.Button,
+                onClickLabel = action,
+                onClick = onClick
+            )
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = OrbitIcons.VoiceChannel,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(16.dp)
         )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall.copy(
+                color = if (isHere) conceptInteractiveActive() else tint,
+                fontSize = 13.sp
+            ),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        if (isLive) {
+            LiveDot(label = "Live", color = OrbitConceptStatus.online)
+        }
     }
 }
 
@@ -648,7 +771,6 @@ private fun VoiceChannelRow(
  */
 @Composable
 private fun LiveDot(label: String, color: Color) {
-    val t = rememberCosmicTokens()
     val reduce = LocalReduceMotion.current
     val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "liveDot")
     val pulse by transition.animateFloat(
@@ -660,7 +782,12 @@ private fun LiveDot(label: String, color: Color) {
         ),
         label = "liveDotPulse"
     )
-    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(14.dp)) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(14.dp)
+            .semantics { contentDescription = label }
+    ) {
         if (!reduce) {
             Box(
                 modifier = Modifier
@@ -678,7 +805,13 @@ private fun LiveDot(label: String, color: Color) {
     }
 }
 
-/** Indented roster shown under a voice channel that has participants. */
+/**
+ * `.voice-users-list { padding-left: 28px; gap: 2px; margin-top: 2px;
+ * margin-bottom: 4px }`.
+ *
+ * The 28dp indent is the concept's, not Orbit's old 20dp: it lines the roster's
+ * avatars up under the room row's own 18dp glyph plus its 8dp gap.
+ */
 @Composable
 private fun VoiceMemberStack(
     members: List<OrbitUser>,
@@ -686,20 +819,20 @@ private fun VoiceMemberStack(
     showLocalFallback: Boolean,
     callManager: webrtc.CallManager?
 ) {
-    val t = rememberCosmicTokens()
-    val isAudioEnabled by callManager?.isLocalAudioEnabled?.collectAsState() ?: remember { mutableStateOf(true) }
+    val isAudioEnabled by callManager?.isLocalAudioEnabled?.collectAsState()
+        ?: remember { mutableStateOf(true) }
     val speakers = callManager?.activeSpeakers?.collectAsState()?.value ?: emptySet()
     val remoteMuted = callManager?.remoteMicMutedIds?.collectAsState()?.value ?: emptySet()
 
     val showSelf = showLocalFallback && currentUser != null && members.none { it.id == currentUser.id }
 
-    // Indent 20dp, not 30dp.
-    //
-    // The old indent plus 6dp row padding plus an 18dp avatar plus an 8dp spacer
-    // consumed 62dp of a 248dp drawer before a single character of a name was
-    // drawn. At 20dp avatar and 12dp gap the budget drops to 48dp, which is the
-    // difference between "Ahmad Hassan" and "Ahma" on a real display name.
-    Column(modifier = Modifier.padding(start = 20.dp, bottom = 2.dp)) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 28.dp)
+            .padding(top = 2.dp, bottom = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
         members.forEach { member ->
             val speaking = speakers.any { it.substringBeforeLast(':') == member.id }
             val selfMuted = member.id == currentUser?.id && !isAudioEnabled
@@ -721,7 +854,13 @@ private fun VoiceMemberStack(
 }
 
 /**
- * One line of the nested voice roster: avatar, name, mute icon.
+ * `.voice-user-item { padding: 4px 6px; border-radius: 4px; font-size: 13px;
+ * color: var(--text-muted) }`, hover `--bg-modifier-hover` + `--text-normal`.
+ *
+ * `.voice-user-avatar { width: 20px; height: 20px; border-radius: 50% }` and
+ * `.speaking { box-shadow: 0 0 0 2px var(--status-online) }` — a 2dp ring, so
+ * it is drawn as a `border` rather than a shadow: a ring that casts its own
+ * shadow is 2dp of blur nobody asked for.
  *
  * The name gets `weight(1f, fill = false)` rather than a bare weight. The mute
  * icon is laid out before it and is entitled to the row's intrinsic width; a bare
@@ -734,12 +873,23 @@ private fun RosterRow(
     speaking: Boolean,
     muted: Boolean
 ) {
-    val t = rememberCosmicTokens()
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+    val fg by animateColorAsStateCompat(
+        when {
+            hovered -> conceptTextNormal()
+            speaking -> conceptInteractiveHover()
+            else -> conceptTextMuted()
+        }
+    )
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(OrbitRadius.xsShape)
-            .padding(horizontal = 4.dp, vertical = 2.dp),
+            .background(if (hovered) conceptHoverOverlay() else Color.Transparent)
+            .hoverable(interaction)
+            .padding(horizontal = 6.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(modifier = Modifier.size(20.dp)) {
@@ -766,16 +916,16 @@ private fun RosterRow(
                     modifier = Modifier
                         .matchParentSize()
                         .clip(CircleShape)
-                        .border(1.5.dp, t.Success, CircleShape)
+                        .border(2.dp, OrbitConceptStatus.online, CircleShape)
                 )
             }
         }
-        Spacer(Modifier.width(OrbitSpace.xs))
+        Spacer(Modifier.width(8.dp))
         Text(
             text = member.displayName,
             style = MaterialTheme.typography.bodySmall.copy(
-                color = if (speaking) t.Text_White else t.Text_Muted,
-                fontSize = 12.5.sp
+                color = fg,
+                fontSize = 13.sp
             ),
             maxLines = 1,
             // Ellipsis, never a hard cut. A name sliced mid-glyph at the panel edge
@@ -784,10 +934,10 @@ private fun RosterRow(
             modifier = Modifier.weight(1f, fill = false)
         )
         if (muted) {
-            androidx.compose.material3.Icon(
+            Icon(
                 imageVector = OrbitIcons.MicOff,
                 contentDescription = "Muted",
-                tint = t.Danger,
+                tint = OrbitConceptStatus.dnd,
                 modifier = Modifier
                     .padding(start = 4.dp)
                     .size(13.dp)

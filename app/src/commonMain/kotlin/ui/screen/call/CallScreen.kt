@@ -8,6 +8,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.hoverable
@@ -50,8 +51,12 @@ import util.rememberFilePickerLauncher
 import ui.assets.OrbitBrandMark
 import ui.assets.OrbitDefaultAvatar
 import ui.icons.OrbitIcons
+import ui.theme.OrbitConceptBorder
+import ui.theme.OrbitConceptStatus
+import ui.theme.OrbitMotion
 import ui.theme.rememberCosmicTokens
 import webrtc.CallManager
+import webrtc.CallShortcuts
 import webrtc.CallState
 import webrtc.DesktopSourceModel
 import kotlin.math.roundToInt
@@ -104,6 +109,28 @@ fun CallScreen(
     var showSoundboard by remember { mutableStateOf(false) }
     var layoutMode by remember { mutableStateOf(CallLayoutMode.Grid) }
     val isDeafened by callManager.isDeafened.collectAsState()
+
+    // `.voice-room-maximized` / `isMaximized`: the share takes the whole stage on
+    // pure black and the faces step aside. Escape leaves it, which is the
+    // affordance the concept states in the button's own tooltip
+    // ("Exit Full Screen (ESC)").
+    //
+    // The handler is only published while the stage is actually maximised, so
+    // Escape keeps meaning "close whatever is open" everywhere else in the app.
+    var isStageMaximized by remember { mutableStateOf(false) }
+    DisposableEffect(isStageMaximized) {
+        val exit: (() -> Unit)? = if (isStageMaximized) {
+            { isStageMaximized = false }
+        } else {
+            null
+        }
+        CallShortcuts.onExitMaximizedStage = exit
+        onDispose { CallShortcuts.onExitMaximizedStage = null }
+    }
+    // A call that ends must not leave a stage "maximised" for the next one.
+    LaunchedEffect(callState) {
+        if (callState == CallState.IDLE || callState == CallState.ENDED) isStageMaximized = false
+    }
 
     if (callState == CallState.IDLE || callState == CallState.ENDED) {
         return
@@ -387,6 +414,8 @@ fun CallScreen(
                     nodes = nodes,
                     tokens = tokens,
                     layoutMode = layoutMode,
+                    maximized = isStageMaximized,
+                    onToggleMaximized = { isStageMaximized = !isStageMaximized },
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -580,27 +609,92 @@ fun CallScreen(
                     }
                 }
 
-                // Right: Layout info
+                // Right: stream indicators, then the layout and maximise toggles.
+                //
+                // `.stream-quality-badge` (rgba(255,255,255,0.08), 3px/8px, 4px
+                // radius, 11px weight 700), `.stream-live-pill` (`#f23f43`, 2px/6px,
+                // 4px radius, 11px weight 800, 0.05em tracking), a 1px
+                // `--border-subtle` rule between them, then `.header-action-btn` for
+                // the layout and maximise toggles.
                 Row(
                     modifier = Modifier.align(Alignment.CenterEnd),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (isScreenSharing) {
+                    if (isVideoCall && callState == CallState.CONNECTED) {
                         Box(
                             modifier = Modifier
-                                .background(tokens.Danger, RoundedCornerShape(4.dp))
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                .background(OrbitConceptBorder.subtle(), CallIconPillShape)
+                                .padding(horizontal = 8.dp, vertical = 3.dp)
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Box(
-                                    modifier = Modifier.size(8.dp).clip(CircleShape).background(Color.White)
-                                )
-                                Text("LIVE", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
-                            }
+                            Text(
+                                if (isScreenSharing) "720p 30FPS" else "HD 1080p 60fps",
+                                color = tokens.Text_Secondary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.22.sp
+                            )
                         }
+                    }
+                    if (isScreenSharing || isRemoteScreenSharing) {
+                        Row(
+                            modifier = Modifier
+                                .background(CallPillDanger, CallIconPillShape)
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.White)
+                            )
+                            Text(
+                                "LIVE",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 0.55.sp
+                            )
+                        }
+                    }
+                    if (isVideoCall && callState == CallState.CONNECTED) {
+                        Box(
+                            modifier = Modifier
+                                .width(1.dp)
+                                .height(16.dp)
+                                .background(OrbitConceptBorder.subtle())
+                        )
+                        // `.header-action-btn` — transparent, 4px padding, 4px
+                        // radius, `--interactive-normal`; hover
+                        // `--interactive-hover`; `.active` `--interactive-active`.
+                        CallHeaderActionButton(
+                            icon = if (layoutMode == CallLayoutMode.Grid) Icons.Default.GridView else Icons.Default.CropFree,
+                            contentDescription = if (layoutMode == CallLayoutMode.Grid) {
+                                "Switch to focus view"
+                            } else {
+                                "Switch to grid view"
+                            },
+                            active = layoutMode == CallLayoutMode.Focus,
+                            onClick = {
+                                layoutMode = if (layoutMode == CallLayoutMode.Grid) {
+                                    CallLayoutMode.Focus
+                                } else {
+                                    CallLayoutMode.Grid
+                                }
+                            }
+                        )
+                        CallHeaderActionButton(
+                            icon = if (isStageMaximized) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                            contentDescription = if (isStageMaximized) {
+                                "Exit full screen (Escape)"
+                            } else {
+                                "Maximize the stream"
+                            },
+                            active = isStageMaximized,
+                            onClick = { isStageMaximized = !isStageMaximized }
+                        )
                     }
                 }
             }
@@ -735,7 +829,9 @@ fun CallScreen(
         // ── Bottom Controls Bar (always visible) ──
         if (callState == CallState.CONNECTED || callState == CallState.CONNECTING || (callState == CallState.RINGING && !isIncomingCall)) {
             Box(
-                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp)
+                // `.call-dock-pill-bar { bottom: 24px }`. It was 16dp here, which
+                // put the bar's own 6px of padding within 10px of the stage edge.
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp)
             ) {
                 CallControlsBar(
                     callManager = callManager,
@@ -1398,52 +1494,79 @@ internal fun ConnectionQualityBars(bars: Int, modifier: Modifier = Modifier) {
 @Composable
 fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Modifier = Modifier, callManager: webrtc.CallManager? = null, isPinned: Boolean = false, onPinToggle: ((String) -> Unit)? = null) {
     // Active-speaker glow: native mixer meters remote voices; a tile whose
-    // participant is talking gets an animated accent ring + soft halo.
+    // participant is talking gets an animated green ring + halo.
     val speakers = if (callManager != null) callManager.activeSpeakers.collectAsState().value else emptySet()
-    val isSpeaking = identityIsSpeaking(node.participantIdentity, speakers)
+    val isSpeaking = identityIsSpeaking(node.participantIdentity, speakers) && !node.isMuted && !node.isMicMuted
     val speakGlow by animateFloatAsState(
         targetValue = if (isSpeaking) 1f else 0f,
         animationSpec = tween(durationMillis = 240),
         label = "speakGlow"
     )
-    val borderColor = animateColorAsState(
-        if (node.isScreenShare) {
-            tokens.Danger
-        } else {
-            // Speaking green, not the accent. Discord's active-speaker border is
-            // green, and Orbit's own sidebar roster already uses Success for the
-            // same signal -- two colours for one meaning is worse than either.
-            lerp(tokens.Separator, tokens.Success, speakGlow)
-        },
-        label = "borderColor"
+    // Hover is a real state of this tile in the concept, not a nicety: a share
+    // lights up when pointed at, and the per-participant audio controls only
+    // exist on hover at all.
+    val hoverInteraction = remember { MutableInteractionSource() }
+    val isHovered by hoverInteraction.collectIsHoveredAsState()
+    val shareHoverGlow by animateFloatAsState(
+        targetValue = if (node.isScreenShare && isHovered) 1f else 0f,
+        animationSpec = tween(durationMillis = OrbitMotion.Fast),
+        label = "shareHoverGlow"
     )
+
+    // `.participant-card { border: 2px solid transparent }` — a tile at rest has
+    // a 2px ring that is deliberately invisible, so that speaking and share
+    // states have somewhere to appear. `.participant-card.speaking` swaps it for
+    // `--status-online`, and `.stream-preview-card` for rgba(242, 63, 67, 0.6).
+    //
+    // Speaking green, not the accent. Discord's active-speaker border is green,
+    // and Orbit's own sidebar roster already uses the same green for the same
+    // signal -- two colours for one meaning is worse than either.
+    val ringColor = when {
+        node.isScreenShare && shareHoverGlow > 0f -> CallShareRingHover.copy(alpha = 1f)
+        node.isScreenShare -> CallShareRing
+        else -> OrbitConceptStatus.online.copy(alpha = speakGlow)
+    }
     // 2dp, not 1dp + 1dp*glow. A 1px accent hairline around a 650px tile is
     // invisible at a glance, which is why the speaking indicator read as
     // "not implemented" rather than "quiet".
-    val borderWidth = if (node.isScreenShare) 2.dp else 2.dp
-    // The speaking ring is drawn as an OVERLAY (see below), not as this Box's
-    // own border, so its width stays 2dp. It used to live here at
-    // 1.dp + 1.dp * speakGlow, i.e. 1dp at rest — a hairline at the exact edge
-    // of a fillMaxSize() child, which is invisible in practice.
+    val borderWidth = 2.dp
+    // The speaking ring is drawn as an OVERLAY (see below) as well, so it
+    // composites on top of a full-bleed video child rather than being painted
+    // over by it.
     // Discord convention: the speaker's name goes green while they talk.
     val nameColor by animateColorAsState(
-        if (isSpeaking) tokens.Success else Color.White,
+        if (isSpeaking) OrbitConceptStatus.online else Color.White,
         animationSpec = tween(durationMillis = 240),
         label = "speakerNameColor"
     )
+
+    // `.participant-card { box-shadow: var(--elevation-high) }` is
+    // `0 8px 16px rgba(0,0,0,0.24)`, and the two states that change it in the CSS
+    // REPLACE it rather than add to it: speaking is
+    // `0 0 20px rgba(35,165,90,0.35)`, and a hovered share is
+    // `0 0 24px rgba(242,63,67,0.4)`. Both are coloured glows, so the shadow is
+    // tinted as well as raised.
+    val cardGlow = if (node.isScreenShare) shareHoverGlow else speakGlow
+    val cardElevation by animateDpAsState(
+        targetValue = 8.dp + 12.dp * cardGlow,
+        animationSpec = OrbitMotion.SnappyDp,
+        label = "cardElevation"
+    )
+    val cardShadowTint = if (node.isScreenShare) CallShareRingHover else CallSpeakingGlow
 
     var participantMenuOpen by remember { mutableStateOf(false) }
 
     BoxWithConstraints(
         modifier = modifier
             .shadow(
-                elevation = 18.dp * speakGlow,
-                shape = RoundedCornerShape(8.dp),
-                ambientColor = tokens.Accent,
-                spotColor = tokens.Accent
+                elevation = cardElevation,
+                shape = CallTileShape,
+                ambientColor = cardShadowTint,
+                spotColor = cardShadowTint
             )
-            .clip(RoundedCornerShape(8.dp))
-            // Token, not the literal ui.theme.Ink900 this used to hardcode.
+            .clip(CallTileShape)
+            // `--bg-call-card`, not the literal ui.theme.Ink900 this used to
+            // hardcode.
             //
             // That literal was the OLD Ink800. When the palette moved to Discord's
             // neutrals the surrounding surface became #313338 while every tile
@@ -1452,8 +1575,9 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
             // fill. Hardcoding a colour that also exists in the ramp means the tile
             // silently stops matching the app the moment the ramp moves -- which
             // is exactly what happened.
-            .background(tokens.Sunken)
-            .border(borderWidth, borderColor.value, RoundedCornerShape(8.dp))
+            .background(callCardSurface(tokens))
+            .border(borderWidth, ringColor, CallTileShape)
+            .hoverable(hoverInteraction)
             .pointerInput(node.participantIdentity) {
                 if (node.participantIdentity == null) return@pointerInput
                 awaitPointerEventScope {
@@ -1474,6 +1598,11 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
         // on screen. Discord scales it to roughly a quarter of the tile's short
         // edge, so a small tile gets a small avatar and a full-screen one does not
         // look abandoned.
+        //
+        // The concept pins `.participant-avatar-wrap` at a fixed 90x90. That is
+        // kept as the value this scale passes THROUGH at a 346dp tile -- which is
+        // the size the concept's own 2-column grid produces -- rather than as a
+        // constant, because a 90dp avatar in a 1080dp spotlight is a stamp.
         val avatarSize = (minOf(maxWidth, maxHeight) * 0.26f).coerceIn(56.dp, 180.dp)
 
         // A stuck share skips the renderer entirely rather than drawing it. The
@@ -1482,7 +1611,7 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
         // is true -- Orbit has stopped trying and is offering the one thing that
         // still works.
         if (node.renderer != null && !node.isStuckShare) {
-            VideoRenderer(renderer = node.renderer, modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp)))
+            VideoRenderer(renderer = node.renderer, modifier = Modifier.fillMaxSize().clip(CallTileShape))
         } else if (node.isStuckShare) {
             Box(modifier = Modifier.fillMaxSize().background(tokens.Sunken))
         } else {
@@ -1498,30 +1627,85 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                     ),
                 contentAlignment = Alignment.Center
             ) {
-                // Avatar
+                // `.participant-avatar-wrap` -- a 90x90 relative box that the
+                // speaking ring is positioned against.
                 Box(
-                    modifier = Modifier
-                        .size(avatarSize)
-                        .clip(CircleShape)
-                        .background(Color(node.avatarColor).copy(alpha = 0.3f)),
+                    modifier = Modifier.size(avatarSize),
                     contentAlignment = Alignment.Center
                 ) {
-                    if (node.avatarUrl != null) {
-                        coil3.compose.AsyncImage(
-                            model = node.avatarUrl,
-                            contentDescription = "Avatar",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize().clip(CircleShape)
+                    // `.speaking-wave-ring`: inset by -8px on every side, a 3px
+                    // `--status-online` ring, breathing 0.95 -> 1.15 and back over
+                    // 1.4s. It is the only part of a call tile that MOVES, which
+                    // is what makes it findable in a grid of still faces without
+                    // needing to be labelled.
+                    if (isSpeaking) {
+                        val waveTransition = rememberInfiniteTransition(label = "speakingWave")
+                        val waveScale by waveTransition.animateFloat(
+                            initialValue = CALL_WAVE_SCALE_MIN,
+                            targetValue = CALL_WAVE_SCALE_MAX,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(
+                                    durationMillis = CALL_WAVE_PULSE_MS,
+                                    // @keyframes pulseSpeaking's
+                                    // cubic-bezier(0.2, 0.8, 0.2, 1).
+                                    easing = CubicBezierEasing(0.2f, 0.8f, 0.2f, 1f)
+                                ),
+                                repeatMode = RepeatMode.Reverse
+                            ),
+                            label = "waveScale"
                         )
-                    } else {
-                        Text(
-                            node.name.take(1).uppercase(),
-                            color = Color.White,
-                            // Scales with the circle, so a large tile does not
-                            // render a single 26sp letter floating in the middle.
-                            fontSize = (avatarSize.value * 0.4f).sp,
-                            fontWeight = FontWeight.Bold
+                        val waveAlpha by waveTransition.animateFloat(
+                            initialValue = 1f,
+                            targetValue = 0.5f,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(CALL_WAVE_PULSE_MS),
+                                repeatMode = RepeatMode.Reverse
+                            ),
+                            label = "waveAlpha"
                         )
+                        Box(
+                            modifier = Modifier
+                                // Inset by -8px on every side of the avatar, so
+                                // the 3px ring clears the picture by 8px.
+                                .size(avatarSize + CallWaveRingInset * 2)
+                                .scale(waveScale)
+                                .alpha(waveAlpha)
+                                .clip(CircleShape)
+                                .border(
+                                    CallWaveRingWidth,
+                                    OrbitConceptStatus.online,
+                                    CircleShape
+                                )
+                                // Drawn first, so it sits UNDER the avatar:
+                                // `.speaking-wave-ring` is z-index 1 and the img
+                                // is z-index 2.
+                        )
+                    }
+                    // Avatar
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(CircleShape)
+                            .background(Color(node.avatarColor).copy(alpha = 0.3f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (node.avatarUrl != null) {
+                            coil3.compose.AsyncImage(
+                                model = node.avatarUrl,
+                                contentDescription = "Avatar",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize().clip(CircleShape)
+                            )
+                        } else {
+                            Text(
+                                node.name.take(1).uppercase(),
+                                color = Color.White,
+                                // Scales with the circle, so a large tile does not
+                                // render a single 26sp letter floating in the middle.
+                                fontSize = (avatarSize.value * 0.4f).sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }
@@ -1560,13 +1744,17 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
             }
         }
 
-        // Raised-hand badge (Discord-style top-left)
+        // Raised-hand badge. The concept has no equivalent — it has no
+        // raise-hand at all — so it stays where it was, top-left, and keeps its
+        // warning fill; it is the one badge on the tile that Orbit adds and the
+        // concept does not, and it is on the opposite corner from the status
+        // pills so the two never collide.
         if (node.isHandRaised) {
             Box(
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .padding(8.dp)
-                    .background(tokens.Warning.copy(alpha = 0.92f), RoundedCornerShape(6.dp))
+                    .padding(12.dp)
+                    .background(tokens.Warning.copy(alpha = 0.92f), CallNamePillShape)
                     .padding(horizontal = 7.dp, vertical = 5.dp)
             ) {
                 Icon(
@@ -1578,66 +1766,166 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
             }
         }
 
-        // Name Overlay (Discord-style bottom left pill)
+        // `.participant-badge-name` — absolute, 12px from the bottom-left, on a
+        // rgba(0,0,0,0.7) plate, 4px/10px of padding, 6px radius, 13px weight
+        // 600 white. When the speaker is talking the concept puts an 8px pulsing
+        // `--status-online` dot in front of the name, which is why the name
+        // itself does not have to change colour to be findable.
         Box(
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .padding(8.dp)
-                .background(tokens.Sunken.copy(alpha = 0.86f), RoundedCornerShape(6.dp))
-                .padding(horizontal = 8.dp, vertical = 4.dp)
+                .padding(start = 12.dp, bottom = 12.dp)
+                .background(CallOverlayScrim, CallNamePillShape)
+                .padding(horizontal = 10.dp, vertical = 4.dp)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                if (node.isMuted || node.isMicMuted) {
-                    Icon(OrbitIcons.MicOff, null, tint = tokens.Danger, modifier = Modifier.size(14.dp))
-                }
-                if (node.isDeafened) {
-                    Icon(Icons.Default.HeadsetOff, null, tint = tokens.Danger, modifier = Modifier.size(14.dp))
+                if (isSpeaking) {
+                    // The dot's own 1s pulse, scoped INSIDE the `if` on purpose:
+                    // an infinite transition left running on every tile of an
+                    // eight-tile grid is eight animations a frame for a pixel
+                    // nobody is looking at.
+                    val nameDotTransition = rememberInfiniteTransition(label = "nameDot")
+                    val nameDotScale by nameDotTransition.animateFloat(
+                        initialValue = 0.9f,
+                        targetValue = 1.3f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(1000),
+                            repeatMode = RepeatMode.Reverse
+                        ),
+                        label = "nameDotScale"
+                    )
+                    val nameDotAlpha by nameDotTransition.animateFloat(
+                        initialValue = 0.8f,
+                        targetValue = 1f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(1000),
+                            repeatMode = RepeatMode.Reverse
+                        ),
+                        label = "nameDotAlpha"
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .scale(nameDotScale)
+                            .alpha(nameDotAlpha)
+                            .clip(CircleShape)
+                            .background(OrbitConceptStatus.online)
+                    )
                 }
                 Text(
                     node.name,
                     color = nameColor,
                     fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
+                    fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
         }
 
-        // Screen Share Badge (top-right)
-        if (node.isScreenShare) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(8.dp)
-                    .background(tokens.Danger, RoundedCornerShape(4.dp))
-                    .padding(horizontal = 8.dp, vertical = 3.dp)
-            ) {
+        // `.participant-status-icons` — absolute, 12px from the top-right, 6px
+        // apart, each item an `.icon-pill` (4px/6px padding, 4px radius).
+        //
+        // The mic-off and deafen badges live HERE in the concept, not in the name
+        // plate: a name plate that changes width as people mute is a name plate
+        // that makes the names in a grid line up badly, and the two states that
+        // matter most get the position with the most contrast behind it.
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 12.dp, end = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (node.isMuted || node.isMicMuted) {
+                Box(
+                    modifier = Modifier
+                        .background(CallMutedBadgeScrim, CallIconPillShape)
+                        .padding(horizontal = 6.dp, vertical = 4.dp)
+                ) {
+                    Icon(
+                        OrbitIcons.MicOff,
+                        contentDescription = "Muted",
+                        tint = Color.White,
+                        modifier = Modifier.size(12.dp)
+                    )
+                }
+            }
+            if (node.isDeafened) {
+                Box(
+                    modifier = Modifier
+                        .background(CallMutedBadgeScrim, CallIconPillShape)
+                        .padding(horizontal = 6.dp, vertical = 4.dp)
+                ) {
+                    Icon(
+                        Icons.Default.HeadsetOff,
+                        contentDescription = "Deafened",
+                        tint = Color.White,
+                        modifier = Modifier.size(12.dp)
+                    )
+                }
+            }
+            // `.icon-pill` for a share, filled `#f23f43` at weight 800. The dot
+            // inside it is `.live-dot-pulse`: an 8px red disc with an 8px glow,
+            // breathing on a 1.5s cycle.
+            if (node.isScreenShare) {
+                val liveTransition = rememberInfiniteTransition(label = "liveDot")
+                val liveScale by liveTransition.animateFloat(
+                    initialValue = 0.9f,
+                    targetValue = 1.3f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(1500),
+                        repeatMode = RepeatMode.Reverse
+                    ),
+                    label = "liveScale"
+                )
+                val liveAlpha by liveTransition.animateFloat(
+                    initialValue = 0.8f,
+                    targetValue = 1f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(1500),
+                        repeatMode = RepeatMode.Reverse
+                    ),
+                    label = "liveAlpha"
+                )
                 Row(
+                    modifier = Modifier
+                        .background(CallPillDanger, CallIconPillShape)
+                        .padding(horizontal = 6.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color.White))
-                    Text("LIVE", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold)
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .scale(liveScale)
+                            .alpha(liveAlpha)
+                            .clip(CircleShape)
+                            .background(Color.White)
+                    )
+                    Text(
+                        "LIVE",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
                 }
             }
-        }
-
-        // Connection-quality signal bars (top-right, remote audio tiles only):
-        // 3 bars green / 2 yellow / 1 red from the native jitter/RTT/loss feed.
-        val sampleBars = node.qualitySample?.bars ?: 0
-        if (!node.isScreenShare && node.participantIdentity != null && sampleBars > 0) {
-            ConnectionQualityBars(
-                bars = sampleBars,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(8.dp)
-                    .background(tokens.Sunken.copy(alpha = 0.7f), RoundedCornerShape(4.dp))
-                    .padding(horizontal = 5.dp, vertical = 4.dp)
-            )
+            // Connection-quality signal bars: 3 lit green / 2 yellow / 1 red from
+            // the native jitter/RTT/loss feed. Sits in the same `.icon-pill` row.
+            val sampleBars = node.qualitySample?.bars ?: 0
+            if (!node.isScreenShare && node.participantIdentity != null && sampleBars > 0) {
+                Box(
+                    modifier = Modifier
+                        .background(CallOverlayScrim, CallIconPillShape)
+                        .padding(horizontal = 6.dp, vertical = 4.dp)
+                ) {
+                    ConnectionQualityBars(bars = sampleBars)
+                }
+            }
         }
 
         // Per-participant volume / local mute — remote group-call tiles only
@@ -1645,21 +1933,40 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
         // so controlling audio from there would be confusing).
         // Local-only: changes the gain this client mixes that person at; the
         // remote side's mic and everyone else are untouched.
+        //
+        // `.participant-card:hover .participant-controls-overlay { opacity: 1 }`:
+        // this is that overlay. It is faded rather than removed so it does not
+        // take the space it needs when nobody wants it, and forced visible while
+        // the right-click menu is open -- a control that vanishes at the exact
+        // moment somebody opens the menu that also controls it is a control that
+        // looks broken.
         val participantIdentity = node.participantIdentity
         if (participantIdentity != null && !node.isScreenShare && callManager != null) {
             val gains by callManager.participantGains.collectAsState()
             val volume = gains[participantIdentity] ?: 1f
+            val controlsVisible = isHovered || participantMenuOpen
+            val controlsAlpha by animateFloatAsState(
+                targetValue = if (controlsVisible) 1f else 0f,
+                animationSpec = tween(OrbitMotion.Fast),
+                label = "tileControlsAlpha"
+            )
             Row(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(8.dp)
-                    .background(tokens.Sunken.copy(alpha = 0.86f), RoundedCornerShape(6.dp))
+                    .alpha(controlsAlpha)
+                    .background(CallOverlayScrim, CallNamePillShape)
                     .padding(horizontal = 6.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 IconButton(
                     onClick = { callManager.toggleParticipantMute(participantIdentity) },
+                    // Faded out is NOT the same as gone: at `alpha = 0f` these
+                    // two controls would still swallow clicks, so a person could
+                    // mute somebody by aiming at something they cannot see. They
+                    // are disabled for exactly as long as they are invisible.
+                    enabled = controlsVisible,
                     modifier = Modifier.size(24.dp)
                 ) {
                     Icon(
@@ -1673,6 +1980,7 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                     value = volume,
                     onValueChange = { callManager.setParticipantVolume(participantIdentity, it) },
                     valueRange = 0f..2f,
+                    enabled = controlsVisible,
                     modifier = Modifier
                         .width(72.dp)
                         .height(24.dp)
@@ -1815,8 +2123,8 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                     .matchParentSize()
                     .border(
                         width = 2.dp + 1.dp * speakGlow,
-                        color = tokens.Success.copy(alpha = speakGlow),
-                        shape = RoundedCornerShape(8.dp)
+                        color = OrbitConceptStatus.online.copy(alpha = speakGlow),
+                        shape = CallTileShape
                     )
             )
         }

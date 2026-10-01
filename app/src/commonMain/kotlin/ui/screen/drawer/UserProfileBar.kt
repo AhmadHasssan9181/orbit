@@ -1,13 +1,5 @@
 package ui.screen.drawer
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,12 +21,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Headset
 import androidx.compose.material.icons.filled.HeadsetOff
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SettingsInputComponent
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -50,8 +40,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -64,25 +56,48 @@ import ui.components.OrbitIconButton
 import ui.components.OrbitMenu
 import ui.components.OrbitMenuDivider
 import ui.components.OrbitMenuItem
-import ui.components.orbitClickable
-import ui.components.rememberOrbitInteraction
 import ui.icons.OrbitIcons
 import ui.model.OrbitUser
 import ui.model.UserStatus
-import ui.theme.OrbitMotion
+import ui.theme.OrbitConceptMetrics
+import ui.theme.OrbitConceptStatus
 import ui.theme.OrbitRadius
 import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
+import webrtc.LocalCallManager
 
 /**
- * Drawer footer: who you are, and your audio state.
+ * Drawer footer: who you are, and your audio state. The concept's `.user-panel`.
  *
- * The old bar put a mic button, a 16dp chevron badge *on top of* the mic
- * button, a deafen button and a settings button in 248dp — and the chevron's
- * hit box overlapped the mic's. Voice controls now live in one popover behind
- * a single device button, the two always-available actions mute and deafen keep
- * their places, and the presence dot is drawn from the token set instead of
- * four hard-coded greens.
+ * ## Geometry
+ *
+ * `.user-panel { height: var(--user-bar-height) }` — 52dp, `--bg-secondary`,
+ * `padding: 0 8px`, `justify-content: space-between`. Inside it:
+ *
+ *  - `.user-info-section` — 4px/6px padding, 4px corners, `--bg-modifier-hover`
+ *    on hover, and `max-width: 130px`, which is what keeps a long display name
+ *    from pushing the controls off the panel;
+ *  - `.user-avatar-wrap` — a fixed 32dp with a 10dp `.status-indicator` at the
+ *    bottom right, ringed in `--bg-secondary` so it reads against the panel and
+ *    not against the avatar;
+ *  - `.user-display-name` — 13px, weight 600, `--header-primary`, ellipsised;
+ *  - `.user-controls` — `.user-control-btn` at `padding: 6px`, 4px corners,
+ *    `--interactive-normal`, flooding to `--bg-modifier-hover` +
+ *    `--interactive-hover`, with `.active-danger` colouring the glyph
+ *    `--status-dnd`.
+ *
+ * The panel is `--bg-secondary`, one step DOWN from the `--bg-sidebar` the list
+ * above it sits on, which is what makes the list read as the panel and this read
+ * as its footer rather than the two running together.
+ *
+ * ## The audio device picker
+ *
+ * The concept's third control is Settings. Orbit's is the audio-device popover,
+ * and the two are not interchangeable: this bar is where a mute, a deafen and a
+ * device picker all have to live in 130dp, and Settings already sits one click
+ * away in the profile popover above them. Everything else about the row — the
+ * 6px padding, the 4px corners, the hover wash, the `.active-danger` treatment —
+ * is the concept's.
  */
 @Composable
 internal fun UserProfileBar(
@@ -90,11 +105,10 @@ internal fun UserProfileBar(
     onSettingsClick: () -> Unit,
     onStatusSelected: ((UserStatus) -> Unit)? = null
 ) {
-    val t = rememberCosmicTokens()
     var showProfilePopover by remember { mutableStateOf(false) }
     var showVoicePopover by remember { mutableStateOf(false) }
 
-    val callManager = webrtc.LocalCallManager.current
+    val callManager = LocalCallManager.current
     // Hoisted so the number of remembered slots does not change when callManager
     // flips between null and non-null.
     val audioEnabledFlow = remember(callManager) {
@@ -106,27 +120,18 @@ internal fun UserProfileBar(
     val isAudioEnabled by audioEnabledFlow.collectAsState(initial = true)
     val isDeafened by deafenedFlow.collectAsState(initial = false)
 
-    val interaction = rememberOrbitInteraction()
-    val hovered by interaction.hoverSource.collectIsHoveredAsState()
-
-    val profileBg by animateColorAsState(
-        targetValue = if (showProfilePopover) t.AccentGhost else if (hovered) t.Hover else Color.Transparent,
-        animationSpec = OrbitMotion.SnappyColor,
-        label = "profileBg"
-    )
-    val profileBorder by animateColorAsState(
-        targetValue = if (showProfilePopover) t.AccentBorder else Color.Transparent,
-        animationSpec = OrbitMotion.SnappyColor,
-        label = "profileBorder"
-    )
+    val infoInteraction = remember { MutableInteractionSource() }
+    val infoHovered by infoInteraction.collectIsHoveredAsState()
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(t.UserBar_Bg)
-            .padding(horizontal = OrbitSpace.sm, vertical = OrbitSpace.sm)
-            .height(40.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .height(OrbitConceptMetrics.userBarHeight)
+            // `.user-panel { background-color: var(--bg-secondary) }`.
+            .background(conceptSecondarySurface())
+            .padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
     ) {
         // ── Identity + presence picker ───────────────────────────
         // The menu must be a child of the node that triggered it: OrbitMenu wraps
@@ -137,25 +142,53 @@ internal fun UserProfileBar(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(36.dp)
-                    .clip(OrbitRadius.smShape)
-                    .background(profileBg)
-                    .border(1.dp, profileBorder, OrbitRadius.smShape)
-                    .hoverable(interaction.hoverSource)
-                    .orbitClickable(interaction, onClick = { showProfilePopover = true })
-                    .padding(horizontal = OrbitSpace.xs),
+                    // `.user-info-section { padding: 4px 6px; border-radius: 4px;
+                    // max-width: 130px }`.
+                    //
+                    // The 130px cap is not applied directly: on a 240dp panel
+                    // minus 8dp of padding each side minus the three 30dp
+                    // controls and their 2dp gaps, 130dp is exactly what is left.
+                    // `weight(1f)` on the enclosing Box with
+                    // `Arrangement.SpaceBetween` derives the same number and
+                    // keeps holding if a control ever changes size.
+                    .height(44.dp)
+                    .clip(OrbitRadius.xsShape)
+                    .background(if (infoHovered) conceptHoverOverlay() else Color.Transparent)
+                    .hoverable(infoInteraction)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        role = Role.Button,
+                        onClickLabel = "Open your profile",
+                        onClick = { showProfilePopover = true }
+                    )
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                UserAvatar(user.displayName, user.avatarColor, user.status, user.avatarUrl, size = 26.dp)
-                Spacer(Modifier.width(OrbitSpace.sm))
-                Column(modifier = Modifier.weight(1f)) {
+                // `.user-avatar-wrap { width: 32px; height: 32px }`.
+                UserAvatar(
+                    displayName = user.displayName,
+                    avatarColor = user.avatarColor,
+                    status = user.status,
+                    avatarUrl = user.avatarUrl,
+                    size = 32.dp
+                )
+                Spacer(Modifier.width(8.dp))
+                // `.user-names { display: flex; flex-direction: column; overflow:
+                // hidden }`.
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(1.dp)
+                ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = user.displayName,
+                            // `.user-display-name { font-size: 13px; font-weight:
+                            // 600; color: var(--header-primary) }`.
                             style = MaterialTheme.typography.labelLarge.copy(
                                 fontWeight = FontWeight.SemiBold,
-                                color = t.Text_White,
-                                fontSize = 12.5.sp
+                                color = conceptHeaderPrimary(),
+                                fontSize = 13.sp
                             ),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -166,22 +199,19 @@ internal fun UserProfileBar(
                             OrbitVerifiedBadge(modifier = Modifier.size(11.dp))
                         }
                     }
+                    // `.user-status-text { font-size: 11px; color:
+                    // var(--text-muted) }`.
                     Text(
                         text = statusLabel(user.status),
                         style = MaterialTheme.typography.labelSmall.copy(
-                            color = presenceColor(t, user.status),
-                            fontSize = 10.sp,
-                            lineHeight = 12.sp
+                            color = conceptTextMuted(),
+                            fontSize = 11.sp,
+                            lineHeight = 13.sp
                         ),
-                        maxLines = 1
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
-                androidx.compose.material3.Icon(
-                    imageVector = androidx.compose.material.icons.Icons.Default.KeyboardArrowUp,
-                    contentDescription = null,
-                    tint = t.Text_Subtle,
-                    modifier = Modifier.size(14.dp)
-                )
             }
 
             OrbitMenu(
@@ -201,48 +231,98 @@ internal fun UserProfileBar(
         }
 
         // ── Audio state ─────────────────────────────────────────
-        Box {
-            OrbitIconButton(
-                icon = Icons.Default.SettingsInputComponent,
-                contentDescription = "Audio devices",
-                onClick = { showVoicePopover = !showVoicePopover },
-                size = 30.dp,
-                iconSize = 15.dp,
-                shape = CircleShape,
-                active = showVoicePopover
-            )
-            OrbitMenu(
-                expanded = showVoicePopover,
-                onDismissRequest = { showVoicePopover = false },
-                width = 268.dp
-            ) {
-                VoiceControlPopover(onSettingsClick = {
-                    showVoicePopover = false
-                    onSettingsClick()
-                })
+        // `.user-controls { display: flex; align-items: center; gap: 2px }`.
+        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            Box {
+                UserControlButton(
+                    icon = Icons.Default.SettingsInputComponent,
+                    contentDescription = "Audio devices",
+                    isDanger = false,
+                    onClick = { showVoicePopover = !showVoicePopover }
+                )
+                OrbitMenu(
+                    expanded = showVoicePopover,
+                    onDismissRequest = { showVoicePopover = false },
+                    width = 268.dp
+                ) {
+                    VoiceControlPopover(onSettingsClick = {
+                        showVoicePopover = false
+                        onSettingsClick()
+                    })
+                }
             }
+            UserControlButton(
+                icon = if (isAudioEnabled) OrbitIcons.Mic else OrbitIcons.MicOff,
+                contentDescription = if (isAudioEnabled) "Mute microphone" else "Unmute microphone",
+                isDanger = !isAudioEnabled,
+                onClick = { callManager?.toggleMute(isAudioEnabled) }
+            )
+            UserControlButton(
+                icon = if (isDeafened) Icons.Default.HeadsetOff else Icons.Default.Headset,
+                contentDescription = if (isDeafened) "Undeafen" else "Deafen",
+                isDanger = isDeafened,
+                onClick = { callManager?.toggleDeafen() }
+            )
         }
-        OrbitIconButton(
-            icon = if (isAudioEnabled) OrbitIcons.Mic else OrbitIcons.MicOff,
-            contentDescription = if (isAudioEnabled) "Mute microphone" else "Unmute microphone",
-            onClick = {
-                callManager?.toggleMute(isAudioEnabled)
-            },
-            size = 30.dp,
-            iconSize = 16.dp,
-            shape = CircleShape,
-            active = !isAudioEnabled,
-            danger = !isAudioEnabled
-        )
-        OrbitIconButton(
-            icon = if (isDeafened) Icons.Default.HeadsetOff else Icons.Default.Headset,
-            contentDescription = if (isDeafened) "Undeafen" else "Deafen",
-            onClick = { callManager?.toggleDeafen() },
-            size = 30.dp,
-            iconSize = 16.dp,
-            shape = CircleShape,
-            active = isDeafened,
-            danger = isDeafened
+    }
+}
+
+/**
+ * `.user-control-btn { background: transparent; border: none; color:
+ * var(--interactive-normal); padding: 6px; border-radius: 4px }` with
+ * `:hover { background-color: var(--bg-modifier-hover); color:
+ * var(--interactive-hover) }` and `.active-danger { color: var(--status-dnd) }`.
+ *
+ * An 18dp glyph inside 6dp of padding is a 30dp target, which is what the
+ * concept's box comes to — and it is the same size as Orbit's previous
+ * `OrbitIconButton`, so nothing about the hit area moved.
+ */
+@Composable
+private fun UserControlButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    isDanger: Boolean,
+    onClick: () -> Unit
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+
+    val fill by animateColorAsStateCompat(
+        if (hovered) conceptHoverOverlay() else Color.Transparent,
+        label = "userControlFill"
+    )
+    // `.active-danger` wins over the hover colour: a muted mic stays red whether
+    // or not the pointer is on it, because "you are muted" is a state and not a
+    // mood.
+    val tint by animateColorAsStateCompat(
+        when {
+            isDanger -> OrbitConceptStatus.dnd
+            hovered -> conceptInteractiveHover()
+            else -> conceptInteractiveNormal()
+        },
+        label = "userControlTint"
+    )
+
+    Box(
+        modifier = Modifier
+            .size(30.dp)
+            .clip(OrbitRadius.xsShape)
+            .background(fill)
+            .hoverable(interaction)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                role = Role.Button,
+                onClickLabel = contentDescription,
+                onClick = onClick
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(18.dp)
         )
     }
 }
@@ -254,7 +334,7 @@ internal fun UserProfileBar(
 @Composable
 internal fun VoiceControlPopover(onSettingsClick: () -> Unit) {
     val t = rememberCosmicTokens()
-    val callManager = webrtc.LocalCallManager.current
+    val callManager = LocalCallManager.current
     val settingsManager = ui.theme.LocalSettingsManager.current
     var showInputDevices by remember { mutableStateOf(false) }
     var inputDevices by remember { mutableStateOf(emptyList<String>()) }
@@ -452,13 +532,22 @@ internal fun ProfilePopoverContent(
     }
 }
 
+/**
+ * `.user-avatar-wrap { position: relative; width/height }` with
+ * `.user-avatar-img` filling it and a `.status-indicator` at `bottom: -2px;
+ * right: -2px` — 10px, a 2px `--bg-secondary` ring.
+ *
+ * The ring is drawn as a `border` on a slightly larger circle rather than as an
+ * offset child, because a CSS outline and a Compose border are the same shape at
+ * two sizes and the offset form is what the previous version used.
+ */
 @Composable
 internal fun UserAvatar(
     displayName: String,
     avatarColor: Int,
     status: UserStatus,
     avatarUrl: String? = null,
-    size: androidx.compose.ui.unit.Dp = 32.dp
+    size: Dp = 32.dp
 ) {
     val t = rememberCosmicTokens()
     Box(modifier = Modifier.size(size)) {
@@ -481,10 +570,10 @@ internal fun UserAvatar(
         }
         Box(
             modifier = Modifier
-                .size(if (size > 40.dp) 12.dp else 9.dp)
+                .size(if (size > 40.dp) 12.dp else 10.dp)
                 .align(Alignment.BottomEnd)
                 .offset(x = 1.dp, y = 1.dp)
-                .border(2.dp, t.UserBar_Bg, CircleShape)
+                .border(2.dp, conceptSecondarySurface(), CircleShape)
                 .padding(1.5.dp)
                 .clip(CircleShape)
                 .background(presenceColor(t, status))

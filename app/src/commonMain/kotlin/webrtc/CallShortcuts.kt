@@ -21,6 +21,12 @@ object CallShortcuts {
     // Return to Active Call: expands a minimized call back into its surface.
     var onReturnToCall: (() -> Unit)? = null
 
+    // Leave a maximised call stage. Published ONLY while a stage is actually
+    // maximised, so Escape keeps meaning "close whatever is open" everywhere
+    // else in the app -- the concept's tooltip says "Exit Full Screen (ESC)",
+    // which is a claim about Escape, not a global binding.
+    var onExitMaximizedStage: (() -> Unit)? = null
+
     // App navigation (registered by OrbitApp's shell): Alt+←/→ history and
     // Ctrl+K quick switcher. Live here because the root Window dispatches
     // every app-wide keybind through this object.

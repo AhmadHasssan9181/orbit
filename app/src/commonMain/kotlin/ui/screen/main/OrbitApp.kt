@@ -369,6 +369,11 @@ private fun MainAppContent(
     var selectedBottomTab by remember { mutableStateOf(BottomNavTab.DMs) }
     // Navigation stack for compact: null = list, non-null = chat open
     var compactOpenChannelId by remember { mutableStateOf<String?>(null) }
+    // The friends view holds the main column instead of a room. It is a peer of
+    // `selectedChannelId` rather than a value derived from it: there is no room
+    // id for "friends", and it has to survive being selected while no room is
+    // open — which is precisely when the DM sidebar's `Friends` row is pressed.
+    var friendsTabActive by remember { mutableStateOf(false) }
 
     // ─── Load current user ──────────────────────────────────────
     LaunchedEffect(Unit) {
@@ -511,6 +516,10 @@ private fun MainAppContent(
         isLoadingChannels = true
         selectedChannelId = ""
         compactOpenChannelId = null
+        // The friends view belongs to the DM sidebar, so leaving it with the
+        // server is the only way it could otherwise stay lit over a server's
+        // room list — a row that reads "Friends" while a channel is open.
+        friendsTabActive = false
         try {
             // Hard timeout, and `finally` for the flag rather than a trailing
             // assignment.
@@ -634,6 +643,10 @@ private fun MainAppContent(
     }
 
     val handleChannelClick: (String) -> Unit = { id ->
+        // Opening a room always wins over the friends view. Without this the
+        // `Friends` row stayed selected while a conversation filled the main
+        // column, so the sidebar claimed a destination that was not on screen.
+        friendsTabActive = false
         navigateTo(id)
     }
 
@@ -687,6 +700,8 @@ private fun MainAppContent(
                     onOpenRoles = { showServerRoles = true },
                     unreadCounts = unreadCountsSnapshot,
                     unreadByServer = unreadByServer,
+                    friendsTabActive = friendsTabActive,
+                    onSelectFriendsTab = { friendsTabActive = true },
                     modifier = Modifier.fillMaxSize()
                 )
 
@@ -707,6 +722,8 @@ private fun MainAppContent(
                     onOpenRoles = { showServerRoles = true },
                     unreadCounts = unreadCountsSnapshot,
                     unreadByServer = unreadByServer,
+                    friendsTabActive = friendsTabActive,
+                    onSelectFriendsTab = { friendsTabActive = true },
                     modifier = Modifier.fillMaxSize()
                 )
 
@@ -727,6 +744,8 @@ private fun MainAppContent(
                     onOpenRoles = { showServerRoles = true },
                     unreadCounts = unreadCountsSnapshot,
                     unreadByServer = unreadByServer,
+                    friendsTabActive = friendsTabActive,
+                    onSelectFriendsTab = { friendsTabActive = true },
                     modifier = Modifier.fillMaxSize()
                 )
             }
