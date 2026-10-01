@@ -44,6 +44,7 @@ import ui.assets.OrbitDefaultAvatar
 import ui.model.OrbitUser
 import ui.model.UserStatus
 import ui.theme.OrbitConceptMetrics
+import ui.theme.OrbitConceptOverlay
 import ui.theme.rememberCosmicTokens
 
 /** One heading and the members under it. */
@@ -160,7 +161,12 @@ fun MemberListRow(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(4.dp))
-            .background(if (onClick != null && hovered) t.Hover else Color.Transparent)
+            .background(
+                // The concept's `.member-item-row:hover` is --bg-modifier-hover,
+                // white at 6%. t.Hover is white at 3.9%, which is why this row
+                // felt dead next to the 14 places that use conceptHoverOverlay().
+                if (onClick != null && hovered) OrbitConceptOverlay.hover() else Color.Transparent
+            )
             .hoverable(enabled = onClick != null, interactionSource = interaction)
             .then(
                 if (onClick != null) {

@@ -220,6 +220,8 @@ data class CosmicTokens(
     val Scrim: Color,
     val FocusRing: Color,
     val ScrollbarTrack: Color,
+    /** The rail's 32x2 hairline between sections. */
+    val ServerDivider: Color,
     val ScrollbarThumb: Color,
     val ScrollbarThumbHover: Color,
 ) {
@@ -266,8 +268,15 @@ private fun darkTokens(cs: androidx.compose.material3.ColorScheme) = CosmicToken
     // no edge at all. Ink780 is darker than the card: the recessed direction, and
     // what Discord actually does.
     Input_Bg = Ink780,
-    Members_Bg = Ink800,
-    Rail_Bg = Ink950,
+    // The concept's .member-list-sidebar is --bg-sidebar, #2b2d31. Ink800 is the
+    // CHAT CANVAS, so the member list was the same colour as the timeline it
+    // sits beside -- precisely the indistinguishable-surfaces failure
+    // OrbitConcept.kt was written to prevent.
+    Members_Bg = Ink850,
+    // The concept's --bg-servers is #1e1f22. Ink950 (#111214) is the FLOATING
+    // surface -- modals and popovers -- so the rail was three steps darker than
+    // the design and read as a black gutter rather than a dark column.
+    Rail_Bg = Ink900,
     // The concept's .server-icon-btn background is --bg-sidebar, i.e. Ink850.
     // It was never given a token and the rail drew a per-server gradient instead,
     // which meant no idle fill existed to flood away from on hover.
@@ -314,8 +323,15 @@ private fun darkTokens(cs: androidx.compose.material3.ColorScheme) = CosmicToken
     Scrim = Color(0xCC111214),
     FocusRing = Iris400.copy(alpha = 0.55f),
     ScrollbarTrack = Color.Transparent,
-    ScrollbarThumb = Color(0x24FFFFFF),
-    ScrollbarThumbHover = Color(0x42FFFFFF),
+    // The concept's scrollbar thumb is near-BLACK (rgba(26,27,30,.7)) in both
+    // themes, light included. A white thumb is legible but is the opposite of
+    // the design, and on a light surface it is the wrong shape of mark.
+    // .server-divider is --border-subtle (white at 8%) over the rail, which
+    // composites to roughly #232426. t.Separator is an opaque #3F4147 -- a full
+    // ramp step lighter and fully opaque, so a 32x2 hairline read as a hard rule.
+    ServerDivider = Color(0x14FFFFFF),
+    ScrollbarThumb = Color(0xB31A1B1E),
+    ScrollbarThumbHover = Color(0xE6111214),
 )
 
 private fun lightTokens(cs: androidx.compose.material3.ColorScheme) = CosmicTokens(
@@ -384,6 +400,8 @@ private fun lightTokens(cs: androidx.compose.material3.ColorScheme) = CosmicToke
     Scrim = Color(0x59000000),
     FocusRing = cs.primary.copy(alpha = 0.55f),
     ScrollbarTrack = Color.Transparent,
+    // The concept keeps the divider dark in the light theme too.
+    ServerDivider = Color(0x14000000),
     ScrollbarThumb = Color(0x1F000000),
     ScrollbarThumbHover = Color(0x33000000),
 )

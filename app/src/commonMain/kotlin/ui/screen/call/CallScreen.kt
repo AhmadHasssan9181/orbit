@@ -300,7 +300,7 @@ fun CallScreen(
                         modifier = Modifier
                             .align(Alignment.TopStart)
                             .padding(8.dp)
-                            .background(Color(0xFF23A559).copy(alpha = 0.9f), RoundedCornerShape(4.dp))
+                            .background(Color(0xFF23A55A).copy(alpha = 0.9f), RoundedCornerShape(4.dp))
                             .padding(horizontal = 6.dp, vertical = 2.dp)
                     ) {
                         Text(timerText, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
@@ -596,11 +596,11 @@ fun CallScreen(
                                     modifier = Modifier
                                         .size(6.dp)
                                         .clip(CircleShape)
-                                        .background(Color(0xFF23A559))
+                                        .background(Color(0xFF23A55A))
                                 )
                                 Text(
                                     timerText,
-                                    color = Color(0xFF23A559),
+                                    color = Color(0xFF23A55A),
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Medium
                                 )
@@ -784,13 +784,13 @@ fun CallScreen(
                                 onClick = { callManager.answerCall(isVideo = false) },
                                 modifier = Modifier
                                     .size(64.dp)
-                                    .background(Color(0xFF23A559), CircleShape)
+                                    .background(Color(0xFF23A55A), CircleShape)
                                     .shadow(8.dp, CircleShape)
                             ) {
                                 Icon(OrbitIcons.Call, contentDescription = "Accept", tint = Color.White, modifier = Modifier.size(28.dp))
                             }
                             Spacer(Modifier.height(12.dp))
-                            Text("Accept", color = Color(0xFF23A559), fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                            Text("Accept", color = Color(0xFF23A55A), fontWeight = FontWeight.Medium, fontSize = 13.sp)
                         }
 
                         if (isVideoCall) {
@@ -2201,7 +2201,7 @@ fun AudioDeviceMenu(
                 },
                 trailingIcon = {
                     if (isSelected) {
-                        Icon(Icons.Default.Check, contentDescription = "Active device", tint = Color(0xFF23A559), modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Check, contentDescription = "Active device", tint = Color(0xFF23A55A), modifier = Modifier.size(16.dp))
                     }
                 }
             )
@@ -2243,7 +2243,7 @@ fun AudioDeviceMenu(
                 },
                 trailingIcon = {
                     if (isSelected) {
-                        Icon(Icons.Default.Check, contentDescription = "Active device", tint = Color(0xFF23A559), modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Check, contentDescription = "Active device", tint = Color(0xFF23A55A), modifier = Modifier.size(16.dp))
                     }
                 }
             )
@@ -2282,7 +2282,7 @@ fun AudioDeviceMenu(
                 },
                 trailingIcon = {
                     if (isSelected) {
-                        Icon(Icons.Default.Check, contentDescription = "Active camera", tint = Color(0xFF23A559), modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Check, contentDescription = "Active camera", tint = Color(0xFF23A55A), modifier = Modifier.size(16.dp))
                     }
                 }
             )

@@ -393,7 +393,7 @@ private fun HeaderActionBtn(
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .offset(x = 4.dp, y = (-2).dp)
+                        .offset(x = (-2).dp, y = (-2).dp)
                         .height(14.dp)
                         .clip(RoundedCornerShape(6.dp))
                         .background(OrbitConceptStatus.dnd)
