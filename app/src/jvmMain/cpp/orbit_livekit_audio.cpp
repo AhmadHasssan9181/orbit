@@ -1100,15 +1100,34 @@ void raiseCurrentThreadPriority() {
         std::shared_ptr<ParticipantPcmQueue> queue;
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            auto& existing = participants_[trackSid];
+            // KEY BY PARTICIPANT IDENTITY, not track SID.
+            //
+            // This map is read by identity everywhere else -- applyParticipantGain,
+            // removeParticipant, the active-speaker UI event -- while this one
+            // writer used the track SID. Those are different strings, so every
+            // identity-keyed lookup missed and silently returned:
+            //
+            //   stored   participants_["TR_AMwWxXt3pkqKK6"]
+            //   sought   participants_["@hamzamasudbutt:matrix.org:BzPLGdcHdw"]
+            //
+            // Per-participant volume and mute were therefore dead on every group
+            // call, which is why a caller heard some peers and not others: gain was
+            // never applied to anyone, so audibility came down to which queue the
+            // mixer happened to favour, and that changed with join order.
+            //
+            // Identity is also the correct key on the merits. A participant can
+            // publish two audio tracks (screen share with audio mirrors their mic),
+            // and two queues under one identity is exactly what the share-tile
+            // volume ban in docs/planning/ESCAPE_FROM_HELL.md H15 depends on: both
+            // queues share the identity key, so one slider controls both.
+            //
+            // Falls back to the track SID only when the identity is genuinely
+            // unknown, because the mixer pushes this value into the active-speaker
+            // event the UI matches on and an empty string would never match.
+            const std::string key = participantIdentity.empty() ? trackSid : participantIdentity;
+            auto& existing = participants_[key];
             if (existing == nullptr) {
-                // Report the PARTICIPANT identity, not the track SID. An empty
-                // identity falls back to the SID so the reported value is never
-                // blank: the mixer pushes this straight into the active-speaker
-                // event the UI matches against, and an empty string there would
-                // silently never match anything.
-                existing = std::make_shared<ParticipantPcmQueue>(
-                    participantIdentity.empty() ? trackSid : participantIdentity, trackSid);
+                existing = std::make_shared<ParticipantPcmQueue>(key, trackSid);
                 std::cout << "DEBUG [OrbitLiveKitAudio] remote audio participant added: trackSid="
                           << trackSid << " identity=" << existing->participantIdentity << std::endl;
             }
@@ -1147,6 +1166,19 @@ void raiseCurrentThreadPriority() {
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = participants_.find(identity);
         if (it == participants_.end() || it->second == nullptr) {
+            // Logged rather than swallowed. This used to `return` in silence, which
+            // is how a keying mismatch hid for so long: the setter was called, the
+            // map was written, and the only evidence was a UI slider that did
+            // nothing and no log line anywhere saying so.
+            //
+            // The known keys are printed because "not found" is only actionable if
+            // you can see what IS in the map.
+            std::cout << "WARN [OrbitLiveKitAudio] applyParticipantGain MISS identity=" << identity
+                      << " gain=" << gain << " knownKeys=";
+            for (const auto& entry : participants_) {
+                std::cout << "[" << entry.first << "]";
+            }
+            std::cout << std::endl;
             return;
         }
         std::lock_guard<std::mutex> queueLock(it->second->queueMutex);
@@ -1163,6 +1195,17 @@ void raiseCurrentThreadPriority() {
             std::lock_guard<std::mutex> lock(mutex_);
             auto it = participants_.find(identity);
             if (it == participants_.end()) {
+                // Same reasoning as applyParticipantGain: a removal that finds
+                // nothing is exactly the failure that leaves a queue alive for the
+                // rest of the call, and it used to pass without a sound. This is the
+                // path that would have surfaced the keying mismatch as a leak
+                // instead of as silence.
+                std::cout << "WARN [OrbitLiveKitAudio] removeParticipant MISS identity=" << identity
+                          << " (queue left in place) knownKeys=";
+                for (const auto& entry : participants_) {
+                    std::cout << "[" << entry.first << "]";
+                }
+                std::cout << std::endl;
                 return;
             }
             removed = it->second;
@@ -1249,9 +1292,11 @@ inline std::vector<std::int16_t> resampleLinear(
             std::lock_guard<std::mutex> lock(mutex_);
             auto& existing = participants_[identity];
             if (existing == nullptr) {
-                // This path is already keyed by identity (legacy P2P callers pass
-                // the identity where the LiveKit path passes a track SID), so both
-                // fields get the same value.
+                // Keyed by identity, which is what addParticipant now does too.
+                // Both writers previously disagreed -- this one by identity, that
+                // one by track SID -- so the two could create separate queues for
+                // the same person and the identity-keyed lookups only ever reached
+                // this path's queue.
                 existing = std::make_shared<ParticipantPcmQueue>(identity, identity);
                 std::cout << "DEBUG [OrbitLiveKitAudio] remote audio participant added: "
                           << identity << " inSampleRate=" << sampleRate << " inChannels=" << channels << std::endl;

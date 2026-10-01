@@ -71,6 +71,7 @@ against Element sources), `docs/planning/headache_medicine.md` (UI architecture 
 | We can't hear a peer who joined later | [H8-RX](#h8-v3-rx-dead-for-latecomers) / [H7](#h7-settle-nudge-silent-element-peers) |
 | Audio works, then garbles/chops | [BUG-D](#bug-d-robotic-garbled-audio-in-one-room) |
 | One person too loud/quiet, or mute ONE person's playback | [H15](#h15--per-participant-volume--the-local-mute) |
+| **Can hear SOME peers and not others, same build** | **[H20](#h20--the-two-key-same-map--why-volume-and-mute-were-dead)** |
 | No visual indicator of who is speaking | [H16](#h16--the-speaking-glow--native-rms-to-the-tile-ring) |
 | Key delivery to one device keeps failing long-session | [H8-V4](#h8-v4--one-bad-device-poisoned-the-whole-batch) |
 | Everything is ~2s late for minutes | [H6](#h6--2s-end-to-end-latency-that-never-recovers) |
@@ -723,6 +724,8 @@ be born inside the mixer queue itself.
    accumulate loop multiplies by `queue->gain`. MUTED QUEUES STILL POP — only
    the contribution is zeroed, so starvation/jitter-depth bookkeeping is
    untouched (muting must not re-trigger the cold-buffer gate).
+   ⚠️ **`participants_` is keyed by PARTICIPANT IDENTITY. Do not key it by track
+   SID.** See [H20](#h20--the-two-key-same-map--why-volume-and-mute-were-dead).
 2. **JNI**: `Java_livekit_LiveKitNativeAudioBridge_nativeSetParticipantGain(JNIEnv*, jclass, jstring, jfloat)`
    → `setParticipantGainEverywhere()` (writes map + live queue).
 3. **Kotlin bridge**: `LiveKitNativeAudioBridge.nativeSetParticipantGain`
@@ -978,7 +981,87 @@ Post to the VISIBLE window instead:
 > resident, sipping 4 GB from the tray like a polite poltergeist.
 > Follow the rituals below or join them.*
 
-## H13 — The window-close zombie JVM
+## H20 - The two-key same map: why volume and mute were dead
+
+> 🕯️ *Three people, one build, and each of them heard a different subset. The
+> mixer was fine. The map was fine. The map was keyed two ways.*
+
+**You see:** on a group call, some peers are audible and others are not, and it
+CHANGES between runs. Per-participant volume sliders and mute-one-person do
+nothing at all. The person who was fine last call is silent this one. Reported
+as "Hamza can hear me, I can't hear Hamza; Talnz can't hear anyone but we can all
+hear Talnz" — three mutually inconsistent-sounding reports that are one bug.
+
+**It is:** ONE map, `participants_`, written under TWO different keys.
+
+```
+addParticipant()             participants_[trackSid]          <- LiveKit / group calls
+applyParticipantGain()       participants_.find(identity)     <- every read
+removeParticipant()          participants_.find(identity)
+pushRemoteAudio()            participants_[identity]         <- legacy P2P
+```
+
+For a group call the queue was created as
+
+```
+stored   participants_["TR_AMwWxXt3pkqKK6"]
+sought   participants_["@hamzamasudbutt:matrix.org:BzPLGdcHdw"]
+```
+
+Different strings. Every identity-keyed lookup missed, and every miss `return`ed
+**in silence**.
+
+**Why it presents as "I can hear SOME of them":** the miss is in
+`applyParticipantGain`, not in the mix. `mixOneFrame` iterates `participants_` and
+sums every queue at whatever gain that queue holds — which was always the default
+`1.0f`. So audio genuinely reached the mixer (the log shows `inRms` spiking to
+2717), it was simply never shaped, and audibility came down to which queue the
+mixer happened to favour on join order. Nothing in that path produces an error,
+a warning, or a log line.
+
+**Why H15 looked fine in review:** H15 documents the gain stack as shipped and
+working, and it is -- *keyed consistently, by identity*. The LiveKit writer was the
+odd one out. Documentation of the intended design was correct; one call site had
+drifted away from it. That drift is why this sat in a book full of fixed bugs.
+
+**Fix:** `addParticipant` keys by `participantIdentity`, falling back to the track
+SID only when the identity is genuinely unknown (an empty identity would never
+match the UI's active-speaker event). Identity is also correct on the merits: a
+participant publishing screen-share-with-audio mirrors their mic queue under the
+SAME identity, and one key is what makes a single slider control both -- the
+behaviour H15's share-tile ban depends on.
+
+Both silent misses now log. `applyParticipantGain MISS` and
+`removeParticipant MISS` print the identity plus every key currently in the map,
+because "not found" is only actionable if you can see what IS there. A removal
+that finds nothing is also exactly what leaves a queue alive for the rest of the
+call, so that miss was the leak's natural early warning and it passed without a
+sound.
+
+**Prove it:** group call, two peers, drag one peer's volume to 0. That peer must go
+silent AND the log must show no `applyParticipantGain MISS`. Any MISS line means a
+key is still wrong somewhere. Then check the teardown tally:
+
+```
+PARTLEDGER final UNBALANCED identities=...(+3/-0)
+```
+
+`PARTLEDGER` (added alongside this) counted 5 connects against 0 disconnects in
+the run that exposed this -- the same keying mismatch, seen from the other side:
+a participant stored under a track SID can never be found by the identity-keyed
+removal path, so it is never cleaned up.
+
+**Files:** `jvmMain/cpp/orbit_livekit_audio.cpp` (`addParticipant`,
+`applyParticipantGain`, `removeParticipant`, `pushRemoteAudio`).
+
+**Lesson, added to the Codex:** a map read by identity in four places and written
+by track SID in one is not a subtle bug — it is a bug that produces NO symptom in
+any layer that reports errors. It surfaced only as *asymmetry between users*, which
+is the least reportable symptom there is. **Whenever a lookup can miss silently,
+make it log the miss with the keys it holds.** Silence is not a valid failure mode
+for a lookup.
+
+## H13 - The window-close zombie JVM
 
 **You see:** Close the app; java.exe lives on in Task Manager eating 3–4GB.
 
