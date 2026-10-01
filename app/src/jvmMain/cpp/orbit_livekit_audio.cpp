@@ -2418,27 +2418,25 @@ void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track, const
                     const auto timestampNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
                         std::chrono::steady_clock::now().time_since_epoch()).count();
                     g_audioMixer.pushParticipantFrame(
-                        // reader->participantIdentity, NOT reader->trackSid.
+                        // reader->trackSid -- the map key, and the SAME value
+                        // addParticipant created this queue under. Both must agree or
+                        // a second queue appears for one track and the mixer drains
+                        // them independently (480 samples each per 10ms tick),
+                        // splitting one voice across two buffers too thin to clear
+                        // kStarvationReprimeSamples.
                         //
-                        // pushParticipantFrame's first parameter is `identity`, and
-                        // this call site passed a track SID into it. Since
-                        // addParticipant creates the queue under the identity key,
-                        // this enqueued into a DIFFERENT queue -- one created purely
-                        // by this write, keyed by the track SID, and never drained
-                        // from the same pair as the queue addParticipant made.
+                        // An earlier commit put participantIdentity here while
+                        // addParticipant was identity-keyed. Reverting the map to
+                        // track-SID keying WITHOUT reverting this left one enqueue
+                        // site passing identity into a track-SID-keyed map, which
+                        // minted an unremovable second queue -- run 65 named itself:
                         //
-                        // One participant therefore ended up with two queues, and the
-                        // mixer drains them independently (480 samples from each per
-                        // 10ms tick), splitting one voice across two buffers too thin
-                        // to clear kStarvationReprimeSamples. Observed in run 64 as
-                        // MIXSTAT starved climbing in EXACTLY 1000-per-5s steps: one
-                        // starvation event per mixer tick, i.e. one queue permanently
-                        // empty while the other played.
+                        //   WARN remote audio queue overflow for
+                        //        @hellishsaa... trackSid=@hellishsaa...
                         //
-                        // Same person, two audio tracks:
-                        //   TR_AMWQpDJLYWtw4D  addParticipant  -> keyed by identity
-                        //   TR_AMhanQNtMPc3aW  this call site  -> keyed by track SID
-                        reader->participantIdentity,
+                        // The identity appearing in the trackSid field is the proof
+                        // the two disagreed.
+                        reader->trackSid,
                         samples.data(),
                         event.frame.sampleRate(),
                         event.frame.samplesPerChannel(),
