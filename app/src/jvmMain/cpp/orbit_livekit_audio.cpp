@@ -2338,9 +2338,14 @@ void joinTxStatsThread();
 // that must not run with g_sessionMutex held.
 std::vector<std::pair<std::shared_ptr<RemoteVideoReader>, std::string>> g_pendingVideoReaderJoins;
 std::atomic<bool> g_readerReaperRunning{false};
-// Set when stopTxStats() has signalled the TXSTAT thread but not yet joined it,
-// because both of its callers hold g_sessionMutex. Drained by the reaper.
+// Set when a TXSTAT thread has been signalled but not yet joined, because the
+// callers hold g_sessionMutex. Drained by the reaper.
 std::atomic<bool> g_txStatsJoinPending{false};
+std::mutex g_txStatsRetiredMutex;
+// Holds the handle once the thread has been signalled. Kept separate from
+// g_txStatsThread so a caller can stop the old thread and start a new one
+// immediately, which it must be able to do -- see retireTxStatsThread().
+std::thread g_txStatsRetiredThread;
 
 // Joins readers that were already signalled and removed from the map.
 //
@@ -2387,9 +2392,21 @@ void ensureReaderReaper() {
     if (!g_readerReaperRunning.compare_exchange_strong(expected, true)) {
         return;
     }
+    // Detached, so JNI_OnUnload cannot join it; it exits on the flag below within
+    // one 50ms sleep instead. Detaching is deliberate and older than the unload
+    // handling: the reaper's whole job is to make joins safe from threads that
+    // hold g_sessionMutex, and making it joinable would reintroduce exactly that
+    // requirement at process exit.
     std::thread([] {
         try {
             while (true) {
+                // Checked FIRST, before draining. JNI_OnUnload clears this to stop
+                // the reaper before the VM tears down; without the check the reaper
+                // ignored the request and kept running, which is one of the threads
+                // that reaches a destroying VM in run 83's 0xC0000409.
+                if (!g_readerReaperRunning.load(std::memory_order_acquire)) {
+                    return;
+                }
                 drainPendingReaderJoins();
                 if (g_pendingReaderJoins.empty() && g_pendingVideoReaderJoins.empty() &&
                     !g_txStatsJoinPending.load(std::memory_order_acquire)) {
@@ -3052,34 +3069,55 @@ void logTxStatsIfDue() {
     }
 }
 
+// Moves a finished-or-finishing TXSTAT thread out of g_txStatsThread and into the
+// reaper's queue, so the join happens on a thread that is not holding
+// g_sessionMutex.
+//
+// Why the thread has to be MOVED rather than joined in place: two callers want
+// to stop the old thread and immediately start a new one, and both of them hold
+// g_sessionMutex. Assigning a fresh std::thread to g_txStatsThread while the old
+// one is still joinable is undefined behaviour, and joining first is a deadlock.
+// So the handle is relocated, the slot is free, and the reaper joins later.
+//
+// std::thread's move constructor leaves the source non-joinable, which is what
+// makes the swap safe to do without a lock beyond this one.
+void retireTxStatsThread() {
+    if (!g_txStatsThread.joinable()) {
+        return;
+    }
+    if (g_txStatsThread.get_id() == std::this_thread::get_id()) {
+        // The TXSTAT thread is stopping itself. It cannot join itself, and it is
+        // about to exit, so detaching is the only correct option -- the reaper has
+        // nothing to do and must not be asked to.
+        g_txStatsThread.detach();
+        return;
+    }
+    g_txStatsJoinPending.store(true, std::memory_order_release);
+    {
+        std::lock_guard<std::mutex> lock(g_txStatsRetiredMutex);
+        g_txStatsRetiredThread = std::move(g_txStatsThread);
+    }
+    ensureReaderReaper();
+}
+
 void stopTxStats() {
     g_txStatsRunning.store(false, std::memory_order_relaxed);
-    if (g_txStatsThread.joinable()) {
-        if (g_txStatsThread.get_id() == std::this_thread::get_id()) {
-            g_txStatsThread.detach();
-        } else {
-            // Do NOT join here. Both callers (resetRoomLocked and the connect
-            // path) hold g_sessionMutex, and the TXSTAT thread's body opens with
-            // SessionLock to read g_audioTrack -- so a join here waits for a lock
-            // the joining thread already holds:
-            //
-            //     disconnect step=bridge.disconnect atMs=10   (never returns)
-            //     WARN remote audio reader self-cleanup deferred
-            //          (g_sessionMutex held by joiner)
-            //
-            // This is the fourth instance of the same rule in this file, which
-            // the file states twice already: never join a thread while holding
-            // g_sessionMutex. The audio readers, the video readers and ~Room were
-            // the other three; TXSTAT was the one place it had not reached, and
-            // it was the last waiter, which is why each earlier fix moved the
-            // stall to the next call instead of ending it.
-            //
-            // Signal here (running=false is what makes the thread exit its 5s
-            // sleep) and let the reader reaper do the join with no lock held.
-            g_txStatsJoinPending.store(true, std::memory_order_release);
-            ensureReaderReaper();
-        }
-    }
+    // Signal and hand the join to the reaper. running=false is what makes the
+    // thread leave its 5s sleep; the reaper does the join with no lock held,
+    // which is the whole point.
+    //
+    // Both callers (resetRoomLocked and the connect path) hold g_sessionMutex and
+    // the TXSTAT body opens with SessionLock, so joining here waited for a lock
+    // the joining thread already held:
+    //
+    //     disconnect step=bridge.disconnect atMs=10   (never returns)
+    //
+    // That was the fourth instance of the rule this file states twice already --
+    // never join a thread while holding g_sessionMutex. The audio readers, the
+    // video readers and ~Room were the other three. Each fix was correct and each
+    // moved the stall to the next waiter, which is why the hangup produced the
+    // same symptom eleven times.
+    retireTxStatsThread();
 }
 
 // Performs the deferred TXSTAT join. Called from the reaper with g_sessionMutex
@@ -3089,9 +3127,21 @@ void joinTxStatsThread() {
     if (!g_txStatsJoinPending.exchange(false, std::memory_order_acq_rel)) {
         return;
     }
-    if (g_txStatsThread.joinable()) {
-        g_txStatsThread.join();
+    // The handle lives in g_txStatsRetiredThread, not g_txStatsThread: by the time
+    // this runs the caller may already have installed a fresh TXSTAT thread, and
+    // joining THAT one would block the reaper for the whole next call.
+    std::thread retired;
+    {
+        std::lock_guard<std::mutex> lock(g_txStatsRetiredMutex);
+        if (!g_txStatsRetiredThread.joinable()) {
+            return;
+        }
+        retired = std::move(g_txStatsRetiredThread);
     }
+    // Joined with g_txStatsRetiredMutex released AND g_sessionMutex never held:
+    // the thread being joined needs the session mutex to finish its iteration,
+    // which is the entire reason this join is deferred.
+    retired.join();
 }
 std::string optionalTrackSourceLabel(const std::optional<livekit::TrackSource>& source);
 std::string trackKindLabel(livekit::TrackKind kind);
@@ -6091,9 +6141,13 @@ Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(
         std::cout << "DEBUG [OrbitLiveKitAudio] mic publish succeeded" << std::endl;
         // TX telemetry thread: see logTxStatsIfDue for why the sender needs its own.
         g_txStatsRunning.store(true, std::memory_order_relaxed);
-        if (g_txStatsThread.joinable()) {
-            g_txStatsThread.join();
-        }
+        // Same rule as the four sites already fixed, and this one had not been
+        // looked at because it is not on the teardown path -- it is on the PUBLISH
+        // path, so it stalls the next call rather than the hangup. A caller that
+        // re-publishes the mic (a mute round-trip, a device change) blocks here
+        // forever, waiting on a TXSTAT thread that is itself blocked on
+        // g_sessionMutex, which this function's caller holds.
+        retireTxStatsThread();
         g_txStatsThread = std::thread([] { logTxStatsIfDue(); });
         const auto trackSource = g_audioTrack->source();
         std::cout << "DEBUG [OrbitLiveKitAudio] local microphone track details "
@@ -8301,6 +8355,38 @@ JNI_OnUnload(JavaVM* vm, void*) {
     g_callbackShutdown = true;
     g_sessionDestroyed = true;
     g_javaVm = nullptr;
+    // Stop the native threads BEFORE the JVM destroys itself, and wait for them.
+    // Run 83 exited with 0xC0000409 (STATUS_STACK_BUFFER_OVERRUN, a HotSpot
+    // fail-fast) immediately after:
+    //
+    //     VM attach current thread failed
+    //     Failed to attach thread 24756
+    //
+    // That is what a LiveKit SDK thread calling getJniEnv looks like once the VM
+    // is tearing down: it asks to attach, HotSpot refuses, and the abort is
+    // HotSpot's, not ours -- which is why that string appears nowhere in this
+    // file. Latching the flags above only stops the NEXT upcall. It does nothing
+    // about a thread already inside one, and nothing about threads that outlive
+    // the library entirely.
+    //
+    // Joining here is safe precisely because this function holds NO lock. Every
+    // join that had to be deferred elsewhere in this file was deferred because
+    // the joiner held g_sessionMutex, which the joined thread needs to finish.
+    // Here there is nothing held, so the joins can be immediate -- and they have
+    // to be, because a detached thread reaching the VM during teardown is the
+    // thing being fixed.
+    //
+    // Bounded by one sleep interval each: both threads check their atomic at the
+    // top of every loop, so clearing it here releases them within 5s worst case.
+    g_txStatsRunning.store(false, std::memory_order_release);
+    g_readerReaperRunning.store(false, std::memory_order_release);
+    if (g_txStatsThread.joinable() &&
+        g_txStatsThread.get_id() != std::this_thread::get_id()) {
+        g_txStatsThread.join();
+    }
+    if (g_txStatsRetiredThread.joinable()) {
+        g_txStatsRetiredThread.join();
+    }
     // The AEC router class was cached as a global ref for the process
     // lifetime; drop it here so unloading the library does not leave a global
     // ref pointing at a class whose class loader may already be tearing down.
