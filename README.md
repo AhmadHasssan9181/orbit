@@ -51,7 +51,8 @@
 - [Troubleshooting](#troubleshooting)
 - [Known Limitations](#known-limitations)
 - [Related Documentation](#related-documentation)
-- [Regards](#regards)
+- [License](#license)
+- [Credits](#credits)
 
 ## What Orbit Is
 
@@ -204,10 +205,10 @@ one place.
 |   |   |   |   |-- util              Desktop database, media, browser, audio actuals
 |   |   |   |   |-- webrtc            Desktop WebRTC actual implementation
 |   |   |   |-- resources          Logo, wallpaper art, selfie-segmentation model, native WebRTC DLLs
-|-- webrtc-java-lib             Local JVM WebRTC library wrapper
+|-- webrtc-java-lib             Local JVM WebRTC library wrapper (compiled module)
 |-- webrtc-java-fork            Custom fork/reference source for desktop WebRTC work
+|-- webrtc_sources              webrtc-java Java interface sources, reference only
 |-- trixnity-src                Local reference copy of Trixnity sources
-|-- trixnity_sources            Additional Trixnity reference sources
 
 |-- docs/planning/               Working notes and historical plans
 
@@ -870,6 +871,29 @@ When debugging Element interoperability, confirm:
 | [`docs/planning/`](docs/planning) | Working notes, historical plans and call-stack references |
 
 
-## Regards
+## License
 
-Regards to [Ahmed Hassan](https://github.com/AhmadHassan1289) and [Haideransari444](https://github.com/Haideransari444).
+Orbit is licensed under the [Apache License, Version 2.0](LICENSE).
+
+Orbit bundles third-party software under its own license. See [`NOTICE`](NOTICE) for
+the full list, which covers Trixnity, webrtc-java, the WebRTC native build and LiveKit.
+Vendored source trees keep their upstream `LICENSE` and `NOTICE` files in place.
+
+## Credits
+
+Orbit is the work of a small team.
+
+| Role | Contributor |
+| --- | --- |
+| Lead | [AhmadHasssan9181](https://github.com/AhmadHasssan9181) |
+| Team | Muzammil Haider |
+| Team | hamzambutt |
+| Team | Haideransari444 |
+
+Thanks also to [Ahmed Hassan](https://github.com/AhmadHassan1289), whose work this
+project grew out of.
+
+Built on the shoulders of [Trixnity](https://github.com/connect2x-de/trixnity),
+[webrtc-java](https://github.com/devopvoid/webrtc-java), [WebRTC](https://webrtc.org)
+and [LiveKit](https://livekit.io).
+
