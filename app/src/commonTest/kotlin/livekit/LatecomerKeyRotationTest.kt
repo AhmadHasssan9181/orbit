@@ -125,4 +125,79 @@ class LatecomerKeyRotationTest {
             KeyRotationPolicy.KEYLESS_SIGHTING_ACTION
         )
     }
+
+    /**
+     * Whether a departing roster entry justifies rotating the shared key.
+     *
+     * Run 67 found the second half of the same defect. After the latecomer fix, the
+     * FIRST leave/join worked and the SECOND was silent. The rotation that broke it
+     * was never triggered by hellishsaa, who was connected throughout:
+     *
+     *     rotating key: leavers=1 joiners=0 keyAgeMs=26065
+     *     deferring 1 device(s) without stored keys: [@nfak_ism:ZVK65HTOZW]
+     *     WARN giving up on 1 device(s) with no published olm keys after 4 queries
+     *
+     * A stale MatrixRTC membership record was evicted from the roster, `old - targets`
+     * called that a leaver, and the whole call was moved to a new key index on the
+     * strength of a device Orbit had never exchanged a single byte with.
+     */
+    object LeaverPolicy {
+
+        /**
+         * Does [identity] count as a leaver for the purposes of rotation?
+         *
+         * Only a device we actually exchanged key material with. A roster entry we
+         * never reached holds no key of ours, so rotating revokes nothing -- while
+         * costing every live peer an index change they must each learn before
+         * audio resumes.
+         */
+        fun countsAsLeaver(identity: String, exchangedKeyWith: Set<String>): Boolean =
+            identity in exchangedKeyWith
+    }
+
+    @Test
+    fun aRosterEntryWeNeverReachedIsNotALeaver() {
+        // The run-67 regression.
+        assertEquals(
+            false,
+            LeaverPolicy.countsAsLeaver("@nfak_ism:ZVK65HTOZW", exchangedKeyWith = setOf("@hellishsaa:UHNLkPGyFF")),
+            "evicting a stale membership record rotated the shared key and desynced a live peer"
+        )
+    }
+
+    @Test
+    fun aPeerWeActuallyExchangedWithStillRotates() {
+        // The guard must not disable the protocol rule Element also follows, or
+        // forward secrecy regresses: a real leaver holds our key and keeps it.
+        assertEquals(
+            true,
+            LeaverPolicy.countsAsLeaver("@hellishsaa:UHNLkPGyFF", exchangedKeyWith = setOf("@hellishsaa:UHNLkPGyFF"))
+        )
+    }
+
+    @Test
+    fun everyLeaverTriggersRotationWhenAnyIsReal() {
+        // decideMembershipReaction rotates on ANY leaver, so one genuine leaver among
+        // several departing entries is enough -- the ghosts alongside it are ignored
+        // rather than diluting the count to zero.
+        val departed = listOf("@nfak_ism:ZVK65HTOZW", "@hellishsaa:UHNLkPGyFF", "@stale:AAA")
+        val exchanged = setOf("@hellishsaa:UHNLkPGyFF")
+        val leaverCount = departed.count { LeaverPolicy.countsAsLeaver(it, exchanged) }
+        assertEquals(
+            CallMediaKeys.MembershipReaction.Rotate,
+            CallMediaKeys.decideMembershipReaction(leaverCount, joinerCount = 0, currentKeyAgeMs = 60_000L)
+        )
+    }
+
+    @Test
+    fun ghostsAloneNeverRotate() {
+        // And the converse: if every departing entry was one we never reached, there
+        // is nothing to revoke, so nothing moves.
+        val departed = listOf("@nfak_ism:ZVK65HTOZW", "@stale:AAA")
+        val leaverCount = departed.count { LeaverPolicy.countsAsLeaver(it, exchangedKeyWith = setOf()) }
+        assertEquals(
+            CallMediaKeys.MembershipReaction.None,
+            CallMediaKeys.decideMembershipReaction(leaverCount, joinerCount = 0, currentKeyAgeMs = 60_000L)
+        )
+    }
 }
