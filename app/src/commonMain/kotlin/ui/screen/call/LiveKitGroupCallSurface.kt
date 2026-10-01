@@ -334,7 +334,7 @@ fun LiveKitGroupCallSurface(
                             name = tileName(track.participantIdentity),
                             renderer = LiveKitVideoTileRenderer.RemoteTrack(track.trackSid, isScreenShare = false),
                             isScreenShare = false,
-                            hasVideoFrameYet = videoPlaceholder(
+                            isVideoExpected = videoPlaceholder(
                                 hasFrame = framesByTrack[track.trackSid] != null,
                                 waitedMs = frameWaitedMs
                             ) != VideoPlaceholder.Avatar,
