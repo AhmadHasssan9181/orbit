@@ -801,8 +801,54 @@ class CallMediaKeyExchange(
                 return
             }
             val old = previous
-            val leavers = old - targets
             val joiners = targets - old
+
+            // Rotation is the one operation in this file that desynchronises
+            // EVERY peer in the call at once. It is therefore gated on having
+            // actual key-exchange history with the departing device, not merely
+            // on that device having been present in the roster a moment ago.
+            //
+            // Run 67, group room, hellishsaa cut his call and rejoined twice.
+            // The first cycle was clean. The second was silent, and the cause was
+            // never hellishsaa:
+            //
+            //     rotating key: leavers=1 joiners=0 keyAgeMs=26065
+            //     deferring 1 device(s) without stored keys: [@nfak_ism:ZVK65HTOZW]
+            //     WARN giving up on 1 device(s) with no published olm keys after
+            //          4 queries: [@nfak_ism] ... stale MatrixRTC membership record
+            //
+            // @nfak_ism was a stale MatrixRTC membership record left in the roster
+            // by a crashed client. When its device keys could not be fetched it was
+            // dropped from targets, and `old - targets` reported that as a LEAVER.
+            // Element rotates on a leaver too -- that rule is correct, and it is
+            // why Orbit and Element interoperate. The difference is what counts as
+            // a leaver. Orbit counted the absence of a roster entry it had never
+            // exchanged a single key with, then rotated the shared key on that
+            // fiction. hellishsaa was connected throughout and was desynced by a
+            // dead record being evicted.
+            //
+            // Rotating for a device we never reached protects nothing: it holds no
+            // key of ours and we never delivered one, so there is no shared state
+            // to revoke. It costs everything: every live peer is moved to a new
+            // index and each must learn it before audio resumes.
+            //
+            // A real leaver is in the exchange ledger -- we delivered a key to them
+            // or they sent us one -- so it still rotates, and forward secrecy is
+            // preserved for the case that rule exists to cover.
+            val exchangePeers: Set<String> =
+                deliveredIndex.snapshot().keys.toSet() + receivedPeerIdentities
+            val departing = old - targets
+            val leavers = departing.filter { dev ->
+                CallMediaKeys.participantIdentity(dev.userId, dev.deviceId) in exchangePeers
+            }
+            val ghosts = departing - leavers.toSet()
+            if (ghosts.isNotEmpty()) {
+                println(
+                    "DEBUG [CallMediaKeyExchange] ${ghosts.size} roster entr(ies) left without ever " +
+                        "exchanging a key -- NOT counted as leavers, no rotation: " +
+                        ghosts.map { CallMediaKeys.participantIdentity(it.userId, it.deviceId) }
+                )
+            }
             when (CallMediaKeys.decideMembershipReaction(leavers.size, joiners.size, ring.ageMs())) {
                 CallMediaKeys.MembershipReaction.Rotate -> {
                     println(
