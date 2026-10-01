@@ -1,4 +1,4 @@
-package ui.screen.server
+﻿package ui.screen.server
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
@@ -50,6 +50,7 @@ import ui.model.OrbitServer
 import ui.screen.orbitGlobalShortcuts
 import ui.theme.OrbitConceptBorder
 import ui.theme.OrbitConceptDark
+import ui.theme.OrbitConceptTheme
 import ui.theme.OrbitConceptOverlay
 import ui.theme.OrbitConceptStatus
 import ui.theme.OrbitRadius
@@ -246,7 +247,7 @@ fun JoinServerScreen(
                 .shadow(16.dp, ConceptModalShape)
                 .clip(ConceptModalShape)
                 // background-color: var(--bg-chat)
-                .background(OrbitConceptDark.chat)
+                .background(OrbitConceptTheme.chat)
         ) {
             Column(
                 modifier = Modifier
@@ -297,7 +298,7 @@ fun JoinServerScreen(
                     Text(
                         text = "Join a Server",
                         style = MaterialTheme.typography.headlineSmall.copy(
-                            color = OrbitConceptDark.textPrimary,
+                            color = OrbitConceptTheme.textPrimary,
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 24.sp,
                             lineHeight = 30.sp
@@ -308,7 +309,7 @@ fun JoinServerScreen(
                     Text(
                         text = "Paste a room alias or an invite to join a server you are not in yet.",
                         style = MaterialTheme.typography.bodyMedium.copy(
-                            color = OrbitConceptDark.textMuted,
+                            color = OrbitConceptTheme.textMuted,
                             fontSize = 14.sp
                         ),
                         textAlign = TextAlign.Center,
@@ -365,7 +366,7 @@ fun JoinServerScreen(
                     Text(
                         text = "Create Your Server",
                         style = MaterialTheme.typography.headlineSmall.copy(
-                            color = OrbitConceptDark.textPrimary,
+                            color = OrbitConceptTheme.textPrimary,
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 24.sp,
                             lineHeight = 30.sp
@@ -376,7 +377,7 @@ fun JoinServerScreen(
                     Text(
                         text = "Your server is where you and your friends hang out. Make yours and start talking.",
                         style = MaterialTheme.typography.bodyMedium.copy(
-                            color = OrbitConceptDark.textMuted,
+                            color = OrbitConceptTheme.textMuted,
                             fontSize = 14.sp
                         ),
                         textAlign = TextAlign.Center,
@@ -403,7 +404,7 @@ fun JoinServerScreen(
                         Text(
                             text = "START FROM A TEMPLATE",
                             style = MaterialTheme.typography.labelSmall.copy(
-                                color = OrbitConceptDark.textMuted,
+                                color = OrbitConceptTheme.textMuted,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 12.sp
                             ),
@@ -434,7 +435,7 @@ fun JoinServerScreen(
                     Text(
                         text = "Customize Your Server",
                         style = MaterialTheme.typography.headlineSmall.copy(
-                            color = OrbitConceptDark.textPrimary,
+                            color = OrbitConceptTheme.textPrimary,
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 24.sp,
                             lineHeight = 30.sp
@@ -445,7 +446,7 @@ fun JoinServerScreen(
                     Text(
                         text = "Give your new server a personality with a name.",
                         style = MaterialTheme.typography.bodyMedium.copy(
-                            color = OrbitConceptDark.textMuted,
+                            color = OrbitConceptTheme.textMuted,
                             fontSize = 14.sp
                         ),
                         textAlign = TextAlign.Center,
@@ -459,7 +460,7 @@ fun JoinServerScreen(
                         Text(
                             text = "SERVER NAME",
                             style = MaterialTheme.typography.labelSmall.copy(
-                                color = OrbitConceptDark.textMuted,
+                                color = OrbitConceptTheme.textMuted,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 12.sp
                             )
@@ -621,7 +622,7 @@ private fun ConceptMenuItem(
         targetValue = when {
             flooded -> Color.White
             selected -> OrbitConceptDark.brand
-            else -> OrbitConceptDark.textNormal
+            else -> OrbitConceptTheme.textNormal
         },
         animationSpec = ConceptHoverSpec,
         label = "conceptMenuFg"
@@ -703,7 +704,7 @@ private fun ConceptInputField(
         label = "conceptFieldFrame"
     )
     val fieldStyle = MaterialTheme.typography.bodyMedium.copy(
-        color = OrbitConceptDark.textNormal,
+        color = OrbitConceptTheme.textNormal,
         fontSize = 15.sp
     )
 
@@ -712,7 +713,7 @@ private fun ConceptInputField(
             // border-radius: 6px
             .clip(OrbitRadius.smShape)
             // background-color: var(--bg-secondary)
-            .background(OrbitConceptDark.secondary)
+            .background(OrbitConceptTheme.secondary)
             // border: 1px solid var(--border-subtle)
             .border(1.dp, frame, OrbitRadius.smShape)
             // padding: 10px 12px
@@ -723,7 +724,7 @@ private fun ConceptInputField(
             if (value.isEmpty()) {
                 Text(
                     text = placeholder,
-                    style = fieldStyle.copy(color = OrbitConceptDark.textMuted),
+                    style = fieldStyle.copy(color = OrbitConceptTheme.textMuted),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -829,7 +830,7 @@ private fun ConceptTextButton(
     val pressed by interaction.pressSource.collectIsPressedAsState()
 
     val fg by animateColorAsState(
-        targetValue = if (hovered || pressed) Color.White else OrbitConceptDark.textNormal,
+        targetValue = if (hovered || pressed) Color.White else OrbitConceptTheme.textNormal,
         animationSpec = ConceptHoverSpec,
         label = "conceptTextBtnFg"
     )

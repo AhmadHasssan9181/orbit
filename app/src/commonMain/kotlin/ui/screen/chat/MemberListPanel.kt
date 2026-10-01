@@ -118,13 +118,23 @@ internal fun MemberListPanel(
     val showRoleSections by showRoleSectionsState
     val sections by sectionsState
 
-    Column(
+    Row(
         modifier = Modifier
             .width(OrbitMetrics.sidePanelWidth)
             .fillMaxHeight()
-            .background(t.Members_Bg)
-            .border(1.dp, t.Separator)
     ) {
+        Box(
+            modifier = Modifier
+                .width(1.dp)
+                .fillMaxHeight()
+                .background(t.Separator)
+        )
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .background(t.Members_Bg)
+        ) {
         SidePanelHeader(
             icon = ui.icons.OrbitIcons.Members,
             // "In call" while a call is live, because the list below is the call
@@ -168,6 +178,7 @@ internal fun MemberListPanel(
                 }
             }
             OrbitScrollbar(listState = listState, modifier = Modifier.align(Alignment.CenterEnd))
+        }
         }
     }
 }

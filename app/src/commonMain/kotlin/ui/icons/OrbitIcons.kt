@@ -12,26 +12,25 @@ import androidx.compose.ui.unit.dp
 object OrbitIcons {
     private var _textChannel: ImageVector? = null
     val TextChannel: ImageVector
-        get() = _textChannel ?: collectionIcon(
+        get() = _textChannel ?: discordIcon(
             name = "TextChannel",
-            originX = 80f,
-            originY = 1359f,
+            viewportSize = 24f,
             paths = listOf(
                 CollectionPath(
-                    data = """M148 1359H116C111.6 1359 108 1362.6 108 1367V1387C108 1391.4 104.4 1395 100 1395C91.16 1395 84 1402.16 84 1411V1431C84 1435.4 87.6 1439 92 1439H124C128.4 1439 132 1435.4 132 1431V1411C132 1406.6 135.6 1403 140 1403C148.84 1403 156 1395.84 156 1387V1367C156 1362.6 152.4 1359 148 1359ZM120 1431H96C93.8 1431 92 1429.2 92 1427C92 1424.8 93.8 1423 96 1423H120C122.2 1423 124 1424.8 124 1427C124 1429.2 122.2 1431 120 1431ZM120 1415H96C93.8 1415 92 1413.2 92 1411C92 1408.8 93.8 1407 96 1407H120C122.2 1407 124 1408.8 124 1411C124 1413.2 122.2 1415 120 1415ZM144 1391H120C117.8 1391 116 1389.2 116 1387C116 1384.8 117.8 1383 120 1383H144C146.2 1383 148 1384.8 148 1387C148 1389.2 146.2 1391 144 1391ZM144 1375H120C117.8 1375 116 1373.2 116 1371C116 1368.8 117.8 1367 120 1367H144C146.2 1367 148 1368.8 148 1371C148 1373.2 146.2 1375 144 1375Z"""
+                    data = "M5.886 21l1.114-4.457H3v-2.086h4.514l1.029-4.114H4.543V8.257h4.571L10.229 3.8h2.086l-1.114 4.457h4.085l1.115-4.457h2.085l-1.114 4.457H21v2.086h-4.514l-1.029 4.114h4.086V16.543h-4.572L13.857 21h-2.086l1.115-4.457H8.8l-1.114 4.457H5.886zm3.429-6.543h4.085l1.029-4.114H10.343l-1.028 4.114z",
+                    fillType = PathFillType.EvenOdd
                 ),
             )
         ).also { _textChannel = it }
 
     private var _voiceChannel: ImageVector? = null
     val VoiceChannel: ImageVector
-        get() = _voiceChannel ?: collectionIcon(
+        get() = _voiceChannel ?: discordIcon(
             name = "VoiceChannel",
-            originX = 655f,
-            originY = 698f,
+            viewportSize = 24f,
             paths = listOf(
                 CollectionPath(
-                    data = """M694.507 699.316C692.933 698.674 691.122 699.028 689.918 700.22L671.842 719.828H659.211C656.895 719.828 655 721.707 655 723.995V748.995C655 751.287 656.895 753.162 659.211 753.162H671.842L689.918 772.778C691.122 773.97 692.933 774.328 694.507 773.683C696.082 773.037 697.105 771.516 697.105 769.828V703.161C697.105 701.482 696.082 699.953 694.507 699.316ZM705.526 707.328V715.661C717.135 715.661 726.579 725.011 726.579 736.495C726.579 747.982 717.135 757.328 705.526 757.328V765.662C721.779 765.662 735 752.582 735 736.495C735 720.415 721.779 707.328 705.526 707.328ZM705.526 723.995C712.491 723.995 718.158 729.607 718.158 736.495C718.158 743.391 712.491 748.995 705.526 748.995V740.662C707.846 740.662 709.737 738.791 709.737 736.495C709.737 734.199 707.846 732.328 705.526 732.328V723.995Z"""
+                    data = "M11.383 3.079C11.009 2.925 10.579 3.01 10.293 3.296L6 7.589H3C2.447 7.589 2 8.037 2 8.589v6.822C2 15.963 2.447 16.411 3 16.411h3l4.293 4.293C10.579 20.99 11.009 21.075 11.383 20.921 11.757 20.767 12 20.404 12 20V4c0-.404-.243-.767-.617-.921zM14 6v2c2.209 0 4 1.791 4 4s-1.791 4-4 4v2c3.314 0 6-2.686 6-6s-2.686-6-6-6zm0 4v4c1.105 0 2-.895 2-2s-.895-2-2-2z"
                 ),
             )
         ).also { _voiceChannel = it }
@@ -214,27 +213,25 @@ object OrbitIcons {
 
     private var _pin: ImageVector? = null
     val Pin: ImageVector
-        get() = _pin ?: collectionIcon(
+        get() = _pin ?: discordIcon(
             name = "Pin",
-            originX = 195f,
-            originY = 1359f,
+            viewportSize = 24f,
             paths = listOf(
-                CollectionPath("""M275 1400.48L233.521 1359L227.592 1364.92L233.521 1370.85L212.779 1391.59V1391.6L206.85 1385.67L200.925 1391.6L218.704 1409.37L195 1433.07L200.925 1439L224.629 1415.3L242.408 1433.07L248.333 1427.15L242.408 1421.22L263.146 1400.48H263.15L269.075 1406.4L275 1400.48Z"""),
+                CollectionPath(
+                    data = "M19.293 6.293l-1.586-1.586a1 1 0 0 0-1.414 0L14.5 6.5l-2.793-2.793a1 1 0 0 0-1.414 0l-1.5 1.5a1 1 0 0 0 0 1.414L10.586 8.414 4.293 14.707a1 1 0 0 0 0 1.414l1.586 1.586a1 1 0 0 0 1.414 0l6.293-6.293 1.793 1.793a1 1 0 0 0 1.414 0l1.5-1.5a1 1 0 0 0 0-1.414L14.5 8.914l1.793-1.793a1 1 0 0 0 0-1.414l1.414-1.414a1 1 0 0 0 0-1.414zM3 21l4-1-3-3-1 4z"
+                ),
             )
         ).also { _pin = it }
 
     private var _members: ImageVector? = null
     val Members: ImageVector
-        get() = _members ?: collectionIcon(
+        get() = _members ?: discordIcon(
             name = "Members",
-            originX = 425f,
-            originY = 1629f,
+            viewportSize = 24f,
             paths = listOf(
                 CollectionPath(
-                    data = """M465 1709C466.953 1709 468.874 1708.86 470.752 1708.59C467.166 1704.4 465 1698.95 465 1693C465 1691.64 465.114 1690.3 465.332 1689H441V1685.1C441 1677.3 457 1673 465 1673C467.486 1673 470.744 1673.42 474.055 1674.22C478.155 1670.96 483.35 1669 489 1669C494.951 1669 500.396 1671.17 504.59 1674.76C504.86 1672.88 505 1670.96 505 1669C505 1646.91 487.091 1629 465 1629C442.909 1629 425 1646.91 425 1669C425 1691.1 442.909 1709 465 1709ZM465 1669C471.64 1669 477 1663.64 477 1657C477 1650.36 471.64 1645 465 1645C458.36 1645 453 1650.36 453 1657C453 1663.64 458.36 1669 465 1669Z""",
-                    fillType = PathFillType.EvenOdd
+                    data = "M14 8a4 4 0 1 0-8 0 4 4 0 0 0 8 0zm-2 0a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm7 12v-1.5c0-2.485-2.015-4.5-4.5-4.5h-9C3.015 14 1 16.015 1 18.5V20h18zm-2-1.5H3c.245-1.42 1.48-2.5 3-2.5h8c1.52 0 2.755 1.08 3 2.5z"
                 ),
-                CollectionPath("""M488.797 1709C497.746 1709 505 1701.75 505 1692.8C505 1683.85 497.746 1676.6 488.797 1676.6C479.849 1676.6 472.595 1683.85 472.595 1692.8C472.595 1701.75 479.849 1709 488.797 1709Z"""),
             )
         ).also { _members = it }
 
@@ -265,6 +262,26 @@ private data class CollectionPath(
     val data: String,
     val fillType: PathFillType = PathFillType.NonZero
 )
+
+private fun discordIcon(
+    name: String,
+    viewportSize: Float = 24f,
+    paths: List<CollectionPath>
+): ImageVector = ImageVector.Builder(
+    name = name,
+    defaultWidth = 24.dp,
+    defaultHeight = 24.dp,
+    viewportWidth = viewportSize,
+    viewportHeight = viewportSize
+).apply {
+    paths.forEach { path ->
+        addPath(
+            pathData = PathParser().parsePathString(path.data).toNodes(),
+            pathFillType = path.fillType,
+            fill = SolidColor(Color.Black)
+        )
+    }
+}.build()
 
 private fun collectionIcon(
     name: String,

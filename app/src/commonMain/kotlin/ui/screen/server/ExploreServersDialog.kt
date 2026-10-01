@@ -1,4 +1,4 @@
-package ui.screen.server
+﻿package ui.screen.server
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
@@ -74,6 +74,7 @@ import ui.model.OrbitServer
 import ui.screen.orbitGlobalShortcuts
 import ui.theme.OrbitConceptBorder
 import ui.theme.OrbitConceptDark
+import ui.theme.OrbitConceptTheme
 import ui.theme.OrbitSpace
 
 // ── Concept modal geometry ────────────────────────────────────────────────
@@ -232,7 +233,7 @@ fun ExploreServersDialog(
                 .shadow(16.dp, ExploreCardShape)
                 .clip(ExploreCardShape)
                 // background-color: var(--bg-chat)
-                .background(OrbitConceptDark.chat)
+                .background(OrbitConceptTheme.chat)
         ) {
             ExploreHero(onClose = onClose)
 
@@ -429,14 +430,14 @@ private fun ExploreSearchField(
         label = "exploreFieldFrame"
     )
     val fieldStyle = MaterialTheme.typography.bodyMedium.copy(
-        color = OrbitConceptDark.textNormal,
+        color = OrbitConceptTheme.textNormal,
         fontSize = 15.sp
     )
 
     Box(
         modifier = modifier
             .clip(ExploreSearchShape)
-            .background(OrbitConceptDark.secondary)
+            .background(OrbitConceptTheme.secondary)
             .border(1.dp, frame, ExploreSearchShape)
             .padding(horizontal = 14.dp, vertical = 10.dp),
         contentAlignment = Alignment.CenterStart
@@ -446,7 +447,7 @@ private fun ExploreSearchField(
                 if (value.isEmpty()) {
                     Text(
                         text = placeholder,
-                        style = fieldStyle.copy(color = OrbitConceptDark.textMuted),
+                        style = fieldStyle.copy(color = OrbitConceptTheme.textMuted),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -471,7 +472,7 @@ private fun ExploreSearchField(
             Icon(
                 imageVector = Icons.Default.Search,
                 contentDescription = null,
-                tint = OrbitConceptDark.textMuted,
+                tint = OrbitConceptTheme.textMuted,
                 modifier = Modifier.size(18.dp)
             )
         }
@@ -494,7 +495,7 @@ private fun ExploreServerCard(space: OrbitServer, onOpen: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .clip(ExploreCardShape)
-            .background(OrbitConceptDark.secondary)
+            .background(OrbitConceptTheme.secondary)
             .border(1.dp, OrbitConceptBorder.subtle(), ExploreCardShape)
     ) {
         Box(
@@ -537,7 +538,7 @@ private fun ExploreServerCard(space: OrbitServer, onOpen: () -> Unit) {
                         modifier = Modifier
                             .size(48.dp)
                             .clip(ExploreIconShape)
-                            .border(3.dp, OrbitConceptDark.secondary, ExploreIconShape)
+                            .border(3.dp, OrbitConceptTheme.secondary, ExploreIconShape)
                     )
                 } else {
                     OrbitServerAssetIcon(
@@ -546,7 +547,7 @@ private fun ExploreServerCard(space: OrbitServer, onOpen: () -> Unit) {
                         modifier = Modifier
                             .size(48.dp)
                             .clip(ExploreIconShape)
-                            .border(3.dp, OrbitConceptDark.secondary, ExploreIconShape)
+                            .border(3.dp, OrbitConceptTheme.secondary, ExploreIconShape)
                     )
                 }
             }
@@ -567,7 +568,7 @@ private fun ExploreServerCard(space: OrbitServer, onOpen: () -> Unit) {
                 Text(
                     text = space.name,
                     style = MaterialTheme.typography.titleSmall.copy(
-                        color = OrbitConceptDark.textPrimary,
+                        color = OrbitConceptTheme.textPrimary,
                         fontWeight = FontWeight.Bold,
                         fontSize = 16.sp,
                         lineHeight = 22.sp
@@ -585,7 +586,7 @@ private fun ExploreServerCard(space: OrbitServer, onOpen: () -> Unit) {
             Text(
                 text = space.description.ifBlank { "No description" },
                 style = MaterialTheme.typography.bodySmall.copy(
-                    color = OrbitConceptDark.textMuted,
+                    color = OrbitConceptTheme.textMuted,
                     fontSize = 13.sp,
                     // line-height: 1.4
                     lineHeight = 18.2.sp
@@ -602,7 +603,7 @@ private fun ExploreServerCard(space: OrbitServer, onOpen: () -> Unit) {
             Text(
                 text = space.id,
                 style = MaterialTheme.typography.labelSmall.copy(
-                    color = OrbitConceptDark.textMuted,
+                    color = OrbitConceptTheme.textMuted,
                     fontSize = 12.sp
                 ),
                 maxLines = 1,
@@ -630,7 +631,7 @@ private fun ExploreJoinCard(target: String, isJoining: Boolean, onJoin: () -> Un
         modifier = Modifier
             .fillMaxWidth()
             .clip(ExploreCardShape)
-            .background(OrbitConceptDark.secondary)
+            .background(OrbitConceptTheme.secondary)
             .border(1.dp, OrbitConceptBorder.subtle(), ExploreCardShape)
     ) {
         Box(
@@ -651,7 +652,7 @@ private fun ExploreJoinCard(target: String, isJoining: Boolean, onJoin: () -> Un
                     .size(48.dp)
                     .clip(ExploreIconShape)
                     .background(OrbitConceptDark.brand.copy(alpha = 0.35f))
-                    .border(3.dp, OrbitConceptDark.secondary, ExploreIconShape),
+                    .border(3.dp, OrbitConceptTheme.secondary, ExploreIconShape),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
@@ -676,7 +677,7 @@ private fun ExploreJoinCard(target: String, isJoining: Boolean, onJoin: () -> Un
                 Text(
                     text = target,
                     style = MaterialTheme.typography.titleSmall.copy(
-                        color = OrbitConceptDark.textPrimary,
+                        color = OrbitConceptTheme.textPrimary,
                         fontWeight = FontWeight.Bold,
                         fontSize = 16.sp,
                         lineHeight = 22.sp
@@ -688,7 +689,7 @@ private fun ExploreJoinCard(target: String, isJoining: Boolean, onJoin: () -> Un
             Text(
                 text = "A room alias or invite you are not in yet. Joining here adds it to your spaces.",
                 style = MaterialTheme.typography.bodySmall.copy(
-                    color = OrbitConceptDark.textMuted,
+                    color = OrbitConceptTheme.textMuted,
                     fontSize = 13.sp,
                     lineHeight = 18.2.sp
                 ),

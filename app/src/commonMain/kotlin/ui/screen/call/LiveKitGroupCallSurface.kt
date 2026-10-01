@@ -134,13 +134,17 @@ fun LiveKitGroupCallSurface(
     // everywhere else in the app.
     var isStageMaximized by remember { mutableStateOf(false) }
     DisposableEffect(isStageMaximized) {
+        CallShortcuts.isStageMaximized = isStageMaximized
         val exit: (() -> Unit)? = if (isStageMaximized) {
             { isStageMaximized = false }
         } else {
             null
         }
         CallShortcuts.onExitMaximizedStage = exit
-        onDispose { CallShortcuts.onExitMaximizedStage = null }
+        onDispose {
+            CallShortcuts.onExitMaximizedStage = null
+            CallShortcuts.isStageMaximized = false
+        }
     }
     LaunchedEffect(callState) {
         if (callState == CallState.IDLE || callState == CallState.ENDED) {
@@ -177,6 +181,16 @@ fun LiveKitGroupCallSurface(
             }
             val cameraTracks = activeTracks.values.filter { !it.isScreenShare }
             val screenShareTracks = activeTracks.values.filter { it.isScreenShare }
+
+            // Which camera tracks have actually delivered a frame.
+            //
+            // This is the fix for a camera-off participant rendering as a
+            // placeholder forever. LiveKit announces the publication either way,
+            // so the tile always has a renderer, and the renderer draws a spinner
+            // because no frame ever arrives. Reading the frame store lets the tile
+            // tell "not yet" from "not coming" and fall back to the avatar.
+            val framesByTrack by LiveKitRemoteVideoFrameStore.framesByTrack.collectAsState()
+            val frameWaitedMs = rememberFrameWaitMs(cameraTracks.any { framesByTrack[it.trackSid] != null })
             val identitiesWithVideo = cameraTracks.flatMap { 
                 listOf(it.participantIdentity, it.participantIdentity.substringBeforeLast(':')) 
             }.toSet()
@@ -320,6 +334,10 @@ fun LiveKitGroupCallSurface(
                             name = tileName(track.participantIdentity),
                             renderer = LiveKitVideoTileRenderer.RemoteTrack(track.trackSid, isScreenShare = false),
                             isScreenShare = false,
+                            hasVideoFrameYet = videoPlaceholder(
+                                hasFrame = framesByTrack[track.trackSid] != null,
+                                waitedMs = frameWaitedMs
+                            ) != VideoPlaceholder.Avatar,
                             isMicMuted = identityIsMicMuted(track.participantIdentity, remoteMicMutedIds),
                             participantIdentity = track.participantIdentity,
                             qualitySample = connectionQuality[track.participantIdentity],
@@ -451,36 +469,6 @@ fun LiveKitGroupCallSurface(
         // Built from displayMembers, never the raw Matrix roster: that roster is a
         // membership record, so counting it is how a two-person call came to
         // report eight participants.
-        val callLabel = remoteFallbackName.ifBlank { "Voice call" }
-        val visibleParticipants = remember(displayMembers, remoteParticipants) {
-            (displayMembers.map { it.id } + remoteParticipants)
-                .filter { it.isNotBlank() }
-                .distinct()
-                .size
-                .coerceAtLeast(1)
-        }
-        if (!isStageMaximized) {
-            VoiceConnectedPanel(
-                channelName = callLabel,
-                participantCount = visibleParticipants,
-                isMuted = isMuted,
-                isScreenSharing = isScreenSharing,
-                isVideoEnabled = isVideoEnabled,
-                onToggleMute = { callManager.toggleMute(!isMuted) },
-                onToggleScreenShare = {
-                    // The panel button starts a share through the same source
-                    // picker the dock uses, and stops a running one directly --
-                    // the same contract as `onToggleStream`.
-                    if (isScreenSharing) callManager.stopScreenShare() else showScreenShareDialog = true
-                },
-                onToggleCamera = { callManager.toggleVideo(!isVideoEnabled) },
-                onToggleSoundboard = { showSoundboard = !showSoundboard },
-                onDisconnect = { callManager.endCall() },
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(start = 24.dp, bottom = 24.dp)
-            )
-        }
     }
 }
 

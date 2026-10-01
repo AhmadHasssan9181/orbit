@@ -25,6 +25,8 @@ object CallShortcuts {
     // maximised, so Escape keeps meaning "close whatever is open" everywhere
     // else in the app -- the concept's tooltip says "Exit Full Screen (ESC)",
     // which is a claim about Escape, not a global binding.
+    // Tracks whether any call stage/video stream is currently maximized/fullscreen.
+    var isStageMaximized by mutableStateOf(false)
     var onExitMaximizedStage: (() -> Unit)? = null
 
     // App navigation (registered by OrbitApp's shell): Alt+←/→ history and
