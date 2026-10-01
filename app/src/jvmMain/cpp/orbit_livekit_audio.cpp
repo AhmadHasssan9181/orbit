@@ -409,6 +409,38 @@ bool g_rawDisconnecting = false;
 bool g_e2eeRequested = false;
 std::map<std::string, std::pair<std::vector<std::uint8_t>, int>> g_participantMediaKeys;
 
+// The key this participant is ACTIVELY TRANSMITTING with.
+//
+// Every sender-side counter Orbit had was satisfiable by a peer hearing silence:
+// capture could show tone, the encoder could emit RTP, packets and bytes could
+// climb, the track could report encryption=gcm, and the key-exchange log could
+// show the correct index being distributed and installed. All of those are true
+// while the peer still hears nothing, because none of them observe the one thing
+// that matters -- whether the frames leaving this machine are encrypted with the
+// key the peer is holding.
+//
+// The index alone is not enough either: two peers can each be sitting on a
+// DIFFERENT index and every number above still looks perfect. So the fingerprint
+// travels too. It is an FNV-1a over the key bytes, truncated -- not a secret, it
+// exists so two logs can be compared by eye and agree or disagree about which key
+// material is in play. Compare this against what the far end reports installing
+// and a cross-machine desync stops being a guess.
+//
+// Written only in nativeSetParticipantMediaKey when the identity being installed
+// is the LOCAL participant; read by TXSTAT under SessionLock.
+std::string g_ownKeyIdentity;
+int g_ownKeyIndex = -1;
+std::uint32_t g_ownKeyFingerprint = 0;
+
+std::uint32_t fingerprintKeyBytes(const std::vector<std::uint8_t>& bytes) {
+    std::uint32_t hash = 2166136261u;
+    for (const std::uint8_t byte : bytes) {
+        hash ^= byte;
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
 bool isSupportedAudioChannels(jint channels) {
     return channels == kChannels || channels == kMaxChannels;
 }
@@ -2770,6 +2802,9 @@ void logTxStatsIfDue() {
         std::shared_ptr<livekit::LocalAudioTrack> track;
         bool muted = false;
         bool accepting = false;
+        bool e2eeRequested = false;
+        int ownKeyIndex = -1;
+        std::uint32_t ownKeyFingerprint = 0;
         long long captureFrames = 0;
         {
             // g_sessionMutex is a timed_mutex, and the rest of this file takes it
@@ -2777,6 +2812,9 @@ void logTxStatsIfDue() {
             SessionLock lock;
             track = g_audioTrack;
             accepting = g_acceptingFrames;
+            e2eeRequested = g_e2eeRequested;
+            ownKeyIndex = g_ownKeyIndex;
+            ownKeyFingerprint = g_ownKeyFingerprint;
             // workerFramesCaptured_ is the counter the existing `audio source stats` line
                     // already reports, so TXSTAT and that line agree by
                     // construction. captureCount_ is private and has no accessor.
@@ -2835,6 +2873,14 @@ void logTxStatsIfDue() {
                 verdict = "no-outbound";
             } else if (packetsSent == 0) {
                 verdict = "stalled";
+            } else if (e2eeRequested && ownKeyIndex < 0) {
+                // Packets are on the wire and this is an encrypted room, but no
+                // local encryption key is installed. Every other counter reads
+                // healthy here -- capture tone, encoder RTP, rising bytesSent,
+                // publicationEncryption=gcm -- and the peer hears nothing, because
+                // what is leaving the machine is not decryptable. Previously this
+                // state was indistinguishable from `sending`.
+                verdict = "sending-unkeyed";
             } else {
                 verdict = "sending";
             }
@@ -2847,6 +2893,8 @@ void logTxStatsIfDue() {
                       << " accepting=" << (accepting ? "true" : "false")
                       << " captured=" << captureFrames
                       << " trackSid=" << track->sid()
+                      << " outKeyIndex=" << ownKeyIndex
+                      << std::hex << " outKeyFp=" << ownKeyFingerprint << std::dec
                       << std::endl;
         } catch (const std::exception& error) {
             std::cout << "DEBUG [OrbitLiveKitAudio] TXSTAT verdict=stats-threw what="
@@ -6079,6 +6127,11 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeDestroySession(JNIEnv* env, jclass, jlo
     // connectRoom() reuses that to replay the pre-connect key cache into a
     // fresh E2EE manager.
     g_participantMediaKeys.clear();
+    // Our transmit key is gone with the cache. Leaving the old index in place
+    // would make TXSTAT keep claiming a key we are no longer encrypting with.
+    g_ownKeyIdentity.clear();
+    g_ownKeyIndex = -1;
+    g_ownKeyFingerprint = 0;
     {
         std::lock_guard<std::mutex> gainLock(g_participantGainsMutex);
         g_participantGains.clear();
@@ -6536,6 +6589,23 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetParticipantMediaKey(
                 std::cout << "DEBUG [OrbitLiveKitAudio] e2ee participant key installed identity=" << identityString
                           << " keyIndex=" << keyIndex
                           << " keyLen=" << keyLength << std::endl;
+
+                // Is this the key we are TRANSMITTING with? Only the local
+                // participant's key is used to encrypt outgoing media; every other
+                // entry here is for decrypting somebody else. Recording which one is
+                // ours is what lets TXSTAT report the transmit key rather than
+                // letting the peer-side desync hide behind healthy packet counters.
+                if (g_room->localParticipant() != nullptr) {
+                    const std::string localIdentity = g_room->localParticipant()->identity();
+                    if (identityString == localIdentity) {
+                        g_ownKeyIdentity = identityString;
+                        g_ownKeyIndex = static_cast<int>(keyIndex);
+                        g_ownKeyFingerprint = fingerprintKeyBytes(keyBytes);
+                        std::cout << "DEBUG [OrbitLiveKitAudio] TXKEY outgoing key armed keyIndex=" << keyIndex
+                                  << " fingerprint=" << std::hex << g_ownKeyFingerprint << std::dec
+                                  << " identity=" << identityString << std::endl;
+                    }
+                }
                 return kStatusOk;
             }
         }
@@ -6598,6 +6668,9 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeDisconnect(
         resetRoomLocked();
         // Hangup is a real boundary; connectRoom() is not.
         g_participantMediaKeys.clear();
+        g_ownKeyIdentity.clear();
+        g_ownKeyIndex = -1;
+        g_ownKeyFingerprint = 0;
         {
             std::lock_guard<std::mutex> gainLock(g_participantGainsMutex);
             g_participantGains.clear();
