@@ -1,0 +1,31 @@
+Trixnity
+Copyright connect2x GmbH
+
+This folder contains a copy of Trixnity, the Kotlin Multiplatform SDK for Matrix,
+under `commonMain/de/connect2x/trixnity/client`. It is vendored here as a
+developer reference so the SDK's behaviour can be read without unpacking the Gradle
+cache.
+
+Upstream: https://github.com/connect2x-de/trixnity
+          (mirror of https://gitlab.com/connect2x/trixnity/trixnity)
+
+Licensed under the Apache License, Version 2.0.
+
+LOCAL MODIFICATIONS
+-------------------
+None. The copy here is unmodified upstream source. Orbit uses Trixnity through its
+published Maven artifacts, not from this folder; this tree is read-only reference
+material.
+
+A second, near-identical copy used to live at `trixnity_sources/`. It differed from
+this tree by one modified condition in MatrixClient.kt, which inverted the guard
+while leaving its own error message unchanged:
+
+    require(newUserId != userId || newDeviceId != deviceId) {
+        "...must match stored authenticated userId ..."
+
+The condition required the two ids to DIFFER while the message said they must match.
+Neither folder is compiled -- only `:webrtc-java-lib` is a real Gradle module -- so
+this was never in a shipped binary, but a reference tree that contradicts its own
+message is worse than no reference tree. The modified copy was removed rather than
+corrected, since the unmodified upstream text is the correct one.

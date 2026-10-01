@@ -1,0 +1,64 @@
+Orbit
+Copyright the Orbit contributors
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product bundles third-party software. Each bundled component keeps its own
+license and, where the upstream provides one, its own NOTICE file alongside it.
+
+BUNDLED COMPONENTS
+------------------
+
+Trixnity -- Kotlin Multiplatform SDK for Matrix
+  Copyright connect2x GmbH. Licensed under the Apache License, Version 2.0.
+  Upstream: https://github.com/connect2x-de/trixnity
+  Used as a published Maven dependency. An unmodified copy of part of the client
+  module is vendored at `trixnity-src/` as developer reference material only; it is
+  not compiled and is not on the runtime classpath.
+  Full text and notes: `trixnity-src/LICENSE`, `trixnity-src/NOTICE`.
+
+webrtc-java -- WebRTC for desktop platforms running Java
+  Copyright 2019 Alex Andres. Licensed under the Apache License, Version 2.0.
+  Upstream: https://github.com/devopvoid/webrtc-java
+  `webrtc-java-lib/` is Orbit's in-tree build of the Java API layer and IS compiled
+  (`include(":webrtc-java-lib")` in settings.gradle.kts). `webrtc_sources/` is the
+  matching set of Java interface sources, kept for reference.
+  Full text and notes: `webrtc-java-lib/LICENSE`, `webrtc-java-lib/NOTICE`.
+
+webrtc-java fork -- Orbit's modifications
+  `webrtc-java-fork/` carries the Apache-2.0 LICENSE and NOTICE inherited from
+  upstream. It also contains the JNI layer (`webrtc-jni/`) and a bundled build of
+  WebRTC itself.
+  Full text and notes: `webrtc-java-fork/LICENSE`, `webrtc-java-fork/NOTICE`.
+
+WebRTC
+  Bundled inside `webrtc-java-fork/` and shipped in the native library
+  (`webrtc-java-orbit-windows-x86_64.dll`). Available under a 3-clause BSD license.
+  Details: https://webrtc.github.io/webrtc-org/license
+
+LiveKit
+  Bundled as `livekit.dll` / `livekit_ffi.dll`. Licensed under the Apache License,
+  Version 2.0. Upstream: https://github.com/livekit/client-sdk-flutter
+  Orbit's own native LiveKit media session (`orbit_livekit_audio.dll`,
+  `orbit_livekit_video.dll`) is original work, licensed under the same terms as the
+  rest of Orbit.
+
+NOTE ON MODIFICATIONS
+---------------------
+
+Apache-2.0 section 4(b) requires modified files to carry prominent notices stating
+the change. Orbit's modifications to `webrtc-java-fork/` are scoped to that
+directory and its README documents them; the vendored reference trees listed above
+(`trixnity-src/`, `webrtc-java-lib/`, `webrtc_sources/`) are unmodified upstream
+source and say so in their own NOTICE files.
+
+THIRD-PARTY DEPENDENCIES
+------------------------
+
+Orbit depends on, but does not redistribute source for, Kotlin, Compose Multiplatform,
+Trixnity and its transitive Ktor/kotlinx.serialization/Koin dependencies, JNA, Okio
+and the Room, SQLCipher and Trixnity crypto stack. Each remains under its own license
+as published; see the dependency declarations in `app/build.gradle.kts` and
+`settings.gradle.kts`. The packaged Windows installer additionally bundles a Java
+runtime under the Eclipse Temurin/Adoptium terms, whose license files ship in
+`runtime/legal/` inside the installed application.
