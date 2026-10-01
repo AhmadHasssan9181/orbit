@@ -406,7 +406,34 @@ std::atomic<jlong> g_rawEpochForCallbacks{0};
 bool g_rawDisconnecting = false;
 // Set via nativeConfigureE2EE before connect; survives reconnects until the
 // next configure call. Read in connectRoom under g_sessionMutex.
-bool g_e2eeRequested = false;
+// Module-level E2EE intent, read by connectRoom when it builds RoomOptions.
+//
+// Atomic, and deliberately NOT guarded by g_sessionMutex.
+//
+// This flag used to be a plain bool written under g_sessionMutex by
+// nativeConfigureE2EE. That made a pre-connect call contend with session
+// teardown, and the contention was not symmetric: teardown legitimately holds
+// the mutex for a long time (it joins reader threads), while this call only
+// needs to store one boolean whose every reader is already inside connectRoom
+// holding the lock anyway.
+//
+// The cost of that unnecessary lock was a hang on rejoin. Reported as "the app
+// is stuck" after Orbit itself disconnected and reconnected. The log shows the
+// join stalling immediately after the last line that precedes this call:
+//
+//     MatrixRTC membership visible. Connecting native media at wss://...
+//     (nothing further, for the remainder of the call)
+//
+// The line that would follow is printed by the caller AFTER this returns, so a
+// stall here is silent -- no error, no warning, no retry, and no watchdog. The
+// app sits on a spinner with the capture worker already dead (mic.read=0 for
+// the rest of the run) and a heap that keeps climbing, which reads as "hung"
+// rather than "failed".
+//
+// Atomic removes the dependency entirely. Storing a bool needs mutual exclusion
+// against other stores, not against a reader that is itself serialized by the
+// session mutex.
+std::atomic<bool> g_e2eeRequested{false};
 std::map<std::string, std::pair<std::vector<std::uint8_t>, int>> g_participantMediaKeys;
 
 // The key this participant is ACTIVELY TRANSMITTING with.
@@ -2277,13 +2304,97 @@ void stopReader(const std::shared_ptr<RemoteAudioReader>& reader) {
     }
 }
 
-void stopAllRemoteReadersLocked() {
-    auto readers = std::move(g_remoteAudioReaders);
-    g_remoteAudioReaders.clear();
-    for (const auto& entry : readers) {
-        stopReader(entry.second);
+// Joining a reader while holding the session mutex is the deadlock behind
+// "the app is stuck" on rejoin. Teardown called join() under the lock; the reader
+// being joined needs that same lock in its exit path, so neither side could make
+// progress, and the next call touching the mutex -- the rejoin's configureE2EE --
+// blocked forever with no diagnostic. The log showed exactly that: the join printed
+// its last pre-connect line and then nothing for the rest of the call.
+//
+// Signalling is what actually unblocks a reader (running=false plus closing the
+// stream is what makes read() return), so signal under the lock and join after
+// releasing it.
+//
+// Readers removed from the map but not yet joined. Populated under
+// g_sessionMutex, drained by the reaper thread below with no lock held.
+std::vector<std::shared_ptr<RemoteAudioReader>> g_pendingReaderJoins;
+std::atomic<bool> g_readerReaperRunning{false};
+
+// Joins readers that were already signalled and removed from the map.
+//
+// This exists because stopAllRemoteReadersLocked used to join() inline, while its
+// caller held g_sessionMutex. That is a deadlock rather than a slow path: the
+// reader being joined takes the same mutex in its exit path, so teardown waits
+// for a thread that is waiting for the lock teardown is holding, and the next
+// caller that touches the mutex -- a rejoin's configureE2EE -- waits forever.
+//
+// Removing the entry BEFORE joining is what makes this safe, and it is the
+// invariant the reader's own exit path already relies on: it detaches its thread
+// only when its map erase succeeds, reasoning that a successful erase proves the
+// map held the last other owner. Here the erase fails by construction, so the
+// reader never detaches and this join is well-defined.
+//
+// A shared_ptr per reader keeps each alive across the wait, so nothing is
+// destroyed while its own thread is still running.
+void drainPendingReaderJoins() {
+    std::vector<std::shared_ptr<RemoteAudioReader>> readers;
+    {
+        SessionLock lock;
+        readers.swap(g_pendingReaderJoins);
+        g_audioMixer.clearParticipants();
     }
-    g_audioMixer.clearParticipants();
+    for (const auto& reader : readers) {
+        stopReader(reader);
+    }
+}
+
+void ensureReaderReaper() {
+    bool expected = false;
+    if (!g_readerReaperRunning.compare_exchange_strong(expected, true)) {
+        return;
+    }
+    std::thread([] {
+        try {
+            while (true) {
+                drainPendingReaderJoins();
+                if (g_pendingReaderJoins.empty()) {
+                    // Nothing left to do. Sleep briefly rather than spinning:
+                    // this thread exists only for the rare teardown path.
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                    {
+                        SessionLock lock;
+                        if (g_pendingReaderJoins.empty()) {
+                            g_readerReaperRunning.store(false, std::memory_order_release);
+                            return;
+                        }
+                    }
+                }
+            }
+        } catch (const std::exception& error) {
+            std::cerr << "ERROR [OrbitLiveKitAudio] reader reaper threw: "
+                      << error.what() << std::endl;
+            g_readerReaperRunning.store(false, std::memory_order_release);
+        }
+    }).detach();
+}
+
+// Signal every remote reader and hand it to the reaper. Call with
+// g_sessionMutex held; the JOINING happens later with no lock held.
+void stopAllRemoteReadersLocked() {
+    for (const auto& entry : g_remoteAudioReaders) {
+        if (entry.second == nullptr) {
+            continue;
+        }
+        // Signalling is what actually unblocks the thread: running=false plus
+        // closing the stream is what makes read() return.
+        entry.second->running = false;
+        if (entry.second->stream != nullptr) {
+            entry.second->stream->close();
+        }
+        g_pendingReaderJoins.push_back(entry.second);
+    }
+    g_remoteAudioReaders.clear();
+    ensureReaderReaper();
 }
 
 // H6 recovery: rebuild one remote audio receiver by toggling its publication
@@ -2812,7 +2923,7 @@ void logTxStatsIfDue() {
             SessionLock lock;
             track = g_audioTrack;
             accepting = g_acceptingFrames;
-            e2eeRequested = g_e2eeRequested;
+            e2eeRequested = g_e2eeRequested.load(std::memory_order_relaxed);
             ownKeyIndex = g_ownKeyIndex;
             ownKeyFingerprint = g_ownKeyFingerprint;
             // workerFramesCaptured_ is the counter the existing `audio source stats` line
@@ -5500,7 +5611,7 @@ bool connectRoom(
         livekit::RoomOptions options;
         options.auto_subscribe = true;
         options.dynacast = false;
-        if (g_e2eeRequested) {
+        if (g_e2eeRequested.load(std::memory_order_relaxed)) {
             livekit::E2EEOptions e2eeOptions;
             e2eeOptions.encryption_type = livekit::EncryptionType::GCM;
             // Element Call's JS worker always derives frame keys via HKDF-SHA256;
@@ -5522,7 +5633,7 @@ bool connectRoom(
             return false;
         }
 
-        if (g_e2eeRequested) {
+        if (g_e2eeRequested.load(std::memory_order_relaxed)) {
             auto* e2eeManager = g_room->e2eeManager();
             if (e2eeManager != nullptr) {
                 e2eeManager->setEnabled(true);
@@ -5754,7 +5865,7 @@ Java_livekit_LiveKitNativeAudioBridge_nativePublishAudio(
         publishOptions.dtx = true;
         // RED doesn't work with frame encryption (see livekit-client options.ts);
         // Element publishes with red=false in E2EE rooms, so mirror that.
-        const bool e2eeActive = g_e2eeRequested;
+        const bool e2eeActive = g_e2eeRequested.load(std::memory_order_relaxed);
         publishOptions.red = !e2eeActive;
         livekit::AudioEncodingOptions audioEncoding;
         audioEncoding.max_bitrate = static_cast<std::uint64_t>(effectiveMaxBitrateBps);
@@ -6530,10 +6641,12 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeConfigureE2EE(
     // Set the flag unconditionally. If a session id is supplied and it is not
     // merely "not yet created", the caller still gets told.
     const bool haveSession = isRawSessionValid(sessionId);
-    {
-        std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
-        g_e2eeRequested = enabled == JNI_TRUE;
-    }
+    // No g_sessionMutex here, deliberately -- see g_e2eeRequested. This runs
+    // BEFORE the session exists, on the rejoin path, and used to block behind a
+    // previous session's teardown. That teardown joins reader threads while
+    // holding the mutex; a reader's exit path needs the same mutex, so the wait
+    // could not complete and the rejoin hung with no diagnostic of any kind.
+    g_e2eeRequested.store(enabled == JNI_TRUE, std::memory_order_relaxed);
     std::cout << "DEBUG [OrbitLiveKitAudio] e2ee configured requested="
               << (enabled == JNI_TRUE ? "true" : "false")
               << " liveSession=" << (haveSession ? "yes" : "no (pre-connect arming)")
