@@ -1279,7 +1279,20 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         remoteVideoRescanJob = scope.launch {
             while (isActive) {
                 delay(REMOTE_VIDEO_RESCAN_INTERVAL_MS)
-                if (sessionId == 0L || !readinessCache.connected) break
+                // Terminal only when the session is gone. A terminal teardown
+                // cancels this job in disconnect(), so `sessionId == 0L` here
+                // means there is nothing left to scan.
+                if (sessionId == 0L) break
+                // `continue`, NOT `break`. A reconnect sets the state to
+                // Reconnecting before it re-arms, so `connected` is briefly
+                // false on every refresh -- and this loop used to exit on that,
+                // permanently and silently. The roster is rebuilt by this scan,
+                // so a loop that gave up during the refresh left the call with
+                // whatever the store happened to be holding, and nothing
+                // restarts the job except a fully successful reconnect. Skip the
+                // tick instead: the session is still ours and the next one is
+                // two seconds away.
+                if (!readinessCache.connected) continue
                 // Result intentionally ignored: stale-epoch during a reconnect window
                 // self-heals on the next tick; terminal teardown cancels this job.
                 bridge.rescanRemoteVideoTracks(sessionId, epoch)

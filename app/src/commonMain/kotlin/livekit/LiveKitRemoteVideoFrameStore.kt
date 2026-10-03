@@ -483,6 +483,10 @@ object LiveKitRemoteVideoFrameStore {
         // in updateFrame: ordering alone never protected the empty maps, because the
         // reader thread had already passed its check.
         var framesThisCall = 0L
+        // Captured before the reset, because after it there is nothing left to
+        // count. See the WARN below for why this is captured at all.
+        val participantsLost = _remoteParticipants.value.size
+        val tracksLost = _activeTracks.value.size
         synchronized(commitLock) {
             if (_latestFrame.value != null || activeTrackSid != null) {
                 println("DEBUG [RemoteVideoUI] render stopped reason=$reason trackSid=${activeTrackSid ?: "<none>"}")
@@ -521,6 +525,27 @@ object LiveKitRemoteVideoFrameStore {
             println(
                 "WARN [RemoteVideoUI] frames were rejected during this call " +
                     "rejected=$framesThisCall reason=$reason"
+            )
+        }
+        // WARN, and unconditional on the debug gate, because this is the line
+        // that makes the "everyone can hear me and I can see nobody" bug
+        // findable from a user's log.
+        //
+        // A refresh calls clear() with a LIVE roster. Every tile the call
+        // surface draws comes from `_activeTracks` or `_remoteParticipants`, so
+        // emptying them takes the whole grid down to the local node -- and audio
+        // is unaffected, because it never touches this store. That combination
+        // reads as "the UI crashed" and produces no exception, so with only
+        // DEBUG logging on there was nothing at all in the file.
+        //
+        // The roster is expected to come back: the rescan re-announces it. So
+        // this is a warning about a window, not a failure claim -- but it is the
+        // difference between a bug report with a cause in it and one without.
+        if (participantsLost > 0 || tracksLost > 0) {
+            println(
+                "WARN [RemoteVideoUI] roster cleared while participants were present " +
+                    "reason=$reason participants=$participantsLost tracks=$tracksLost " +
+                    "(tiles rebuild on the next rescan; if they do not, this is the line to quote)"
             )
         }
         NativeParticipantLedger.report()
