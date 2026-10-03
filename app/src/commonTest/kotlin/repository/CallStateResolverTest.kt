@@ -278,22 +278,26 @@ class CallStateResolverTest {
     }
 
     @Test
-    fun `a missing timestamp or lifetime never invents an expiry`() {
+    fun `a missing timestamp or an unusable lifetime never invents an expiry`() {
         // "Cannot prove it expired" must not read as expired, or a live call
         // becomes unjoinable whenever a field is spelled unusually.
+        //
+        // The no-`lifetime` case below is DELIBERATELY no longer in this group. It
+        // used to assert that a definition with no lifetime never ages out, on the
+        // reasoning that "cannot prove" must not read as "expired". That reasoning
+        // cost a 3-second `/rooms/{id}/state` download for the rest of the session,
+        // against a definition 125 days old, filling 44.7% of a real user's log
+        // file. A missing lifetime is now aged out by a generous 12-hour floor
+        // instead -- long enough that no live call is ever affected. See
+        // `DefinitionAgedOutTest` for that regression and `definitionAgedOut` for
+        // why the asymmetry mattered: a wrong "expired" is a visibly stuck UI, a
+        // wrong "not expired" is unbounded background traffic forever.
         assertFalse(
             CallStateResolver.definitionAgedOut(
                 Json.parseToJsonElement("""{"lifetime":1}""") as JsonObject,
                 originServerTs = now, now = now
             ),
             "no origin_server_ts must mean 'cannot tell', not 'expired'"
-        )
-        assertFalse(
-            CallStateResolver.definitionAgedOut(
-                Json.parseToJsonElement("""{"version":"1"}""") as JsonObject,
-                originServerTs = 1, now = now
-            ),
-            "no lifetime must mean 'cannot tell', not 'expired'"
         )
         assertFalse(
             CallStateResolver.definitionAgedOut(
@@ -307,6 +311,20 @@ class CallStateResolverTest {
                 Json.parseToJsonElement("""{"lifetime":1000}""") as JsonObject,
                 originServerTs = now - 5000, now = now
             )
+        )
+    }
+
+    @Test
+    fun `a live definition with no lifetime is not expired`() {
+        // The counterpart to the 12-hour floor, and the reason it is 12 hours: a
+        // definition somebody is actually in must never be treated as over, no
+        // matter that it carries no lifetime.
+        assertFalse(
+            CallStateResolver.definitionAgedOut(
+                Json.parseToJsonElement("""{"version":"1"}""") as JsonObject,
+                originServerTs = now - 60_000, now = now
+            ),
+            "a definition one minute old with no lifetime is somebody's live call"
         )
     }
 

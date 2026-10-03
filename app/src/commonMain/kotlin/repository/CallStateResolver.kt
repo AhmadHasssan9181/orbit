@@ -80,10 +80,50 @@ internal object CallStateResolver {
         now: Long
     ): Boolean {
         if (originServerTs == null || originServerTs <= 0) return false
-        val lifetime = jsonLong(content, "lifetime") ?: return false
+        val lifetime = jsonLong(content, "lifetime")
+            // No lifetime to age out against, so fall back to the generous floor
+            // rather than to "never". See the constant's note for why.
+            ?: return originServerTs + DEFINITION_WITHOUT_LIFETIME_MAX_AGE_MS <= now
         if (lifetime <= 0) return false
         return originServerTs + lifetime <= now
     }
+
+    /**
+     * A definition with NO `lifetime` is treated as aged out once it is older than
+     * [DEFINITION_WITHOUT_LIFETIME_MAX_AGE_MS].
+     *
+     * This reverses a deliberate earlier decision, and the reversal is the whole
+     * point of the change. The old comment said: "Definitions Orbit published
+     * before `DEFINITION_LIFETIME_MS` existed carry no `lifetime`, cannot be proven
+     * expired, and are deliberately left alone -- 'cannot prove' must not be read
+     * as 'expired'." Correct in isolation, and it cost a 3-second `/state`
+     * download for the rest of the session.
+     *
+     * A live log from a real user showed the cost:
+     *
+     * ```
+     * DEBUG [MatrixCallsRepository] roster tick !GfDlxb…: current call began 10871050237ms ago
+     * ```
+     *
+     * repeating every three seconds, for the whole session, on a definition
+     * 10,871,050 seconds -- **125 days** -- old, with no `lifetime` to age out
+     * against. It accounted for **44.7% of that user's entire log file**. The
+     * self-terminating guard reads `definitionAgedOut`, so with no lifetime to
+     * compare against it returned false forever and the guard could never fire.
+     *
+     * The asymmetry that made "cannot prove" untenable: this is not a case where
+     * failing to prove expiry makes a LIVE call unjoinable. It is the opposite
+     * direction -- treating an ancient definition as live keeps a poller running
+     * and a room rendered as having a call in it. Both failure modes are bad, but
+     * one costs a stuck UI and the other costs unbounded background work against
+     * the homeserver, forever, for a call nobody is in.
+     *
+     * The floor is deliberately generous (12 hours) and far longer than any real
+     * call: it only has to be longer than "a call someone is actually in", so the
+     * practical cost of being wrong is nil, while the benefit is that a stale
+     * definition stops costing anything within a day.
+     */
+    private const val DEFINITION_WITHOUT_LIFETIME_MAX_AGE_MS = 12L * 60L * 60L * 1000L
 
     /** Where the answer came from, for the debug log. */
     const val SOURCE_DEFINITION = "definition"
