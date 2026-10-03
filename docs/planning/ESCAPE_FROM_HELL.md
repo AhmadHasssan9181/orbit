@@ -1450,6 +1450,93 @@ spawns the real JVM child carrying the window. WM_CLOSE-test the CHILD pid.
 Native `webrtc-deps` DLLs ship INSIDE the app jar (`app-jvm-*.jar!
 /webrtc-deps/…`), not as loose files.
 
+## The packaged app CANNOT LOG — the launcher has no console
+
+`Orbit.exe` is a **GUI-subsystem binary**: PE header subsystem field = 2
+(`WINDOWS_GUI`), because `windows { console = true }` is not set. A GUI-subsystem
+process launched from Explorer has no console, so `System.out`/`System.err` go
+nowhere and the OS discards them.
+
+Consequence: **every `println` in this codebase — all 300+ legacy sites and every
+`OrbitLog.d/w/e` — produced NOTHING for a user running the MSI.** Not "logs are
+hard to find". Nothing. A bug report from a tester carried no evidence, which is
+why several demons in this document took rounds to pin down.
+
+Verified by reading the subsystem field directly:
+
+```powershell
+$b=[IO.File]::ReadAllBytes("$exe"); $pe=[BitConverter]::ToInt32($b,0x3C)
+[BitConverter]::ToUInt16($b,$pe+0x5C)   # 2 = GUI, 3 = console
+```
+
+**Do not "fix" this with `console = true`.** That attaches a console window to a
+messenger people keep open all day. The fix is `util.installOrbitLogFile()`, a
+rolling sink at `%LOCALAPPDATA%\Orbit\logs\orbit.log` (`ORBIT_LOG_DIR` overrides),
+4 MB × 3 files. Two non-obvious things, both found by RUNNING it:
+
+- **Open eagerly at startup, never lazily on first write.** DEBUG is off by
+  default, so a session that logs no WARN/ERROR writes nothing — and a
+  lazily-created file means that session leaves NO log. That is precisely the
+  session worth a log ("it just closed", "nothing happens when I press Join").
+- **`PrintWriter.println` does not flush.** The startup banner sat in the
+  `BufferedWriter` and the eagerly-created file stayed 0 bytes. `flush()`
+  explicitly, or the log looks broken.
+
+Redirection still works as a manual escape hatch, and needs `start /wait`
+because cmd does not wait for a GUI app:
+
+```
+start /wait "" "%LOCALAPPDATA%\Orbit\Orbit.exe" > "%USERPROFILE%\Desktop\orbit-log.txt" 2>&1
+```
+
+Gotcha: only lines routed through `OrbitLog.emit` reach the FILE. Raw `println`
+sites hit the console filter and are deliberately not duplicated — routing them
+into the sink double-writes every line. Use `OrbitLog.d/w/e` for anything you
+need to read back from a user's machine.
+
+## A duplicate LazyColumn key is a 3-second dialog, not a static error
+
+`Key "@user:server" was already used. If you are using LazyColumn/Row please make
+sure you provide a unique key for each item.` — every row in a keyed lazy list
+uses `it.id` (a Matrix user ID) as its key, so a roster that repeats one ID throws
+out of the lazy layout.
+
+It presents as **a tick every three seconds**, which is not a sound bug at all:
+it is the Windows error-dialog beep. Compose throws, a dialog appears, the user
+dismisses it, and `MatrixCallsRepository`'s roster poller re-emits the member
+list on `delay(3000)` (`ensureRosterPoller`) — so the throw returns three seconds
+later, for the length of the call. Nothing in the audio path is involved.
+
+**Both feeds were already supposed to be unique**, which is why this is a trap:
+
+- room roster — `getJoinedMembers().joined.keys`, a Map;
+- call roster — `currentMembers.none { it.id == sender }` in
+  `observeCallMembers`.
+
+One of them handed over a repeated ID anyway, from data only that call had. So
+the guarantee lives in `dedupeByUserId`, at the one point rows are built, rather
+than in each source — a fix per-source just moves the bug to the next list. It
+logs WARN with the offending ids, because the malformed data is upstream and must
+stay visible. The header count reads `sections.sumOf { it.users.size }`, not the
+input size, so a duplicate cannot inflate the badge above the rows on screen.
+
+`MemberList` (the `groups` variant in `MemberList.kt`) is **dead code** — nothing
+calls it. Its key was `it.id` too. If you touch member lists, do not "fix" that
+one; delete it or wire it up deliberately.
+
+## msiexec / upgrade-version mismatch
+
+`app-version` in `app/Orbit.cfg` and `app/.jpackage.xml` comes from
+`nativeDistributions.packageVersion`. A stale build dir can carry an OLD
+`app-version` (0.1.5 under an `Orbit-0.2.2.msi` filename) — and with a fixed
+`upgradeUuid`, **Windows Installer decides upgrades from ProductVersion, not the
+filename**, so a mismatched MSI can refuse to upgrade in place or duplicate the
+install. If the version looks wrong, `rm -rf app/build/compose/binaries` and
+re-run `packageMsi`; the field is regenerated, never edited by hand.
+
+Also: `packageVersion` must be bumped per release or the new MSI collides with the
+existing release asset on the tag.
+
 ## windows{} DSL notes
 
 - No `menuGroup` ⇒ shortcut lands under Start Menu → **Unknown** folder.

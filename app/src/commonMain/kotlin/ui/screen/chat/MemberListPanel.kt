@@ -118,6 +118,14 @@ internal fun MemberListPanel(
     val showRoleSections by showRoleSectionsState
     val sections by sectionsState
 
+    // Counted from the DEDUPED rows, not from `allUsers`.
+    //
+    // The badge and the rows used to come from different lists, so a duplicate
+    // inflated the badge while the extra row was invisible. Reading the count off
+    // the sections means it cannot disagree with what is on screen even when the
+    // input list is malformed.
+    val rowCount = sections.sumOf { it.users.size }
+
     Row(
         modifier = Modifier
             .width(OrbitMetrics.sidePanelWidth)
@@ -141,9 +149,10 @@ internal fun MemberListPanel(
             // roster and not the room membership. A "Members" header over a
             // participant list is how a 2-person call ended up reading "Members 0".
             title = if (liveCallMembers != null) "In call" else "Members",
-            // Counted from the SAME list the rows render, so the badge can never
-            // disagree with what is on screen.
-            count = allUsers.size
+            // Counted from the rows that actually render, post-dedupe. It used to
+            // read `allUsers.size`, which disagreed with the list the moment the
+            // input carried a duplicate id.
+            count = rowCount
         )
         androidx.compose.material3.HorizontalDivider(color = t.Separator, thickness = 1.dp)
 
@@ -184,13 +193,59 @@ internal fun MemberListPanel(
 }
 
 /** One heading plus its rows. Built once per roster/role change, not per frame. */
-private class MemberSection(val key: String, val label: String, val users: List<OrbitUser>)
+internal class MemberSection(val key: String, val label: String, val users: List<OrbitUser>)
 
-private fun buildMemberSections(
+/**
+ * Drop repeated user ids, and say so.
+ *
+ * Every row below is keyed by `it.id`, so a repeated id is not a cosmetic bug:
+ * Compose throws `Key "@user:server" was already used` out of the lazy layout,
+ * and because the call roster is re-emitted every 3 seconds by the poller in
+ * `MatrixCallsRepository`, the throw came back every 3 seconds for the length of
+ * the call. The user heard Windows' error-dialog beep as a tick and had no way to
+ * get a log out of the app -- stdout is discarded by the GUI-subsystem launcher.
+ *
+ * ## Why dedupe here rather than at the sources
+ *
+ * Both feeds are supposed to be unique already -- the room roster is
+ * `getJoinedMembers().joined.keys`, a Map, and the call roster is built with
+ * `currentMembers.none { it.id == sender }`. Yet the duplicate reached the screen
+ * from a real group call, which means at least one path we did not read hands us
+ * a repeated id. Guaranteeing the invariant at the ONE point every row funnels
+ * through closes that off for every current and future source, instead of moving
+ * the same bug to whichever list is added next.
+ *
+ * First occurrence wins, so display order (and therefore the section a person
+ * lands in) is unchanged.
+ *
+ * WARN, not silent: the ids are logged so a report from a user's machine names
+ * the duplicate instead of leaving us to re-derive it. This is a data-shape bug
+ * upstream, not something this panel can fix, so it must stay visible.
+ */
+internal fun dedupeByUserId(users: List<OrbitUser>): List<OrbitUser> {
+    if (users.size < 2) return users
+    val seen = HashSet<String>(users.size)
+    val duplicates = ArrayList<String>()
+    val out = ArrayList<OrbitUser>(users.size)
+    for (user in users) {
+        if (seen.add(user.id)) out += user else duplicates += user.id
+    }
+    if (duplicates.isNotEmpty()) {
+        util.OrbitLog.w(
+            "MemberListPanel",
+            "dropped ${duplicates.size} duplicate roster entr(ies) sharing a user id: " +
+                duplicates.distinct().joinToString().take(500)
+        )
+    }
+    return out
+}
+
+internal fun buildMemberSections(
     members: List<OrbitUser>,
     memberRoles: Map<String, MemberRoleInfo>,
     showRoleSections: Boolean
 ): List<MemberSection> {
+    val members = dedupeByUserId(members)
     if (showRoleSections) {
         val admins = members.filter { (memberRoles[it.id]?.powerLevel ?: 0L) >= 100L }
             .sortedBy { presenceRank(it.status) }

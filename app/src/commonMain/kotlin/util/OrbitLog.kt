@@ -2,9 +2,10 @@ package util
 
 /**
  * Central logging facade. Levels and subsystems are enforced by
- * [OrbitLog.shouldEmit]; on the JVM the console sink additionally filters the
- * legacy `println("LEVEL [Subsystem] ...")` call sites through the same rule
- * (see OrbitLogConsole), so the whole codebase honors one configuration.
+ * [OrbitLog.shouldPrint]; the JVM installs a real file sink (see
+ * OrbitLogFile) *and* a filtering System.out (see OrbitLogConsole), so the
+ * whole codebase honors one configuration and the same lines land in both a
+ * terminal and a file a user can send you.
  */
 object OrbitLog {
     enum class Level(val label: String) {
@@ -48,17 +49,62 @@ object OrbitLog {
     fun isAuditSubsystem(subsystem: String): Boolean =
         subsystem == "MatrixRTCVisibilityAudit" || subsystem == "ElementReferenceDump"
 
-    fun d(subsystem: String, message: String) {
-        if (shouldEmit(Level.DEBUG, subsystem)) println("DEBUG [$subsystem] $message")
+    /**
+     * Where a gated line goes.
+     *
+     * Split out from the level/subsystem gate so that gating is decided in one
+     * place ([shouldPrint]) and delivery is a separate concern. That split is the
+     * whole reason a file sink could be added without touching the gate: before
+     * it, `d`/`w`/`e` called `println` directly, so the only destination a
+     * packaged app had was stdout — and a jpackage GUI-subsystem launcher has no
+     * console, so every line was discarded.
+     *
+     * Implementations must not throw: a logger that takes the app down is worse
+     * than a logger that loses a line.
+     */
+    fun interface Sink {
+        fun write(line: String)
     }
 
-    fun w(subsystem: String, message: String) {
-        if (shouldEmit(Level.WARN, subsystem)) println("WARN [$subsystem] $message")
+    /** The pre-file-sink behaviour, and still the fallback if file install fails. */
+    private object ConsoleSink : Sink {
+        override fun write(line: String) {
+            println(line)
+        }
     }
 
-    fun e(subsystem: String, message: String) {
-        if (shouldEmit(Level.ERROR, subsystem)) println("ERROR [$subsystem] $message")
+    /**
+     * Process-wide destination. Install once at startup, before any subsystem
+     * logs. Never null; defaults to the console.
+     */
+    @Volatile
+    var sink: Sink = ConsoleSink
+
+    /**
+     * Write [line] if it passes the gates, then return whether it was written.
+     *
+     * The return value exists for the console filter, which is a
+     * [java.io.PrintStream] wrapper and must decide for itself whether to let a
+     * line reach the real stdout. The file sink does not consult it: it receives
+     * only lines that already passed, via [emit].
+     */
+    fun shouldPrint(line: String): Boolean {
+        if (!shouldPrintLine(line)) return false
+        sink.write(line)
+        return true
     }
+
+    /** Single entry point for everything that logs, including the console filter. */
+    fun emit(line: String) {
+        if (!shouldPrintLine(line)) return
+        sink.write(line)
+    }
+
+    fun d(subsystem: String, message: String) = emit("DEBUG [$subsystem] $message")
+
+    fun w(subsystem: String, message: String) = emit("WARN [$subsystem] $message")
+
+    fun e(subsystem: String, message: String) = emit("ERROR [$subsystem] $message")
 
     fun shouldEmit(level: Level, subsystem: String): Boolean = when (level) {
         Level.DEBUG ->
@@ -81,7 +127,11 @@ object OrbitLog {
         return parsed.level to parsed.subsystem
     }
 
-    /** Single entry point used by the JVM console filter. */
+    /**
+     * The level/subsystem gate alone, with no side effect. True for lines
+     * without a recognized prefix: a line OrbitLog did not produce is somebody
+     * else's, and swallowing it would hide a stack trace.
+     */
     fun shouldPrintLine(line: String): Boolean {
         val (level, subsystem) = parseLine(line)
         return if (level == null) true else shouldEmit(level, subsystem ?: "")
