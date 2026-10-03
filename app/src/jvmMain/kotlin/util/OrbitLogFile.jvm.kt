@@ -42,7 +42,19 @@ import java.time.format.DateTimeFormatter
  */
 private object OrbitLogFile {
 
-    private const val MAX_BYTES = 4L * 1024 * 1024
+    /**
+     * 8 MB x 3, raised from 4 MB x 3 when debug logging went on by default.
+     *
+     * A four-minute call produces on the order of a couple of thousand DEBUG
+     * lines, and a long session or several calls in a day will cross 4 MB. At that
+     * size rotation churned constantly and the oldest evidence -- which is the
+     * part you actually want, since the interesting failure is usually the one
+     * that started before you noticed -- was thrown away within the hour.
+     *
+     * 24 MB retained is still nothing next to the ~500 MB the app itself
+     * occupies, and it holds days of sessions rather than hours.
+     */
+    private const val MAX_BYTES = 8L * 1024 * 1024
     private const val MAX_FILES = 3
     private const val FILE_NAME = "orbit.log"
 

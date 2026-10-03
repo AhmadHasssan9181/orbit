@@ -116,16 +116,23 @@ internal fun WindowsSettingsPane(settingsManager: SettingsManager) {
         }
 
         SectionHeader("Diagnostics")
-        // This switch had a reader with no writer for its entire life, so DEBUG
-        // was permanently off. `OrbitLog.d` is used across the whole call stack —
-        // roster ticks, ICE candidates, membership publishing, media frames — and
-        // none of it could ever emit. The console filter reads `debugEnabled` per
-        // line, so flipping this works without a restart.
-        val debugOn by settingsManager.debugLogging.collectAsState(false)
+        // `collectAsState(true)` MUST match the stored default. With it on `false`
+        // the switch rendered "off" on a fresh install while DEBUG lines were in
+        // fact being written to disk -- a control that misreports the state of the
+        // only thing it controls.
+        //
+        // It also had a reader with no writer for its entire life, so DEBUG was
+        // permanently off and `OrbitLog.d` was dead code across the whole call
+        // stack. The console filter reads `debugEnabled` per line, so flipping
+        // this works without a restart.
+        val debugOn by settingsManager.debugLogging.collectAsState(true)
         PrefCard(
             "Debug logging",
-            "Print DEBUG lines to the console. Noisy — turn it on to report a " +
-                "bug, then off again. ORBIT_DEBUG=1 does the same for one run."
+            "On by default so a bug report is diagnosable without you having to " +
+                "find this pane first. Writes to " +
+                "%LOCALAPPDATA%\\Orbit\\logs\\orbit.log, kept for a few days. " +
+                "Turn it off if you prefer a smaller log. ORBIT_DEBUG=1 forces it " +
+                "on for one run."
         ) {
             CosmicSwitch(checked = debugOn, onCheckedChange = {
                 settingsManager.setDebugLogging(it)

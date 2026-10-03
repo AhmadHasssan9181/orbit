@@ -1494,6 +1494,36 @@ sites hit the console filter and are deliberately not duplicated — routing the
 into the sink double-writes every line. Use `OrbitLog.d/w/e` for anything you
 need to read back from a user's machine.
 
+## Debug logging is ON by default, and the two defaults are pinned by a test
+
+DEBUG went on by default after two releases shipped with it off and a bug report
+arrived with a log containing nothing about the call. The lesson generalises past
+this bug: **a bug report must be diagnosable without the reporter first finding a
+settings pane.** That is asking them to do your job.
+
+The subtlety is that there are **two** defaults, far apart in the codebase:
+
+- `SettingsManager.debugLoggingSync()` — read once at startup by `Main.kt`;
+- `SettingsManager.debugLogging` flow — read by the Diagnostics switch.
+
+Set only the first and the switch renders **"off" on a fresh install while DEBUG
+lines are genuinely being written to disk**. Both halves work; the control simply
+lies about the only state it exists to report. `DebugLoggingDefaultTest` pins both
+to `true` and fails if either drifts, so the next person to change one has to
+change both. An explicit user "off" is still respected — only the never-chosen case
+flips.
+
+Rotation went 4 MB × 3 → **8 MB × 3**. A four-minute call is a couple of thousand
+DEBUG lines; at 4 MB the oldest evidence rotated away inside an hour, and the
+failure you want is usually the one that started before you noticed. 24 MB
+retained is nothing against the app's own ~500 MB.
+
+**The protocol-shape dump stays behind `ORBIT_AUDIT`.** Turning DEBUG on by default
+must never drag in `MatrixRTCVisibilityAudit`, which is a third of a whole call's
+output because it prints every MatrixRTC state event on every publish. Debug is
+volume; the audit is a deliberate, one-off, with-the-room-in-hand investigation.
+`ORBIT_DEBUG=1` still forces DEBUG on for a single run.
+
 ## A log level that excludes the diagnosis is worse than no log
 
 The roster-wipe bug shipped to users with a log attached, and the log was
