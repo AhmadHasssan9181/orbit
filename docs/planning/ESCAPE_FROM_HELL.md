@@ -1494,6 +1494,47 @@ sites hit the console filter and are deliberately not duplicated — routing the
 into the sink double-writes every line. Use `OrbitLog.d/w/e` for anything you
 need to read back from a user's machine.
 
+## A log level that excludes the diagnosis is worse than no log
+
+The roster-wipe bug shipped to users with a log attached, and the log was
+**empty of anything relevant**: a startup banner and two unrelated errors from
+another room. The sink worked perfectly. It was faithfully recording a log level
+that excluded the entire story.
+
+The cause: **debug logging is OFF by default**, so only WARN/ERROR reach the
+file — and the whole reconnect lifecycle was classified DEBUG. A token-refresh
+reconnect, which is the *cause* of the roster wipe, therefore left no trace
+unless the user happened to know to flip a setting in a settings pane.
+
+This is worse than having no logging, because an empty log looks like evidence.
+It reads as "nothing happened", which sends you looking in the wrong place
+entirely — I did, twice, before noticing that the level itself was the bug.
+
+**The rule that came out of it: anything that explains a user-visible state
+change must be visible at DEFAULT settings.** If a user's screen visibly changes,
+a WARN exists for it. Debug is for volume, not for causation.
+
+Promoted to WARN (all rare — roughly twice an hour — so they cannot flood):
+
+| line | why it must be default-visible |
+|---|---|
+| `roster cleared while participants were present` | the moment the screen blanks; carries participant/track counts |
+| `remote video render sink (re)enabled reason=` | pairs with the above to prove the roster came back |
+| `token refresh scheduled in …ms (expires in …s)` | marks that a reconnect is now pending |
+| `token refresh RECONNECT started attempt= mutedBefore=` | opens the teardown window; `mutedBefore` is the only evidence for a mic that came back wrong |
+| `native reconnect dispatching to SFU` / `CONNECTED` | closes it |
+
+`RosterCollapseIsLoggedByDefault` in `jvmTest` pins this: it captures real stdout
+and asserts the WARN appears with debug off, that the level is `WARN` and not
+`DEBUG`, and that clearing an *empty* roster stays silent so the rule cannot
+degenerate into "log everything". Verified by reverting one line to DEBUG — the
+test fails and names the line.
+
+Two traps in that test worth knowing: do not assert on the JVM constant pool for
+adjacent-string ordering (it is not a contract and fails for the wrong reasons),
+and do not promote a per-frame or per-tick line to WARN to "see more" — that is
+how a default log becomes noise nobody reads.
+
 ## "I can hear everyone, I can see nobody" — the reconnect that ate the roster
 
 **The symptom is audio/video asymmetry, so never start in the audio path.** A user
