@@ -1310,7 +1310,21 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         LiveKitRemoteVideoFrameStore.beginSession(sessionId, epoch)
         val result = bridge.setRemoteVideoSink(LiveKitNativeRemoteVideoRenderer)
         if (result.ok) {
-            println("DEBUG [LiveKitNativeMediaSession] remote video render sink enabled reason=$reason")
+            // WARN, not DEBUG, and the level is the point rather than a
+            // stylistic choice.
+            //
+            // This fires once per connect and once per token-refresh reconnect --
+            // roughly twice an hour -- so it cannot flood anything. But it is the
+            // line that pairs with the "roster cleared" WARN from clear() above to
+            // tell you the tiles were torn down AND successfully rebuilt. With
+            // this at DEBUG the pair was invisible unless the user happened to have
+            // debug logging on, which is exactly how a whole group-call roster
+            // wipe shipped to users as an unexplained UI collapse with an empty
+            // log attached.
+            //
+            // A support log with no debug flag has to be able to answer "was this
+            // a reconnect, and did the roster come back".
+            println("WARN [LiveKitNativeMediaSession] remote video render sink (re)enabled reason=$reason")
         } else {
             println(
                 "WARN [LiveKitNativeMediaSession] remote video render sink failed reason=$reason " +
@@ -1342,6 +1356,17 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             else -> CameraPublishState.Failed
         }
 
+    /**
+     * Whole seconds until the token expires, for the log line.
+     *
+     * Clamped at zero because a token can be reported as already expired (clock
+     * skew between the homeserver and this machine is routine), and a negative
+     * "expires in -12s" in a support log reads like a bug in the log rather than
+     * the clock skew that it actually is.
+     */
+    private fun expiresInSeconds(expiresAtEpochSeconds: Long?, nowEpochSeconds: Long): Long =
+        ((expiresAtEpochSeconds ?: (nowEpochSeconds + 30L * 60L)) - nowEpochSeconds).coerceAtLeast(0L)
+
     private fun scheduleTokenRefresh(tokenResult: LiveKitTokenResult) {
         refreshJob?.cancel()
         val fetcher = lastRefreshTokenFetcher
@@ -1352,7 +1377,14 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
 
         val nowSeconds = kotlin.time.Clock.System.now().epochSeconds
         val delayMs = computeTokenRefreshDelayMillis(tokenResult.expiresAtEpochSeconds, nowSeconds)
-        println("DEBUG [LiveKitNativeMediaSession] token refresh scheduled in ${delayMs}ms")
+        // WARN for the same reason as the sink line: once per token lifetime, and
+        // it is the marker that says "a reconnect is now scheduled". A support
+        // log showing a refresh at 11:28 and a collapse at 11:33 is the whole
+        // diagnosis, and it needs this at a level that is on by default.
+        println(
+            "WARN [LiveKitNativeMediaSession] token refresh scheduled in ${delayMs}ms " +
+                "(expires in ${expiresInSeconds(tokenResult.expiresAtEpochSeconds, nowSeconds)}s)"
+        )
         refreshJob = scope.launch {
             delay(delayMs)
             refreshAndReconnect(fetcher)
@@ -1429,8 +1461,20 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             return
         }
 
-        println("DEBUG [LiveKitNativeMediaSession] token refresh started (attempt $attempts)")
-        println("DEBUG [LiveKitNativeMediaSession] mute state before reconnect: $desiredAudioMuted")
+        // The three lines that bracket a reconnect, all WARN because they are rare
+        // and decisive rather than chatty. `mute state before reconnect` is here
+        // too because a muted mic that comes back unmuted (or vice versa) is a
+        // bug a user will report as "it started talking without me" and the only
+        // evidence is this value captured before the teardown.
+        //
+        // Between "started" and "success" below, this is the window where the UI
+        // is tearing down and rebuilding the roster -- which is precisely the
+        // window that produced the invisible collapse. A default-level log now
+        // brackets it.
+        println(
+            "WARN [LiveKitNativeMediaSession] token refresh RECONNECT started " +
+                "attempt=$attempts mutedBefore=$desiredAudioMuted"
+        )
         updateNativeState(NativeMediaState.Reconnecting)
         runCatching { LiveKitNativeVideoCapture.stopAndJoin() }
         cameraPushEnabled = false
@@ -1471,7 +1515,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         videoPublishedDeferred = if (shouldPublishVideo()) CompletableDeferred() else null
         mediaReadyDeferred = CompletableDeferred()
 
-        println("DEBUG [LiveKitNativeMediaSession] native reconnect started")
+        println("WARN [LiveKitNativeMediaSession] native reconnect dispatching to SFU epoch=$epoch")
         val reconnect = bridge.reconnectAsync(sessionId, epoch, tokenResult.value.livekitUrl, tokenResult.value.token)
         if (!reconnect.ok) {
             handleNativeError(reconnect.error ?: unknownError("Native reconnect failed", "nativeReconnectAsync"))
@@ -1482,7 +1526,10 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             handleNativeError(connected.error ?: unknownError("Native reconnect timed out", "nativeReconnect"))
             return
         }
-        println("DEBUG [LiveKitNativeMediaSession] native reconnect success")
+        println(
+            "WARN [LiveKitNativeMediaSession] native reconnect CONNECTED epoch=$epoch " +
+                "(audio republish follows; roster rebuilds on the 2s rescan)"
+        )
         LiveKitNativeAudioPlayer.start(sessionId, epoch, bridge, ::handlePlaybackFailure)
 
         val publishChannels = LiveKitNativeAudioCapture.configuredPublishChannels()
