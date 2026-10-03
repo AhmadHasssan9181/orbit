@@ -1494,6 +1494,58 @@ sites hit the console filter and are deliberately not duplicated — routing the
 into the sink double-writes every line. Use `OrbitLog.d/w/e` for anything you
 need to read back from a user's machine.
 
+## "I can hear everyone, I can see nobody" — the reconnect that ate the roster
+
+**The symptom is audio/video asymmetry, so never start in the audio path.** A user
+in a group call reported the grid collapsing to just their own tile while the call
+stayed perfectly audible both ways, and that hanging up and rejoining was the only
+cure. Audio does not touch the frame store, so audio working PROVES nothing about
+video and audio failing would have sent you somewhere else entirely.
+
+**The chain, in order:**
+
+1. A LiveKit token expires. `scheduleTokenRefresh` → `computeTokenRefreshDelayMillis`
+   fires at **expiry − 5 min** (`LiveKitTokenModels.kt`; a token with no `exp` claim
+   defaults to 30 min). A Matrix-issued JWT with a short `exp` puts this minutes
+   into an otherwise flawless call, which is why it always looks random.
+2. `refreshAndReconnect` → `configureRemoteVideoSink("reconnect")` →
+   **`LiveKitRemoteVideoFrameStore.clear("reconnect-start")`**.
+3. `clear()` empties `_activeTracks` and `_remoteParticipants`. Every `RenderNode`
+   in `LiveKitGroupCallSurface` is built from those two — cameraTracks,
+   screenShareTracks, and voiceIdentities. Empty both and the grid can only produce
+   the hardcoded local `"You"` node. **That is the collapse.**
+4. Audio is untouched: `refreshAndReconnect` separately republishes it and it
+   succeeds. Hence a call where everyone can hear everyone and nobody can see anyone.
+
+**Step 3 is survivable. The real bug was that the roster was never refilled.**
+
+Native deduplicates participant announcements in `g_announcedParticipantSids`, and
+`resetRoomLocked()` cleared `g_announcedVideoPublications` but **not** the
+participant set. So on the fresh room `nativeRescanRemoteVideoTracks` re-announced
+every video publication and silently skipped every participant (the dispatch returns
+early on "already announced"), `participantConnected` was never called again, and
+the store stayed empty. Only the two full-disconnect paths cleared that set — which
+is exactly why a manual reconnect was the only thing that worked, and why the bug
+looked unreproducible from inside the app.
+
+**Fix:** clear `g_announcedParticipantSids` in `resetRoomLocked()` too, making
+reconnect symmetric with disconnect. Within one session the dedup still holds, so
+the "announce each participant exactly once" fix is unaffected.
+
+Two companions, both worth keeping:
+
+- The rescan loop used `break` when `!readinessCache.connected`. A reconnect sets
+  `Reconnecting` *before* re-arming, so **every token refresh killed the loop that
+  rebuilds the roster** — permanently and silently. Now `continue`; only
+  `sessionId == 0L` is terminal (`disconnect()` cancels the job anyway).
+- `clear()` now WARNs when it drops a non-empty roster. The whole episode was
+  invisible in a user's log because every line on this path was DEBUG and the
+  failure raises nothing. That WARN is the line to quote.
+
+**Lesson:** a dedup set that lives on the far side of a JNI boundary is state the
+other side cannot see or invalidate. When the Kotlin side resets its view, the
+native dedup has to be reset with it — otherwise the reset is a one-way door.
+
 ## A duplicate LazyColumn key is a 3-second dialog, not a static error
 
 `Key "@user:server" was already used. If you are using LazyColumn/Row please make

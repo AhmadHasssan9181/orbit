@@ -5151,6 +5151,36 @@ void resetRoomLocked() {
         g_announcedVideoPublications.clear();
     }
     {
+        // Same reasoning as g_announcedVideoPublications directly above, and the
+        // omission of it here is why a reconnect could leave the call with no
+        // remote tiles at all.
+        //
+        // The dedup set survives a reconnect, so on the new room every
+        // participant still hashes to an entry the dispatcher believes it has
+        // already announced. `nativeRescanRemoteVideoTracks` then re-announces
+        // VIDEO (that set was cleared) but silently skips every PARTICIPANT, so
+        // Kotlin's `LiveKitRemoteVideoFrameStore.participantConnected` is never
+        // called again. `clear()` had already emptied `_remoteParticipants`, and
+        // nothing refills it -- the call surface builds every voice/avatar tile
+        // from that set, so the grid collapses to the local "You" node while
+        // audio, which never touches this store, keeps working. A user hears a
+        // normal call and sees themselves alone. Only a full disconnect cleared
+        // this set (the two disconnect paths both did), which is why hanging up
+        // and rejoining was the only thing that restored the tiles.
+        //
+        // Clearing it here is what makes reconnect symmetric with disconnect: a
+        // new SFU session re-announces from scratch. Within one session the
+        // set still does its job -- that is the "announce each participant
+        // exactly once" fix, and it is unaffected.
+        //
+        // Tight scope on purpose: this function dispatches removals into Java
+        // further down, and the Java side calls back into the participant
+        // dispatcher, which takes this same non-recursive mutex. Holding it
+        // across that dispatch would deadlock.
+        std::lock_guard<std::mutex> announcedLock(g_announcedParticipantsMutex);
+        g_announcedParticipantSids.clear();
+    }
+    {
         std::lock_guard<std::mutex> lock(g_delegateEventMutex);
         g_delegatePublished = 0;
         g_delegateUnpublished = 0;

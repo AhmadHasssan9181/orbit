@@ -147,7 +147,7 @@ compose.desktop {
             packageName = "Orbit"
             // Bump per release. The MSI filename carries this, so a stale value
             // silently uploads an asset that contradicts the tag it ships under.
-            packageVersion = "0.2.3"
+            packageVersion = "0.2.4"
             description = "Orbit — Matrix voice/video calls client"
             vendor = "Orbit"
 
