@@ -216,19 +216,30 @@ class SettingsManager {
         // reading the log; leaving it set would flood the console forever.
         val override = System.getenv("ORBIT_DEBUG")?.trim()?.lowercase()
         if (override == "1" || override == "true" || override == "on" || override == "yes") return true
-        return settings.getBoolean("debugLogging", false)
+        // DEFAULT TRUE, and the reason is the whole reason there is a log file at
+        // all. Two releases shipped with DEBUG off by default and it cost a real
+        // bug report: a user lost every video tile in a group call, sent the log,
+        // and it contained nothing about the call because the entire reconnect
+        // lifecycle was DEBUG. The sink was working; the level was excluding the
+        // diagnosis. Asking a user to find a settings pane before their bug is
+        // diagnosable is asking them to do my job.
+        //
+        // `getBoolean(key, true)` still respects an explicit `false`, so anyone
+        // who turns it off keeps it off. Only the never-chosen case flips.
+        return settings.getBoolean("debugLogging", true)
     }
     
     /**
      * Observable twin of [debugLoggingSync].
      *
-     * The sync reader had no writer for its entire life, so DEBUG was
-     * permanently off and `OrbitLog` looked broken: dozens of `OrbitLog.d` call
-     * sites across the call stack, none of which could ever emit. Turning this
-     * on at runtime works because `installOrbitLogConsoleFilter` reads
-     * `OrbitLog.debugEnabled` per line rather than capturing it once.
+     * The default MUST match the default in [debugLoggingSync] — `true` in both.
+     * They disagreeing is how the Diagnostics switch ends up showing "off" while
+     * DEBUG lines are actually being written, which is a setting that lies about
+     * the one thing it exists to report. This codebase has been bitten by exactly
+     * that shape before (see the settings honesty audit), so the pair is pinned by
+     * a test rather than left to memory.
      */
-    val debugLogging = flowSettings.getBooleanFlow("debugLogging", false)
+    val debugLogging = flowSettings.getBooleanFlow("debugLogging", true)
     fun setDebugLogging(value: Boolean) = settings.putBoolean("debugLogging", value)
     
     
