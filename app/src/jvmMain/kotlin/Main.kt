@@ -52,6 +52,11 @@ private fun armForcedExitWatchdog(budgetMs: Long = 5_000) {
 }
 
 fun main() = application {
+    // File sink FIRST. The packaged launcher is a GUI-subsystem binary with no
+    // console, so `println` is discarded by the OS -- without this the only
+    // destination for a diagnostic was a void. Installed before the console
+    // filter so the earliest lines are already on disk.
+    util.installOrbitLogFile()
     util.installOrbitLogConsoleFilter()
     // Process-wide, installed once: guarantees the push-to-talk KeyUp is seen
     // even when a dialog that does not handle shortcuts owns focus.

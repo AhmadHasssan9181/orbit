@@ -69,4 +69,46 @@ class OrbitLogTest {
         assertFalse(OrbitLog.shouldPrintLine("DEBUG [LiveKitTokenProvider] Token refresh started"))
         assertTrue(OrbitLog.shouldPrintLine("ERROR [LiveKitTokenProvider] /get_token failed"))
     }
+
+    /**
+     * The sink is the whole reason the gate was split out of delivery: before
+     * this, `d`/`w`/`e` called `println` and the packaged app had no destination
+     * at all. These pin the contract the JVM file sink depends on -- [emit]
+     * decides, and a suppressed DEBUG line is never handed to the sink.
+     */
+    @Test
+    fun emitDeliversToTheSinkOnlyWhenTheGatePasses() {
+        val seen = mutableListOf<String>()
+        val restore = OrbitLog.sink
+        try {
+            OrbitLog.sink = OrbitLog.Sink { seen += it }
+            OrbitLog.debugEnabled = false
+            OrbitLog.mutedSubsystems = emptySet()
+
+            OrbitLog.d(SUB, "suppressed")
+            assertTrue(seen.isEmpty(), "a gated DEBUG line must not reach the sink: $seen")
+
+            OrbitLog.w(SUB, "kept")
+            assertEquals(listOf("WARN [$SUB] kept"), seen)
+        } finally {
+            OrbitLog.sink = restore
+        }
+    }
+
+    /** The gate must stay side-effect free, or the console filter double-writes. */
+    @Test
+    fun shouldPrintLineNeverTouchesTheSink() {
+        val seen = mutableListOf<String>()
+        val restore = OrbitLog.sink
+        try {
+            OrbitLog.sink = OrbitLog.Sink { seen += it }
+            OrbitLog.debugEnabled = true
+            OrbitLog.mutedSubsystems = emptySet()
+
+            assertTrue(OrbitLog.shouldPrintLine("DEBUG [$SUB] hello"))
+            assertTrue(seen.isEmpty(), "the gate must only decide, never deliver: $seen")
+        } finally {
+            OrbitLog.sink = restore
+        }
+    }
 }

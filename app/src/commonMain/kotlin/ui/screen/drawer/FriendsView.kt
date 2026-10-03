@@ -1076,16 +1076,38 @@ fun FriendsPanel(
     val activeRoomId by activeRoomFlow.collectAsState(initial = null)
     val callIsLive = callState != webrtc.CallState.IDLE && callState != webrtc.CallState.ENDED
 
+    // Deduplicated BY CONTACT ID, not by room id.
+    //
+    // The list renders as `items(friends, key = { it.user.id })`, so the user id
+    // is the LazyColumn key and it must be unique. Two DM channels can resolve to
+    // one and the same person -- Matrix happily hands out a second invite-only
+    // room for a pair that already has one (a recreated DM, an abandoned room
+    // still sitting in the list), and `resolveDmContacts` maps each room to the
+    // OTHER participant, so both rooms land on the same `OrbitUser`. Two rows,
+    // one mxid, and Compose throws `Key "@user:server" was already used` out of
+    // the lazy layout.
+    //
+    // That throw is not a one-off: `FriendsPanel` recomposes on every call-state
+    // and roster change, so the dialog returns until the duplicate goes away.
+    //
+    // `roomIds` above is distinct, but it only dedupes what we ASK about. This
+    // dedupes what we RENDER, which is the list whose ids become keys. First room
+    // wins, which matches the display order of the channel list the user is
+    // already looking at.
     val friends = remember(contacts, dmChannels, callIsLive, activeRoomId) {
-        dmChannels.mapNotNull { ch ->
+        val byUserId = LinkedHashMap<String, OrbitFriend>()
+        for (ch in dmChannels) {
             val roomId = ch.matrixRoomId.ifBlank { ch.id }
-            val contact = contacts[roomId] ?: return@mapNotNull null
-            OrbitFriend(
+            val contact = contacts[roomId] ?: continue
+            // `putIfAbsent` rather than a null check + put: one lookup, and the
+            // intent ("keep the first room for this person") is the statement.
+            byUserId.putIfAbsent(contact.id, OrbitFriend(
                 user = contact,
                 roomId = roomId,
                 inCall = callIsLive && activeRoomId == roomId
-            )
+            ))
         }
+        byUserId.values.toList()
     }
 
     FriendsView(
