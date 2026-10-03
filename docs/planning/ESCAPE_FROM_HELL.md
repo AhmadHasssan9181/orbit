@@ -1524,6 +1524,95 @@ output because it prints every MatrixRTC state event on every publish. Debug is
 volume; the audit is a deliberate, one-off, with-the-room-in-hand investigation.
 `ORBIT_DEBUG=1` still forces DEBUG on for a single run.
 
+## `WARN` on a raw `println` is a line that does not exist
+
+Promoting the reconnect bracket from DEBUG to WARN changed **nothing** for the
+people it was written for. Every one of those lines was a raw `println`, and raw
+`println` goes to the console filter only — **never to the file sink**.
+
+```
+OrbitLog.w(...)  ->  gate  ->  sink      ->  orbit.log     ✓
+println(...)     ->  console filter    ->  stdout        ✗ (GUI app has none)
+```
+
+The evidence was in a healthy 57-minute call that produced 722
+`LiveKitNativeMediaSession` lines and **not one** lifecycle line — impossible if
+they were being captured, since a token refresh is logged on every connect.
+
+This is the second time a logging fix failed for this same reason, and the failure
+mode is nasty because it *looks* like it worked: the code is right, the level is
+right, and the file is silently missing the evidence. **A diagnostic that does not
+reach the file is not a diagnostic.** Anything a user must be able to send us goes
+through `OrbitLog.w` / `OrbitLog.e` — never `println`.
+
+`RosterCollapseIsLoggedByDefault` now asserts the *delivery mechanism* as well as
+the level, so "promote to WARN" cannot be mistaken for "now it is in the file".
+
+## One person, two names: the track-SID identity fallback
+
+Two real group-call logs, from two different participants, contained the same human
+reported twice in a single speaking event:
+
+```
+[@marioreo:matrix.org:djpYnE6QIj, TR_AMpAsYgfYnJ4z7]
+[@marioreo:matrix.org:djpYnE6QIj]
+[TR_AMpAsYgfYnJ4z7]      <- same person again
+```
+
+**`TR_...` is a LiveKit track SID, not a person.** `startRemoteReaderLocked` and
+`addParticipant` both did `participantIdentity.empty() ? track->sid() : identity`,
+so a participant publishing **two** audio tracks (screen share with audio mirrors
+the mic) got the real Matrix identity on one reader and a track SID on the other.
+
+Consequences, all downstream of the mixer reporting both under different keys:
+
+- the **speaking ring** lit the wrong tile, or counted one person as two;
+- **per-participant volume and mute** silently failed — the fan-out matches on
+  identity, so a `TR_` key never matched and that track stayed at unity gain;
+- the call surface grew a workaround comparing both the full identity and
+  `substringBeforeLast(':')` to avoid rendering one human as two tiles.
+
+**The fix is not to merge the queues.** Keying by track SID is deliberate and
+load-bearing: run 64's split voice came from merging a share track and a mic track
+into one identity-keyed buffer, and H15 depends on two queues existing per
+participant. Keying and *reporting* are different questions and only reporting was
+wrong. Both ends now report the real identity, an empty identity stays empty (and
+logs WARN) rather than being invented, and `normalizeSpeakerToken` collapses device
+suffixes on the Kotlin side as a guard — it must never count a `TR_` as a person,
+because a missing ring is cosmetic and a phantom speaker is a lie.
+
+## "Cannot prove it expired" is not symmetric
+
+The roster poller logged this every 3 seconds for a whole session:
+
+```
+DEBUG [MatrixCallsRepository] roster tick !GfDlxb…: current call began 10871050237ms ago
+```
+
+**125 days**, and **44.7% of that user's entire log file** — one dead room, a full
+`/rooms/{id}/state` download every 3 seconds, forever.
+
+The self-terminating guard was never broken. It asks `definitionAgedOut`, which
+returned **false forever** because the definition carries **no `lifetime` field**,
+and the code read a missing lifetime as "cannot prove expired" — i.e. immortal.
+
+That default was defensible in isolation and wrong in practice, because the two
+failure modes are not symmetric:
+
+| wrong answer | cost |
+|---|---|
+| "expired" when live | a visibly stuck, unjoinable room |
+| "not expired" when dead | unbounded traffic against someone's homeserver, invisibly, forever |
+
+One is a bug someone reports in a minute. The other is the bug above. A definition
+with no lifetime is now aged out by a **12-hour floor** — far longer than any real
+call, so being wrong costs nothing, while a stale definition stops costing anything
+within a day.
+
+The lesson generalises: **when "cannot prove" is the answer, ask what each possible
+mistake costs before defaulting to caution.** Caution is only free if the error is
+symmetric.
+
 ## A log level that excludes the diagnosis is worse than no log
 
 The roster-wipe bug shipped to users with a log attached, and the log was

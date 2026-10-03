@@ -576,9 +576,9 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                             // caller that simply never cleaned up — none of which
                             // can now leak a job.
                             if (callStartedAt == null && currentMembers.isEmpty()) {
-                                util.OrbitLog.d(
+                                util.OrbitLog.w(
                                     "MatrixCallsRepository",
-                                    "roster poller stopping: no live call remains in $channelId"
+                                    "roster poller stopping for $channelId: no live call remains"
                                 )
                                 stopCallRosterPolling(channelId)
                                 return@launch
@@ -737,17 +737,30 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
         //
         // The check is `CallStateResolver`'s, not a second implementation of it,
         // so the UI's "is this room live" and the poller's "should I keep
-        // running" cannot disagree. Definitions Orbit published before
-        // `DEFINITION_LIFETIME_MS` existed carry no `lifetime`, cannot be proven
-        // expired, and are deliberately left alone -- "cannot prove" must not be
-        // read as "expired".
+        // running" cannot disagree. A definition with no `lifetime` to age out
+        // against is now judged by a generous floor rather than assumed immortal
+        // -- see `definitionAgedOut`, whose note explains why "cannot prove" was
+        // the wrong default here.
         if (CallStateResolver.definitionAgedOut(definition.content, originServerTs, getTimeMillis())) {
-            if (util.OrbitLog.debugEnabled) {
-                util.OrbitLog.d(
-                    "MatrixCallsRepository",
-                    "roster tick $roomId: call definition is past its lifetime; treating the call as over",
-                )
-            }
+            // WARN, not a debug-gated line. This is the moment a runaway poller
+            // stops, so it is the one line in this file that must reach a log with
+            // no debug flag on. A live run showed 125-day-old definitions polling
+            // every 3 seconds and filling 44.7% of a user's log file.
+            //
+            // `hasLifetime` is hoisted because the alternative is nested quotes
+            // inside a string template, which does not compile.
+            val hadLifetime = hasNonNullContentField(definition.content, "lifetime")
+            // `originServerTs` is nullable (jsonLong). `definitionAgedOut` already
+            // returned false for null/<=0, so this branch only runs with a real
+            // value -- but the type does not know that, hence the elvis rather
+            // than a non-null assertion.
+            val ageMs = getTimeMillis() - (originServerTs ?: 0L)
+            util.OrbitLog.w(
+                "MatrixCallsRepository",
+                "call definition in $roomId is past its lifetime " +
+                    "(age=${ageMs}ms hasLifetime=$hadLifetime); " +
+                    "treating the call as over so the roster poller can stop"
+            )
             return null
         }
         val start = MatrixRtcMembership.callStartFromDefinition(

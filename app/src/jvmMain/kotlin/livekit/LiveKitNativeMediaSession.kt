@@ -982,13 +982,44 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
                 // Logging the transitions makes the feed observable and shows the
                 // exact token shape the mixer is publishing.
                 val previous = _activeSpeakers.value
-                val speakers = event.speakers.toSet()
+                // Collapse device suffixes, and drop track-SID tokens.
+                //
+                // Two real logs showed one person reported under two names in the
+                // same call:
+                //
+                //   [@marioreo:matrix.org:djpYnE6QIj, TR_AMpAsYgfYnJ4z7]
+                //   [@marioreo:matrix.org:djpYnE6QIj]
+                //   [TR_AMpAsYgfYnJ4z7]
+                //
+                // A `TR_...` entry is a track SID that native fell back to because
+                // it had no identity for that audio track; it is fixed at the C++
+                // end now, but this side must not depend on that having shipped
+                // everywhere, and must never count a nameless token as a person.
+                // Dropping it is the safe direction: a missing speaking ring is a
+                // cosmetic miss, whereas a phantom speaker is a lie about who is
+                // in the room.
+                val speakers = event.speakers
+                    .map { normalizeSpeakerToken(it) }
+                    .filter { it.isNotBlank() }
+                    .toSet()
                 _activeSpeakers.value = speakers
                 if (previous != speakers) {
                     util.OrbitLog.d(
                         "LiveKitNativeMediaSession",
                         "active speakers ${if (speakers.isEmpty()) "cleared" else speakers.toString()}"
                     )
+                    // Name the discarded tokens once per transition. A track-SID
+                    // entry here means native still has an audio track with no
+                    // identity, which is the upstream cause and the thing worth
+                    // chasing -- not the ring failing to light.
+                    val nameless = event.speakers.filter { normalizeSpeakerToken(it).isBlank() }
+                    if (nameless.isNotEmpty()) {
+                        util.OrbitLog.w(
+                            "LiveKitNativeMediaSession",
+                            "dropped ${nameless.size} speaking token(s) with no participant " +
+                                "identity (they are track SIDs, not people): ${nameless.toSet()}"
+                        )
+                    }
                 }
             }
         }
@@ -1324,7 +1355,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             //
             // A support log with no debug flag has to be able to answer "was this
             // a reconnect, and did the roster come back".
-            println("WARN [LiveKitNativeMediaSession] remote video render sink (re)enabled reason=$reason")
+            util.OrbitLog.w("LiveKitNativeMediaSession", "remote video render sink (re)enabled reason=$reason")
         } else {
             println(
                 "WARN [LiveKitNativeMediaSession] remote video render sink failed reason=$reason " +
@@ -1381,8 +1412,9 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         // it is the marker that says "a reconnect is now scheduled". A support
         // log showing a refresh at 11:28 and a collapse at 11:33 is the whole
         // diagnosis, and it needs this at a level that is on by default.
-        println(
-            "WARN [LiveKitNativeMediaSession] token refresh scheduled in ${delayMs}ms " +
+        util.OrbitLog.w(
+            "LiveKitNativeMediaSession",
+            "token refresh scheduled in ${delayMs}ms " +
                 "(expires in ${expiresInSeconds(tokenResult.expiresAtEpochSeconds, nowSeconds)}s)"
         )
         refreshJob = scope.launch {
@@ -1471,9 +1503,9 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         // is tearing down and rebuilding the roster -- which is precisely the
         // window that produced the invisible collapse. A default-level log now
         // brackets it.
-        println(
-            "WARN [LiveKitNativeMediaSession] token refresh RECONNECT started " +
-                "attempt=$attempts mutedBefore=$desiredAudioMuted"
+        util.OrbitLog.w(
+            "LiveKitNativeMediaSession",
+            "token refresh RECONNECT started attempt=$attempts mutedBefore=$desiredAudioMuted"
         )
         updateNativeState(NativeMediaState.Reconnecting)
         runCatching { LiveKitNativeVideoCapture.stopAndJoin() }
@@ -1515,7 +1547,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         videoPublishedDeferred = if (shouldPublishVideo()) CompletableDeferred() else null
         mediaReadyDeferred = CompletableDeferred()
 
-        println("WARN [LiveKitNativeMediaSession] native reconnect dispatching to SFU epoch=$epoch")
+        util.OrbitLog.w("LiveKitNativeMediaSession", "native reconnect dispatching to SFU epoch=$epoch")
         val reconnect = bridge.reconnectAsync(sessionId, epoch, tokenResult.value.livekitUrl, tokenResult.value.token)
         if (!reconnect.ok) {
             handleNativeError(reconnect.error ?: unknownError("Native reconnect failed", "nativeReconnectAsync"))
@@ -1526,8 +1558,9 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             handleNativeError(connected.error ?: unknownError("Native reconnect timed out", "nativeReconnect"))
             return
         }
-        println(
-            "WARN [LiveKitNativeMediaSession] native reconnect CONNECTED epoch=$epoch " +
+        util.OrbitLog.w(
+            "LiveKitNativeMediaSession",
+            "native reconnect CONNECTED epoch=$epoch " +
                 "(audio republish follows; roster rebuilds on the 2s rescan)"
         )
         LiveKitNativeAudioPlayer.start(sessionId, epoch, bridge, ::handlePlaybackFailure)

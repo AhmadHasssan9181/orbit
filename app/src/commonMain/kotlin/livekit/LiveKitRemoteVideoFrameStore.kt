@@ -542,8 +542,9 @@ object LiveKitRemoteVideoFrameStore {
         // this is a warning about a window, not a failure claim -- but it is the
         // difference between a bug report with a cause in it and one without.
         if (participantsLost > 0 || tracksLost > 0) {
-            println(
-                "WARN [RemoteVideoUI] roster cleared while participants were present " +
+            util.OrbitLog.w(
+                "RemoteVideoUI",
+                "roster cleared while participants were present " +
                     "reason=$reason participants=$participantsLost tracks=$tracksLost " +
                     "(tiles rebuild on the next rescan; if they do not, this is the line to quote)"
             )

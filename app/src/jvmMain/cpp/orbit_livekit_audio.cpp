@@ -1286,8 +1286,48 @@ void raiseCurrentThreadPriority() {
                 // Report the PARTICIPANT identity, not the track SID: this value is
                 // pushed into the active-speaker event the UI matches on, and an
                 // empty string there silently never matches anything.
-                existing = std::make_shared<ParticipantPcmQueue>(
-                    participantIdentity.empty() ? trackSid : participantIdentity, trackSid);
+                //
+                // The fallback below is what made ONE PERSON appear under TWO
+                // NAMES in a live call. `startRemoteReaderLocked` computes the
+                // same `participantIdentity.empty() ? track->sid() : ...`, and a
+                // participant publishing two audio tracks (screen share with
+                // audio mirrors the mic) produced:
+                //
+                //   active speakers [@marioreo:matrix.org:djpYnE6QIj, TR_AMpAsYgfYnJ4z7]
+                //   active speakers [@marioreo:matrix.org:djpYnE6QIj]
+                //   active speakers [TR_AMpAsYgfYnJ4z7]      <- same person, again
+                //
+                // Both entries are the same human. Consequences, all observed in
+                // two real logs:
+                //
+                //  - the speaking ring lit the wrong tile, or counted one person
+                //    as two speakers;
+                //  - per-participant volume and mute were applied by an identity
+                //    matcher (setParticipantGainEverywhere fans one identity out
+                //    to every track SID), so a `TR_` key never matched a real
+                //    identity and that track stayed at unity gain;
+                //  - the call surface had to grow a workaround comparing both
+                //    the full identity and `substringBeforeLast(':')` to avoid
+                //    rendering the same human as two tiles.
+                //
+                // The map stays keyed by TRACK SID on purpose -- run 64's split
+                // voice came from merging a share track and a mic track into one
+                // identity-keyed buffer, and H15 depends on two queues existing.
+                // Keying and REPORTING are different questions, and only the
+                // reporting was wrong.
+                //
+                // So: keep the track SID as the key, and report the identity
+                // whenever we have one. An empty identity is now the only case
+                // that falls back, and it is logged at WARN because a queue with
+                // no identity cannot be matched to a person by anything
+                // downstream.
+                const std::string reportedIdentity = participantIdentity.empty() ? trackSid : participantIdentity;
+                if (participantIdentity.empty()) {
+                    std::cerr << "WARN [OrbitLiveKitAudio] remote audio track has NO participant identity; "
+                              << "speaking/volume will key on the track sid instead trackSid="
+                              << trackSid << std::endl;
+                }
+                existing = std::make_shared<ParticipantPcmQueue>(reportedIdentity, trackSid);
                 std::cout << "DEBUG [OrbitLiveKitAudio] remote audio participant added: trackSid="
                           << trackSid << " identity=" << existing->participantIdentity << std::endl;
             }
@@ -2576,7 +2616,23 @@ void startRemoteReaderLocked(const std::shared_ptr<livekit::Track>& track, const
 
         auto reader = std::make_shared<RemoteAudioReader>();
         reader->trackSid = trackSid;
-        reader->participantIdentity = participantIdentity.empty() ? track->sid() : participantIdentity;
+        // The identity is used for REPORTING (speaking set, gain fan-out, tile
+        // matching) while `trackSid` keys the queue and the reader map. Those are
+        // deliberately different -- see the long note in addParticipant about
+        // run 64's split voice and why two queues per participant are correct.
+        //
+        // It used to fall back to `track->sid()` here, which is the origin of the
+        // one-person-two-names bug: a participant with two audio tracks got the
+        // real identity on one reader and a `TR_...` string on the other, so the
+        // mixer reported the same human twice under different keys. Fixed at both
+        // ends -- the reader and the queue -- but the reader is the one that
+        // feeds every identity-keyed lookup, so it is fixed here first.
+        //
+        // An empty identity is left empty rather than invented. The queue's
+        // addParticipant logs a WARN for that case, because a nameless queue is
+        // a real gap in the data rather than something to paper over with a SID
+        // that no identity matcher will ever match.
+        reader->participantIdentity = participantIdentity;
         // Mixer queues are keyed by TRACK SID, not participant identity: an
         // Element user sharing screen-with-audio has TWO audio tracks, and
         // both feeding one identity-keyed queue doubles its inflow (garbled

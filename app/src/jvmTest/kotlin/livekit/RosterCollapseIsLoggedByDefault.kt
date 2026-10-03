@@ -145,19 +145,31 @@ class RosterCollapseIsLoggedByDefault {
             val lines = source.lines()
             val index = lines.indexOfFirst { it.contains(marker) }
             assertTrue(index >= 0, "lifecycle line missing from source: $marker")
-            // The message may be a continuation of a `println(` that opened on an
-            // earlier line, so look at the statement head as well as this line.
+            // The message may be a continuation of a call that opened on an earlier
+            // line, so look at the statement head as well as this line.
             val window = lines
                 .drop(index - 3)
                 .take(4)
                 .joinToString("\n")
+
+            // Level: must reach the file with debug OFF.
             assertTrue(
-                window.contains("WARN"),
+                window.contains("OrbitLog.w(") || window.contains("\"WARN [LiveKitNativeMediaSession]"),
                 "must be WARN to survive default logging (debug is OFF by default): $marker\n--- window ---\n$window"
             )
             assertTrue(
-                !window.contains("DEBUG [LiveKitNativeMediaSession]"),
+                !window.contains("OrbitLog.d(") && !window.contains("\"DEBUG [LiveKitNativeMediaSession]"),
                 "must not be DEBUG for this line: $marker\n--- window ---\n$window"
+            )
+
+            // Delivery: a raw `println` bypasses the file sink entirely and only
+            // reaches the console filter. The GUI-subsystem launcher has no
+            // console, so a `println` WARN is a line that never exists for a user
+            // -- which is exactly how the whole reconnect bracket shipped
+            // invisible after being promoted to WARN in the first place.
+            assertTrue(
+                !window.contains("println("),
+                "raw println never reaches orbit.log; use OrbitLog.w for this line: $marker\n--- window ---\n$window"
             )
         }
     }
