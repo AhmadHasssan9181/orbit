@@ -70,7 +70,6 @@ object WebrtcNativeDepsLoader {
                 "libyuv.dll",
                 "aom.dll",
                 "opus.dll",
-                "pkgconf-7.dll",
                 "srtp2.dll",
                 "opencv_core4.dll",
                 "opencv_imgproc4.dll",

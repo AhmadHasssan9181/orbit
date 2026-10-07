@@ -9,7 +9,7 @@ import kotlin.test.assertTrue
 /**
  * The share panel has to be the same shape as the thing in it.
  *
- * This was the "shitty box". The panel was `weight(2.5f).fillMaxWidth()`, which in
+ * This was the poorly proportioned box. The panel was `weight(2.5f).fillMaxWidth()`, which in
  * a 1920x1080 window is 1896x653 -- a 2.9:1 box. A 16:9 screen drawn inside a 2.9:1
  * box comes out 1161px wide with a 367px black bar down each side, so two thirds
  * of the panel was empty, and the faces underneath had been handed a third of the

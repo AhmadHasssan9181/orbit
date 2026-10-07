@@ -54,7 +54,7 @@ NATIVE DEPENDENCY INVENTORY -- `app/src/jvmMain/resources/webrtc-deps/`
 -------------------------------------------------------------------
 
 The file above names components, not every file. This is the file-level inventory,
-because a reviewer auditing this repo has to be able to account for all 26 binaries
+because a reviewer auditing this repo has to be able to account for all 25 binaries
 and several of them were previously unlisted. Every entry ships inside the
 package; nothing here is downloaded at runtime.
 
@@ -99,22 +99,10 @@ Serialization
   libprotobuf.dll            Protocol Buffers. BSD-3-Clause.
   jsoncpp.dll                JsonCpp. MIT (Public Domain / MIT dual).
 
-UNATTRIBUTED -- NEEDS RESOLUTION
-  z.dll                      No upstream, version or licence is recorded anywhere
-                             in this repository. There is no LICENSE or NOTICE
-                             file in `webrtc-deps/`, so this file cannot currently
-                             be attributed. It is 89 KB.
-  legacy.dll                 Same: 108 KB, no recorded provenance or licence.
-  pkgconf-7.dll              Part of the pkgconf/libpkgconf toolchain. MIT, but
-                             almost certainly a build-tooling artefact that
-                             should not have been shipped into a runtime
-                             directory at all.
-
-  These three are recorded here rather than quietly omitted, because an
-  unattributable binary in a shipped package is a compliance problem that has to
-  be fixed, and writing it down is the first step. Until each is traced to an
-  upstream, replaced, or removed, this repository does not have a complete
-  attribution chain for what it ships.
+  legacy.dll                 OpenSSL 3.6.2 legacy provider module. Apache-2.0
+                             with OpenSSL/SSLeay licence-compatibility clause.
+  z.dll                      zlib 1.3.2 data compression library (Jean-loup Gailly,
+                             Mark Adler). zlib license (https://zlib.net/zlib_license.html).
 
 NOTE ON MODIFICATIONS
 ---------------------
