@@ -51,6 +51,9 @@ jobs:
       # dependencies. Note that `gradle.properties` must not carry a
       # machine-specific `org.gradle.java.home`; a path committed there breaks
       # every other clone before anything compiles.
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
       - name: Compile
         run: ./gradlew --no-daemon :app:compileKotlinJvm
 
