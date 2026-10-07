@@ -87,6 +87,11 @@ object LiveKitNativeAudioCapture {
     // same override" from "the hardware changed" without re-probing to find out.
     @Volatile private var preparedCandidatesSignature: String = ""
     @Volatile private var preparedSelfTestResult: MicCaptureSelfTestResult? = null
+    // Wall-clock time the cached probe was taken, so it cannot outlive the hardware
+    // state it described. A USB interface that gets re-enumerated keeps its mixer
+    // name and version in JavaSound's list, so the signature above still matches and
+    // only a time bound stops us reusing a stale answer.
+    @Volatile private var preparedProbeAtMs: Long = 0L
     @Volatile private var inputDeviceOverride = ""
     @Volatile private var userVolumeFactor = 1f
 
@@ -170,6 +175,41 @@ object LiveKitNativeAudioCapture {
     // hasReadyMicLocked() per frame and silently drops, so a coarser poll costs at
     // most a handful of dropped frames.
     private const val ACCEPTING_FRAMES_POLL_FRAMES = 50
+
+    // Microphone read-stall recovery.
+    //
+    // `line.read` returning 0 in a tight loop means the capture line is no longer
+    // producing samples. The common reason is not a broken microphone but a device
+    // that the OS re-enumerated underneath us (USB audio unplug/replug, driver
+    // reset), which leaves the TargetDataLine open and empty. Before treating that
+    // as a permanent failure we try to reattach the same line, then, if that keeps
+    // failing, we let it go with a *recoverable* error: a dead mic must not end a
+    // call whose LiveKit session and remote audio are fine.
+    /** Consecutive empty reads before the first warning is logged. */
+    private const val EMPTY_READ_WARN_AT = 25
+
+    /** Empty reads between capture-line revival attempts. */
+    private const val EMPTY_READ_REVIVE_INTERVAL = 50
+
+    /** Empty reads before the capture line is declared unrecoverable. */
+    private const val EMPTY_READ_GIVE_UP_AT = 200
+
+    /** How many revival attempts to make before giving up on the line. */
+    private const val CAPTURE_LINE_REVIVE_ATTEMPTS = 4
+
+    /** Backoff before the first revival attempt, doubling each time. */
+    private const val CAPTURE_LINE_REVIVE_BASE_DELAY_MS = 250L
+
+    /**
+     * How long a cached microphone probe stays usable.
+     *
+     * Probing is expensive (seconds of blocking audio, one input at a time), so the
+     * result is cached between joins. It must not be cached forever, though: a USB
+     * audio interface that the OS re-enumerates keeps the same mixer name and version
+     * in JavaSound's list, so the candidate signature cannot tell that the hardware
+     * underneath changed.
+     */
+    private const val PREPARED_PROBE_MAX_AGE_MS = 5 * 60 * 1000L
 
     data class MicProbeResult(
         val mixerName: String,
@@ -373,8 +413,18 @@ object LiveKitNativeAudioCapture {
 
         val signature = candidatesSignature(candidatesToProbe, overrideName)
         val cached = preparedSelfTestResult
+        val cachedAgeMs = System.currentTimeMillis() - preparedProbeAtMs
+        val cachedStillFresh = preparedProbeAtMs > 0L && cachedAgeMs in 0 until PREPARED_PROBE_MAX_AGE_MS
+        if (preparedProbeAtMs > 0L && !cachedStillFresh) {
+            println(
+                "DEBUG [LiveKitNativeAudioCapture] cached microphone probe is ${cachedAgeMs}ms old " +
+                    "(limit ${PREPARED_PROBE_MAX_AGE_MS}ms); re-probing inputs rather than reusing it"
+            )
+            invalidatePreparedMicrophone("probe exceeded the ${PREPARED_PROBE_MAX_AGE_MS}ms freshness limit")
+        }
         if (cached != null && preparedMixerKey != null &&
-            preparedCandidatesSignature == signature && preparedOverrideName == overrideName
+            preparedCandidatesSignature == signature && preparedOverrideName == overrideName &&
+            cachedStillFresh
         ) {
             println(
                 "DEBUG [LiveKitNativeAudioCapture] microphone self-test reused cached probe " +
@@ -420,7 +470,31 @@ object LiveKitNativeAudioCapture {
         )
         preparedCandidatesSignature = signature
         preparedSelfTestResult = result
+        preparedProbeAtMs = System.currentTimeMillis()
         return result
+    }
+
+    /**
+     * Drops the cached microphone probe so the next join re-probes.
+     *
+     * Called when a capture line that was opened from the cached probe turns out to
+     * be dead. The mixer name, version and format support all look unchanged after a
+     * USB audio interface is re-enumerated, so the signature check on its own keeps
+     * serving the stale answer; the hardware is what invalidated it, not the name.
+     */
+    private fun invalidatePreparedMicrophone(reason: String) {
+        val had = preparedSelfTestResult != null
+        preparedSelfTestResult = null
+        preparedProbeResult = null
+        preparedMixerKey = null
+        preparedCandidatesSignature = ""
+        preparedProbeAtMs = 0L
+        if (had) {
+            println(
+                "DEBUG [LiveKitNativeAudioCapture] discarded the cached microphone probe " +
+                    "($reason); the next join will re-probe every input"
+            )
+        }
     }
 
     /**
@@ -644,14 +718,31 @@ object LiveKitNativeAudioCapture {
                     if (read <= 0) {
                         CallPathStats.onMicReadStall()
                         consecutiveEmptyReads += 1
-                        if (consecutiveEmptyReads == 25) {
+                        if (consecutiveEmptyReads == EMPTY_READ_WARN_AT) {
                             println("WARN [LiveKitNativeAudioCapture] mic read repeatedly returned $read (${consecutiveEmptyReads}x) � device may be gone")
                         }
-                        if (consecutiveEmptyReads >= 100) {
+                        // Before giving up, try to bring the line back. A USB audio
+                        // interface that is re-enumerated (unplugged, or a driver
+                        // reset by the OS) leaves the TargetDataLine open but
+                        // inactive, and every read returns 0 forever. stop/start
+                        // on the same line usually reattaches it.
+                        if (consecutiveEmptyReads % EMPTY_READ_REVIVE_INTERVAL == 0 &&
+                            attemptCaptureLineRevival(line, consecutiveEmptyReads / EMPTY_READ_REVIVE_INTERVAL, myGeneration)
+                        ) {
+                            consecutiveEmptyReads = 0
+                            continue
+                        }
+                        if (consecutiveEmptyReads >= EMPTY_READ_GIVE_UP_AT) {
+                            // Recoverable on purpose: a dead microphone is not a dead
+                            // call. The LiveKit session, the roster and remote
+                            // playback are all still healthy, and the session layer
+                            // keeps the call up and surfaces this in Diagnostics.
                             failureSink?.invoke(
                                 NativeError(
                                     code = NativeErrorCode.AUDIO_DEVICE_UNAVAILABLE,
-                                    message = "Microphone stopped delivering samples ($consecutiveEmptyReads empty reads)",
+                                    message = "Microphone stopped delivering samples " +
+                                        "($consecutiveEmptyReads empty reads) and the capture line " +
+                                        "could not be revived",
                                     operation = "JVM_MIC_CAPTURE",
                                     recoverable = true
                                 )
@@ -670,14 +761,31 @@ object LiveKitNativeAudioCapture {
                     if (read <= 0) {
                         CallPathStats.onMicReadStall()
                         consecutiveEmptyReads += 1
-                        if (consecutiveEmptyReads == 25) {
+                        if (consecutiveEmptyReads == EMPTY_READ_WARN_AT) {
                             println("WARN [LiveKitNativeAudioCapture] resampled mic read repeatedly returned $read (${consecutiveEmptyReads}x) � device may be gone")
                         }
-                        if (consecutiveEmptyReads >= 100) {
+                        // Before giving up, try to bring the line back. A USB audio
+                        // interface that is re-enumerated (unplugged, or a driver
+                        // reset by the OS) leaves the TargetDataLine open but
+                        // inactive, and every read returns 0 forever. stop/start
+                        // on the same line usually reattaches it.
+                        if (consecutiveEmptyReads % EMPTY_READ_REVIVE_INTERVAL == 0 &&
+                            attemptCaptureLineRevival(line, consecutiveEmptyReads / EMPTY_READ_REVIVE_INTERVAL, myGeneration)
+                        ) {
+                            consecutiveEmptyReads = 0
+                            continue
+                        }
+                        if (consecutiveEmptyReads >= EMPTY_READ_GIVE_UP_AT) {
+                            // Recoverable on purpose: a dead microphone is not a dead
+                            // call. The LiveKit session, the roster and remote
+                            // playback are all still healthy, and the session layer
+                            // keeps the call up and surfaces this in Diagnostics.
                             failureSink?.invoke(
                                 NativeError(
                                     code = NativeErrorCode.AUDIO_DEVICE_UNAVAILABLE,
-                                    message = "Microphone stopped delivering samples ($consecutiveEmptyReads empty reads)",
+                                    message = "Microphone stopped delivering samples " +
+                                        "($consecutiveEmptyReads empty reads) and the capture line " +
+                                        "could not be revived",
                                     operation = "JVM_MIC_CAPTURE",
                                     recoverable = true
                                 )
@@ -790,6 +898,12 @@ object LiveKitNativeAudioCapture {
                         operation = "JVM_MIC_CAPTURE",
                         recoverable = true
                     )
+                )
+                // The capture itself threw. Whatever the cached probe believes about
+                // this input has just been disproved, so drop it rather than letting a
+                // later join reuse it.
+                invalidatePreparedMicrophone(
+                    "the capture line failed with ${error::class.simpleName.orEmpty()}"
                 )
             } else {
                 println("DEBUG [LiveKitNativeAudioCapture] capture generation $myGeneration failed after being superseded; not reporting")
@@ -1234,6 +1348,54 @@ object LiveKitNativeAudioCapture {
         selected.probeResult?.let { result ->
             println("DEBUG [LiveKitNativeAudioCapture] selected mixer probe min=${result.min} max=${result.max} peak=${result.peak} rms=${result.rms.formatRms()} first10Samples=${result.firstSamples.joinToString(prefix = "[", postfix = "]")} nonZeroSamples=${result.nonZeroSamples}/${result.totalSamples}")
         }
+    }
+
+    /**
+     * Tries to bring a stalled capture line back to life.
+     *
+     * A TargetDataLine whose device has been re-enumerated by the OS stays open but
+     * reports `isActive=false` / `isRunning=false` and returns 0 from every read
+     * forever. Cycling stop/start on the same line normally reattaches it to the
+     * (possibly new) underlying device, which is far cheaper than tearing the call
+     * down and asking the user to rejoin.
+     *
+     * Returns true if the line looks live again, so the caller can reset its
+     * stall counter and keep the existing session.
+     */
+    private suspend fun attemptCaptureLineRevival(line: TargetDataLine, attempt: Int, myGeneration: Long): Boolean {
+        if (attempt > CAPTURE_LINE_REVIVE_ATTEMPTS) {
+            println(
+                "WARN [LiveKitNativeAudioCapture] gave up reviving the capture line after " +
+                    "$CAPTURE_LINE_REVIVE_ATTEMPTS attempts; reporting a recoverable microphone failure"
+            )
+            // The mixer we probed is the hardware that just failed on us. Anything
+            // cached about it is no longer a description of the current machine.
+            invalidatePreparedMicrophone("the capture line it was probed against went dead")
+            return false
+        }
+        val backoffMs = CAPTURE_LINE_REVIVE_BASE_DELAY_MS shl (attempt - 1)
+        println(
+            "DEBUG [LiveKitNativeAudioCapture] reviving stalled capture line attempt=$attempt/" +
+                "$CAPTURE_LINE_REVIVE_ATTEMPTS isOpen=${line.isOpen} isActive=${line.isActive} " +
+                "isRunning=${line.isRunning} backoffMs=$backoffMs"
+        )
+        kotlinx.coroutines.delay(backoffMs)
+        if (!isCurrentGeneration(myGeneration)) return false
+        // An open line can be cycled in place; a closed one cannot be revived here,
+        // and reading from it would throw on every subsequent call.
+        if (!line.isOpen) {
+            println("WARN [LiveKitNativeAudioCapture] capture line is closed; it cannot be revived in place")
+            return false
+        }
+        runCatching { line.stop() }
+        runCatching { line.flush() }
+        val restarted = runCatching { line.start() }.isSuccess
+        val live = restarted && line.isActive
+        println(
+            "DEBUG [LiveKitNativeAudioCapture] capture line revival attempt=$attempt restarted=$restarted " +
+                "isActive=${line.isActive} isRunning=${line.isRunning} bufferSize=${line.bufferSize}"
+        )
+        return live
     }
 
     private fun logReadDiagnostics(

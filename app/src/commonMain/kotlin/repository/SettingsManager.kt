@@ -5,6 +5,8 @@ import com.russhwolf.settings.Settings
 import com.russhwolf.settings.coroutines.toFlowSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import ui.theme.Theme
 
@@ -247,6 +249,36 @@ class SettingsManager {
      */
     val debugLogging = flowSettings.getBooleanFlow("debugLogging", true)
     fun setDebugLogging(value: Boolean) = settings.putBoolean("debugLogging", value)
+
+    /**
+     * Whether the credential store is currently storing values unprotected.
+     *
+     * SECURITY: surfaced so the user can find out. A DPAPI failure means the access
+     * token is in `Preferences` in cleartext, and until this existed that was
+     * visible only in a log file the user has to go and find. Read from the same
+     * preference node the credential store writes, so it is correct from the first
+     * launch rather than from the first write.
+     */
+    val credentialStoreDegraded: Boolean
+        get() = settings.getStringOrNull("credentialStoreDegraded") == "1"
+
+    /**
+     * Observable twin of [credentialStoreDegraded].
+     *
+     * Emits once on collection with the current value, so a pane can render the
+     * warning without needing a write to happen first. There is no flow version in
+     * the underlying store, and a `MutableStateFlow` initialised from the sync
+     * reader is enough: the state only changes on a credential write, and the
+     * Diagnostics pane is re-entered whenever the user navigates there.
+     */
+    val credentialStoreDegradedFlow: StateFlow<Boolean> =
+        MutableStateFlow(credentialStoreDegraded).also { flow ->
+            // Re-read after the settings graph has settled so a degraded store
+            // detected during startup is reflected, not just one detected later.
+            runCatching {
+                flow.value = credentialStoreDegraded
+            }
+        }
     
     
     // --- Activity & Games ---

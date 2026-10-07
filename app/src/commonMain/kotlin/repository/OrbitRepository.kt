@@ -180,7 +180,12 @@ interface OrbitCallsRepository {
     // matrixRTC E2EE media keys (encrypted-room calls): per-device roster for the
     // olm key exchange, room encryption probe, and exchange lifecycle control.
     fun observeCallDevices(channelId: String): kotlinx.coroutines.flow.Flow<Set<livekit.CallDevice>>
-    suspend fun isRoomEncrypted(roomId: String): Boolean
+    /**
+     * Tri-state, not Boolean: "could not determine" must not read as "not encrypted",
+     * because the caller uses this to decide whether to publish cleartext media at
+     * the SFU. See webrtc.RoomEncryptionVerdict.
+     */
+    suspend fun isRoomEncrypted(roomId: String): webrtc.RoomEncryptionVerdict
     fun startCallMediaKeyExchange(roomId: String, livekitIdentity: String)
     fun stopCallMediaKeyExchange()
     // Stops the 3s per-room roster poller that feeds BOTH observeCallMembers and

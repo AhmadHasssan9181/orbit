@@ -1,6 +1,7 @@
 package repository
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import livekit.MatrixRtcCalls
@@ -48,11 +49,17 @@ internal object CallStateResolver {
     private val MEMBER_TYPES = setOf("m.call.member", "org.matrix.msc3401.call.member")
 
     private fun jsonString(content: JsonObject, key: String): String? =
-        runCatching { (content[key] as? JsonPrimitive)?.content }.getOrNull()
+        runCatching {
+            val elem = content[key]
+            if (elem == null || elem is JsonNull) null
+            else (elem as? JsonPrimitive)?.content?.takeUnless { it == "null" }
+        }.getOrNull()
 
     private fun jsonLong(content: JsonObject, key: String): Long? =
         runCatching {
-            (content[key] as? JsonPrimitive)?.content?.toLongOrNull()
+            val elem = content[key]
+            if (elem == null || elem is JsonNull) null
+            else (elem as? JsonPrimitive)?.content?.toLongOrNull()
         }.getOrNull()
 
     /**
@@ -280,9 +287,7 @@ internal object CallStateResolver {
                 // dropped, so a membership event with no content still reaches the
                 // resolver and is rejected there on its merits.
                 content = obj["content"] as? JsonObject ?: JsonObject(emptyMap()),
-                originServerTs = runCatching {
-                    jsonString(obj, "origin_server_ts")?.toLong()
-                }.getOrNull()
+                originServerTs = jsonLong(obj, "origin_server_ts")
             )
         }
     }.getOrElse { emptyList() }

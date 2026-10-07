@@ -58,6 +58,37 @@ private object JvmMessageCacheStore : MessageCacheStore {
         File(System.getProperty("user.home"), ".orbit/cache/rooms").apply { mkdirs() }
 
     /**
+     * SECURITY: this cache holds **decrypted** E2EE message bodies.
+     *
+     * `CachedMessage.body` is plaintext, for every room, written from the sync path
+     * as messages arrive. On Windows `%USERPROFILE%` is per-user ACL'd so the blast
+     * radius is limited to processes running as that user; on a POSIX host -- and
+     * the app is not gated to Windows, `Browser.jvm.kt` still has `open` and
+     * `xdg-open` branches -- the default umask gives 0644, i.e. world-readable.
+     *
+     * So the directory and every file in it are owner-only. This mirrors what
+     * `Settings.jvm.kt` already does for `.credkey`; the asymmetry was the bug, not
+     * the absence of a fix.
+     *
+     * Best-effort by design: a filesystem with no POSIX permissions must not stop
+     * the cache from working. The cache is allowed to be useless; it is not allowed
+     * to be a new way for chat to fail, which is the same rule this class already
+     * applies to every read.
+     */
+    private fun restrictToOwner(target: File) {
+        runCatching {
+            java.nio.file.Files.setPosixFilePermissions(
+                target.toPath(),
+                java.nio.file.attribute.PosixFilePermissions.fromString("rwx------")
+            )
+        }.onFailure {
+            // Windows, or a non-POSIX mount. Nothing to do; the ACL model there is
+            // per-user already. Deliberately not logged per call -- this runs on
+            // every cache write and would flood the log.
+        }
+    }
+
+    /**
      * Room ids contain `!`, `:`, `/` and can be very long, so they cannot be a
      * filename. A hash of the id is: stable across runs, filesystem-safe, and two
      * different rooms cannot collide in any way that matters -- and if one ever
@@ -134,11 +165,37 @@ private object JvmMessageCacheStore : MessageCacheStore {
     private fun writeNow(roomId: String, messages: List<CachedMessage>, maxPerRoom: Int) {
         val file = fileFor(roomId)
         file.parentFile?.mkdirs()
+        // Restrict the directory too: a file can be 0600 inside a world-traversable
+        // directory, and the directory is what a reader enumerates.
+        file.parentFile?.let { restrictToOwner(it) }
         val tmp = File(file.parentFile, "${file.name}.tmp")
-        tmp.writeText(json.encodeToString(serializer, messages.takeLast(maxPerRoom)))
+        // Create the temp file owner-only BEFORE the message bodies reach disk. A
+        // plain `writeText` applies the umask, so the plaintext would exist
+        // world-readable for the duration of the write.
+        val bytes = json.encodeToString(serializer, messages.takeLast(maxPerRoom))
+        runCatching {
+            java.nio.file.Files.createFile(
+                tmp.toPath(),
+                java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
+                    java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")
+                )
+            )
+        }
+        tmp.writeText(bytes)
+        // Also narrow a pre-existing temp file left by an older build.
+        restrictToOwner(tmp)
         if (!tmp.renameTo(file)) {
+            // rename failed (antivirus holding the target on Windows). Copy over,
+            // then drop the temp -- and make sure the destination is restricted too,
+            // since it may have been created by an older build with loose modes.
             file.writeText(tmp.readText())
+            restrictToOwner(file)
             tmp.delete()
+        } else {
+            // rename preserves the temp file's mode, but an older `file` may still
+            // exist with looser permissions if the rename replaced it on some
+            // filesystems, so normalise both ends.
+            restrictToOwner(file)
         }
     }
 

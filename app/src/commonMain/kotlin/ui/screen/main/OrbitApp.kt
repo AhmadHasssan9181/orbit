@@ -140,6 +140,17 @@ import ui.theme.*
 // ─── Cosmic Design Tokens ──────────────────────────────────────
 
 private val coilHttpClient = HttpClient(CIO) {
+    // SECURITY: refuse an https -> http redirect for image loads too.
+    //
+    // This client is the one that carries the Authorization header for avatars,
+    // room banners and other remote images, injected by the interceptor below.
+    // Ktor strips Authorization on a cross-authority hop, but
+    // `allowHttpsDowngrade` defaults to true, so a same-host downgrade would send
+    // the account token in cleartext. Cross-host redirects (a CDN) still work.
+    install(io.ktor.client.plugins.HttpRedirect) {
+        checkHttpMethod = false
+        allowHttpsDowngrade = false
+    }
     install(io.ktor.client.plugins.logging.Logging) {
         logger = object : io.ktor.client.plugins.logging.Logger {
             override fun log(message: String) {
@@ -154,16 +165,28 @@ private val coilHttpClient = HttpClient(CIO) {
     // Dynamic header injection interceptor
     requestPipeline.intercept(io.ktor.client.request.HttpRequestPipeline.Before) {
         repository.CredentialManager.accessToken?.let { token ->
-            val url = context.url.buildString()
-            val host = context.url.host
-            val hsHost = repository.CredentialManager.homeserverUrl
-                ?.removePrefix("https://")?.removePrefix("http://")
-                ?.trimEnd('/')
-            // Attach auth for any Matrix API request (path-based) or matching homeserver host
-            val isMatrixApi = url.contains("/_matrix/")
-            val isHomeserver = hsHost != null && host.contains(hsHost, ignoreCase = true)
-            if (isMatrixApi || isHomeserver) {
+            // SECURITY: this attaches the long-lived access token, so the test must be
+            // an origin comparison, never a substring.
+            //
+            // It used to be `url.contains("/_matrix/") || host.contains(hsHost)`.
+            // Both are satisfiable by an attacker: `m.room.banner` is writable by any
+            // room member, so `https://attacker.example/_matrix/logo.png` passed the
+            // first test and every client that rendered the banner sent its access
+            // token to that host. And `matrix.org` as a homeserver made
+            // `evil-matrix.org.attacker.com` pass the second. The token is a bearer
+            // credential for the whole account, E2EE material included.
+            //
+            // See util/OriginGuard for the full rationale.
+            val homeserver = repository.CredentialManager.homeserverUrl
+            val target = context.url.buildString()
+            if (util.OriginGuard.mayAttachCredential(target, homeserver)) {
                 context.header("Authorization", "Bearer $token")
+            } else {
+                util.OrbitLog.d(
+                    "Coil-Auth",
+                    "no credential attached: ${util.OriginGuard.originOf(target) ?: "unparseable"} " +
+                        "is not this homeserver's origin"
+                )
             }
         }
     }

@@ -38,7 +38,13 @@ actual fun NativeVideoPlayer(
 
     DisposableEffect(url) {
         val token = CredentialManager.accessToken
-        val isMatrixMedia = url.contains("/_matrix/")
+        // SECURITY: origin check, not `url.contains("/_matrix/")`. The substring form
+        // is satisfied by any host containing that text, so a hostile media URL
+        // would get the account token attached by libVLC. See util/OriginGuard.
+        val isMatrixMedia = util.OriginGuard.mayAttachCredential(
+            url,
+            CredentialManager.homeserverUrl
+        )
         val media = mediaPlayerComponent.mediaPlayer().media()
         if (token != null && isMatrixMedia) {
             // Authorization HEADER, never a query parameter. The access token is

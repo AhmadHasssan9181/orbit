@@ -6,15 +6,22 @@ Licensed under the Apache License, Version 2.0 (see LICENSE).
 This product bundles third-party software. Each bundled component keeps its own
 license and, where the upstream provides one, its own NOTICE file alongside it.
 
+The named components below carry their own LICENSE/NOTICE files in-tree. The
+native dependency inventory further down accounts for the binaries shipped under
+`app/src/jvmMain/resources/webrtc-deps/`, which do **not** carry individual
+licence files -- that directory is covered by this file rather than by a licence
+beside each DLL.
+
 BUNDLED COMPONENTS
 ------------------
 
 Trixnity -- Kotlin Multiplatform SDK for Matrix
   Copyright connect2x GmbH. Licensed under the Apache License, Version 2.0.
   Upstream: https://github.com/connect2x-de/trixnity
-  Used as a published Maven dependency. An unmodified copy of part of the client
-  module is vendored at `trixnity-src/` as developer reference material only; it is
-  not compiled and is not on the runtime classpath.
+  Used as a published Maven dependency (v5.9.2). A historical partial reference
+  snapshot of parts of the client module from Trixnity 5.4.0 is retained at `trixnity-src/`
+  for developer reference only; it is not compiled, is not on the runtime classpath,
+  and does not represent the active upstream dependency version.
   Full text and notes: `trixnity-src/LICENSE`, `trixnity-src/NOTICE`.
 
 webrtc-java -- WebRTC for desktop platforms running Java
@@ -42,6 +49,72 @@ LiveKit
   Orbit's own native LiveKit media session (`orbit_livekit_audio.dll`,
   `orbit_livekit_video.dll`) is original work, licensed under the same terms as the
   rest of Orbit.
+
+NATIVE DEPENDENCY INVENTORY -- `app/src/jvmMain/resources/webrtc-deps/`
+-------------------------------------------------------------------
+
+The file above names components, not every file. This is the file-level inventory,
+because a reviewer auditing this repo has to be able to account for all 26 binaries
+and several of them were previously unlisted. Every entry ships inside the
+package; nothing here is downloaded at runtime.
+
+First-party / Orbit-built
+  orbit_livekit_audio.dll    Orbit's native LiveKit media session (audio, AEC,
+                             media-key registration). Apache-2.0, Orbit.
+  orbit_livekit_video.dll    Orbit's native LiveKit video processor. Apache-2.0,
+                             Orbit.
+  livekit.dll                LiveKit C++ SDK. Apache-2.0.
+  livekit_ffi.dll            LiveKit Flutter FFI library, loaded via JNA by
+                             `SelfCaptureGuard` / the Windows audio ducker.
+                             Apache-2.0.
+  webrtc-java-orbit-windows-x86_64.dll
+                             Orbit's build of WebRTC plus the webrtc-jni layer.
+                             3-clause BSD (WebRTC) + Apache-2.0 (webrtc-java).
+
+Third-party codecs and crypto
+  abseil_dll.dll             Abseil. Apache-2.0.
+  aom.dll                    AV1 reference encoder (libaom). BSD-2-Clause.
+  jpeg62.dll                 libjpeg-turbo. BSD-3-Clause/IJG.
+  libyuv.dll                 Google's libyuv. BSD-3-Clause.
+  opus.dll                   Opus reference codec. BSD-3-Clause.
+  srtp2.dll                  libsrtp. BSD-3-Clause.
+  turbojpeg.dll              libjpeg-turbo wrapper. BSD-3-Clause/IJG.
+  libcrypto-3-x64.dll        OpenSSL libcrypto. Apache-2.0 **with the
+                             OpenSSL/SSLeay licence-compatibility clause** -- see
+                             https://www.openssl.org/source/license.html
+  libssl-3-x64.dll           OpenSSL libssl. Same terms as above.
+  concrt140.dll,
+  msvcp140.dll,
+  vcruntime140.dll,
+  vcruntime140_1.dll         Microsoft Visual C++ runtime, redistributable.
+                             Microsoft licence.
+
+OpenCV
+  opencv_core4.dll           OpenCV. Apache-2.0.
+  opencv_imgproc4.dll        OpenCV. Apache-2.0.
+  opencv_dnn4.dll            OpenCV. Apache-2.0.
+  Upstream: https://github.com/opencv/opencv
+
+Serialization
+  libprotobuf.dll            Protocol Buffers. BSD-3-Clause.
+  jsoncpp.dll                JsonCpp. MIT (Public Domain / MIT dual).
+
+UNATTRIBUTED -- NEEDS RESOLUTION
+  z.dll                      No upstream, version or licence is recorded anywhere
+                             in this repository. There is no LICENSE or NOTICE
+                             file in `webrtc-deps/`, so this file cannot currently
+                             be attributed. It is 89 KB.
+  legacy.dll                 Same: 108 KB, no recorded provenance or licence.
+  pkgconf-7.dll              Part of the pkgconf/libpkgconf toolchain. MIT, but
+                             almost certainly a build-tooling artefact that
+                             should not have been shipped into a runtime
+                             directory at all.
+
+  These three are recorded here rather than quietly omitted, because an
+  unattributable binary in a shipped package is a compliance problem that has to
+  be fixed, and writing it down is the first step. Until each is traced to an
+  upstream, replaced, or removed, this repository does not have a complete
+  attribution chain for what it ships.
 
 NOTE ON MODIFICATIONS
 ---------------------

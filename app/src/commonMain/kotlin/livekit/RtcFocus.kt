@@ -89,11 +89,16 @@ object MatrixRtcCalls {
         if (intent == "m.terminated") return true
         return when (val terminated = content["m.terminated"]) {
             null -> false
-            // Canonical form: m.terminated: true
-            is JsonPrimitive -> terminated.contentOrNull == "true"
+            // Canonical form: m.terminated: true.
+            // MSC3401/MatrixRTC also supports string reasons (e.g. "m.user_hangup", "m.timeout").
+            // Only explicit "false" or blank values assert that the call is NOT terminated.
+            is JsonPrimitive -> {
+                val value = terminated.contentOrNull
+                value != null && value != "false" && value.isNotBlank()
+            }
             // Present with a reason: m.terminated: { "reason": "..." }
             is JsonObject -> true
-            // false, a number, a string -- none of which assert termination.
+            // Any other structured termination representation
             else -> false
         }
     }

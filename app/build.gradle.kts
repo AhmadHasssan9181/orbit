@@ -17,6 +17,9 @@ kotlin {
             kotlinOptions {
                 jvmTarget = "17"
                 freeCompilerArgs += "-Xskip-metadata-version-check"
+                // Trixnity 5.9.2 exposes store APIs (e.g. KeyStore.updateOutdatedKeys)
+                // with context receivers, so calling them requires this flag.
+                freeCompilerArgs += "-Xcontext-receivers"
             }
         }
     }
@@ -52,10 +55,10 @@ kotlin {
                 implementation("androidx.sqlite:sqlite-bundled:2.5.0-alpha11")
 
                 // Trixnity
-                implementation("de.connect2x.trixnity:trixnity-client:5.4.0")
-                implementation("de.connect2x.trixnity:trixnity-client-repository-room:5.4.0")
-                implementation("de.connect2x.trixnity:trixnity-client-media-okio:5.4.0")
-                implementation("de.connect2x.trixnity:trixnity-client-cryptodriver-vodozemac:5.4.0")
+                implementation("de.connect2x.trixnity:trixnity-client:5.9.2")
+                implementation("de.connect2x.trixnity:trixnity-client-repository-room:5.9.2")
+                implementation("de.connect2x.trixnity:trixnity-client-media-okio:5.9.2")
+                implementation("de.connect2x.trixnity:trixnity-client-cryptodriver-vodozemac:5.9.2")
             }
         }
 

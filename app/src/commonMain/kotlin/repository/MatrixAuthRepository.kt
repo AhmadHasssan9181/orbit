@@ -127,10 +127,45 @@ class MatrixAuthRepository(private val context: MatrixContext) : OrbitAuthReposi
         // plus a CIO selector thread and kept 401-storming the server.
         val client = context.trixnityClient
         context.trixnityClient = null
+
+        // SECURITY: revoke server-side FIRST, before anything local is destroyed.
+        //
+        // This used to call `client?.close()` and nothing else. `close()` only tears
+        // down sync and the API layer -- it issues no POST
+        // /_matrix/client/v3/logout -- so the access token stayed valid on the
+        // homeserver indefinitely after the user clicked "Log out". Anyone holding a
+        // leaked token kept working. Trixnity's `MatrixClient.logout()` does both
+        // halves: it cancels sync, calls api.authentication.logout() (so the token is
+        // dead server-side) and then deleteAll() (so the Olm account, cross-signing
+        // keys and every megolm session in ~/.orbit/trixnity.db are destroyed).
+        //
+        // deleteAll() being skipped is the worse of the two: a later user of the same
+        // Windows account could read the E2EE key material out of the database that
+        // logout was supposed to destroy.
+        //
+        // Revocation must come before the local wipe because it needs a live session.
+        // A failure (already-expired token, no network, homeserver down) must NOT
+        // block the local cleanup -- a user on a plane still has to be able to log
+        // out -- so it is reported and the teardown continues.
+        val revokeFailure = runCatching {
+            client?.logout()?.getOrThrow()
+        }.exceptionOrNull()
+        if (revokeFailure != null) {
+            util.OrbitLog.w(
+                "MatrixAuthRepository",
+                "server-side logout failed (${revokeFailure.message}); the access token may " +
+                    "still be valid on ${context.homeserverUrl}. Local credentials are still cleared."
+            )
+        } else {
+            util.OrbitLog.d("MatrixAuthRepository", "session revoked server-side and key store deleted")
+        }
+
+        // Belt and braces: logout() above cancels sync, but a partially-initialised
+        // client can still be syncing, and close() must run either way.
         runCatching { client?.stopSync() }
-            .onFailure { println("WARN [MatrixAuthRepository] stopSync on logout failed: ${it.message}") }
+            .onFailure { util.OrbitLog.w("MatrixAuthRepository", "stopSync on logout failed: ${it.message}") }
         runCatching { client?.close() }
-            .onFailure { println("WARN [MatrixAuthRepository] closing Trixnity client failed: ${it.message}") }
+            .onFailure { util.OrbitLog.w("MatrixAuthRepository", "closing Trixnity client failed: ${it.message}") }
         CredentialManager.clear()
         // Cached messages are readable with no session at all, which is what makes
         // them useful when the network is down -- and is exactly why they have to

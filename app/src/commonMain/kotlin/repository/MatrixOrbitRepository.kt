@@ -147,7 +147,7 @@ class MatrixOrbitRepository private constructor(
         val client = context.trixnityClient
         context.trixnityClient = null
         runCatching { client?.close() }
-            .onFailure { println("WARN [MatrixOrbitRepository] closing Trixnity client failed: ${it.message}") }
+            .onFailure { util.OrbitLog.w("MatrixOrbitRepository", "closing Trixnity client failed: ${it.message}") }
         context.close()
     }
 

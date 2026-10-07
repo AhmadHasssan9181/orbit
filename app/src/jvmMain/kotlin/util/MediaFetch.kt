@@ -3,6 +3,7 @@ package util
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
+import io.ktor.client.plugins.HttpRedirect
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -34,6 +35,33 @@ internal val mediaDownloadClient: HttpClient by lazy {
             requestTimeoutMillis = 60_000
             connectTimeoutMillis = 15_000
             socketTimeoutMillis = 60_000
+        }
+        // SECURITY: pin the redirect policy explicitly rather than inheriting a
+        // default whose guarantees live in someone else's dependency.
+        //
+        // What Ktor actually does (verified against the resolved ktor-client-core
+        // 3.4.0): HttpRedirect is installed by default, follows redirects, and DOES
+        // strip the Authorization header on a cross-authority hop -- it logs
+        // "Removing Authorization header for cross-authority redirect". So the
+        // feared "token replayed to a CDN" does not happen, and that part of the
+        // concern was wrong.
+        //
+        // The real gap is `allowHttpsDowngrade`, which defaults to TRUE. The
+        // header is only stripped when the *authority* changes, so a same-host
+        // https -> http redirect keeps Authorization and sends the long-lived
+        // account token in cleartext. A homeserver or an intercepting proxy only
+        // has to answer one media request with a 302 to its own http:// endpoint.
+        //
+        // Setting it false turns that hop into "Blocked redirect ... due to HTTPS
+        // downgrade" instead. Media still loads from CDNs, because those are
+        // cross-authority and unaffected.
+        //
+        // `followRedirects` is intentionally not set: ktor 3.4.0's
+        // HttpRedirectConfig only exposes `checkHttpMethod` and
+        // `allowHttpsDowngrade`, and the plugin follows redirects when installed.
+        install(HttpRedirect) {
+            checkHttpMethod = false
+            allowHttpsDowngrade = false
         }
     }
 }

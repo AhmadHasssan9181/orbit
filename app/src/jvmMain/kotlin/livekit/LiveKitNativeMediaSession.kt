@@ -1764,6 +1764,46 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
             println("WARN [LiveKitNativeMediaSession] mic input near-silent (check OS mic level/mute); keeping call alive")
             return
         }
+        if (error.recoverable) {
+            // Every recoverable capture error LiveKitNativeAudioCapture raises is a
+            // microphone that may come back: the device re-enumerating (USB audio
+            // dropping), a line going momentarily inactive, too few frames in the
+            // buffer. None of those are call failures — remote playback, the LiveKit
+            // session and the roster are all unaffected. Declaring the whole media
+            // chain Failed here made the CallManager watchdog tear down a perfectly
+            // healthy call the moment a USB mic blinked.
+            //
+            // Record the error for Diagnostics and mark the mic as not accepting
+            // frames (there genuinely is nothing to push), but keep the call state so
+            // the watchdog does not act on it.
+            println(
+                "WARN [LiveKitNativeMediaSession] recoverable microphone capture problem " +
+                    "(${error.code} ${error.operation}: ${error.message}); keeping call alive, " +
+                    "audio publishing paused"
+            )
+            mutateReadiness { old ->
+                old.copy(acceptingAudioFrames = false, lastError = error)
+            }
+            return
+        }
+        handleNativeError(error)
+    }
+
+    private fun handlePlaybackFailure(error: NativeError) {
+        if (error.recoverable) {
+            // LiveKitNativeAudioPlayer marks every playback error recoverable and
+            // already falls back to the system default line in each case: a USB
+            // speaker unplugged mid-call, or an output format the device will not take.
+            // Ending the call there throws away a live session and everyone's
+            // membership over a speaker problem, so surface it and carry on muted.
+            println(
+                "WARN [LiveKitNativeMediaSession] recoverable audio playback problem " +
+                    "(${error.code} ${error.operation}: ${error.message}); keeping call alive, " +
+                    "you will not hear remote audio"
+            )
+            mutateReadiness { old -> old.copy(lastError = error) }
+            return
+        }
         handleNativeError(error)
     }
 
@@ -1782,10 +1822,6 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
                 lastError = error
             )
         }
-    }
-
-    private fun handlePlaybackFailure(error: NativeError) {
-        handleNativeError(error)
     }
 
     private fun updateReadinessWithError(state: NativeMediaState, error: NativeError) {

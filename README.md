@@ -9,13 +9,13 @@
 <h1 align="center">Orbit</h1>
 
 <p align="center">
-  <strong>A modern Matrix-powered chat, server, DM, voice, video, and screen-sharing client for Android and desktop.</strong>
+  <strong>A modern Matrix-powered chat, server, DM, voice, video, and screen-sharing client for desktop.</strong>
 </p>
 
 <p align="center">
   <img alt="Kotlin" src="https://img.shields.io/badge/Kotlin-2.0.21-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white" />
   <img alt="Compose Multiplatform" src="https://img.shields.io/badge/Compose-1.7.3-4285F4?style=for-the-badge&logo=jetpackcompose&logoColor=white" />
-  <img alt="Android" src="https://img.shields.io/badge/Android-SDK%2034-3DDC84?style=for-the-badge&logo=android&logoColor=white" />
+  <img alt="JVM" src="https://img.shields.io/badge/JVM-17-F97316?style=for-the-badge&logo=openjdk&logoColor=white" />
   <img alt="JVM" src="https://img.shields.io/badge/JVM-17-F97316?style=for-the-badge&logo=openjdk&logoColor=white" />
 </p>
 
@@ -61,7 +61,7 @@ media, profiles, verification, and VoIP signaling into a Discord-style communica
 experience with servers, channels, DMs, voice calls, video calls, and screen sharing.
 
 The project is named `Orbit`, while the Gradle root project is currently named `Onichat`.
-The Android package namespace is `com.noobdev.orbit`.
+The desktop application id is `com.noobdev.orbit`. There is no Android target yet -- see [Build](#build).
 
 Orbit is designed around a simple idea:
 
@@ -116,14 +116,14 @@ Orbit aims to provide:
 | --- | --- |
 | Language | Kotlin Multiplatform `2.0.21` |
 | UI | Compose Multiplatform `1.7.3`, Material, Material 3 |
-| Android | Android Gradle Plugin, compile SDK `34`, min SDK `24` |
+| Android | **not implemented.** No `androidTarget()` is declared; the only target is `jvm` |
 | Desktop | JVM `17`, Compose Desktop |
 | Matrix SDK | Trixnity `5.4.0` |
 | Direct HTTP | Ktor `3.0.1` |
 | Persistence | Room KMP `2.7.0-alpha11`, bundled SQLite `2.5.0-alpha11` |
 | Media | Trixnity Okio media store, Coil `3.0.0` |
 | Crypto | Trixnity Vodozemac crypto driver |
-| Android WebRTC | `io.getstream:stream-webrtc-android:1.1.2` |
+| Android WebRTC | **not implemented.** Desktop uses the bundled libwebrtc via JNI (`webrtc-java-lib`) |
 | Desktop WebRTC | Local `:webrtc-java-lib` project and custom native DLL resources |
 | Native Helpers | `webrtc-java-fork`, Windows WebRTC runtime DLLs, JNA |
 
@@ -168,7 +168,7 @@ flowchart LR
     RepositoryImpl["repository/MatrixOrbitRepository"] --> RepositoryAPI
     RepositoryImpl --> MatrixSDK["Trixnity + Ktor"]
     Calls["webrtc/CallManager"] --> WebRtcAPI["webrtc/WebRtcClient"]
-    PlatformImpls["androidMain/jvmMain implementations"] --> WebRtcAPI
+    PlatformImpls["jvmMain implementations"] --> WebRtcAPI
 ```
 
 The UI should talk to `OrbitRepository` and `CallManager`, not directly to raw Matrix
@@ -193,9 +193,9 @@ one place.
 |   |   |   |   |   |-- theme           Palette, typography, shapes, motion
 |   |   |   |   |-- util              Shared expect declarations
 |   |   |   |   |-- webrtc            Shared call manager and WebRTC contract
-|   |   |-- androidMain
+|   |   |-- androidMain  **(planned -- does not exist)**
 |   |   |   |-- kotlin
-|   |   |   |   |-- com/noobdev/orbit Android activity, app bootstrap, screen-share service
+|   |   |   |   |-- (planned) Android activity, app bootstrap, screen-share service
 |   |   |   |   |-- repository        Android credential/settings actuals
 |   |   |   |   |-- util              Android database, media, browser, audio actuals
 |   |   |   |   |-- webrtc            Android WebRTC actual implementation
@@ -224,7 +224,7 @@ Orbit uses Kotlin Multiplatform source sets:
 ```mermaid
 flowchart TD
     Common["commonMain"]
-    Android["androidMain"]
+    Android["androidMain (planned)"]
     Desktop["jvmMain"]
 
     Common --> SharedUI["Shared Compose UI"]
@@ -244,7 +244,7 @@ flowchart TD
 | Source Set | Responsibility |
 | --- | --- |
 | `commonMain` | Shared UI, shared models, repository API, Matrix repository, call state machine |
-| `androidMain` | Android activity, permissions, media picker, SSO handler, Android WebRTC |
+| `androidMain` | **planned only.** The source set does not exist |
 | `jvmMain` | Desktop entry point, custom title bar, desktop WebRTC, native loading |
 
 ## Domain Model
@@ -725,13 +725,28 @@ Compile the desktop Kotlin target:
 
 ### Android
 
-Build the Android debug APK:
+**There is no Android build.** `:app:assembleDebug` does not exist.
+
+The `app` module is a Kotlin Multiplatform module whose only declared target is
+`jvm`. There is no `com.android.application` / `com.android.library` plugin
+applied anywhere, no `androidTarget()` in any build script, and no
+`app/src/androidMain/` source set. Anything in this README that implied otherwise
+— the Android badge, the `com.noobdev.orbit` namespace, the compile/min SDK
+figures, the `stream-webrtc-android` dependency, the `androidMain` rows in the
+source-layout and architecture diagrams — describes an intended target, not the
+current code. `app/src/main/res/` is still full of Android resources
+(translations, `network_security_config.xml`, trust anchors) that no target
+consumes.
+
+Verified against every `*.gradle.kts` in the tree: zero matches for
+`androidTarget`, `com.android.application`, `com.android.library`, `compileSdk`
+or `androidLibrary`.
+
+The desktop client is the one that builds:
 
 ```powershell
-.\gradlew.bat :app:assembleDebug
+.\gradlew.bat :app:compileKotlinJvm
 ```
-
-Install through Android Studio or Gradle/ADB as usual after the APK is produced.
 
 ### Clean
 
@@ -769,7 +784,7 @@ Useful commands:
 git status --short --branch
 git pull --rebase --autostash origin main
 .\gradlew.bat :app:compileKotlinJvm
-.\gradlew.bat :app:assembleDebug
+.\gradlew.bat :app:jvmTest
 git add -- <files>
 git commit -m "Meaningful message"
 git push origin main

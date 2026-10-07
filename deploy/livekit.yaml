@@ -23,6 +23,22 @@ turn:
   external_tls: true
 
 keys:
-  # Filled from .env by docker-compose (LIVEKIT_KEYS env var overrides this file's
-  # value when set via environment). Keep a placeholder here for bare-metal runs.
-  devkey: secret-placeholder-overridden-by-compose
+  # SECURITY: no usable key/secret pair is committed.
+  #
+  # This used to ship `devkey: secret-placeholder-overridden-by-compose`, which was
+  # only safe as long as docker-compose overrode it -- and it only does that when a
+  # `.env` file exists. A `docker compose up` in a fresh clone ran the SFU with a
+  # publicly known key and secret published in git, which is enough to mint a
+  # LiveKit JWT for any room.
+  #
+  # LiveKit requires at least one key here to start, so an empty map would refuse to
+  # boot rather than boot insecurely -- but the error is opaque. The placeholder is
+  # kept only so the failure is an obviously-wrong credential rather than a
+  # confusing parse error, and it is deliberately not a valid-looking secret.
+  #
+  # docker-compose passes LIVEKIT_KEYS from .env, which takes precedence over this
+  # file. Generate real values with:
+  #     openssl rand -hex 32
+  # and put them in .env (see .env.example). To run bare metal instead, replace the
+  # value below with your own generated secret -- and do not commit that file.
+  REPLACE_WITH_YOUR_LIVEKIT_KEY: REPLACE_WITH_OUTPUT_OF_OPENSSL_RAND_HEX_32

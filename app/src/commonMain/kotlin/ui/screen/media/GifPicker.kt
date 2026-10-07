@@ -63,7 +63,18 @@ private fun String.urlEncoded(): String = buildString {
 }
 
 @Composable
+/**
+ * The client used for every Tenor call in this picker.
+ *
+ * SECURITY: production passes [tenorHttpClient], which has explicit request,
+ * connect and socket timeouts. The bare `HttpClient()` this used to receive has no
+ * plugins installed at all, so a stalled third-party response left the picker in
+ * `isLoading` forever. The byte caps live in TenorHttp.kt.
+ *
+ * The parameter is kept so the composable stays injectable for tests.
+ */
 fun GifPicker(commonHttpClient: HttpClient, onGifSelected: (ByteArray) -> Unit) {
+    val tenorClient = commonHttpClient
     val t = rememberCosmicTokens()
     val scope = rememberCoroutineScope()
     val settingsManager = remember { repository.SettingsManager() }
@@ -92,13 +103,12 @@ fun GifPicker(commonHttpClient: HttpClient, onGifSelected: (ByteArray) -> Unit) 
             } else {
                 "https://tenor.googleapis.com/v2/search?key=$tenorApiKey&client_key=$TENOR_CLIENT_KEY&media_filter=tinygif&limit=20&q=${searchQuery.trim().urlEncoded()}"
             }
-            val response: HttpResponse = commonHttpClient.get(url)
-            if (response.status.value !in 200..299) {
-                throw IllegalStateException("Tenor responded ${response.status.value}")
-            }
-            // readBytes()/bodyAsText() on a response that was not `save()`d run on
-            // the calling thread; with CIO that is the Compose main thread.
-            val payload = withContext(Dispatchers.IO) { response.readBytes() }
+            // SECURITY: bounded read + real timeouts. This used to be
+            // `commonHttpClient.get(url)` + `response.readBytes()` on a bare
+            // `HttpClient()` with no timeout plugin installed at all, so a
+            // slow-streaming body was read into the heap without limit and a hung
+            // connection hung the coroutine forever. See TenorHttp.kt.
+            val payload = fetchTenorJson(tenorClient, url)
             val tenorRes = tenorJson.decodeFromString<TenorResponse>(payload.decodeToString())
             gifs = tenorRes.results.mapNotNull { it.mediaFormats.tinygif.url }
         } catch (e: Exception) {
@@ -208,11 +218,9 @@ fun GifPicker(commonHttpClient: HttpClient, onGifSelected: (ByteArray) -> Unit) 
                                             scope.launch {
                                                 isDownloading = true
                                                 try {
-                                                    val response: HttpResponse = commonHttpClient.get(url)
-                                                    if (response.status.value !in 200..299) {
-                                                        throw IllegalStateException("Download failed ${response.status.value}")
-                                                    }
-                                                    val bytes = withContext(Dispatchers.IO) { response.readBytes() }
+                                                    // Bounded read, and a non-image response is rejected rather than
+                                                    // handed to the uploader as if it were a GIF.
+                                                    val bytes = downloadGifBounded(tenorClient, url)
                                                     onGifSelected(bytes)
                                                 } catch (e: Exception) {
                                                     OrbitLog.e("GifPicker", "GIF download failed: ${e.message}")

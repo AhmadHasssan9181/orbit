@@ -1,10 +1,9 @@
 package livekit
 
 import de.connect2x.trixnity.client.MatrixClient
-import de.connect2x.trixnity.client.store.KeySignatureTrustLevel
 import de.connect2x.trixnity.client.store.KeyStore
-import de.connect2x.trixnity.client.store.StoredDeviceKeys
-import de.connect2x.trixnity.crypto.olm.OlmDecrypter
+import de.connect2x.trixnity.client.store.StoreTransactionManager
+import de.connect2x.trixnity.crypto.olm.OlmEventHandler
 import de.connect2x.trixnity.crypto.olm.OlmEncryptionService
 import de.connect2x.trixnity.crypto.olm.OlmStore
 import de.connect2x.trixnity.core.model.UserId
@@ -78,7 +77,70 @@ class CallMediaKeyExchange(
     private val keyStore: KeyStore? =
         runCatching { client.di.get<KeyStore>(KeyStore::class) }.getOrNull()
             .also { if (it == null) println("ERROR [CallMediaKeyExchange] KeyStore unavailable in DI") }
-    private val olmStore: OlmStore? =
+    /**
+ * Mark [ids] outdated so Trixnity refetches, verifies and stores their device keys.
+ *
+ * ## Why this wrapper exists
+ *
+ * Trixnity 5.9.2 changed the shape of `KeyStore.updateOutdatedKeys`:
+ *
+ * ```
+ * // 5.4.0
+ * suspend fun updateOutdatedKeys(lambda: suspend (Set<UserId>) -> Set<UserId>)
+ * // 5.9.2 -- on KeyStore, taking the transaction; StoreWriteTransaction does not
+ * //          expose it
+ * fun updateOutdatedKeys(txn: StoreWriteTransaction, lambda: (Set<UserId>) -> Set<UserId>)
+ * ```
+ *
+ * It is no longer `suspend`, it no longer supplies its own transaction, and its
+ * lambda is no longer `suspend`. So the caller must now open a write transaction
+ * and hand it to `KeyStore`.
+ *
+ * Both call sites go through here so that exists once. This is the single writer
+ * for "ask Trixnity to verify these peers' keys" -- see the security note on
+ * [fetchAndStorePeerDeviceKeys] for why it must not be a direct store write.
+ */
+private suspend fun markKeysOutdated(ids: Set<UserId>) {
+    if (ids.isEmpty()) return
+    val tm = runCatching {
+        client.di.get<StoreTransactionManager>(StoreTransactionManager::class)
+    }.getOrNull()
+    if (tm == null) {
+        util.OrbitLog.w(
+            "CallMediaKeyExchange",
+            "StoreTransactionManager unavailable in DI; cannot request device keys for $ids"
+        )
+        return
+    }
+    val keys = runCatching { client.di.get<KeyStore>(KeyStore::class) }.getOrNull()
+    if (keys == null) {
+        util.OrbitLog.w("CallMediaKeyExchange", "KeyStore unavailable in DI; cannot request device keys")
+        return
+    }
+    tm.writeTransaction {
+        // 5.9.2 made the transaction a context receiver rather than a parameter,
+        // so `writeTransaction` supplies it; there is nothing to pass.
+        keys.updateOutdatedKeys { current ->
+            val merged = current + ids
+            util.OrbitLog.d(
+                "CallMediaKeyExchange",
+                "marked outdated: +${ids.size} ids, ${current.size} -> ${merged.size} for $ids"
+            )
+            merged
+        }
+    }
+    // Read back through the same public API the distribute path uses, so this
+    // proves the write committed rather than merely that the lambda ran.
+    util.OrbitLog.d(
+        "CallMediaKeyExchange",
+        "outdated now = " + runCatching {
+            val out = keys.getOutdatedKeys()
+            "${out.size} ids"
+        }.getOrElse { "ERR ${it.message}" }
+    )
+}
+
+private val olmStore: OlmStore? =
         runCatching { client.di.get<OlmStore>(OlmStore::class) }.getOrNull()
     private val keysRequestedFor = mutableSetOf<String>()
     private var syncProbeUnsubscribe: (() -> Unit)? = null
@@ -479,8 +541,19 @@ class CallMediaKeyExchange(
                 }
                 if (dueForQuery.isNotEmpty()) fetchAndStorePeerDeviceKeys(dueForQuery)
                 val ready = live.filter { dev ->
-                    runCatching { olmStore?.getDeviceKeys(UserId(dev.userId)) }
-                        .getOrNull()?.containsKey(dev.deviceId) == true
+                    // Same rule as distribute(): a cancelled scope is not evidence
+                    // about a peer's keys. See the long note there.
+                    try {
+                        olmStore?.getDeviceKeys(UserId(dev.userId))?.containsKey(dev.deviceId) == true
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        util.OrbitLog.w(
+                            "CallMediaKeyExchange",
+                            "getDeviceKeys failed for ${dev.userId}: ${e.message}"
+                        )
+                        false
+                    }
                 }
                 if (ready.isNotEmpty()) {
                     println(
@@ -587,47 +660,70 @@ class CallMediaKeyExchange(
         val missing = users - keysRequestedFor
         if (missing.isNotEmpty()) {
             val missingIds = missing.map { UserId(it) }.toSet()
-            runCatching { store.updateOutdatedKeys { current -> current + missingIds } }
+            runCatching { markKeysOutdated(missingIds) }
                 .onFailure { println("WARN [CallMediaKeyExchange] marking peers outdated failed: ${it.message}") }
                 .onSuccess { println("DEBUG [CallMediaKeyExchange] requested device keys for $missing") }
             keysRequestedFor += missing
         }
     }
 
+    /**
+     * Ensure [users]' device keys are fetched AND signature-verified.
+     *
+     * SECURITY: this now marks keys outdated via `updateOutdatedKeys` and lets
+     * trixnity's `OutdatedKeysHandler` fetch, verify and store them.
+     *
+     * It used to call /keys/query itself and write the store directly with
+     * `saveDeviceKeys`, which is `deviceKeysCache.set(...)`. Two defects:
+     *   1. it stored `KeySignatureTrustLevel.Valid(verified = false)`, skipping
+     *      the `signService.verify` that Trixnity's own path requires;
+     *   2. it *replaced* the user's entire device map, discarding already-verified
+     *      cross-signed keys and silently unblocking blocked devices.
+     *
+     * That let a malicious or compromised homeserver substitute Curve25519 identity
+     * keys and receive the olm-encrypted 16-byte call media key -- i.e. every frame
+     * of the call -- which is the one thing this whole exchange exists to prevent.
+     *
+     * It also ran on the hot path (before every reply, in the retry watcher, and
+     * after every olm encryption failure), so it was not an edge case.
+     */
     private suspend fun fetchAndStorePeerDeviceKeys(users: Collection<String>) {
         val store = keyStore ?: return
         for (user in users) {
-            val response = try {
-                client.api.key.getKeys(mapOf(UserId(user) to emptySet<String>()), 10_000L).getOrThrow()
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                println("WARN [CallMediaKeyExchange] /keys/query failed for $user: ${e.message}")
-                null
-            } ?: continue
-            val signed = response.deviceKeys?.get(UserId(user)).orEmpty()
-            if (signed.isEmpty()) {
-                println("WARN [CallMediaKeyExchange] /keys/query returned no devices for $user")
-                continue
-            }
-            val devices = signed.mapValues { (_, value) ->
-                StoredDeviceKeys(value, KeySignatureTrustLevel.Valid(verified = false))
-            }
-            runCatching { store.saveDeviceKeys(UserId(user), devices) }
-                .onFailure { println("WARN [CallMediaKeyExchange] storing device keys for $user failed: ${it.message}") }
+            val ids = setOf(UserId(user))
+            // SECURITY: route through trixnity's OutdatedKeysHandler, the single
+            // writer that fetches, signature-verifies and stores. This function
+            // used to call /keys/query itself and store the result as
+            // `KeySignatureTrustLevel.Valid(verified = false)` via `saveDeviceKeys`,
+            // which (a) skipped `signService.verify` entirely and (b) *replaced*
+            // every device entry for the user rather than merging -- since
+            // saveDeviceKeys is `deviceKeysCache.set(...)`. Blocked devices were
+            // silently unblocked and verified cross-signed keys were overwritten.
+            //
+            // A malicious homeserver could serve substituted Curve25519 identity
+            // keys and clients would olm-encrypt the 16-byte call media key to the
+            // attacker, handing the operator every frame -- defeating the exact
+            // property this exchange exists to provide.
+            runCatching { markKeysOutdated(ids) }
                 .onSuccess {
-                    println(
-                        "DEBUG [CallMediaKeyExchange] stored ${devices.size} device key(s) for $user " +
-                            "via /keys/query fallback"
+                    util.OrbitLog.d(
+                        "CallMediaKeyExchange",
+                        "requested signature-verified device keys for $user"
+                    )
+                }
+                .onFailure {
+                    util.OrbitLog.w(
+                        "CallMediaKeyExchange",
+                        "marking $user outdated for key verification failed: ${it.message}"
                     )
                 }
         }
     }
 
     private fun subscribeReceive(): (() -> Unit)? {
-        val decrypter = runCatching { client.di.get<OlmDecrypter>(OlmDecrypter::class) }.getOrNull()
+        val decrypter = runCatching { client.di.get<OlmEventHandler>(OlmEventHandler::class) }.getOrNull()
         if (decrypter == null) {
-            println("ERROR [CallMediaKeyExchange] OlmDecrypter unavailable in DI")
+            println("ERROR [CallMediaKeyExchange] OlmEventHandler unavailable in DI")
             return null
         }
         return decrypter.subscribe { container ->
@@ -951,9 +1047,56 @@ class CallMediaKeyExchange(
         val ready = mutableListOf<CallDevice>()
         val missing = mutableListOf<CallDevice>()
         for (device in targets) {
-            val present = runCatching { olmStore?.getDeviceKeys(UserId(device.userId)) }
-                .getOrNull()?.containsKey(device.deviceId) == true
-            if (present) ready.add(device) else missing.add(device)
+            // SECURITY/CORRECTNESS: CancellationException must be rethrown, not
+            // swallowed.
+            //
+            // `runCatching` catches Throwable, so when the caller's scope died
+            // mid-lookup it returned null here -- which read as "this peer has no
+            // device keys". Every device was therefore deferred, the retry watcher
+            // never converged, the watchdog fired and tore the call down. The log
+            // line that gave it away was:
+            //
+            //   getDeviceKeys threw for @hawk_eye_360: StandaloneCoroutine was cancelled
+            //   no usable key for @hawk_eye_360 (store returned null device(s))
+            //
+            // A cancelled scope is a lifecycle event, not a statement about a peer's
+            // keys, and treating it as one turned a routine teardown into a total
+            // key-exchange failure. Rethrowing lets the scope's own owner decide what
+            // cancellation means, and leaves a genuine "no keys" as a genuine empty map.
+            val present = try {
+                olmStore?.getDeviceKeys(UserId(device.userId))?.containsKey(device.deviceId) == true
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                util.OrbitLog.w(
+                    "CallMediaKeyExchange",
+                    "getDeviceKeys failed for ${device.userId}: ${e.message}"
+                )
+                false
+            }
+            if (present) ready.add(device) else {
+                missing.add(device)
+                // The first deferral of a call is the moment to explain WHY a device
+                // has no usable key: whether the store returned nothing at all, or
+                // returned other devices for that user but not this one, or the
+                // lookup itself threw. Those are three different bugs and the single
+                // "without stored keys" line above cannot tell them apart.
+                if (pendingRetryDevices.add(device)) {
+                    val all = try {
+                        olmStore?.getDeviceKeys(UserId(device.userId))
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        util.OrbitLog.w("CallMediaKeyExchange", "getDeviceKeys failed for ${device.userId}: ${e.message}")
+                        null
+                    }
+                    util.OrbitLog.w(
+                        "CallMediaKeyExchange",
+                        "no usable key for ${device.userId}:${device.deviceId} " +
+                            "(store returned ${all?.size ?: "null"} device(s) for that user)"
+                    )
+                }
+            }
         }
         if (missing.isNotEmpty()) {
             println(

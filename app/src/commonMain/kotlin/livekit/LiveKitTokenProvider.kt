@@ -151,7 +151,23 @@ object LiveKitTokenProvider {
                 })
                 put("openid_token", openIdToken)
             }
-            println("DEBUG [LiveKitTokenProvider] Request Body: $requestBody")
+            // SECURITY: never log the assembled body. It carries `openid_token`, a
+            // single-use bearer credential the SFU exchanges for a LiveKit JWT. It
+            // used to be `println(... Request Body: $requestBody)`, and because
+            // debugLogging defaults to on and the file sink is installed
+            // unconditionally, that wrote a live credential to
+            // %LOCALAPPDATA%\Orbit\logs\orbit.log on every call, for every user,
+            // with no opt-in. This is the exact thing AGENTS.md forbids: "Never log
+            // secrets, passwords, keys, or user content."
+            //
+            // The fields worth diagnosing are printed individually instead: room_id
+            // and the identity triple are not secrets and are what you actually
+            // need when an SFU rejects a join.
+            println(
+                "DEBUG [LiveKitTokenProvider] POST /get_token room=$roomId " +
+                    "identity=$identity user=$cleanUserId device=$claimedDeviceId " +
+                    "(openid_token present, redacted)"
+            )
             setBody(requestBody.toString())
         }
         println("DEBUG [LiveKitTokenProvider] /get_token response status: ${lkResponse.status.value}")
@@ -202,7 +218,12 @@ object LiveKitTokenProvider {
                 put("openid_token", openIdToken)
                 put("device_id", claimedDeviceId)
             }
-            println("DEBUG [LiveKitTokenProvider] Request Body: $requestBody")
+            // SECURITY: redacted, same reason as the /get_token path above -- the
+            // body carries a bearer credential and must never reach the log file.
+            println(
+                "DEBUG [LiveKitTokenProvider] POST /sfu/get room=$roomId " +
+                    "device_id=$claimedDeviceId (openid_token present, redacted)"
+            )
             setBody(requestBody.toString())
         }
         println("DEBUG [LiveKitTokenProvider] /sfu/get response status: ${lkResponse.status.value}")

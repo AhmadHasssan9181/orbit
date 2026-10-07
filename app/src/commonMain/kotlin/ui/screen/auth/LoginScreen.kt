@@ -108,6 +108,27 @@ fun LoginScreen(
     var isRegistering by remember { mutableStateOf(false) }
 
     var errorMessage by remember { mutableStateOf<String?>(null) }
+
+/**
+ * The homeserver awaiting a decision about accepting SSO callbacks with no `state`.
+ *
+     * Non-null means the error callout is showing the weaker-check explanation and the
+ * * consent button is rendered. See `repository.SsoStatePolicy` for why this is a
+     * per-homeserver choice rather than a global switch.
+     */
+var ssoStateWarningFor by remember { mutableStateOf<String?>(null) }
+
+/**
+ * Set when consent has been given and the SSO retry should start as soon as a
+ * *fresh* repository exists.
+ *
+     * Deliberately not a direct call into [performSso]: at the moment consent is
+     * recorded, `repoForAttempt` is still the repository whose scope is about to be
+     * cancelled by `attempt++`, so retrying through it fails with
+     * `Parent job is Completed`. A `LaunchedEffect` keyed on the repository runs the
+     * retry against the new one.
+     */
+var pendingSsoRetry by remember { mutableStateOf(false) }
     var isLoading by remember { mutableStateOf(false) }
     var loadingLabel by remember { mutableStateOf("") }
 
@@ -158,11 +179,34 @@ fun LoginScreen(
     val repoForAttempt = repoBuild.getOrNull()
     val homeserverError = repoBuild.exceptionOrNull()?.message ?: "Invalid homeserver URL"
 
-    // Close the superseded repository: on URL change, on a retry after failure,
-    // and when the screen goes away. Without this, a typo'd URL repeated a few
-    // times accumulated CIO selector threads for the life of the process.
+    // SECURITY / CORRECTNESS: never close a repository that was handed to the app.
+    //
+    // Close the superseded repository on URL change and on a retry after failure --
+    // without that, a typo'd URL repeated a few times accumulated CIO selector
+    // threads for the life of the process. But a SUCCESSFUL login hands this exact
+    // instance to OrbitApp through onLoginSuccess, which drops LoginScreen from
+    // composition and fires this DisposableEffect.
+    //
+    // The effect therefore used to close the client that had just logged in:
+    //
+    //   1. `close()` issues no POST /_matrix/client/v3/logout, so the access token
+    //      minted one frame earlier stayed valid on the homeserver with nothing
+    //      revoking it. MatrixAuthRepository.logout(), which does revoke, was never
+    //      on this path -- so every successful login left a live token behind.
+    //   2. `context.close()` cancels repositoryScope, one frame after OrbitApp's
+    //      startSync() was launched on it. The sync was cancelled immediately.
+    //
+    // `handedOff` is set at the same moment as the onLoginSuccess call, so onDispose
+    // sees it and leaves the repository alive. MatrixAuthRepository.logout() stays
+    // the single place a session ends, and it does revoke server-side.
+    var handedOff by remember { mutableStateOf(false) }
     DisposableEffect(repoForAttempt) {
-        onDispose { runCatching { repoForAttempt?.close() } }
+        onDispose {
+            if (!handedOff) {
+                runCatching { repoForAttempt?.close() }
+                    .onFailure { util.OrbitLog.w("LoginScreen", "closing abandoned repository failed: ${it.message}") }
+            }
+        }
     }
 
     // Which flows this homeserver actually offers. Without this the SSO button
@@ -215,6 +259,7 @@ fun LoginScreen(
                         when (val stage = regResult.stage) {
                             is AuthStage.Complete -> {
                                 target.login(identifier = username, password = password, deviceName = "Orbit")
+                                handedOff = true
                                 onLoginSuccess(target)
                             }
                             else -> {
@@ -237,6 +282,7 @@ fun LoginScreen(
                 scope.launch {
                     try {
                         target.login(identifier = identifier, password = password, deviceName = "Orbit")
+                        handedOff = true
                         onLoginSuccess(target)
                     } catch (e: Exception) {
                         errorMessage = "Sign in failed: ${e.message}"
@@ -260,7 +306,37 @@ fun LoginScreen(
             scope.launch {
                 try {
                     target.loginWithSso()
+                    handedOff = true
                     onLoginSuccess(target)
+                } catch (e: repository.SsoStatePolicy.StateMissingException) {
+                    // SECURITY: this homeserver does not implement the `state` echo,
+                    // so Orbit cannot correlate the callback with this attempt.
+                    //
+                    // Refusing outright makes SSO unusable against it, and a control
+                    // that blocks the feature just gets removed by whoever finds it.
+                    // So the refusal becomes a question: here is what happened, here is
+                    // what accepting it costs, and the choice is remembered **for this
+                    // homeserver only** -- one server that cannot echo `state` says
+                    // nothing about the next one you sign in to.
+                    //
+                    // The button is deliberately not the default path and the warning
+                    // says plainly that a mismatch is still refused.
+                    ssoStateWarningFor = e.homeserverUrl
+                    errorMessage = repository.SsoStatePolicy.warningText(e.homeserverUrl)
+                    isLoading = false
+                    // An abandoned or failed SSO round-trip closed the client too.
+                    attempt++
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    // SECURITY/CORRECTNESS: a cancelled scope is not a login failure.
+                    //
+                    // This used to be reported to the user verbatim, which produced
+                    // "Browser sign in failed: Parent job is Completed" -- a coroutine
+                    // message that is both untrue (nothing cancelled the user's account)
+                    // and unactionable. Cancellation means the attempt was superseded,
+                    // usually by `attempt++` building a new repository, so it is
+                    // swallowed deliberately and not displayed.
+                    isLoading = false
+                    util.OrbitLog.d("LoginScreen", "SSO attempt superseded (cancelled)")
                 } catch (e: Exception) {
                     errorMessage = "Browser sign in failed: ${e.message}"
                     isLoading = false
@@ -268,6 +344,50 @@ fun LoginScreen(
                     attempt++
                 }
             }
+        }
+    }
+
+    /**
+     * Consent for the weaker SSO callback check, then retry once the fresh repository
+     * exists.
+     *
+     * ## Why this does not call [performSso] directly
+     *
+     * It used to, and that was a real bug that showed up as
+     * `Browser sign in failed: Parent job is Completed`.
+     *
+     * The failure path runs `attempt++`, which rebuilds the repository. The
+     * `DisposableEffect(repoForAttempt)` then closes the old one, and `close()`
+     * cancels its `repositoryScope` -- which is exactly the scope
+     * `loginWithSso()` runs on. So calling `performSso()` in the same breath as
+     * `attempt++` handed the retry to the **already-cancelled** repository, and every
+     * coroutine it launched failed instantly with a `CancellationException`.
+     *
+     * Worse, `CancellationException` was being surfaced to the user as the error
+     * text, which is both untrue (nothing was cancelled by the user's account) and
+     * useless. Cancellation is now rethrown rather than reported as a failure.
+     *
+     * So: record consent, request a fresh repository, and let
+     * [LaunchedEffect] below start the retry against the *new* one, once composition
+     * has actually produced it.
+     */
+    val acceptMissingStateAndRetry: () -> Unit = {
+        val hs = ssoStateWarningFor
+        if (hs != null && repository.SsoStatePolicy.accept(hs)) {
+            ssoStateWarningFor = null
+            errorMessage = null
+            pendingSsoRetry = true
+            attempt++
+        }
+    }
+
+    // Runs after composition, so `repoForAttempt` is the NEW repository with a live
+    // scope. Keyed on the repository for the same reason: an identity change means a
+    // different attempt, which is the only thing that should trigger the retry.
+    LaunchedEffect(repoForAttempt, pendingSsoRetry) {
+        if (pendingSsoRetry && repoForAttempt != null) {
+            pendingSsoRetry = false
+            performSso()
         }
     }
 
@@ -535,9 +655,42 @@ fun LoginScreen(
                         OrbitCallout(
                             text = it,
                             icon = Icons.Default.ErrorOutline,
-                            tone = OrbitButtonTone.Danger
+                            // Not a Danger: nothing has gone wrong and no data is at
+                            // risk yet -- the homeserver just cannot do something Orbit
+                            // prefers. Colouring this red alongside every other error
+                            // would train the user to click through the real ones.
+                            tone = if (ssoStateWarningFor != null) {
+                                OrbitButtonTone.Neutral
+                            } else {
+                                OrbitButtonTone.Danger
+                            }
                         )
                     }
+                }
+
+                // The consent affordance. Only rendered for the missing-state case, so
+                // there is no way to weaken the check for a reason the user was never
+                // shown.
+                ssoStateWarningFor?.let { hs ->
+                    Spacer(Modifier.height(OrbitSpace.xs))
+                    OrbitButton(
+                        text = "Continue without this check",
+                        onClick = acceptMissingStateAndRetry,
+                        modifier = Modifier.fillMaxWidth(),
+                        tone = OrbitButtonTone.Neutral,
+                    )
+                    OrbitButton(
+                        text = "Cancel",
+                        onClick = {
+                            ssoStateWarningFor = null
+                            errorMessage = null
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        tone = OrbitButtonTone.Neutral,
+                    )
+                    // Named so the choice is auditable after the fact: the log line is
+                    // the only record that this account skipped the CSRF check.
+                    util.OrbitLog.d("LoginScreen", "offered weaker SSO callback check for $hs")
                 }
 
                 Spacer(Modifier.height(OrbitSpace.xs))

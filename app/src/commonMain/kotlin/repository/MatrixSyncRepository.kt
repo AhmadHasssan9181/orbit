@@ -80,6 +80,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.Clock
@@ -198,19 +199,72 @@ class MatrixSyncRepository(
     private val syncLock = Any()
 
     override fun startSync() {
+        // SECURITY/CORRECTNESS: say what is happening at every step.
+        //
+        // This function used to `launch { runSync() }` with no handler at all. The
+        // scope is a SupervisorJob, so a coroutine that throws on its first
+        // suspension goes to the default CoroutineExceptionHandler -- which prints
+        // to stderr, and a jpackage GUI-subsystem launcher has no stderr. The result
+        // was that a sync which died immediately was completely invisible: no
+        // account data, no rooms, no message, and no log line anywhere. That is how
+        // "rooms don't load after login but work after a restart" stayed invisible.
+        //
+        // Every observable step is now logged through OrbitLog, which reaches
+        // %LOCALAPPDATA%\Orbit\logs\orbit.log, and a failure is reported as an
+        // error rather than vanishing.
+        util.OrbitLog.d(
+            "Sync",
+            "startSync called scopeActive=${context.repositoryScope.isActive} " +
+                "hasClient=${context.trixnityClient != null} " +
+                "hasToken=${!context.accessToken.isNullOrBlank()} " +
+                "hasUser=${!context.userId.isNullOrBlank()}"
+        )
         val job = synchronized(syncLock) {
             syncJob?.let { existing ->
                 if (existing.isActive) {
-                    println("DEBUG [MatrixSyncRepository] startSync ignored; a sync is already running")
+                    util.OrbitLog.d("Sync", "startSync ignored; a sync is already running")
                     return
                 }
             }
-            val newJob = context.repositoryScope.launch { runSync() }
+            if (!context.repositoryScope.isActive) {
+                // Launching on a cancelled scope completes silently and immediately,
+                // which looks exactly like a hang. Refusing loudly is the difference
+                // between a diagnosable bug and a mystery.
+                util.OrbitLog.e(
+                    "Sync",
+                    "startSync refused: this repository's scope is already closed. " +
+                        "A previous login attempt was abandoned; the caller needs a fresh " +
+                        "repository (MatrixOrbitRepository) rather than this one."
+                )
+                return
+            }
+            val newJob = context.repositoryScope.launch {
+                try {
+                    runSync()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    // Previously unhandled and therefore invisible.
+                    util.OrbitLog.e(
+                        "Sync",
+                        "sync coroutine failed and stopped: ${e::class.simpleName}: ${e.message}"
+                    )
+                    util.OrbitLog.d("Sync", "sync failure trace follows")
+                    e.stackTrace.take(12).forEach {
+                        util.OrbitLog.d("Sync", "    at $it")
+                    }
+                    context.authStatusFlow.value =
+                        AuthStatus.Error("Could not start syncing: ${e.message}")
+                }
+            }
             syncJob = newJob
             newJob
         }
-        job.invokeOnCompletion {
+        job.invokeOnCompletion { cause ->
             synchronized(syncLock) { if (syncJob === job) syncJob = null }
+            if (cause != null && cause !is kotlinx.coroutines.CancellationException) {
+                util.OrbitLog.e("Sync", "sync job completed exceptionally: $cause")
+            }
         }
     }
 
@@ -219,6 +273,7 @@ class MatrixSyncRepository(
         // this job and are cancelled with it. A bare `run` gives no scope, so the
         // inner `launch` calls had no receiver and would have leaked.
         coroutineScope {
+            util.OrbitLog.d("Sync", "runSync entered; client=${context.trixnityClient != null}")
             if (context.trixnityClient == null && context.accessToken != null && context.userId != null) {
                 try {
                     context.trixnityClient = MatrixClient.create(

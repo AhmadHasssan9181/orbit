@@ -183,4 +183,19 @@ class MatrixRtcMembershipTest {
             MatrixRtcMembership.callStartFromDefinition(definition, originServerTs = 1_700_000_000_000L)
         )
     }
+
+    @Test
+    fun `null or blank fields do not assert membership`() {
+        val blankContent = obj("""{"membershipID":null,"device_id":"","application":null}""")
+        assertFalse(MatrixRtcMembership.isCurrentlyValid(blankContent))
+
+        val realContent = obj("""{"membershipID":"@user:example.org:DEV1","device_id":"DEV1"}""")
+        assertTrue(MatrixRtcMembership.isCurrentlyValid(realContent))
+    }
+
+    @Test
+    fun `focus_active object asserts membership even without string fields`() {
+        val focusActive = obj("""{"focus_active":{"type":"livekit"}}""")
+        assertTrue(MatrixRtcMembership.isCurrentlyValid(focusActive))
+    }
 }

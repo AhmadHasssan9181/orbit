@@ -39,13 +39,57 @@ test_*.cpp
 *.old2
 /build_baseline_test.log
 
+# SECURITY: ad-hoc investigation scripts must never be committed.
+#
+# `scratch/` was added in 17e1584 ("ui improv") and contained eleven Python
+# scripts. Seven of them hardcoded a live matrix.org access token in an
+# `Authorization: Bearer` header, plus the account's MXID, device id, ed25519
+# identity key, curve25519 identity key and a live one-time key. A bearer token
+# in a git repository is permanent: deleting the files in a later commit does not
+# remove it from any clone that already pulled, and no rotation happens
+# automatically. History has to be rewritten, and the token revoked at the
+# homeserver -- both of which are the credential owner's call, not a code fix.
+#
+# These scripts are useful work, so keep them locally; do not publish them. If
+# one is genuinely needed by someone else, redact the token and the key material
+# first, not after.
+#
+# Rules here:
+#   /scratch/            the directory
+#   /scratch_*/          the older naming convention
+#   *.py                 one-off scripts at the root (the tree has no real Python)
+#   .env / *.local       never commit a local secret file, whatever it is called
+#
+# A pattern without a reason reads as cargo cult, so: there is no Python in the
+# product, `build.gradle.kts` never invokes a .py, and the only ones that ever
+# existed were debugging aids. `scratch_test.kt` above is listed separately
+# because it is Kotlin.
+/scratch/
+/scratch_*/
+*.py
+.env
+*.local
+
 # CMake / Visual Studio build caches.
 #
 # `**/build/` above does not reach these, because the generated directories are
 # not always named "build" -- webrtc-jni uses build2, and orbit_audio_jni keeps a
 # parallel out/ tree. 166 of these were tracked, each carrying absolute paths from
 # whichever machine generated it, so every clone disagreed with the committed
-# cache. They are now untracked; this stops them coming back.
+# cache.
+#
+# The previous version of this comment claimed "They are now untracked; this stops
+# them coming back" while listing no rule that reached build2/. So
+# webrtc-jni/src/main/cpp/build2/ came straight back, 368 files of .obj, .tlog,
+# .lib, .exp and an absolute-path CMakeCache.txt. The rules below are the ones
+# that actually match that tree; keep this list and the claim in step.
+#
+# The directory names first, because the extension globs below do not catch
+# generated *files* like .obj/.tlog/.exp.
+**/build2/
+**/out/
+**/CMakeCache.txt
+**/CMakeFiles/
 CMakeCache.txt
 CMakeFiles/
 CMakeUserPresets.json
@@ -59,6 +103,30 @@ VSInheritEnvironments.txt
 TargetDirectories.txt
 VCTargetsPath.txt
 compile_commands.json
+
+# The compiler/linker outputs a CMake configure drops next to its cache. These are
+# exactly the files that carried another machine's absolute paths.
+#
+# NOTE: deliberately no blanket `*.dll`, `*.lib` or `*.pdb` rule here. `*.dll` is
+# already handled above (with the app-resources carve-outs), the WebRTC decoders and
+# the LiveKit plugin are committed binaries that MUST stay tracked, and webrtc-jni
+# links against committed `.lib` files. A glob that quietly untracks shipped media
+# is a far worse mistake than a few stale `.tlog` files, which the directory rules
+# above already catch.
+**/CMakeFiles/
+**/*.tlog/
+**/*.idb.tlog/
+*.obj
+*.tlog
+*.ipdb
+*.ilk
+*.iobj
+*.exp
+*.recipe
+*.stamp
+*.ninja_deps
+*.ninja_log
+generate.stamp.list
 
 # Stale editor/merge leftovers of a source file. *.old2 was already listed;
 # these are the other names the same mistake turns up under.

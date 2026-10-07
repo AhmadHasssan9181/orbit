@@ -45,6 +45,7 @@ import de.connect2x.trixnity.core.model.events.m.space.ChildEventContent
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
+import io.ktor.client.plugins.HttpRedirect
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.logging.LogLevel
 import io.ktor.client.plugins.logging.Logging
@@ -139,6 +140,73 @@ data class RoomMetadata(
  * wire over a validated origin.
  */
 object HomeserverUrlNormalizer {
+    /**
+     * Hosts the user has explicitly confirmed as plaintext-insecure.
+     *
+     * Deliberately a *set of hosts*, not a single global boolean: consent for
+     * `http://192.168.1.50:8008` says nothing about `http://matrix.example.com`,
+     * and a "disable the check" toggle would let one trusted local server silently
+     * authorise every later homeserver. Lower-cased; loopback never needs an entry.
+     */
+    private val confirmedInsecure = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /** True when the user has already confirmed plaintext for [host]. */
+    fun isInsecureAllowed(host: String): Boolean =
+        host.lowercase().trim() in confirmedInsecure
+
+    /**
+     * Record the user's explicit consent for [host], so [normalize] will accept a
+     * plaintext URL to it.
+     *
+     * @return false when [host] is blank.
+     */
+    fun allowInsecure(host: String): Boolean {
+        val cleaned = host.lowercase().trim()
+        if (cleaned.isEmpty()) return false
+        confirmedInsecure += cleaned
+        return true
+    }
+
+    /** Withdraw consent, e.g. when the user edits the homeserver field. */
+    fun disallowInsecure(host: String) {
+        confirmedInsecure -= host.lowercase().trim()
+    }
+
+    /** Test seam: forget every confirmation. */
+    fun resetInsecureAllowances() = confirmedInsecure.clear()
+
+    /**
+     * The plaintext homeserver this process actually connected to, or null.
+     *
+     * Consumed by the Diagnostics pane so "I accepted this once" stays visible for
+     * as long as it is true. Without a reader, `allowInsecure` was a one-line
+     * escape hatch with no confirmation surface and no way to see what it had let
+     * through -- and the refusal message pointed at a Settings control that did not
+     * exist.
+     *
+     * Recorded at the moment [normalize] accepts a plaintext URL, so it reflects
+     * the live decision rather than the set of every host ever approved.
+     */
+    @Volatile
+    var activeInsecureHost: String? = null
+        private set
+
+    /**
+     * Loopback is exempt from the plaintext check.
+     *
+     * A developer running Synapse locally on http://localhost:8008 (or on
+     * http://[::1]) is the one legitimate plaintext case, and it is not a network
+     * exposure: the traffic never leaves the machine. Everything else must be
+     * confirmed.
+     */
+    private fun isLoopbackHost(host: String): Boolean {
+        val h = host.lowercase().trim().removeSurrounding("[", "]")
+        if (h == "localhost" || h.endsWith(".localhost")) return true
+        if (h == "::1" || h == "0:0:0:0:0:0:0:1") return true
+        // Whole 127.0.0.0/8, not just 127.0.0.1.
+        return h.matches(Regex("""127\.\d{1,3}\.\d{1,3}\.\d{1,3}"""))
+    }
+
     fun normalize(input: String): String {
         val trimmed = input.trim()
         require(trimmed.isNotEmpty()) { "Homeserver URL is empty" }
@@ -150,14 +218,47 @@ object HomeserverUrlNormalizer {
             "Homeserver URL must use http or https, got '${url.protocol.name}'"
         }
         if (scheme == "http") {
-            println(
-                "WARN [MatrixContext] homeserver '$withScheme' is plain HTTP: the Matrix access " +
-                    "token will be sent in cleartext to $scheme://${url.host}"
+            // SECURITY: refuse plaintext by default.
+            //
+            // This used to print a warning and carry on. That put the user's
+            // PASSWORD in cleartext on the first login (MatrixAuthRepository puts it
+            // in the /login body) and then sent the long-lived access token in a
+            // cleartext `Authorization: Bearer` header on every subsequent request
+            // from 16 call sites. The only signal was this line, which a jpackage
+            // GUI-subsystem launcher discards -- there is no console in the packaged
+            // app, so the user saw nothing at all.
+            //
+            // A typo'd scheme, or a hostile .well-known advertising an http://
+            // base_url, was enough. Plaintext is now opt-in per host:
+            // `allowInsecureHomeservers` is a set of hosts the user has explicitly
+            // confirmed, so the warning travels with the host rather than being
+            // printed once and forgotten. Loopback is exempt because a local
+            // Synapse on http://localhost:8008 is the single legitimate case and
+            // stays usable without ceremony.
+            val host = url.host
+            if (!isLoopbackHost(host) && !isInsecureAllowed(host)) {
+                throw IllegalArgumentException(
+                    "Refusing to use a plaintext homeserver: $withScheme would send your " +
+                        "password and access token in cleartext. Use https://. If this is a " +
+                        "trusted local server on http://$host, confirm it first in Settings."
+                )
+            }
+            util.OrbitLog.w(
+                "MatrixContext",
+                "INSECURE: plaintext http homeserver $withScheme explicitly allowed for $host; " +
+                    "credentials are being sent in cleartext"
             )
+            activeInsecureHost = host
+        } else {
+            activeInsecureHost = null
         }
+        // Lower-case the host: DNS names are case-insensitive, so `MATRIX.example.org`
+        // and `matrix.example.org` are the same origin, and a canonical stored form
+        // stops the same server looking like two different homeservers to an
+        // origin comparison (util.OriginGuard) or a string equality check.
         val host = url.host.ifBlank {
             throw IllegalArgumentException("Homeserver URL has no host: '$withScheme'")
-        }
+        }.lowercase()
         val defaultPort = if (scheme == "https") 443 else 80
         val port = if (url.port != defaultPort) ":${url.port}" else ""
         // Keep the path. Synapse behind a reverse proxy is commonly hosted at
@@ -208,6 +309,22 @@ class MatrixContext(homeserverUrl: String) {
         }
         install(Logging) {
             level = LogLevel.NONE
+        }
+        // SECURITY: refuse an https -> http redirect.
+        //
+        // Every one of the ~16 `Authorization: Bearer` call sites in the
+        // repositories goes through this client, so this is where the token is at
+        // risk. Ktor strips Authorization on a cross-*authority* redirect (it logs
+        // "Removing Authorization header for cross-authority redirect"), but
+        // `allowHttpsDowngrade` defaults to TRUE: a same-host downgrade keeps the
+        // header and puts the long-lived account token on the wire in cleartext.
+        // One 302 from a homeserver or an intercepting proxy is enough.
+        //
+        // Cross-host redirects -- a CDN or a federated media repo, which are
+        // ordinary deployments -- still work; only the downgrade is blocked.
+        install(HttpRedirect) {
+            checkHttpMethod = false
+            allowHttpsDowngrade = false
         }
     }
 
@@ -324,6 +441,18 @@ class MatrixContext(homeserverUrl: String) {
     @Volatile
     var wellKnownRtcFocusUrl: String? = null
         private set
+
+    /**
+     * Test seam for [wellKnownRtcFocusUrl], which production only ever writes from
+     * `refreshWellKnownRtcFoci()` parsing a `.well-known` response.
+     *
+     * SfuUrlPolicyTest needs to exercise both "homeserver advertised this SFU" and
+     * "nothing advertised yet" without standing up an HTTP server. Kept next to the
+     * property it relaxes so the `private set` is not silently widened.
+     */
+    internal fun setWellKnownRtcFocusUrlForTest(value: String?) {
+        wellKnownRtcFocusUrl = value
+    }
 
     /** Non-suspend read of the current endpoint chain; call [refreshWellKnownRtcFoci] at startup. */
     fun effectiveLiveKitServiceUrl(): String =

@@ -245,7 +245,14 @@ class CallManager(
     var onUpdateGroupCallMembershipCapabilities: (suspend (roomId: String, callId: String, audio: Boolean, video: Boolean, livekitIdentity: String?) -> Boolean)? = null
 
     // matrixRTC E2EE media keys (encrypted-room calls): wired from WebRtcEffects.
-    var roomIsEncryptedChecker: (suspend (roomId: String) -> Boolean)? = null
+    //
+    // SECURITY: returns a tri-state, not a Boolean. The previous signature was
+    // `(suspend (String) -> Boolean)?` and every "we don't know" case collapsed to
+    // `false`, which meant "unencrypted" -- so a 429, a 502 from a restarting Synapse,
+    // a timeout, or an unwired checker silently downgraded an encrypted room's call
+    // to cleartext media at the SFU. Absence of evidence was being read as evidence
+    // of absence. Callers must treat UNKNOWN as a hard stop; see [probeRoomEncryption].
+    var roomIsEncryptedChecker: (suspend (roomId: String) -> RoomEncryptionVerdict)? = null
     var mediaKeysStart: ((roomId: String, livekitIdentity: String) -> Unit)? = null
     var mediaKeysStop: (() -> Unit)? = null
 
@@ -790,17 +797,46 @@ class CallManager(
             // Encrypted rooms need per-participant media keys (matrixRTC olm
             // exchange) and the native frame cryptors armed BEFORE connect.
             val probeStart = System.nanoTime()
-            val roomEncrypted = try {
-                roomIsEncryptedChecker?.invoke(roomId) ?: false
-            } catch (e: Exception) {
-                println("WARN [CallManager] room encryption probe failed: ${e.message}")
-                false
-            }
+            val verdict = probeRoomEncryption(roomId)
             tProbe = (System.nanoTime() - probeStart) / 1_000_000L
+
+            // SECURITY: fail CLOSED. See RoomEncryptionVerdict for why this cannot
+            // be a Boolean.
+            //
+            // The old code was `checker?.invoke(roomId) ?: false` with a catch that
+            // also returned false, and false meant "arm the call to publish cleartext
+            // media at the SFU". So a 429, a 502 from a restarting Synapse, a
+            // timeout, or an unwired checker silently downgraded an encrypted room's
+            // microphone, camera and screen-share to plaintext inside a room the user
+            // believed was protected -- and the only signal was a println that the
+            // packaged GUI build discards. No TLS break was needed to induce it.
+            //
+            // Now only an affirmative NOT_ENCRYPTED lets a join proceed without media
+            // E2EE. UNKNOWN aborts the join and tells the user why.
+            if (!verdict.shouldArmMediaE2EE && !verdict.mayProceedWithoutMediaE2EE) {
+                util.OrbitLog.e(
+                    "CallManager",
+                    "Refusing to join room $roomId: media encryption state is UNKNOWN"
+                )
+                // Clear the flag explicitly rather than leaving whatever the previous
+                // call set: reaching prepareNativeE2EE here would be worse than either
+                // outcome, since a stale `true` alongside a refused join is a lie.
+                livekit.prepareNativeE2EE(false)
+                groupConnectionTracker.markFailed(
+                    "Call not started: Orbit could not confirm whether this room is " +
+                        "end-to-end encrypted. Nothing was sent. Check your connection " +
+                        "and try again."
+                )
+                onGroupCallObserversStop?.invoke(roomId)
+                return false
+            }
+
+            val roomEncrypted = verdict.shouldArmMediaE2EE
             livekit.prepareNativeE2EE(roomEncrypted)
-            println(
-                "DEBUG [CallManager] room encrypted=$roomEncrypted → native E2EE media " +
-                    if (roomEncrypted) "armed" else "disabled"
+            util.OrbitLog.d(
+                "CallManager",
+                "room encryption verdict=$verdict; native E2EE media " +
+                    if (roomEncrypted) "armed" else "not armed (room is not encrypted)"
             )
 
             var readiness: livekit.NativeResult<livekit.NativeMediaReadiness>? = null
@@ -845,6 +881,37 @@ class CallManager(
             e.printStackTrace()
             groupConnectionTracker.markFailed(e.message ?: "Native media error")
             false
+        }
+    }
+
+    /**
+     * Ask the repository whether [roomId] is encrypted, collapsing transport
+     * failures into [RoomEncryptionVerdict.UNKNOWN] rather than a `false` that
+     * reads as "not encrypted".
+     *
+     * The checker being null is itself UNKNOWN, not NOT_ENCRYPTED. An unwired
+     * checker previously meant `false`, i.e. "publish cleartext", which is the
+     * exact failure this whole path exists to prevent.
+     */
+    private suspend fun probeRoomEncryption(roomId: String): RoomEncryptionVerdict {
+        val checker = roomIsEncryptedChecker
+        if (checker == null) {
+            util.OrbitLog.e(
+                "CallManager",
+                "room encryption checker is not wired; refusing to assume the room is unencrypted"
+            )
+            return RoomEncryptionVerdict.UNKNOWN
+        }
+        return try {
+            checker(roomId)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            util.OrbitLog.w(
+                "CallManager",
+                "room encryption probe threw for $roomId: ${e.message}"
+            )
+            RoomEncryptionVerdict.UNKNOWN
         }
     }
 

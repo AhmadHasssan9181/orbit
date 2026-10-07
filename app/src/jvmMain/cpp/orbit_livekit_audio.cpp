@@ -5951,22 +5951,53 @@ bool connectRoom(
 
         if (g_e2eeRequested.load(std::memory_order_relaxed)) {
             auto* e2eeManager = g_room->e2eeManager();
-            if (e2eeManager != nullptr) {
-                e2eeManager->setEnabled(true);
-                std::cout << "DEBUG [OrbitLiveKitAudio] E2EE manager enabled enabled="
-                          << (e2eeManager->enabled() ? "true" : "false")
-                          << " keyProvider=" << (e2eeManager->keyProvider() != nullptr ? "present" : "MISSING")
+            if (e2eeManager == nullptr) {
+                // SECURITY: fail closed. This branch used to log a warning and fall
+                // through, so a connect that could not honour the E2EE request
+                // proceeded and published unencrypted media at the SFU -- silently,
+                // because the warning went to std::cerr, which the packaged GUI build
+                // discards. The Kotlin side already refuses to join when it cannot
+                // establish that the room is encrypted (RoomEncryptionVerdict), so
+                // reaching here means we asked for E2EE and the SDK could not give
+                // us one: the only safe move is to refuse the connect.
+                //
+                // resetRoomLocked() tears down g_room/g_delegate, so the session does
+                // not linger half-connected.
+                std::cerr << "ERROR [OrbitLiveKitAudio] E2EE requested but the room has no e2ee "
+                             "manager; refusing to connect rather than publish unencrypted"
                           << std::endl;
-                if (e2eeManager->keyProvider() != nullptr) {
-                    for (const auto& [identity, keyInfo] : g_participantMediaKeys) {
-                        e2eeManager->keyProvider()->setKey(identity, keyInfo.first, keyInfo.second);
-                        std::cout << "DEBUG [OrbitLiveKitAudio] e2ee flushed cached key identity=" << identity
-                                  << " keyIndex=" << keyInfo.second
-                                  << " keyLen=" << keyInfo.first.size() << std::endl;
-                    }
+                resetRoomLocked();
+                if (errorMessage != nullptr) {
+                    *errorMessage =
+                        "This call needs end-to-end encryption but the media engine could not "
+                        "provide it, so nothing was published.";
                 }
-            } else {
-                std::cerr << "WARN [OrbitLiveKitAudio] E2EE requested but room has no e2ee manager" << std::endl;
+                return false;
+            }
+            e2eeManager->setEnabled(true);
+            std::cout << "DEBUG [OrbitLiveKitAudio] E2EE manager enabled enabled="
+                      << (e2eeManager->enabled() ? "true" : "false")
+                      << " keyProvider=" << (e2eeManager->keyProvider() != nullptr ? "present" : "MISSING")
+                      << std::endl;
+            if (e2eeManager->keyProvider() == nullptr) {
+                // Same reasoning: enabled() without a key provider cannot encrypt
+                // anything, so treat it as a failure to honour the request.
+                std::cerr << "ERROR [OrbitLiveKitAudio] E2EE manager has no key provider; "
+                             "refusing to connect rather than publish unencrypted"
+                          << std::endl;
+                resetRoomLocked();
+                if (errorMessage != nullptr) {
+                    *errorMessage =
+                        "This call needs end-to-end encryption but no media keys could be "
+                        "installed, so nothing was published.";
+                }
+                return false;
+            }
+            for (const auto& [identity, keyInfo] : g_participantMediaKeys) {
+                e2eeManager->keyProvider()->setKey(identity, keyInfo.first, keyInfo.second);
+                std::cout << "DEBUG [OrbitLiveKitAudio] e2ee flushed cached key identity=" << identity
+                          << " keyIndex=" << keyInfo.second
+                          << " keyLen=" << keyInfo.first.size() << std::endl;
             }
         }
 

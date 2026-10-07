@@ -2,6 +2,7 @@ package repository
 
 import io.ktor.util.date.getTimeMillis
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonPrimitive
@@ -39,8 +40,12 @@ internal object MatrixRtcMembership {
      */
     const val CALL_START_SKEW_MS = 120_000L
 
-private fun jsonString(content: JsonObject, key: String): String? =
-        runCatching { (content[key] as? JsonPrimitive)?.content }.getOrNull()
+    private fun jsonString(content: JsonObject, key: String): String? =
+        runCatching {
+            val elem = content[key]
+            if (elem == null || elem is JsonNull) null
+            else (elem as? JsonPrimitive)?.content?.takeUnless { it == "null" }
+        }.getOrNull()
 
     private fun jsonLong(content: JsonObject, key: String): Long? =
         runCatching { content[key]?.jsonPrimitive?.longOrNull }.getOrNull()
@@ -93,11 +98,7 @@ private fun jsonString(content: JsonObject, key: String): String? =
                 val expires = jsonLong(obj, "expires")
                 if (createdTs != null && expires != null && createdTs + expires <= now) continue
                 if (minCreatedTs != null && createdTs != null && createdTs + CALL_START_SKEW_MS < minCreatedTs) continue
-                if (obj.containsKey("membershipID") || obj.containsKey("membership_id") ||
-                    obj.containsKey("device_id") || obj.containsKey("application") ||
-                    obj.containsKey("focus_active") || obj.containsKey("foci_active") ||
-                    obj.containsKey("scope") || obj.containsKey("m.call.intent")
-                ) {
+                if (assertsMembership(obj)) {
                     out.add(obj)
                 }
             }
@@ -119,14 +120,40 @@ private fun jsonString(content: JsonObject, key: String): String? =
         if (minCreatedTs != null && flatCreated != null && flatCreated + CALL_START_SKEW_MS < minCreatedTs) {
             return emptyList()
         }
-        val looksLikeMembership = content.containsKey("membershipID") ||
-            content.containsKey("membership_id") ||
-            content.containsKey("device_id") ||
-            content.containsKey("application") ||
-            content.containsKey("focus_active") || content.containsKey("foci_active") ||
-            content.containsKey("scope") ||
-            content.containsKey("m.call.intent")
+        val looksLikeMembership = assertsMembership(content)
         return if (looksLikeMembership) listOf(content) else emptyList()
+    }
+
+    /**
+     * True when the object actually *claims* call membership.
+     *
+     * This used to be `containsKey` on the membership markers, which admitted every
+     * state event that merely had the keys present. Real homeservers are full of
+     * `m.call.member` events whose entire content is nulls —
+     * `membershipID=null device_id=null application=null scope=null
+     * created_ts=null expires=null` — left behind by clients that wrote the shape
+     * without the data. Those are not participants. They cannot be encrypted to
+     * (there is no device to encrypt to) and they cannot expire (they have no
+     * `created_ts`/`expires` to compare against `now`), so the old check both
+     * admitted them into the roster and exempted them from expiry. The key exchange
+     * then spent the whole call querying for keys to devices that never existed.
+     *
+     * A membership must therefore carry at least one marker with a real value. The
+     * markers are only a shape test; the value is what makes it a claim.
+     */
+    private fun assertsMembership(obj: JsonObject): Boolean {
+        // The strongest signal, and the one the spec defines membership by.
+        if (!jsonString(obj, "membershipID").isNullOrBlank()) return true
+        if (!jsonString(obj, "membership_id").isNullOrBlank()) return true
+        if (!jsonString(obj, "device_id").isNullOrBlank()) return true
+        if (!jsonString(obj, "application").isNullOrBlank()) return true
+        if (!jsonString(obj, "scope").isNullOrBlank()) return true
+        if (!jsonString(obj, "m.call.intent").isNullOrBlank()) return true
+        // These two are objects rather than strings, so presence alone is the test —
+        // an empty JSON object still asserts an intent to select a focus.
+        if (obj["focus_active"] is JsonObject) return true
+        if (obj["foci_active"] is JsonArray) return true
+        return false
     }
 
     /** True when this event currently asserts live call membership. */

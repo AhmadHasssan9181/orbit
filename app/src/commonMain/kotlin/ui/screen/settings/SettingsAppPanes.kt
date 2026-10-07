@@ -139,5 +139,50 @@ internal fun WindowsSettingsPane(settingsManager: SettingsManager) {
                 util.OrbitLog.debugEnabled = it
             })
         }
+
+        // SECURITY: tell the user when their credentials are not encrypted at rest.
+        //
+        // `encrypt()` in Settings.jvm.kt falls back to storing a value unprotected
+        // when the platform cipher is unavailable -- a locked or broken-roaming
+        // Windows profile, or `ERROR_INVALID_PARAMETER` from DPAPI. That leaves the
+        // long-lived access token in `Preferences` in cleartext.
+        //
+        // It used to be a bare log line, which is not a channel the user has: a
+        // jpackage GUI-subsystem launcher has no console, and nobody opens
+        // %LOCALAPPDATA%\Orbit\logs\orbit.log unless they are already debugging
+        // something else. So the flag now lives in settings and renders here.
+        //
+        // Rendered from a persisted value rather than a live one, because the write
+        // that fails is the only moment the state changes -- a user who has never
+        // touched their token since a bad boot would otherwise see nothing at all.
+        val storeDegraded by settingsManager.credentialStoreDegradedFlow.collectAsState()
+        if (storeDegraded) {
+            PrefCard(
+                "Credentials are not encrypted",
+                "Windows could not protect your login with its usual per-user encryption " +
+                    "(DPAPI), so your access token is currently stored in cleartext. This " +
+                    "usually means a locked or roaming Windows profile. Sign out and back in " +
+                    "once your profile is healthy, and your token will be re-encrypted " +
+                    "automatically. Until then, do not share this Windows account."
+            ) {}
+        }
+
+        // SECURITY: show when the current homeserver is being reached over plain HTTP.
+        //
+        // `HomeserverUrlNormalizer` refuses a plaintext homeserver unless the user
+        // has explicitly confirmed that host, and the confirmation lives for the
+        // process. Reporting it here means "I accepted this once" is a decision the
+        // user can still see, rather than one they made by accident and forgot -- and
+        // it is the one place they can see which host is on the list.
+        val insecureHost = util.currentInsecureHomeserverHost()
+        if (insecureHost != null) {
+            PrefCard(
+                "Plaintext homeserver",
+                "Orbit is connected to $insecureHost over plain HTTP, so your password " +
+                    "and access token are not encrypted in transit. That is acceptable on " +
+                    "loopback for a homeserver you run yourself. For anything reachable " +
+                    "over a network, use https and change the homeserver URL."
+            ) {}
+        }
     }
 }

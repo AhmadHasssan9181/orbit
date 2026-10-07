@@ -94,7 +94,13 @@ actual class AudioPlayer actual constructor() {
                 // fetched here and the TEMP FILE handed over -- which also gives VLC
                 // a seekable local source for the scrubber. Anything else is a plain
                 // URL VLC can fetch by itself.
-                val isMatrixMedia = url.contains("/_matrix/")
+                // SECURITY: origin check, not `url.contains("/_matrix/")` -- the substring
+                // form is satisfied by any host containing that text, and the code
+                // below attaches the account token. See util/OriginGuard.
+                val isMatrixMedia = OriginGuard.mayAttachCredential(
+                    url,
+                    CredentialManager.homeserverUrl
+                )
                 var localFile: java.io.File? = null
                 val source: String = if (isMatrixMedia) {
                     when (val fetched = fetchAuthenticatedMedia(url)) {

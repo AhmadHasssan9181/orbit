@@ -345,8 +345,12 @@ class CallStateResolverTest {
 
     @Test
     fun `both termination spellings are recognised`() {
-        // `true`, and the object-with-a-reason form clients actually send.
-        for (raw in listOf("""{"m.terminated":true}""", """{"m.terminated":{"reason":"done"}}""")) {
+        // `true`, string reasons like `m.user_hangup`, and the object-with-a-reason form clients send.
+        for (raw in listOf(
+            """{"m.terminated":true}""",
+            """{"m.terminated":"m.user_hangup"}""",
+            """{"m.terminated":{"reason":"done"}}"""
+        )) {
             val content = Json.parseToJsonElement(raw) as JsonObject
             assertTrue(MatrixRtcCalls.isDefinitionTerminated(content), "missed $raw")
             assertFalse(resolve(entry("m.call", raw)).exists, "a terminated call survived $raw")

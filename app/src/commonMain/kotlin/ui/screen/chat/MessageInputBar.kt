@@ -519,7 +519,16 @@ private fun ComposerToolBtn(
 /** What the composer shows above itself when replying. */
 data class ReplyPreview(val author: String, val body: String)
 
-private val commonHttpClient = HttpClient()
+/**
+ * Shared HTTP client for composer-adjacent fetches (currently the GIF picker).
+ *
+ * SECURITY: this was `HttpClient()` with **no plugins installed**, which in Ktor
+ * means no request, connect or socket timeout. Tenor is a third-party endpoint, so
+ * a stalled response left the GIF picker spinning forever with no error and no way
+ * out. Timeouts are now explicit; see ui.screen.media.tenorHttpClient for the
+ * matching byte caps.
+ */
+private val commonHttpClient = ui.screen.media.tenorHttpClient()
 
 /**
  * The emoji picker.

@@ -634,24 +634,54 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
         return flow.asStateFlow()
     }
 
-    override suspend fun isRoomEncrypted(roomId: String): Boolean = try {
+    /**
+     * SECURITY: tri-state on purpose. See [webrtc.RoomEncryptionVerdict].
+     *
+     * This returned a Boolean that was `false` for every failure mode, and the one
+     * consumer read `false` as "publish cleartext media at the SFU". A rate limit, a
+     * restarting homeserver, a timeout or any exception therefore silently
+     * downgraded an encrypted room's call to plaintext. Only a `404` is an
+     * authoritative "this room is not encrypted".
+     */
+    override suspend fun isRoomEncrypted(roomId: String): webrtc.RoomEncryptionVerdict = try {
         // The "/state/event/<type>" URL form parses as eventType="event",
         // stateKey="<type>" on Synapse → 404 → silently treated as unencrypted,
         // which disabled the whole E2EE chain. Classic /state/<type> form works.
         val response = context.httpClient.get(context.fullUrl("/rooms/$roomId/state/m.room.encryption")) {
             header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
         }
-        val encrypted = response.status.value == 200
-        if (!encrypted) {
-            println("DEBUG [MatrixCallsRepository] encryption probe $roomId -> HTTP ${response.status.value}")
-        }
+        val status = response.status.value
         response.drain()
-        encrypted
+        when (status) {
+            200 -> webrtc.RoomEncryptionVerdict.ENCRYPTED
+            // Authoritative: the room genuinely has no encryption state event. This is
+            // the one non-200 that is an answer rather than a failure, and publishing
+            // unencrypted media here matches Element's own behaviour.
+            404 -> {
+                util.OrbitLog.d(
+                    "MatrixCallsRepository",
+                    "encryption probe $roomId -> HTTP 404 (no m.room.encryption in this room)"
+                )
+                webrtc.RoomEncryptionVerdict.NOT_ENCRYPTED
+            }
+            else -> {
+                // 429, 500/502/503, 403, anything else. Not an answer, and reading it
+                // as one is the vulnerability being fixed.
+                util.OrbitLog.w(
+                    "MatrixCallsRepository",
+                    "encryption probe $roomId -> HTTP $status; cannot determine encryption state"
+                )
+                webrtc.RoomEncryptionVerdict.UNKNOWN
+            }
+        }
     } catch (e: kotlinx.coroutines.CancellationException) {
         throw e
     } catch (e: Exception) {
-        println("WARN [MatrixCallsRepository] encryption probe threw for $roomId: ${e.message}")
-        false
+        util.OrbitLog.w(
+            "MatrixCallsRepository",
+            "encryption probe threw for $roomId: ${e.message}; cannot determine encryption state"
+        )
+        webrtc.RoomEncryptionVerdict.UNKNOWN
     }
 
     override fun startCallMediaKeyExchange(roomId: String, livekitIdentity: String) {
@@ -721,40 +751,23 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
      * roster it cannot date.
      */
     private fun callStartFromState(events: List<MatrixRtcVisibilityEvent>, roomId: String): Long? {
-        val definition = events.firstOrNull { event ->
+        val nonTerminated = events.filter { event ->
             (event.type == "m.call" || event.type == "org.matrix.msc3401.call") &&
                 !livekit.MatrixRtcCalls.isDefinitionTerminated(event.content)
-        } ?: return null
-        val originServerTs = jsonLong(definition.raw, "origin_server_ts")
-        // Aged out past its own `lifetime` is the same as terminated, and the
-        // poller needs to hear about it.
-        //
-        // Without this the poller's only "stop" condition was "no definition at
-        // all", so a room whose definition outlived its call kept a 3-second
-        // `/rooms/{id}/state` poller alive forever. A run log caught it: `roster
-        // tick ... current call began 10534060322ms ago` -- 121 days -- repeating
-        // every three seconds for the rest of the session.
-        //
-        // The check is `CallStateResolver`'s, not a second implementation of it,
-        // so the UI's "is this room live" and the poller's "should I keep
-        // running" cannot disagree. A definition with no `lifetime` to age out
-        // against is now judged by a generous floor rather than assumed immortal
-        // -- see `definitionAgedOut`, whose note explains why "cannot prove" was
-        // the wrong default here.
-        if (CallStateResolver.definitionAgedOut(definition.content, originServerTs, getTimeMillis())) {
-            // WARN, not a debug-gated line. This is the moment a runaway poller
-            // stops, so it is the one line in this file that must reach a log with
-            // no debug flag on. A live run showed 125-day-old definitions polling
-            // every 3 seconds and filling 44.7% of a user's log file.
-            //
-            // `hasLifetime` is hoisted because the alternative is nested quotes
-            // inside a string template, which does not compile.
-            val hadLifetime = hasNonNullContentField(definition.content, "lifetime")
-            // `originServerTs` is nullable (jsonLong). `definitionAgedOut` already
-            // returned false for null/<=0, so this branch only runs with a real
-            // value -- but the type does not know that, hence the elvis rather
-            // than a non-null assertion.
-            val ageMs = getTimeMillis() - (originServerTs ?: 0L)
+        }
+        if (nonTerminated.isEmpty()) return null
+
+        val now = getTimeMillis()
+        val liveDefinitions = nonTerminated.filter { event ->
+            val originServerTs = jsonLong(event.raw, "origin_server_ts")
+            !CallStateResolver.definitionAgedOut(event.content, originServerTs, now)
+        }
+
+        if (liveDefinitions.isEmpty()) {
+            val mostRecent = nonTerminated.maxByOrNull { jsonLong(it.raw, "origin_server_ts") ?: 0L } ?: nonTerminated.first()
+            val originServerTs = jsonLong(mostRecent.raw, "origin_server_ts")
+            val hadLifetime = hasNonNullContentField(mostRecent.content, "lifetime")
+            val ageMs = now - (originServerTs ?: 0L)
             util.OrbitLog.w(
                 "MatrixCallsRepository",
                 "call definition in $roomId is past its lifetime " +
@@ -763,6 +776,9 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
             )
             return null
         }
+
+        val definition = liveDefinitions.maxByOrNull { jsonLong(it.raw, "origin_server_ts") ?: 0L } ?: liveDefinitions.first()
+        val originServerTs = jsonLong(definition.raw, "origin_server_ts")
         val start = MatrixRtcMembership.callStartFromDefinition(
             definition.content,
             originServerTs,
@@ -771,7 +787,7 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
             if (util.OrbitLog.debugEnabled) {
                 util.OrbitLog.d(
                     "MatrixCallsRepository",
-                    "roster tick $roomId: current call began ${getTimeMillis() - start}ms ago",
+                    "roster tick $roomId: current call began ${now - start}ms ago",
                 )
             }
         }
@@ -1579,6 +1595,18 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
     override suspend fun fetchLiveKitToken(roomId: String, callId: String, livekitServiceUrl: String): livekit.LiveKitAuthResponse {
         val userId = context.userId ?: throw Exception("No user ID")
         val deviceId = context.deviceId ?: "ORBIT_DESKTOP"
+
+        // SECURITY: the caller's `livekitServiceUrl` is very often the value out of
+        // the room's own m.call state, and any member can write that. It is about to
+        // receive the user's OpenID token, which the SFU exchanges for a LiveKit JWT
+        // -- replayable at the real lk-jwt-service to mint a token AS the victim.
+        //
+        // So a room-supplied URL is only used when the homeserver itself advertised
+        // that origin (Settings override or .well-known rtc_foci). Otherwise fall
+        // back to the configured endpoint, which is strictly better than sending the
+        // credential somewhere a stranger named. See repository/SfuUrlPolicy.
+        val approvedSfuUrl = SfuUrlPolicy.resolve(livekitServiceUrl, context)
+            ?: context.effectiveLiveKitServiceUrl()
         // MatrixRTC token member.id must match the m.call.member membershipID/device_id chain.
         // In legacy Element-shape mode, the LiveKit JWT subject must also match this identity.
         val identity = "$userId:$deviceId"
@@ -1592,9 +1620,9 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
             roomId = roomId,
             callId = callId,
             focus = livekit.RtcFocus.LiveKit(
-                serviceUrl = livekitServiceUrl,
+                serviceUrl = approvedSfuUrl,
                 alias = roomId,
-                raw = livekitServiceUrl
+                raw = approvedSfuUrl
             ),
             identity = identity,
             userId = userId,
