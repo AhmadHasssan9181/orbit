@@ -304,7 +304,7 @@ class GroupCallConnectionTracker(
         // Joining progress after the token fetch, so this must not also fit
         // the OpenID + SFU-JWT round trips (slow homeservers blew past 8s and
         // the watchdog killed joins that were about to succeed).
-        const val MEMBERSHIP_TIMEOUT_MS = 15_000L
+        const val MEMBERSHIP_TIMEOUT_MS = 30_000L
         const val CONNECT_TIMEOUT_MS = 25_000L
         const val AUDIO_PUBLISH_TIMEOUT_MS = 20_000L
         const val VIDEO_PUBLISH_TIMEOUT_MS = 30_000L

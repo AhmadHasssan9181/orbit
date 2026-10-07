@@ -113,12 +113,7 @@ internal object SidebarConcept {
     val interactiveActive = Color(0xFFFFFFFF)
     val interactiveActiveLight = OrbitConceptLight.textPrimary
 
-    /**
-     * `var(--interactive-muted)` (#4e5058) — `.channel-icon` at rest. The light
-     * theme does not override it, so one value serves both. Equals
-     * `ui.theme.Ink650`; kept here so the sidebar reads off one list.
-     */
-    val interactiveMuted = Color(0xFF4E5058)
+    val interactiveMuted: Color @Composable get() = sidebarTokens().Text_Muted
 
     // ── Lines and interaction washes ────────────────────────────────────────
 
@@ -181,11 +176,8 @@ internal object SidebarConcept {
 
     // ── Geometry the spacing / radius scales do not carry ───────────────────
 
-    /**
-     * `.channel-sidebar { border-top-left-radius: 8px }` — the one rounded corner
-     * on the panel. `OrbitRadius` stops at 6 and 10, so it is literal.
-     */
-    val sidebarShape = RoundedCornerShape(topStart = 8.dp)
+    /** `.channel-sidebar` card shape with 16dp rounded corners like Stoat. */
+    val sidebarShape = RoundedCornerShape(16.dp)
 
     /** `.server-dropdown-menu { border-radius: 8px; padding: 6px; width: 220px }`. */
     val dropdownShape = RoundedCornerShape(8.dp)
@@ -231,63 +223,51 @@ internal fun isDarkSidebar(): Boolean = rememberCosmicTokens().Bg.luminance() < 
 // is exactly one place to change if the test ever moves.
 
 @Composable
-internal fun conceptSidebarSurface(): Color =
-    if (isDarkSidebar()) SidebarConcept.sidebar else SidebarConcept.sidebarLight
+internal fun conceptSidebarSurface(): Color = sidebarTokens().Drawer_Bg
 
 /** `var(--bg-secondary)`. */
 @Composable
-internal fun conceptSecondarySurface(): Color =
-    if (isDarkSidebar()) SidebarConcept.secondary else SidebarConcept.secondaryLight
+internal fun conceptSecondarySurface(): Color = sidebarTokens().CardBg
 
 /** `var(--bg-floating)`. */
 @Composable
-internal fun conceptFloatingSurface(): Color =
-    if (isDarkSidebar()) SidebarConcept.floating else SidebarConcept.floatingLight
+internal fun conceptFloatingSurface(): Color = sidebarTokens().Elevated
 
 /** `var(--bg-chat)`. */
 @Composable
-internal fun conceptChatSurface(): Color =
-    if (isDarkSidebar()) SidebarConcept.chat else SidebarConcept.chatLight
+internal fun conceptChatSurface(): Color = sidebarTokens().Bg
 
 /** `var(--bg-servers)`. */
 @Composable
-internal fun conceptServersSurface(): Color =
-    if (isDarkSidebar()) SidebarConcept.servers else SidebarConcept.serversLight
+internal fun conceptServersSurface(): Color = sidebarTokens().Rail_Bg
 
 /** `var(--header-primary)`. */
 @Composable
-internal fun conceptHeaderPrimary(): Color =
-    if (isDarkSidebar()) SidebarConcept.headerPrimary else SidebarConcept.headerPrimaryLight
+internal fun conceptHeaderPrimary(): Color = sidebarTokens().Text_White
 
 /** `var(--header-secondary)`. */
 @Composable
-internal fun conceptHeaderSecondary(): Color =
-    if (isDarkSidebar()) SidebarConcept.headerSecondary else SidebarConcept.headerSecondaryLight
+internal fun conceptHeaderSecondary(): Color = sidebarTokens().Text_Secondary
 
 /** `var(--text-normal)`. */
 @Composable
-internal fun conceptTextNormal(): Color =
-    if (isDarkSidebar()) SidebarConcept.textNormal else SidebarConcept.textNormalLight
+internal fun conceptTextNormal(): Color = sidebarTokens().Text_Secondary
 
 /** `var(--text-muted)`. */
 @Composable
-internal fun conceptTextMuted(): Color =
-    if (isDarkSidebar()) SidebarConcept.textMuted else SidebarConcept.textMutedLight
+internal fun conceptTextMuted(): Color = sidebarTokens().Text_Muted
 
 /** `var(--interactive-normal)`. */
 @Composable
-internal fun conceptInteractiveNormal(): Color =
-    if (isDarkSidebar()) SidebarConcept.interactiveNormal else SidebarConcept.interactiveNormalLight
+internal fun conceptInteractiveNormal(): Color = sidebarTokens().Text_Secondary
 
 /** `var(--interactive-hover)`. */
 @Composable
-internal fun conceptInteractiveHover(): Color =
-    if (isDarkSidebar()) SidebarConcept.interactiveHover else SidebarConcept.interactiveHoverLight
+internal fun conceptInteractiveHover(): Color = sidebarTokens().Text_White
 
 /** `var(--interactive-active)`. */
 @Composable
-internal fun conceptInteractiveActive(): Color =
-    if (isDarkSidebar()) SidebarConcept.interactiveActive else SidebarConcept.interactiveActiveLight
+internal fun conceptInteractiveActive(): Color = sidebarTokens().Text_White
 
 /**
  * `var(--bg-modifier-hover)` — white at 6% in dark, black at 4% in light.
@@ -295,37 +275,32 @@ internal fun conceptInteractiveActive(): Color =
  * already there.
  */
 @Composable
-internal fun conceptHoverOverlay(): Color =
-    if (isDarkSidebar()) OrbitConceptOverlay.hover() else OrbitConceptOverlay.hoverLight()
+internal fun conceptHoverOverlay(): Color = sidebarTokens().Hover
 
 /** `var(--bg-modifier-selected)` — white at 10%, black at 8%. */
 @Composable
-internal fun conceptSelectedOverlay(): Color =
-    if (isDarkSidebar()) OrbitConceptOverlay.selected() else OrbitConceptOverlay.selectedLight()
+internal fun conceptSelectedOverlay(): Color = sidebarTokens().Selected_Bg
 
 /** `var(--bg-modifier-active)` — white at 14%, black at 12%. */
 @Composable
-internal fun conceptActiveOverlay(): Color =
-    if (isDarkSidebar()) OrbitConceptOverlay.active() else SidebarConcept.overlayActiveLight
+internal fun conceptActiveOverlay(): Color = sidebarTokens().Pressed
 
 /** `var(--border-subtle)`. */
 @Composable
-internal fun conceptBorderSubtle(): Color =
-    if (isDarkSidebar()) OrbitConceptBorder.subtle() else SidebarConcept.borderSubtleLight
+internal fun conceptBorderSubtle(): Color = sidebarTokens().Separator
 
 /** `var(--border-strong)`. */
 @Composable
-internal fun conceptBorderStrong(): Color =
-    if (isDarkSidebar()) OrbitConceptBorder.strong() else SidebarConcept.borderStrongLight
+internal fun conceptBorderStrong(): Color = sidebarTokens().SeparatorStrong
 
 /** `var(--brand-blurple)` — the concept's accent, which is also Orbit's default accent. */
-internal val conceptBrand: Color = OrbitConceptDark.brand
+internal val conceptBrand: Color @Composable get() = sidebarTokens().Accent
 
 /** `var(--brand-blurple-hover)`. */
-internal val conceptBrandHover: Color = OrbitConceptDark.brandHover
+internal val conceptBrandHover: Color @Composable get() = sidebarTokens().AccentLight
 
 /** `var(--brand-blurple-subtle)` — rgba(88, 101, 242, 0.15). */
-internal val conceptBrandSubtle: Color = OrbitConceptDark.brand.copy(alpha = OrbitConceptOverlay.BRAND_SUBTLE)
+internal val conceptBrandSubtle: Color @Composable get() = sidebarTokens().AccentGhost
 
 /** The token set, for call sites that need a colour the concept does not name. */
 @Composable

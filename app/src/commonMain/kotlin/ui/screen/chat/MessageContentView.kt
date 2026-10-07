@@ -115,7 +115,7 @@ private fun TextMessageBody(
             palette = RichTextPalette(
                 text = tokens.Text_Secondary,
                 // `.message-text strong { color: var(--header-primary) }`
-                strong = if (isLightChatSurface(tokens)) ChatConcept.headerPrimaryLight else tokens.Text_White,
+                strong = tokens.Text_White,
                 muted = tokens.Text_Muted,
                 accent = tokens.Accent,
                 codeBg = tokens.Input_Bg,
@@ -591,7 +591,7 @@ private fun StickerCard(content: ui.model.MessageContent.Sticker) {
 @Composable
 private fun ReplyQuoteBlock(content: ui.model.MessageContent.Reply) {
     val tokens = rememberCosmicTokens()
-    val strong = if (isLightChatSurface(tokens)) ChatConcept.headerPrimaryLight else tokens.Text_White
+    val strong = tokens.Text_White
     // Display name, not the raw localpart: the rest of the app shows names, and
     // "@alice:matrix.org" in a quote read like a bug.
     val members = ui.theme.LocalRoomMembers.current

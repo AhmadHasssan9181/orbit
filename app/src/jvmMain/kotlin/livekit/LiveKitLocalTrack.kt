@@ -53,11 +53,14 @@ object LiveKitLocalScreenShareTrack {
 
     val sink = object : VideoTrackSink {
         override fun onVideoFrame(frame: WrtcVideoFrame) {
-            // The capturer hands ownership of the native I420 frame to the sink,
-            // so it must be released on every path (including the early return
-            // below) or the media engine leaks ~94 MB/s at 1080p30.
+            // The capturer hands ownership of the native frame to the sink,
+            // so it must be released on every path or the media engine leaks.
+            // OnVoid WebRTC desktop capturers may deliver a generic VideoFrameBuffer
+            // that requires .toI420() conversion.
+            var i420: I420Buffer? = null
             try {
-                val buffer = frame.buffer as? I420Buffer ?: return
+                val buffer = (frame.buffer as? I420Buffer) ?: runCatching { frame.buffer?.toI420() }.getOrNull() ?: return
+                i420 = buffer
 
                 maybeEmitPreview(buffer)
 
@@ -71,6 +74,9 @@ object LiveKitLocalScreenShareTrack {
                 )
                 CallPathStats.onShareFramePushed(packed.remaining())
             } finally {
+                if (i420 != null && i420 !== frame.buffer) {
+                    runCatching { i420.release() }
+                }
                 runCatching { frame.release() }
             }
         }

@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -45,6 +46,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ui.assets.OrbitDefaultAvatar
+import ui.assets.OrbitMascotAvatar
 import ui.assets.OrbitVerifiedBadge
 import ui.assets.isOrbitVerifiedUser
 import ui.components.OrbitIconButton
@@ -116,6 +118,12 @@ internal fun DmListContent(
             // `.category-group { gap: 2px }`.
             verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
+            item(key = "dm_home", contentType = "home") {
+                HomeRow(
+                    isSelected = !friendsTabActive && (selectedChannelId.isNullOrBlank()),
+                    onClick = { onChannelClick("") }
+                )
+            }
             if (onSelectFriendsTab != null) {
                 item(key = "dm_friends", contentType = "friends") {
                     FriendsRow(
@@ -163,20 +171,28 @@ internal fun DmListContent(
                 contentType = { "dm" }
             ) { ch ->
                 val contact = dmContacts[ch.matrixRoomId.ifBlank { ch.id }]
+                val resolvedUser = contact ?: ui.model.OrbitUser(
+                    id = ch.matrixRoomId.ifBlank { ch.id },
+                    username = ch.name,
+                    displayName = ch.name,
+                    avatarColor = ui.theme.avatarSeedColor(ch.id).value.toInt(),
+                    status = contact?.status ?: ui.model.UserStatus.ONLINE,
+                    avatarUrl = ch.avatarUrl
+                )
                 DmItem(
                     // The resolved member's display name is authoritative; the
                     // channel name is a stale denormalised copy of it.
-                    displayName = contact?.displayName?.takeIf { it.isNotBlank() } ?: ch.name,
+                    displayName = resolvedUser.displayName.takeIf { it.isNotBlank() } ?: ch.name,
                     avatarColor = ui.theme.avatarSeedColor(ch.id).value.toInt(),
-                    // Null (unknown) rather than a fabricated ONLINE when the
-                    // other member could not be resolved.
-                    status = contact?.status,
-                    avatarUrl = contact?.avatarUrl ?: ch.avatarUrl,
+                    status = resolvedUser.status,
+                    avatarUrl = resolvedUser.avatarUrl ?: ch.avatarUrl,
                     isSelected = ch.id == selectedChannelId,
                     unreadCount = maxOf(unreadCounts[ch.id] ?: 0, unreadCounts[ch.matrixRoomId] ?: 0),
                     onClick = { onChannelClick(ch.id) },
                     onVoiceCall = { onVoiceCall?.invoke(ch.id) },
-                    onVideoCall = { onVideoCall?.invoke(ch.id) }
+                    onVideoCall = { onVideoCall?.invoke(ch.id) },
+                    user = resolvedUser,
+                    roomId = ch.id
                 )
             }
         }
@@ -204,10 +220,28 @@ internal fun DmItem(
     avatarUrl: String? = null,
     onVoiceCall: (() -> Unit)? = null,
     onVideoCall: (() -> Unit)? = null,
-    unreadCount: Int = 0
+    unreadCount: Int = 0,
+    user: ui.model.OrbitUser? = null,
+    roomId: String? = null
 ) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
+
+    var cardHovered by remember { mutableStateOf(false) }
+    var isPinned by remember { mutableStateOf(false) }
+    var showHoverCard by remember { mutableStateOf(false) }
+
+    LaunchedEffect(hovered, cardHovered, isPinned) {
+        if (isPinned || hovered || cardHovered) {
+            if (!showHoverCard) {
+                kotlinx.coroutines.delay(200)
+                if (isPinned || hovered || cardHovered) showHoverCard = true
+            }
+        } else {
+            kotlinx.coroutines.delay(180)
+            if (!hovered && !cardHovered && !isPinned) showHoverCard = false
+        }
+    }
 
     val bg by animateColorAsStateCompat(
         when {
@@ -230,34 +264,39 @@ internal fun DmItem(
         label = "dmActions"
     )
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            // `style={{ height: '42px' }}` on the concept's DM row, over the
-            // `.channel-row { padding: 6px 8px }` it also carries.
-            .height(42.dp)
-            .clip(OrbitRadius.xsShape)
-            .background(bg)
-            .hoverable(interaction)
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                role = Role.Button,
-                onClickLabel = "Open the conversation with $displayName",
-                onClick = onClick
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                // `style={{ height: '42px' }}` on the concept's DM row, over the
+                // `.channel-row { padding: 6px 8px }` it also carries.
+                .height(42.dp)
+                .clip(OrbitRadius.xsShape)
+                .background(bg)
+                .hoverable(interaction)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    role = Role.Button,
+                    onClickLabel = "Open the conversation with $displayName",
+                    onClick = {
+                        isPinned = !isPinned
+                        onClick()
+                    }
+                )
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // `.channel-row-content` with `gap: 10px` rather than the 8px a channel
+            // row uses, because the leading glyph here is a 28px avatar.
+            DmAvatar(
+                displayName = displayName,
+                avatarColor = avatarColor,
+                status = status,
+                avatarUrl = avatarUrl,
+                size = 28.dp,
+                userId = user?.id
             )
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        // `.channel-row-content` with `gap: 10px` rather than the 8px a channel
-        // row uses, because the leading glyph here is a 28px avatar.
-        DmAvatar(
-            displayName = displayName,
-            avatarColor = avatarColor,
-            status = status,
-            avatarUrl = avatarUrl,
-            size = 28.dp
-        )
         Spacer(Modifier.width(10.dp))
         Column(
             modifier = Modifier.weight(1f),
@@ -332,6 +371,77 @@ internal fun DmItem(
                 }
             }
         }
+    }
+
+    if (showHoverCard && user != null) {
+        ui.screen.chat.CompactUserProfileBesidePopup(
+            user = user,
+            callRoomId = roomId,
+            onVoiceCall = onVoiceCall,
+            onVideoCall = onVideoCall,
+            onDismissRequest = {
+                isPinned = false
+                showHoverCard = false
+            },
+            onCardHoverStateChange = { cardHovered = it }
+        )
+    }
+}
+}
+
+@Composable
+private fun HomeRow(isSelected: Boolean, onClick: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+
+    val bg by animateColorAsStateCompat(
+        when {
+            isSelected -> conceptSelectedOverlay()
+            hovered -> conceptHoverOverlay()
+            else -> Color.Transparent
+        }
+    )
+    val fg by animateColorAsStateCompat(
+        when {
+            isSelected -> conceptInteractiveActive()
+            hovered -> conceptInteractiveHover()
+            else -> conceptInteractiveNormal()
+        }
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .defaultMinSize(minHeight = 32.dp)
+            .clip(OrbitRadius.xsShape)
+            .background(bg)
+            .hoverable(interaction)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                role = Role.Tab,
+                onClickLabel = "Show home dashboard",
+                onClick = onClick
+            )
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = Icons.Default.Home,
+            contentDescription = null,
+            tint = if (hovered || isSelected) conceptInteractiveHover() else SidebarConcept.interactiveMuted,
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(Modifier.width(10.dp))
+        Text(
+            text = "Home",
+            style = MaterialTheme.typography.labelLarge.copy(
+                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                color = fg,
+                fontSize = 13.5.sp
+            ),
+            modifier = Modifier.weight(1f)
+        )
     }
 }
 
@@ -458,7 +568,8 @@ internal fun DmAvatar(
     avatarColor: Int,
     status: UserStatus?,
     avatarUrl: String? = null,
-    size: androidx.compose.ui.unit.Dp = 32.dp
+    size: androidx.compose.ui.unit.Dp = 32.dp,
+    userId: String? = null
 ) {
     Box(modifier = Modifier.size(size)) {
         if (avatarUrl != null) {
@@ -471,10 +582,8 @@ internal fun DmAvatar(
                     .clip(CircleShape)
             )
         } else {
-            OrbitDefaultAvatar(
-                label = displayName,
-                seed = displayName,
-                color = Color(avatarColor),
+            OrbitMascotAvatar(
+                seed = userId ?: displayName,
                 modifier = Modifier.size(size)
             )
         }

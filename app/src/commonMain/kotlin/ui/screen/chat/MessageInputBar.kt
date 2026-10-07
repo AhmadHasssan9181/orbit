@@ -343,9 +343,8 @@ private fun ComposerFrame(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            // .chat-input-box { border-radius: 8px; padding: 8px 14px; gap: 12px }
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (light) ChatConcept.inputLight else ChatConcept.input)
+            .clip(RoundedCornerShape(20.dp))
+            .background(t.Input_Bg)
             .padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

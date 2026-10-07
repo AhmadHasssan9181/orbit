@@ -6,6 +6,7 @@ import de.connect2x.trixnity.client.MatrixClient
 import de.connect2x.trixnity.client.MediaStoreModule
 import de.connect2x.trixnity.client.RepositoriesModule
 import de.connect2x.trixnity.client.create
+import livekit.configureResilientCrypto
 import de.connect2x.trixnity.client.media
 import de.connect2x.trixnity.client.room
 import de.connect2x.trixnity.client.cryptodriver.vodozemac.vodozemac
@@ -236,7 +237,8 @@ class MatrixAuthRepository(private val context: MatrixContext) : OrbitAuthReposi
             repositoriesModule = RepositoriesModule.room(getRoomDatabaseBuilder()),
             mediaStoreModule = MediaStoreModule.okio(getMediaStorePath()),
             cryptoDriverModule = CryptoDriverModule.vodozemac(),
-            authProviderData = authProviderData
+            authProviderData = authProviderData,
+            configuration = { configureResilientCrypto() }
         ).getOrThrow()
 
         // Persist only after the client actually came up. If create() throws
@@ -311,7 +313,8 @@ class MatrixAuthRepository(private val context: MatrixContext) : OrbitAuthReposi
                 repositoriesModule = RepositoriesModule.room(getRoomDatabaseBuilder()),
                 mediaStoreModule = MediaStoreModule.okio(getMediaStorePath()),
                 cryptoDriverModule = CryptoDriverModule.vodozemac(),
-                authProviderData = authProviderData
+                authProviderData = authProviderData,
+                configuration = { configureResilientCrypto() }
             ).getOrThrow()
         }
     }

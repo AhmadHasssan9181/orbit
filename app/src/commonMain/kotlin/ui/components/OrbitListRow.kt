@@ -198,6 +198,12 @@ fun OrbitListRow(
         else -> t.Text_Muted
     }
 
+    val effectiveTitleColor = if (titleStyle != null && titleStyle.color != Color.Unspecified) {
+        titleStyle.color
+    } else {
+        titleColor
+    }
+
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -205,9 +211,11 @@ fun OrbitListRow(
             .clip(shape)
             .background(bg)
             // Focus-only, as the file's own docstring says. The old `else 1.dp`
-            // kept drawing a 1dp outline in a 55%-alpha accent, so every channel,
-            // DM, member, settings and participant row looked permanently boxed.
-            .border(if (focused && enabled) 1.5.dp else 0.dp, t.FocusRing, shape)
+            // kept drawing a 1dp outline in a 55%-alpha accent, and `.border(0.dp, ...)`
+            // draws a hairline in Skia. Use `.then(...)` so no border is drawn when unfocused.
+            .then(
+                if (focused && enabled) Modifier.border(1.5.dp, t.FocusRing, shape) else Modifier
+            )
             .hoverable(interaction.hoverSource, enabled && isInteractive)
             .scale(interaction.pressScale())
             .then(
@@ -279,7 +287,7 @@ fun OrbitListRow(
                             lineHeight = 17.sp
                         )
                     ),
-                    color = titleColor.copy(alpha = titleAlpha),
+                    color = effectiveTitleColor.copy(alpha = titleAlpha),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false)
@@ -293,7 +301,7 @@ fun OrbitListRow(
                                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium
                             )
                         ),
-                        color = titleColor.copy(alpha = titleAlpha),
+                        color = effectiveTitleColor.copy(alpha = titleAlpha),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )

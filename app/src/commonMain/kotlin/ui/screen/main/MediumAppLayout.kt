@@ -16,6 +16,9 @@ import webrtc.*
 import repository.*
 import ui.screen.chat.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import ui.components.OrbitMessageSkeleton
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Alignment
@@ -73,64 +76,93 @@ fun MediumLayout(
             }
     }
 
-    Row(modifier = modifier.fillMaxSize().background(tokens.Bg)) {
+    Row(modifier = modifier.fillMaxSize().background(tokens.Rail_Bg)) {
         ServerRail(
             servers = servers,
             selectedServerId = selectedServerId,
             onServerClick = onServerClick,
             onAddServerClick = onAddServer,
             onExploreClick = { showExplore = true },
+            onOpenSettings = onOpenSettings,
             unreadByServer = unreadByServer,
             modifier = Modifier.width(64.dp).fillMaxHeight()
         )
 
-        if (selectedServer != null) {
-            ChannelDrawer(
-                server = selectedServer,
-                categories = categories,
-                channels = channels,
-                selectedChannelId = selectedChannelId,
-                currentUser = currentUser ?: OrbitUser(
-                    id = "me", username = "me", displayName = "Me",
-                    avatarColor = 0xFF7C6AF0.toInt(), status = UserStatus.ONLINE
-                ),
-                repository = repository,
-                unreadCounts = unreadCounts,
-                onChannelClick = onChannelClick,
-                onOpenSettings = onOpenSettings,
-                onCreateRoomClick = onCreateRoom,
-                onOpenRolesClick = onOpenRoles,
-                friendsTabActive = friendsTabActive,
-                onSelectFriendsTab = onSelectFriendsTab
-            )
-        }
-
-        val selectedChannel = channels.find { it.id == selectedChannelId }
-        Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-            when {
-                isLoadingChannels -> RoomLoadingPlaceholder()
-
-                friendsTabActive ->
-                    FriendsPanel(
+        // The unified big card starting immediately after ServerRail and extending all the way to the right edge!
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .padding(top = 8.dp, bottom = 8.dp, start = 6.dp, end = 8.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(tokens.Drawer_Bg)
+                .border(1.dp, tokens.Separator.copy(alpha = 0.25f), RoundedCornerShape(16.dp))
+        ) {
+            if (selectedServer != null) {
+                Row(modifier = Modifier.fillMaxSize()) {
+                    ChannelDrawer(
+                        server = selectedServer,
+                        categories = categories,
+                        channels = channels,
+                        selectedChannelId = selectedChannelId,
+                        currentUser = currentUser ?: OrbitUser(
+                            id = "me", username = "me", displayName = "Me",
+                            avatarColor = 0xFF7C6AF0.toInt(), status = UserStatus.ONLINE
+                        ),
                         repository = repository,
-                        dmChannels = channels,
-                        onOpenChannel = onChannelClick,
-                        modifier = Modifier.fillMaxSize()
+                        unreadCounts = unreadCounts,
+                        onChannelClick = onChannelClick,
+                        onOpenSettings = onOpenSettings,
+                        onCreateRoomClick = onCreateRoom,
+                        onOpenRolesClick = onOpenRoles,
+                        friendsTabActive = friendsTabActive,
+                        onSelectFriendsTab = onSelectFriendsTab,
+                        modifier = Modifier.width(220.dp).fillMaxHeight()
                     )
 
-                selectedChannel == null -> ChatEmptyState(
-                    serverName = selectedServer?.name ?: "Orbit",
-                    channels = channels,
-                    onChannelClick = onChannelClick
+                    val selectedChannel = channels.find { it.id == selectedChannelId }
+                    Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                        when {
+                            isLoadingChannels -> RoomLoadingPlaceholder()
+
+                            friendsTabActive ->
+                                FriendsPanel(
+                                    repository = repository,
+                                    dmChannels = channels,
+                                    onOpenChannel = onChannelClick,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+
+                            selectedChannel == null ->
+                                OrbitHomeDashboard(
+                                    server = selectedServer,
+                                    onCreateServer = onAddServer,
+                                    onDiscover = { showExplore = true },
+                                    onOpenSettings = onOpenSettings,
+                                    onChannelClick = onChannelClick,
+                                    channels = channels
+                                )
+
+                            selectedChannel.type == ChannelType.TEXT || selectedChannel.type == ChannelType.VOICE ->
+                                ChatScreenWithRepo(
+                                    repository = repository,
+                                    channel = selectedChannel,
+                                    showMemberList = false,
+                                    isDirectMessage = selectedServer.isDM,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                        }
+                    }
+                }
+            } else {
+                OrbitHomeDashboard(
+                    server = null,
+                    onCreateServer = onAddServer,
+                    onDiscover = { showExplore = true },
+                    onOpenSettings = onOpenSettings,
+                    onChannelClick = onChannelClick,
+                    channels = channels
                 )
-
-                selectedChannel.type == ChannelType.TEXT || selectedChannel.type == ChannelType.VOICE ->
-                    ChatScreenWithRepo(
-                        repository = repository,
-                        channel = selectedChannel,
-                        showMemberList = false,
-                        isDirectMessage = selectedServer?.isDM == true
-                    )
             }
         }
     }

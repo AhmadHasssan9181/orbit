@@ -24,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -236,7 +237,7 @@ fun SettingsScreen(
                         SettingsCategory.Profiles -> settingsItem { ProfilesPane(repository) }
 
                         SettingsCategory.Appearance -> {
-                            settingsItem { ThemeSelectorCard() }
+                            settingsItem { ThemeSelectorCard(settingsManager) }
                             settingsItem { FontSizeCard(settingsManager) }
                             settingsItem { AppearanceExtrasPane(settingsManager) }
                         }
@@ -560,33 +561,124 @@ private fun VerifyDeviceCard(repository: OrbitRepository) {
 }
 
 /** Human label for a theme, from the enum name so new values need no wiring. */
-private fun themeLabel(theme: ui.theme.Theme): String =
-    theme.name.replaceFirstChar { it.uppercase() }
+private fun themeLabel(theme: ui.theme.Theme): String = when (theme) {
+    ui.theme.Theme.M3Dynamic -> "Material You"
+    else -> theme.name.replaceFirstChar { it.uppercase() }
+}
 
-@Composable private fun ThemeSelectorCard() {
-    val activeTheme = ui.theme.LocalActiveTheme.current
+@Composable private fun ThemeSelectorCard(settingsManager: SettingsManager) {
     val onThemeChange = ui.theme.LocalOnThemeChange.current
-    
-    // Derived from the enum rather than hand-listed: a hand list went stale and
-    // left Graphite and Slate unselectable, so a user persisted on one of them
-    // saw "Default" highlighted while the app rendered their actual theme.
-    // M3Dynamic is excluded because getColorScheme has no arm for it and
-    // systemSupportsDynamicColors() returns false, so selecting it would render
-    // nothing.
-    val selectableThemes = ui.theme.Theme.entries.filter { it != ui.theme.Theme.M3Dynamic }
+    val currentSeedColor = ui.theme.LocalThemeSeedColor.current
+    val dynamicIsDark = ui.theme.LocalDynamicThemeIsDark.current
+    val tokens = rememberCosmicTokens()
 
-    val selectedLabel = themeLabel(activeTheme)
-
-    // Vertical, so the ten chips get the card's full width instead of sharing a
-    // Row with the heading. Wide controls belong under their label, not beside it.
-    PrefCard("App Theme", "Choose your visual theme", vertical = true) {
-        ChipGroup(
-            options = selectableThemes.map { themeLabel(it) },
-            selected = selectedLabel,
-            onSelect = { label ->
-                selectableThemes.firstOrNull { themeLabel(it) == label }?.let { onThemeChange(it) }
+    PrefCard("App Theme", "Choose between Dark and Light mode, and pick an adaptive color palette", vertical = true) {
+        // Mode Toggle: Dark vs Light
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(
+                    "Mode",
+                    color = tokens.Text_White,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    if (dynamicIsDark) "Dark mode with rich adaptive tonal shades" else "Light mode with soft adaptive tonal shades",
+                    color = tokens.Text_Muted,
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
-        )
+
+            ChipGroup(
+                options = listOf("Dark", "Light"),
+                selected = if (dynamicIsDark) "Dark" else "Light",
+                onSelect = { mode ->
+                    val isDark = (mode == "Dark")
+                    settingsManager.setDynamicThemeIsDark(isDark)
+                    settingsManager.setTheme(ui.theme.Theme.M3Dynamic)
+                    onThemeChange(ui.theme.Theme.M3Dynamic)
+                }
+            )
+        }
+
+        Spacer(Modifier.height(16.dp))
+        HorizontalDivider(color = tokens.Separator)
+        Spacer(Modifier.height(12.dp))
+
+        // Palette Colors: Always visible in both Dark and Light modes!
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                "Palette Color",
+                color = tokens.Text_White,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                "The entire interface adapts to shades of your chosen color",
+                color = tokens.Text_Muted,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ui.theme.MaterialYouSeeds.forEach { seed ->
+                    val isSelected = currentSeedColor.value == seed.color.value
+                    val interactionSource = remember { MutableInteractionSource() }
+                    val isHovered by interactionSource.collectIsHoveredAsState()
+
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .clickable(
+                                interactionSource = interactionSource,
+                                indication = null
+                            ) {
+                                settingsManager.setThemeSeedColor(seed.color.value.toLong())
+                                settingsManager.setTheme(ui.theme.Theme.M3Dynamic)
+                                onThemeChange(ui.theme.Theme.M3Dynamic)
+                            }
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(CircleShape)
+                                .background(seed.color)
+                                .border(
+                                    width = if (isSelected) 3.dp else if (isHovered) 2.dp else 1.dp,
+                                    color = if (isSelected) tokens.Text_White else if (isHovered) tokens.Text_Secondary else Color.Transparent,
+                                    shape = CircleShape
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (isSelected) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = "Selected",
+                                    tint = if (seed.color.luminance() > 0.4f) Color.Black else Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = seed.name,
+                            color = if (isSelected) tokens.Text_White else tokens.Text_Muted,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontSize = 11.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 

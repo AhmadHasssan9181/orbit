@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsOff
@@ -30,8 +31,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.Role
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -126,11 +132,11 @@ internal fun ChatHeader(
     // `--bg-chat` rather than the app's old header grey, because that is what the
     // rule says the bar is painted with.
     val barBg by animateColorAsState(
-        targetValue = if (hovered) t.Bg.copy(alpha = 0.98f) else t.Bg,
+        targetValue = if (hovered) t.Hover else Color.Transparent,
         animationSpec = OrbitMotion.SnappyColor,
         label = "headerBg"
     )
-    val hairline = if (light) ChatConcept.borderSubtleLight else OrbitConceptBorder.subtle()
+    val hairline = Color.Transparent
 
     // A DM has no topic, so its second line is the handle, which is the closest
     // thing the concept's markup has to a subtitle.
@@ -138,6 +144,22 @@ internal fun ChatHeader(
         directProfile != null && directProfile.username.isNotBlank() -> "@${directProfile.username}"
         channel.topic.isNotBlank() -> channel.topic
         else -> null
+    }
+
+    var userAnchorHovered by remember { mutableStateOf(false) }
+    var userCardHovered by remember { mutableStateOf(false) }
+    var userProfilePinned by remember { mutableStateOf(false) }
+    var showUserCard by remember { mutableStateOf(false) }
+
+    LaunchedEffect(userAnchorHovered, userCardHovered, userProfilePinned) {
+        if (userProfilePinned || userAnchorHovered || userCardHovered) {
+            showUserCard = true
+        } else {
+            delay(180)
+            if (!userAnchorHovered && !userCardHovered && !userProfilePinned) {
+                showUserCard = false
+            }
+        }
     }
 
     Column(
@@ -174,15 +196,76 @@ internal fun ChatHeader(
                     )
                 }
 
-                // `<Hash size={24} color="var(--interactive-muted)" />`
-                //
-                // A DM's stand-in is 28dp rather than the hash's 24dp. The concept
-                // has no DM header, so there is nothing to match — and a 24dp face
-                // with a 9dp presence dot on it is a dot with a person behind it
-                // rather than a person. The 4dp is the difference between a glyph
-                // and an identity.
                 if (directProfile != null) {
-                    SmallUserAvatar(directProfile, size = 28.dp)
+                    val userInteraction = remember { MutableInteractionSource() }
+                    val userHovered by userInteraction.collectIsHoveredAsState()
+                    LaunchedEffect(userHovered) { userAnchorHovered = userHovered }
+
+                    Box {
+                        Row(
+                            modifier = Modifier
+                                .clip(OrbitRadius.xsShape)
+                                .background(
+                                    if (userProfilePinned) t.ElevatedAlt
+                                    else if (userHovered) t.Separator.copy(alpha = 0.2f)
+                                    else Color.Transparent
+                                )
+                                .hoverable(userInteraction)
+                                .clickable(
+                                    role = Role.Button,
+                                    onClick = { userProfilePinned = !userProfilePinned }
+                                )
+                                .padding(horizontal = 6.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(OrbitSpace.sm)
+                        ) {
+                            SmallUserAvatar(directProfile, size = 28.dp)
+
+                            Text(
+                                text = directProfile.displayName,
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (light) ChatConcept.headerPrimaryLight else t.Text_White,
+                                    fontSize = 16.sp,
+                                    letterSpacing = 0.sp,
+                                    lineHeight = 20.sp
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+
+                            if (subtitle != null) {
+                                Box(
+                                    modifier = Modifier
+                                        .width(1.dp)
+                                        .height(16.dp)
+                                        .background(hairline)
+                                )
+                                Text(
+                                    text = subtitle,
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        fontSize = 13.sp,
+                                        lineHeight = 17.sp,
+                                        color = t.Text_Muted
+                                    ),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.widthIn(max = 480.dp)
+                                )
+                            }
+                        }
+
+                        if (showUserCard) {
+                            CompactUserProfilePopup(
+                                user = directProfile,
+                                callRoomId = channel.id,
+                                onVoiceCall = onVoiceCall,
+                                onVideoCall = onVideoCall,
+                                onDismissRequest = { userProfilePinned = false },
+                                onCardHoverStateChange = { userCardHovered = it }
+                            )
+                        }
+                    }
                 } else {
                     Icon(
                         imageVector = if (channel.type == ChannelType.TEXT) {
@@ -194,42 +277,39 @@ internal fun ChatHeader(
                         tint = ChatConcept.interactiveMuted,
                         modifier = Modifier.size(24.dp)
                     )
-                }
 
-                Text(
-                    text = directProfile?.displayName ?: channelDisplayNameForHeader(channel),
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        // .chat-header-title { font-size: 16px; font-weight: 700 }
-                        fontWeight = FontWeight.Bold,
-                        color = if (light) ChatConcept.headerPrimaryLight else t.Text_White,
-                        fontSize = 16.sp,
-                        letterSpacing = 0.sp,
-                        lineHeight = 20.sp
-                    ),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-
-                if (subtitle != null) {
-                    // .chat-header-divider { width: 1px; height: 16px }
-                    Box(
-                        modifier = Modifier
-                            .width(1.dp)
-                            .height(16.dp)
-                            .background(hairline)
-                    )
-                    // .chat-header-topic
                     Text(
-                        text = subtitle,
-                        style = MaterialTheme.typography.bodyMedium.copy(
-                            fontSize = 13.sp,
-                            lineHeight = 17.sp,
-                            color = t.Text_Muted
+                        text = channelDisplayNameForHeader(channel),
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = if (light) ChatConcept.headerPrimaryLight else t.Text_White,
+                            fontSize = 16.sp,
+                            letterSpacing = 0.sp,
+                            lineHeight = 20.sp
                         ),
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.widthIn(max = 480.dp)
+                        overflow = TextOverflow.Ellipsis
                     )
+
+                    if (subtitle != null) {
+                        Box(
+                            modifier = Modifier
+                                .width(1.dp)
+                                .height(16.dp)
+                                .background(hairline)
+                        )
+                        Text(
+                            text = subtitle,
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontSize = 13.sp,
+                                lineHeight = 17.sp,
+                                color = t.Text_Muted
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.widthIn(max = 480.dp)
+                        )
+                    }
                 }
             }
 
@@ -302,6 +382,14 @@ internal fun ChatHeader(
                         active = memberListActive,
                         tooltip = "Members",
                         onClick = onToggleMemberList
+                    )
+                } else if (directProfile != null) {
+                    HeaderActionBtn(
+                        icon = OrbitIcons.Members,
+                        contentDescription = "Profile",
+                        active = showUserCard,
+                        tooltip = "Profile",
+                        onClick = { userProfilePinned = !userProfilePinned }
                     )
                 }
             }

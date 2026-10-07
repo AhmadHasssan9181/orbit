@@ -27,8 +27,12 @@ import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -157,87 +161,104 @@ fun MemberListRow(
     val t = rememberCosmicTokens()
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(4.dp))
-            .background(
-                // The concept's `.member-item-row:hover` is --bg-modifier-hover,
-                // white at 6%. t.Hover is white at 3.9%, which is why this row
-                // felt dead next to the 14 places that use conceptHoverOverlay().
-                if (onClick != null && hovered) OrbitConceptOverlay.hover() else Color.Transparent
-            )
-            .hoverable(enabled = onClick != null, interactionSource = interaction)
-            .then(
-                if (onClick != null) {
-                    Modifier.clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        role = Role.Button,
-                        onClickLabel = "Open ${user.displayName}'s profile",
-                        onClick = onClick
-                    )
-                } else {
-                    Modifier
-                }
-            )
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        MemberAvatarWithStatus(user = user, status = user.status, ringColor = t.Members_Bg)
+    var cardHovered by remember(user.id) { mutableStateOf(false) }
+    var isPinned by remember(user.id) { mutableStateOf(false) }
+    var showHoverCard by remember(user.id) { mutableStateOf(false) }
 
-        // .member-details — a column that clips, so a long name ellipsises
-        // instead of pushing the row's edge out.
-        Column(modifier = Modifier.weight(1f)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                Text(
-                    text = user.displayName,
-                    color = t.Text_White,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (user.isBot) {
-                    // `.message-role-tag` at the concept's inline override for this
-                    // one: 9px, 1px/3px, with the rule's own 3px radius,
-                    // `--brand-blurple` fill and white uppercase label.
-                    Text(
-                        text = "BOT",
-                        color = Color.White,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(3.dp))
-                            .background(t.Accent)
-                            .padding(horizontal = 3.dp, vertical = 1.dp)
-                    )
-                }
+    LaunchedEffect(hovered, cardHovered, isPinned) {
+        if (isPinned || hovered || cardHovered) {
+            if (!showHoverCard) {
+                delay(200)
+                if (isPinned || hovered || cardHovered) showHoverCard = true
             }
-            // `.member-activity-text` — 11px, --text-muted, clipped. An activity
-            // line wins over a custom status, as in the concept.
-            val subline = activity?.name ?: customStatus
-            if (subline != null) {
+        } else {
+            delay(180)
+            if (!hovered && !cardHovered && !isPinned) showHoverCard = false
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(4.dp))
+                .background(
+                    if (hovered) OrbitConceptOverlay.hover() else Color.Transparent
+                )
+                .hoverable(enabled = true, interactionSource = interaction)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    role = Role.Button,
+                    onClickLabel = "Open ${user.displayName}'s profile",
+                    onClick = {
+                        isPinned = !isPinned
+                        if (isPinned) showHoverCard = true
+                        onClick?.invoke()
+                    }
+                )
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            MemberAvatarWithStatus(user = user, status = user.status, ringColor = t.Members_Bg)
+
+            Column(modifier = Modifier.weight(1f)) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier.padding(top = 1.dp)
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    if (activity != null) ActivityGlyph(activity)
                     Text(
-                        text = subline,
-                        color = t.Text_Muted,
-                        fontSize = 11.sp,
+                        text = user.displayName,
+                        color = t.Text_White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    if (user.isBot) {
+                        Text(
+                            text = "BOT",
+                            color = Color.White,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(t.Accent)
+                                .padding(horizontal = 3.dp, vertical = 1.dp)
+                        )
+                    }
+                }
+                val subline = activity?.name ?: customStatus
+                if (subline != null) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.padding(top = 1.dp)
+                    ) {
+                        if (activity != null) ActivityGlyph(activity)
+                        Text(
+                            text = subline,
+                            color = t.Text_Muted,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
+        }
+
+        if (showHoverCard) {
+            CompactUserProfileBesidePopup(
+                user = user,
+                onDismissRequest = {
+                    isPinned = false
+                    showHoverCard = false
+                },
+                onCardHoverStateChange = { cardHovered = it }
+            )
         }
     }
 }

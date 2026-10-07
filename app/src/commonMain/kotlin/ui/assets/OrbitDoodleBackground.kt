@@ -18,6 +18,8 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.unit.dp
 import ui.theme.LocalActiveTheme
 import ui.theme.Theme
+import ui.theme.rememberCosmicTokens
+import androidx.compose.ui.graphics.luminance
 
 /**
  * Chat wallpapers.
@@ -94,9 +96,10 @@ fun orbitDoodleWallpaperIdForLabel(label: String): String {
 private fun resolvedOrbitDoodleWallpaper(selectedId: String): OrbitDoodleWallpaper {
     OrbitDoodleWallpaper.entries.firstOrNull { it.id == selectedId }?.let { return it }
     // "Auto" and anything unrecognised: match the active theme's canvas, flat.
-    return when (LocalActiveTheme.current) {
-        Theme.Light -> OrbitDoodleWallpaper.Light02
-        Theme.Amoled -> OrbitDoodleWallpaper.Amoled01
+    val isLight = rememberCosmicTokens().Bg.luminance() > 0.5f
+    return when {
+        LocalActiveTheme.current == Theme.Amoled -> OrbitDoodleWallpaper.Amoled01
+        isLight -> OrbitDoodleWallpaper.Light02
         else -> OrbitDoodleWallpaper.Plain
     }
 }
@@ -107,16 +110,23 @@ fun OrbitChatDoodleBackground(
     modifier: Modifier = Modifier,
     intensity: Float = 1f
 ) {
-    val wallpaper = resolvedOrbitDoodleWallpaper(selectedId)
+    val tokens = rememberCosmicTokens()
+    val isExplicitPreset = selectedId != "auto" && selectedId != "plain" && selectedId.isNotBlank()
+    val explicitPreset = if (isExplicitPreset) OrbitDoodleWallpaper.entries.firstOrNull { it.id == selectedId } else null
+
+    // For auto, plain, or any unrecognised ID, use tokens.Bg so the chat canvas reflects the dynamic theme!
+    val canvasBg = explicitPreset?.background ?: tokens.Bg
+    val isPatterned = explicitPreset?.patterned ?: false
+
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(wallpaper.background)
+            .background(canvasBg)
     ) {
-        if (!wallpaper.patterned) return@Box
+        if (!isPatterned || explicitPreset == null) return@Box
         Canvas(Modifier.fillMaxSize()) {
             // 0.11 instead of 0.24: a texture, not a pattern you read.
-            drawDoodleWallpaper(wallpaper.stroke.copy(alpha = 0.11f * intensity))
+            drawDoodleWallpaper(explicitPreset.stroke.copy(alpha = 0.11f * intensity))
         }
     }
 }

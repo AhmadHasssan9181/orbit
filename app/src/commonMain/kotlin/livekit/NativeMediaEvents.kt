@@ -109,6 +109,39 @@ interface NativeRemoteVideoSink {
         rotation: Int
     )
 
+    fun onRemoteVideoFrame(
+        sessionId: Long,
+        epoch: Long,
+        participantIdentity: String,
+        trackSid: String,
+        buffer: ByteArray,
+        width: Int,
+        height: Int,
+        format: Int,
+        strideY: Int,
+        strideU: Int,
+        strideV: Int,
+        timestampNs: Long,
+        rotation: Int
+    ) {
+        onRemoteVideoFrame(
+            sessionId,
+            epoch,
+            participantIdentity,
+            trackSid,
+            "",
+            buffer,
+            width,
+            height,
+            format,
+            strideY,
+            strideU,
+            strideV,
+            timestampNs,
+            rotation
+        )
+    }
+
     fun onRemoteVideoTrackRemoved(sessionId: Long, epoch: Long, participantIdentity: String, trackSid: String)
 
     /**

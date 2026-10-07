@@ -128,46 +128,10 @@ fun OrbitDefaultAvatar(
     color: Color? = null,
     isBot: Boolean = false
 ) {
-    val tokens = rememberCosmicTokens()
-    val accent = color ?: orbitSeedColor(seed)
-    Box(
+    OrbitMascotAvatar(
+        seed = seed.ifBlank { label },
         modifier = modifier
-            .aspectRatio(1f)
-            .clip(CircleShape)
-            .background(tokens.Bg)
-            .border(1.dp, tokens.Text_White.copy(alpha = 0.08f), CircleShape)
-            .padding(1.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Canvas(Modifier.fillMaxSize()) {
-            val s = size.minDimension
-            val center = Offset(size.width / 2f, size.height / 2f)
-            drawCircle(accent.copy(alpha = 0.92f), radius = s * 0.48f, center = center)
-            drawCircle(Color.White.copy(alpha = 0.12f), radius = s * 0.22f, center = Offset(s * 0.36f, s * 0.32f))
-            rotate(-18f, center) {
-                drawOval(
-                    color = Color.White.copy(alpha = 0.38f),
-                    topLeft = Offset(center.x - s * 0.54f, center.y - s * 0.18f),
-                    size = Size(s * 1.08f, s * 0.36f),
-                    style = Stroke(width = s * 0.035f)
-                )
-            }
-            if (isBot) {
-                drawCircle(tokens.AccentLight, radius = s * 0.09f, center = Offset(s * 0.75f, s * 0.25f))
-            }
-        }
-        Text(
-            text = initialsFor(label),
-            // Bare Color.White over the seed circle: unreadable when the seed
-            // colour is light. Picked from the circle's own luminance instead.
-            color = if (accent.luminance() > 0.55f) Color(0xFF14161B) else Color.White,
-            textAlign = TextAlign.Center,
-            style = MaterialTheme.typography.labelMedium.copy(
-                fontWeight = FontWeight.ExtraBold,
-                fontSize = 12.sp
-            )
-        )
-    }
+    )
 }
 
 @Composable

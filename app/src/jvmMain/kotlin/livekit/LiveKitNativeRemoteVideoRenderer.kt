@@ -109,6 +109,39 @@ object LiveKitNativeRemoteVideoRenderer : NativeRemoteVideoSink {
         CallPathStats.onRemoteVideoFrame(buffer.size)
     }
 
+    override fun onRemoteVideoFrame(
+        sessionId: Long,
+        epoch: Long,
+        participantIdentity: String,
+        trackSid: String,
+        buffer: ByteArray,
+        width: Int,
+        height: Int,
+        format: Int,
+        strideY: Int,
+        strideU: Int,
+        strideV: Int,
+        timestampNs: Long,
+        rotation: Int
+    ) {
+        onRemoteVideoFrame(
+            sessionId = sessionId,
+            epoch = epoch,
+            participantIdentity = participantIdentity,
+            trackSid = trackSid,
+            trackSource = "",
+            buffer = buffer,
+            width = width,
+            height = height,
+            format = format,
+            strideY = strideY,
+            strideU = strideU,
+            strideV = strideV,
+            timestampNs = timestampNs,
+            rotation = rotation
+        )
+    }
+
     override fun onRemoteVideoTrackRemoved(
         sessionId: Long,
         epoch: Long,

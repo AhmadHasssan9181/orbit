@@ -627,7 +627,8 @@ private fun FriendRow(
                     avatarColor = friend.user.avatarColor,
                     status = friend.user.status,
                     avatarUrl = friend.user.avatarUrl,
-                    size = 40.dp
+                    size = 40.dp,
+                    userId = friend.user.id
                 )
                 Column {
                     Row(verticalAlignment = Alignment.Bottom) {
@@ -928,7 +929,8 @@ private fun ActivityCard(
                 avatarColor = friend.user.avatarColor,
                 status = friend.user.status,
                 avatarUrl = friend.user.avatarUrl,
-                size = 36.dp
+                size = 36.dp,
+                userId = friend.user.id
             )
             Spacer(Modifier.width(10.dp))
             Column {

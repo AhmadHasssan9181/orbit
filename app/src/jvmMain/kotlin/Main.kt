@@ -134,7 +134,7 @@ fun main() = application {
         title = "Orbit",
         undecorated = true,
         transparent = false,
-        icon = painterResource("logo.jpeg"),
+        icon = painterResource("orbit_logo.png"),
         onPreviewKeyEvent = { event -> dispatchOrbitShortcut(event, pttBinding) }
     ) {
         // Both of these used to run in the composable body, so every
@@ -161,15 +161,15 @@ fun main() = application {
             }
         }
         CompositionLocalProvider(LocalPttKeyBinding provides pttBinding) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                CustomTitleBar(state = state, onClose = ::closeRequested)
-                OrbitApp(modifier = Modifier.weight(1f))
-            }
+            OrbitApp(
+                modifier = Modifier.fillMaxSize(),
+                titleBar = { CustomTitleBar(state = state, onClose = ::closeRequested) }
+            )
         }
     }
 
     Tray(
-        icon = painterResource("logo.jpeg"),
+        icon = painterResource("orbit_logo.png"),
         menu = {
             Item("Open Orbit", onClick = { restoreMainWindow() })
             Item("Quit", onClick = { quitOrbit() })

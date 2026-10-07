@@ -16,6 +16,9 @@ import webrtc.*
 import repository.*
 import ui.screen.chat.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Alignment
 import ui.icons.*
@@ -68,86 +71,95 @@ fun ExpandedLayout(
             }
     }
 
-    Row(modifier = modifier.background(tokens.Bg)) {
+    Row(modifier = modifier.fillMaxSize().background(tokens.Rail_Bg)) {
         ServerRail(
             servers = servers,
             selectedServerId = selectedServerId,
             onServerClick = onServerClick,
             onAddServerClick = onAddServer,
             onExploreClick = { showExplore = true },
+            onOpenSettings = onOpenSettings,
             unreadByServer = unreadByServer
         )
-        VerticalRule()
 
-        if (selectedServer != null) {
-            ChannelDrawer(
-                server = selectedServer,
-                categories = categories,
-                channels = channels,
-                selectedChannelId = selectedChannelId,
-                currentUser = currentUser ?: OrbitUser(
-                    id = "me", username = "me", displayName = "Me",
-                    avatarColor = 0xFF7C6AF0.toInt(), status = UserStatus.ONLINE
-                ),
-                repository = repository,
-                unreadCounts = unreadCounts,
-                onChannelClick = onChannelClick,
-                onOpenSettings = onOpenSettings,
-                onCreateRoomClick = onCreateRoom,
-                onOpenRolesClick = onOpenRoles,
-                friendsTabActive = friendsTabActive,
-                onSelectFriendsTab = onSelectFriendsTab
-            )
-            VerticalRule()
-            val selectedChannel = channels.find { it.id == selectedChannelId }
-            when {
-                isLoadingChannels ->
-                    RoomLoadingPlaceholder()
-
-                // The friends view takes the main column while its sidebar row is
-                // active. A DM row is never "selected" in that state, so there is
-                // nothing to arbitrate between the two.
-                friendsTabActive ->
-                    FriendsPanel(
-                        repository = repository,
-                        dmChannels = channels,
-                        onOpenChannel = onChannelClick,
-                        modifier = Modifier.weight(1f).fillMaxHeight()
-                    )
-
-                selectedChannel == null ->
-                    ChatEmptyState(
-                        serverName = selectedServer.name,
+        // The unified big card starting immediately after ServerRail and extending all the way to the right edge!
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .padding(top = 8.dp, bottom = 8.dp, start = 6.dp, end = 8.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(tokens.Drawer_Bg)
+                .border(1.dp, tokens.Separator.copy(alpha = 0.25f), RoundedCornerShape(16.dp))
+        ) {
+            if (selectedServer != null) {
+                Row(modifier = Modifier.fillMaxSize()) {
+                    ChannelDrawer(
+                        server = selectedServer,
+                        categories = categories,
                         channels = channels,
-                        onChannelClick = onChannelClick
-                    )
-
-                selectedChannel.type == ChannelType.TEXT || selectedChannel.type == ChannelType.VOICE ->
-                    ChatScreenWithRepo(
+                        selectedChannelId = selectedChannelId,
+                        currentUser = currentUser ?: OrbitUser(
+                            id = "me", username = "me", displayName = "Me",
+                            avatarColor = 0xFF7C6AF0.toInt(), status = UserStatus.ONLINE
+                        ),
                         repository = repository,
-                        channel = selectedChannel,
-                        showMemberList = !selectedServer.isDM,
-                        isDirectMessage = selectedServer.isDM
-                    )
-            }
-        } else {
-            Box(
-                modifier = Modifier.weight(1f).fillMaxHeight().background(tokens.Bg),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        "No space selected",
-                        color = tokens.Text_Muted,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Spacer(Modifier.height(OrbitSpace.md))
-                    OrbitButton(
-                        text = "Add a server",
-                        onClick = onAddServer,
-                        tone = OrbitButtonTone.Neutral
-                    )
+                        unreadCounts = unreadCounts,
+                        onChannelClick = onChannelClick,
+                        onOpenSettings = onOpenSettings,
+                        onCreateRoomClick = onCreateRoom,
+                        onOpenRolesClick = onOpenRoles,
+                        friendsTabActive = friendsTabActive,
+                        onSelectFriendsTab = onSelectFriendsTab,
+                        )
+
+                    val selectedChannel = channels.find { it.id == selectedChannelId }
+                    Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                        when {
+                            isLoadingChannels ->
+                                RoomLoadingPlaceholder()
+
+                            // The friends view takes the main column while its sidebar row is
+                            // active. A DM row is never "selected" in that state, so there is
+                            // nothing to arbitrate between the two.
+                            friendsTabActive ->
+                                FriendsPanel(
+                                    repository = repository,
+                                    dmChannels = channels,
+                                    onOpenChannel = onChannelClick,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+
+                            selectedChannel == null ->
+                                OrbitHomeDashboard(
+                                    server = selectedServer,
+                                    onCreateServer = onAddServer,
+                                    onDiscover = { showExplore = true },
+                                    onOpenSettings = onOpenSettings,
+                                    onChannelClick = onChannelClick,
+                                    channels = channels
+                                )
+
+                            selectedChannel.type == ChannelType.TEXT || selectedChannel.type == ChannelType.VOICE ->
+                                ChatScreenWithRepo(
+                                    repository = repository,
+                                    channel = selectedChannel,
+                                    showMemberList = !selectedServer.isDM,
+                                    isDirectMessage = selectedServer.isDM,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                        }
+                    }
                 }
+            } else {
+                OrbitHomeDashboard(
+                    server = null,
+                    onCreateServer = onAddServer,
+                    onDiscover = { showExplore = true },
+                    onOpenSettings = onOpenSettings,
+                    onChannelClick = onChannelClick,
+                    channels = channels
+                )
             }
         }
     }

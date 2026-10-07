@@ -83,7 +83,7 @@ fun ActiveCallPipWindow(
         onCloseRequest = { dismissedThisCall = true },
         state = pipState,
         title = "Orbit call",
-        icon = painterResource("logo.jpeg"),
+        icon = painterResource("orbit_logo.png"),
         undecorated = true,
         resizable = false,
         alwaysOnTop = true

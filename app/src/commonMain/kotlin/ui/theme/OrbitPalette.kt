@@ -106,3 +106,28 @@ val AvatarSeeds = listOf(
 
 fun avatarSeedColor(seed: String): Color =
     AvatarSeeds[(seed.hashCode() and Int.MAX_VALUE) % AvatarSeeds.size]
+
+// ─── Pastel avatar seeds (for DM mascot avatars) ──────────────────────────
+// Bright, cheerful pastel pairs: (highlight, subtle shade)
+val PastelAvatarSeeds: List<Pair<Color, Color>> = listOf(
+    Color(0xFFFFD1DC) to Color(0xFFFFAAA6), // Soft Strawberry Rose
+    Color(0xFFD8F3DC) to Color(0xFFB7E4C7), // Fresh Mint
+    Color(0xFFE8D7FF) to Color(0xFFD0B3FF), // Lavender Mist
+    Color(0xFFFFE5D9) to Color(0xFFFFCAD4), // Warm Peach
+    Color(0xFFCCE7FF) to Color(0xFFA6D4FF), // Soft Sky Blue
+    Color(0xFFFFF3BF) to Color(0xFFFFEE99), // Buttercream
+    Color(0xFFFFD6CC) to Color(0xFFFFB8A8), // Soft Coral
+    Color(0xFFC4F1F9) to Color(0xFFA0E7F5), // Seafoam Aqua
+    Color(0xFFDCE2FF) to Color(0xFFBAC7FF), // Periwinkle
+    Color(0xFFE2F0D9) to Color(0xFFC5E0B4), // Pistachio
+    Color(0xFFFFD6E8) to Color(0xFFFFB3D9), // Bubblegum
+    Color(0xFFD0F0FD) to Color(0xFFAEE4FB), // Glacier Blue
+    Color(0xFFFFDFBA) to Color(0xFFFFC988), // Apricot
+    Color(0xFFF3D5F5) to Color(0xFFE5B8E8), // Orchid
+    Color(0xFFD7F8E8) to Color(0xFFB3EDCE), // Spring Meadow
+    Color(0xFFFFF9DB) to Color(0xFFFFF3B0)  // Vanilla Butter
+)
+
+fun pastelAvatarSeedColors(seed: String): Pair<Color, Color> =
+    PastelAvatarSeeds[(seed.hashCode() and Int.MAX_VALUE) % PastelAvatarSeeds.size]
+

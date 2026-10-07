@@ -1,7 +1,9 @@
 package ui.screen.chat
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,6 +42,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import repository.MemberRoleInfo
 import ui.assets.OrbitVerifiedBadge
 import ui.assets.isOrbitVerifiedUser
@@ -94,6 +97,7 @@ internal fun MemberListPanel(
     val t = rememberCosmicTokens()
     val allUsers = liveCallMembers ?: members
     val listState = rememberLazyListState()
+    var pinnedUserId by remember { mutableStateOf<String?>(null) }
 
     // derivedStateOf, NOT remember(members, memberRoles) { ... }: callers hand us
     // collections that are frequently SnapshotStateMap / SnapshotStateList
@@ -174,14 +178,16 @@ internal fun MemberListPanel(
                     }
                     items(section.users, key = { it.id }, contentType = { "member" }) { user ->
                         MemberItem(
-                            user,
-                            observePresence,
-                            if (showRoleSections) currentRoles[user.id] else null,
-                            ownUserId,
-                            onKickUser,
-                            onBanUser,
-                            onSetPowerLevel,
-                            onSelectUser
+                            user = user,
+                            observePresence = observePresence,
+                            roleInfo = if (showRoleSections) currentRoles[user.id] else null,
+                            ownUserId = ownUserId,
+                            isPinned = pinnedUserId == user.id,
+                            onPinUser = { pinnedUserId = it },
+                            onKickUser = onKickUser,
+                            onBanUser = onBanUser,
+                            onSetPowerLevel = onSetPowerLevel,
+                            onSelectUser = onSelectUser
                         )
                     }
                 }
@@ -358,6 +364,8 @@ private fun MemberItem(
     observePresence: (suspend (String) -> kotlinx.coroutines.flow.Flow<UserStatus>)? = null,
     roleInfo: MemberRoleInfo? = null,
     ownUserId: String? = null,
+    isPinned: Boolean = false,
+    onPinUser: ((String?) -> Unit)? = null,
     onKickUser: ((String) -> Unit)? = null,
     onBanUser: ((String) -> Unit)? = null,
     onSetPowerLevel: ((String, Long) -> Unit)? = null,
@@ -365,6 +373,23 @@ private fun MemberItem(
 ) {
     val t = rememberCosmicTokens()
     val liveStatus = rememberLiveStatus(user, observePresence)
+
+    val rowInteraction = remember(user.id) { MutableInteractionSource() }
+    val hovered by rowInteraction.collectIsHoveredAsState()
+    var cardHovered by remember(user.id) { mutableStateOf(false) }
+    var showHoverCard by remember(user.id) { mutableStateOf(false) }
+
+    LaunchedEffect(hovered, cardHovered, isPinned) {
+        if (isPinned || hovered || cardHovered) {
+            if (!showHoverCard) {
+                delay(200)
+                if (isPinned || hovered || cardHovered) showHoverCard = true
+            }
+        } else {
+            delay(180)
+            if (!hovered && !cardHovered && !isPinned) showHoverCard = false
+        }
+    }
 
     val pl = roleInfo?.powerLevel ?: 0L
     val isSelf = ownUserId != null &&
@@ -396,103 +421,115 @@ private fun MemberItem(
         ) { }
     }
 
-    OrbitListRow(
-        title = user.displayName,
-        // Was `onClick = {}`: every row looked strongly interactive and did
-        // nothing. Now the row is only clickable when there is a profile to open.
-        onClick = onSelectUser?.let { open -> { open(user) } },
-        // `.member-item-row { padding: 6px 8px; gap: 10px }` around a 32px
-        // avatar, which is 44px of row. It was 40px with 6px of side padding, so
-        // the roster was 4px shorter per row and its names sat 2px further in than
-        // the channel list's.
-        height = 44.dp,
-        showSelectionBar = false,
-        role = null,
-        horizontalPadding = 8.dp,
-        titleStyle = MaterialTheme.typography.bodyMedium.copy(
-            color = if (liveStatus == UserStatus.OFFLINE) t.Text_Subtle else t.Text_Secondary,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Normal
-        ),
-        leading = OrbitRowLeading(
-            // `.member-avatar-wrap` — 32px, with a 10px presence dot ringed in 2px
-            // of the surface the list is painted on. Was 28px with a 9px unringed
-            // dot, so the dot touched the avatar and the roster read a size smaller
-            // than the concept's.
-            avatar = {
-                MemberAvatarWithStatus(
-                    user = user,
-                    status = liveStatus,
-                    ringColor = t.Members_Bg
-                )
-            }
-        ),
-        trailing = {
-            if (isOrbitVerifiedUser(user.username, user.displayName, user.id)) {
-                OrbitVerifiedBadge(modifier = Modifier.size(12.dp))
-            }
-            if (pl > 0L) {
-                MemberRolePill(label = roleLabel(pl), color = roleColor(pl))
-            }
-            if (anyAction) {
-                OrbitIconButton(
-                    icon = Icons.Default.MoreVert,
-                    contentDescription = "Moderate ${user.displayName}",
-                    onClick = { moderationMenuOpen = true },
-                    size = 24.dp,
-                    iconSize = 14.dp,
-                    shape = OrbitRadius.xsShape
-                )
-                OrbitMenu(
-                    expanded = moderationMenuOpen,
-                    onDismissRequest = { moderationMenuOpen = false },
-                    width = 208.dp
-                ) {
-                    if (promoteVisible) {
-                        OrbitMenuItem(
-                            label = "Promote to Moderator",
-                            onClick = {
-                                moderationMenuOpen = false
-                                onSetPowerLevel?.invoke(user.id, 50L)
-                            }
-                        )
-                    }
-                    if (demoteVisible) {
-                        OrbitMenuItem(
-                            label = "Remove Moderator",
-                            onClick = {
-                                moderationMenuOpen = false
-                                onSetPowerLevel?.invoke(user.id, 0L)
-                            }
-                        )
-                    }
-                    if (kickVisible || banVisible) OrbitMenuDivider()
-                    if (kickVisible) {
-                        OrbitMenuItem(
-                            label = "Kick",
-                            icon = Icons.Default.PersonRemove,
-                            danger = true,
-                            onClick = {
-                                moderationMenuOpen = false
-                                onKickUser?.invoke(user.id)
-                            }
-                        )
-                    }
-                    if (banVisible) {
-                        OrbitMenuItem(
-                            label = "Ban",
-                            icon = Icons.Default.Block,
-                            danger = true,
-                            onClick = {
-                                moderationMenuOpen = false
-                                banConfirmOpen = true
-                            }
-                        )
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .hoverable(rowInteraction)
+    ) {
+        OrbitListRow(
+            modifier = Modifier.hoverable(rowInteraction),
+            title = user.displayName,
+            onClick = {
+                onPinUser?.invoke(if (isPinned) null else user.id)
+                if (!isPinned) showHoverCard = true
+                onSelectUser?.invoke(user)
+            },
+            height = 44.dp,
+            showSelectionBar = false,
+            role = null,
+            horizontalPadding = 8.dp,
+            titleStyle = MaterialTheme.typography.bodyMedium.copy(
+                color = if (liveStatus == UserStatus.OFFLINE) t.Text_Subtle else t.Text_White,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold
+            ),
+            leading = OrbitRowLeading(
+                avatar = {
+                    MemberAvatarWithStatus(
+                        user = user,
+                        status = liveStatus,
+                        ringColor = t.Members_Bg
+                    )
+                }
+            ),
+            trailing = {
+                if (isOrbitVerifiedUser(user.username, user.displayName, user.id)) {
+                    OrbitVerifiedBadge(modifier = Modifier.size(12.dp))
+                }
+                if (pl > 0L) {
+                    MemberRolePill(label = roleLabel(pl), color = roleColor(pl))
+                }
+                if (anyAction) {
+                    OrbitIconButton(
+                        icon = Icons.Default.MoreVert,
+                        contentDescription = "Moderate ${user.displayName}",
+                        onClick = { moderationMenuOpen = true },
+                        size = 24.dp,
+                        iconSize = 14.dp,
+                        shape = OrbitRadius.xsShape
+                    )
+                    OrbitMenu(
+                        expanded = moderationMenuOpen,
+                        onDismissRequest = { moderationMenuOpen = false },
+                        width = 208.dp
+                    ) {
+                        if (promoteVisible) {
+                            OrbitMenuItem(
+                                label = "Promote to Moderator",
+                                onClick = {
+                                    moderationMenuOpen = false
+                                    onSetPowerLevel?.invoke(user.id, 50L)
+                                }
+                            )
+                        }
+                        if (demoteVisible) {
+                            OrbitMenuItem(
+                                label = "Remove Moderator",
+                                onClick = {
+                                    moderationMenuOpen = false
+                                    onSetPowerLevel?.invoke(user.id, 0L)
+                                }
+                            )
+                        }
+                        if (kickVisible || banVisible) OrbitMenuDivider()
+                        if (kickVisible) {
+                            OrbitMenuItem(
+                                label = "Kick",
+                                icon = Icons.Default.PersonRemove,
+                                danger = true,
+                                onClick = {
+                                    moderationMenuOpen = false
+                                    onKickUser?.invoke(user.id)
+                                }
+                            )
+                        }
+                        if (banVisible) {
+                            OrbitMenuItem(
+                                label = "Ban",
+                                icon = Icons.Default.Block,
+                                danger = true,
+                                onClick = {
+                                    moderationMenuOpen = false
+                                    banConfirmOpen = true
+                                }
+                            )
+                        }
                     }
                 }
             }
+        )
+
+        if (showHoverCard) {
+            CompactUserProfileBesidePopup(
+                user = user,
+                onDismissRequest = {
+                    onPinUser?.invoke(null)
+                    showHoverCard = false
+                },
+                onCardHoverStateChange = { cardHovered = it }
+            )
         }
-    )
+    }
 }
 
 @Composable

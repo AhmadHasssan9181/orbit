@@ -1240,27 +1240,7 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
             return
         }
         
-        // 1. Cleanup ALL known ghost keys
-        val userId = context.userId ?: return
-        val deviceId = context.deviceId ?: "ORBIT_DESKTOP"
-        try {
-            val keysToClear = listOf(
-                userId, 
-                "_${userId}_${deviceId}_m.call",
-                "_${userId}_${deviceId}_",
-                "_${userId}_${deviceId}",
-                deviceId
-            )
-            for (key in keysToClear) {
-                for (ns in matrixRtcMemberEventTypes) {
-                    clearMatrixRtcMemberEvent(roomId, ns, key)
-                }
-            }
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            println("WARN [MatrixCallsRepository] ghost membership cleanup failed for $roomId: ${e.message}")
-        }
+
 
         // 2. Publish Call Definition (The Blueprint) to 'm.call' state key for "seamless" support
         try {
@@ -1434,17 +1414,15 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
             matrixRtcMembershipShapes[membershipShapeMapKey(roomId, callId)] = shape
 
             try {
-                val keysToClear = listOf(
-                    userId,
-                    "_${userId}_${deviceId}_m.call",
-                    "_${userId}_${deviceId}_$callId",
-                    "_${userId}_${deviceId}_${jsonCallId}",
-                    "_${userId}_${deviceId}",
-                    deviceId
-                ).distinct()
-                for (key in keysToClear) {
+                // Only clear keys that are actually active in room state (beforeEvents).
+                // Blasting 10-20 sequential HTTP PUTs for nonexistent keys takes 15+ seconds
+                // and triggers the H12 join stall watchdog GiveUp.
+                val activeKeysToClear = beforeEvents
+                    .filter { it.sender == userId && it.stateKey != stateKey && isActiveMatrixRtcMember(it) }
+                    .map { it.stateKey }
+                    .toSet()
+                for (key in activeKeysToClear) {
                     for (ns in matrixRtcMemberEventTypes) {
-                        if (key == stateKey && ns in publishMode.eventTypes) continue
                         clearMatrixRtcMemberEvent(roomId, ns, key)
                     }
                 }

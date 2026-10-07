@@ -24,10 +24,26 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,6 +57,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ui.assets.OrbitDefaultAvatar
+import ui.assets.OrbitMascotAvatar
 import ui.assets.OrbitVerifiedBadge
 import ui.assets.isOrbitVerifiedUser
 import ui.components.OrbitButton
@@ -65,10 +82,8 @@ internal fun SmallUserAvatar(user: OrbitUser, size: Dp) {
                 modifier = Modifier.fillMaxSize().clip(CircleShape)
             )
         } else {
-            OrbitDefaultAvatar(
-                label = user.displayName,
+            OrbitMascotAvatar(
                 seed = user.id,
-                color = Color(user.avatarColor),
                 modifier = Modifier.fillMaxSize()
             )
         }
@@ -170,6 +185,7 @@ internal fun DirectProfilePanel(
     val callManager = webrtc.LocalCallManager.current
     val listState = rememberLazyListState()
     val verified = isOrbitVerifiedUser(user.username, user.displayName, user.id)
+    val t = rememberCosmicTokens()
 
     Column(
         modifier = Modifier
@@ -182,9 +198,9 @@ internal fun DirectProfilePanel(
             // border-radius: 12px, overflow: hidden
             .clip(ProfileCardShape)
             // background-color: var(--bg-floating)
-            .background(OrbitConceptDark.floating)
+            .background(t.Elevated)
             // border: 1px solid var(--border-subtle)
-            .border(1.dp, OrbitConceptBorder.subtle(), ProfileCardShape)
+            .border(1.dp, t.Separator, ProfileCardShape)
     ) {
         // ── Banner + avatar + badges ────────────────────────────────
         Box(modifier = Modifier.fillMaxWidth()) {
@@ -197,7 +213,7 @@ internal fun DirectProfilePanel(
                     .fillMaxWidth()
                     .height(80.dp)
                     .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
-                    .background(OrbitConceptDark.brand)
+                    .background(t.Accent)
             ) {
                 val bannerUrl = user.bannerUrl
                 if (bannerUrl != null) {
@@ -223,7 +239,7 @@ internal fun DirectProfilePanel(
                     .offset(x = 16.dp, y = 44.dp)
                     .size(72.dp)
                     .clip(CircleShape)
-                    .background(OrbitConceptDark.floating)
+                    .background(t.Elevated)
                     .padding(6.dp)
             ) {
                 ProfileCardAvatar(user)
@@ -289,7 +305,7 @@ internal fun DirectProfilePanel(
                 Text(
                     text = user.displayName,
                     style = MaterialTheme.typography.titleLarge.copy(
-                        color = OrbitConceptDark.textPrimary,
+                        color = t.Text_White,
                         fontWeight = FontWeight.ExtraBold,
                         fontSize = 18.sp,
                         lineHeight = 24.sp
@@ -301,7 +317,7 @@ internal fun DirectProfilePanel(
                 Text(
                     text = "@${user.username.ifBlank { user.id }}",
                     style = MaterialTheme.typography.bodySmall.copy(
-                        color = OrbitConceptDark.textMuted,
+                        color = t.Text_Muted,
                         fontSize = 13.sp
                     ),
                     maxLines = 1,
@@ -310,7 +326,7 @@ internal fun DirectProfilePanel(
             }
 
             // .popover-divider { height: 1px; background-color: var(--border-subtle) }
-            HorizontalDivider(color = OrbitConceptBorder.subtle(), thickness = 1.dp)
+            HorizontalDivider(color = t.Separator, thickness = 1.dp)
 
             if (callRoomId != null) {
                 Row(
@@ -387,10 +403,8 @@ private fun ProfileCardAvatar(user: OrbitUser) {
                 modifier = Modifier.fillMaxSize()
             )
         } else {
-            OrbitDefaultAvatar(
-                label = user.displayName,
+            OrbitMascotAvatar(
                 seed = user.id,
-                color = Color(user.avatarColor),
                 modifier = Modifier.fillMaxSize()
             )
         }
@@ -410,6 +424,7 @@ private fun ProfileSection(
     value: String,
     leading: (@Composable () -> Unit)? = null
 ) {
+    val t = rememberCosmicTokens()
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (leading != null) {
@@ -421,7 +436,7 @@ private fun ProfileSection(
                 //   color: var(--text-muted); text-transform: uppercase }
                 text = title,
                 style = MaterialTheme.typography.labelSmall.copy(
-                    color = OrbitConceptDark.textMuted,
+                    color = t.Text_Muted,
                     fontWeight = FontWeight.Bold,
                     fontSize = 11.sp
                 ),
@@ -434,12 +449,397 @@ private fun ProfileSection(
             //   line-height: 1.4 }
             text = value,
             style = MaterialTheme.typography.bodySmall.copy(
-                color = OrbitConceptDark.textNormal,
+                color = t.Text_Secondary,
                 fontSize = 13.sp,
                 lineHeight = 18.2.sp
             ),
             maxLines = 3,
             overflow = TextOverflow.Ellipsis
         )
+    }
+}
+
+/**
+ * A compact "4 by 2" profile card (~280dp x ~140dp) presenting user identity:
+ * banner, avatar with status, display name, @username, presence status, Matrix ID,
+ * and quick voice/video call action buttons.
+ */
+@Composable
+internal fun CompactUserProfileCard(
+    user: OrbitUser,
+    callRoomId: String? = null,
+    onVoiceCall: (() -> Unit)? = null,
+    onVideoCall: (() -> Unit)? = null,
+    onClose: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
+    val callManager = webrtc.LocalCallManager.current
+    val verified = isOrbitVerifiedUser(user.username, user.displayName, user.id)
+    val t = rememberCosmicTokens()
+    val shape = RoundedCornerShape(12.dp)
+
+    Column(
+        modifier = modifier
+            .width(280.dp)
+            .shadow(12.dp, shape)
+            .clip(shape)
+            .background(t.Elevated)
+            .border(1.dp, t.Separator.copy(alpha = 0.5f), shape)
+    ) {
+        // ── Banner (height 44dp) + Quick call actions ─────────────
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(44.dp)
+        ) {
+            val bannerUrl = user.bannerUrl
+            if (bannerUrl != null) {
+                coil3.compose.AsyncImage(
+                    model = bannerUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            androidx.compose.ui.graphics.Brush.horizontalGradient(
+                                listOf(t.Accent, t.Accent.copy(alpha = 0.75f))
+                            )
+                        )
+                )
+            }
+
+            // Quick Call Actions on top-right of banner
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 6.dp, end = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val effectiveVoiceCall: (() -> Unit)? = onVoiceCall ?: if (callRoomId != null) {
+                    { callManager?.startCall(callRoomId, false); Unit }
+                } else null
+                val effectiveVideoCall: (() -> Unit)? = onVideoCall ?: if (callRoomId != null) {
+                    { callManager?.startCall(callRoomId, true); Unit }
+                } else null
+
+                if (effectiveVoiceCall != null) {
+                    Box(
+                        modifier = Modifier
+                            .size(26.dp)
+                            .clip(CircleShape)
+                            .background(Color(0x99000000))
+                            .clickable(role = Role.Button, onClick = effectiveVoiceCall),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        androidx.compose.material3.Icon(
+                            imageVector = Icons.Default.Call,
+                            contentDescription = "Voice Call",
+                            tint = Color.White,
+                            modifier = Modifier.size(13.dp)
+                        )
+                    }
+                }
+                if (effectiveVideoCall != null) {
+                    Box(
+                        modifier = Modifier
+                            .size(26.dp)
+                            .clip(CircleShape)
+                            .background(t.Accent)
+                            .clickable(role = Role.Button, onClick = effectiveVideoCall),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        androidx.compose.material3.Icon(
+                            imageVector = Icons.Default.Videocam,
+                            contentDescription = "Video Call",
+                            tint = Color.White,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                }
+                if (onClose != null) {
+                    Box(
+                        modifier = Modifier
+                            .size(26.dp)
+                            .clip(CircleShape)
+                            .background(Color(0x80000000))
+                            .clickable(role = Role.Button, onClick = onClose),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        androidx.compose.material3.Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close",
+                            tint = Color.White,
+                            modifier = Modifier.size(13.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        // ── Body with overlapping avatar and info ──────────────────
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, end = 12.dp, bottom = 10.dp)
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                // Top row: Avatar on left, name & tag next to it
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Avatar offset upward by 16dp to punch through banner
+                    Box(
+                        modifier = Modifier
+                            .offset(y = (-16).dp)
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(t.Elevated)
+                            .padding(2.dp)
+                    ) {
+                        SmallUserAvatar(user, size = 36.dp)
+                    }
+
+                    Spacer(Modifier.width(8.dp))
+
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .offset(y = (-4).dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = user.displayName,
+                                style = MaterialTheme.typography.titleSmall.copy(
+                                    color = t.Text_White,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.5.sp
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (verified) {
+                                OrbitVerifiedBadge(modifier = Modifier.size(13.dp))
+                            }
+                        }
+                        Text(
+                            text = "@${user.username.ifBlank { user.id }}",
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = t.Text_Muted,
+                                fontSize = 11.5.sp
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                // Hairline divider
+                HorizontalDivider(
+                    color = t.Separator.copy(alpha = 0.35f),
+                    thickness = 0.8.dp,
+                    modifier = Modifier.offset(y = (-8).dp)
+                )
+
+                // Bottom section: Presence & Matrix ID
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .offset(y = (-4).dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    // Presence
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .clip(CircleShape)
+                                .background(memberStatusColor(user.status))
+                        )
+                        Text(
+                            text = statusText(user.status),
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = t.Text_Secondary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            ),
+                            maxLines = 1
+                        )
+                    }
+
+                    // Matrix ID
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "MXID:",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = t.Text_Muted,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        )
+                        Text(
+                            text = user.id,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = t.Text_Secondary,
+                                fontSize = 11.sp
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Popup that displays [CompactUserProfileCard] positioned below an anchor.
+ */
+@Composable
+internal fun CompactUserProfilePopup(
+    user: OrbitUser,
+    callRoomId: String? = null,
+    onVoiceCall: (() -> Unit)? = null,
+    onVideoCall: (() -> Unit)? = null,
+    onDismissRequest: () -> Unit,
+    modifier: Modifier = Modifier,
+    onCardHoverStateChange: ((Boolean) -> Unit)? = null
+) {
+    val density = LocalDensity.current
+    val gapPx = with(density) { 8.dp.roundToPx() }
+    val marginPx = with(density) { 12.dp.roundToPx() }
+
+    val positionProvider = remember(gapPx, marginPx) {
+        object : PopupPositionProvider {
+            override fun calculatePosition(
+                anchorBounds: IntRect,
+                windowSize: IntSize,
+                layoutDirection: LayoutDirection,
+                popupContentSize: IntSize
+            ): IntOffset {
+                val preferredX = anchorBounds.left
+                val maxX = (windowSize.width - popupContentSize.width - marginPx).coerceAtLeast(marginPx)
+                val x = preferredX.coerceIn(marginPx, maxX)
+
+                val preferredY = anchorBounds.bottom + gapPx
+                val y = if (preferredY + popupContentSize.height > windowSize.height - marginPx) {
+                    (anchorBounds.top - popupContentSize.height - gapPx).coerceAtLeast(marginPx)
+                } else {
+                    preferredY
+                }
+                return IntOffset(x, y)
+            }
+        }
+    }
+
+    val cardInteraction = remember { MutableInteractionSource() }
+    val isCardHovered by cardInteraction.collectIsHoveredAsState()
+    LaunchedEffect(isCardHovered) {
+        onCardHoverStateChange?.invoke(isCardHovered)
+    }
+
+    Popup(
+        popupPositionProvider = positionProvider,
+        onDismissRequest = onDismissRequest,
+        properties = PopupProperties(
+            focusable = false,
+            clippingEnabled = false
+        )
+    ) {
+        Box(modifier = Modifier.hoverable(cardInteraction)) {
+            CompactUserProfileCard(
+                user = user,
+                callRoomId = callRoomId,
+                onVoiceCall = onVoiceCall,
+                onVideoCall = onVideoCall,
+                onClose = onDismissRequest,
+                modifier = modifier
+            )
+        }
+    }
+}
+
+/**
+ * Popup that displays [CompactUserProfileCard] positioned beside an anchor (e.g. for sidebar list rows).
+ */
+@Composable
+internal fun CompactUserProfileBesidePopup(
+    user: OrbitUser,
+    callRoomId: String? = null,
+    onVoiceCall: (() -> Unit)? = null,
+    onVideoCall: (() -> Unit)? = null,
+    onDismissRequest: () -> Unit,
+    modifier: Modifier = Modifier,
+    onCardHoverStateChange: ((Boolean) -> Unit)? = null
+) {
+    val density = LocalDensity.current
+    val gapPx = with(density) { 8.dp.roundToPx() }
+    val marginPx = with(density) { 12.dp.roundToPx() }
+
+    val positionProvider = remember(gapPx, marginPx) {
+        object : PopupPositionProvider {
+            override fun calculatePosition(
+                anchorBounds: IntRect,
+                windowSize: IntSize,
+                layoutDirection: LayoutDirection,
+                popupContentSize: IntSize
+            ): IntOffset {
+                val fitsOnRight = anchorBounds.right + gapPx + popupContentSize.width <= windowSize.width - marginPx
+                val preferredX = if (fitsOnRight) {
+                    anchorBounds.right + gapPx
+                } else {
+                    anchorBounds.left - popupContentSize.width - gapPx
+                }
+                val maxX = (windowSize.width - popupContentSize.width - marginPx).coerceAtLeast(marginPx)
+                val x = preferredX.coerceIn(marginPx, maxX)
+
+                val centeredY = anchorBounds.center.y - popupContentSize.height / 2
+                val minY = marginPx
+                val maxY = (windowSize.height - popupContentSize.height - marginPx).coerceAtLeast(minY)
+                val y = centeredY.coerceIn(minY, maxY)
+                return IntOffset(x, y)
+            }
+        }
+    }
+
+    val cardInteraction = remember { MutableInteractionSource() }
+    val isCardHovered by cardInteraction.collectIsHoveredAsState()
+    LaunchedEffect(isCardHovered) {
+        onCardHoverStateChange?.invoke(isCardHovered)
+    }
+
+    Popup(
+        popupPositionProvider = positionProvider,
+        onDismissRequest = onDismissRequest,
+        properties = PopupProperties(
+            focusable = false,
+            clippingEnabled = false
+        )
+    ) {
+        Box(modifier = Modifier.hoverable(cardInteraction)) {
+            CompactUserProfileCard(
+                user = user,
+                callRoomId = callRoomId,
+                onVoiceCall = onVoiceCall,
+                onVideoCall = onVideoCall,
+                onClose = onDismissRequest,
+                modifier = modifier
+            )
+        }
     }
 }

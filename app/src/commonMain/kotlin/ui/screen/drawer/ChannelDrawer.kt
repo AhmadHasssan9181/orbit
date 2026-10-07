@@ -1,4 +1,4 @@
-﻿package ui.screen.drawer
+package ui.screen.drawer
 
 import ui.screen.call.VoiceConnectedPanel
 import androidx.compose.foundation.background
@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -137,11 +138,6 @@ fun ChannelDrawer(
                 }
             )
             .fillMaxHeight()
-            // `.channel-sidebar { border-top-left-radius: 8px; overflow: hidden }`.
-            // The radius is on ONE corner: it is the rail-to-sidebar join, so the
-            // panel reads as sitting over the workspace rather than as a column
-            // butted against it.
-            .clip(SidebarConcept.sidebarShape)
             .background(conceptSidebarSurface())
     ) {
         // `.server-header` with the concept's dropdown behind it.
@@ -366,6 +362,13 @@ fun ChannelDrawer(
         MiniScreenPreviewSlot(
             callManager = LocalCallManager.current,
             modifier = Modifier.fillMaxWidth()
+        )
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(t.Separator.copy(alpha = 0.25f))
         )
 
         val drawerScope = rememberCoroutineScope()

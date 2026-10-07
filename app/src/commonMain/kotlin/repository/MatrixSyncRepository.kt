@@ -6,6 +6,7 @@ import de.connect2x.trixnity.client.MatrixClient
 import de.connect2x.trixnity.client.MediaStoreModule
 import de.connect2x.trixnity.client.RepositoriesModule
 import de.connect2x.trixnity.client.create
+import livekit.configureResilientCrypto
 import de.connect2x.trixnity.client.media
 import de.connect2x.trixnity.client.room
 import de.connect2x.trixnity.client.cryptodriver.vodozemac.vodozemac
@@ -224,7 +225,8 @@ class MatrixSyncRepository(
                         repositoriesModule = RepositoriesModule.room(getRoomDatabaseBuilder()),
                         mediaStoreModule = MediaStoreModule.okio(getMediaStorePath()),
                         cryptoDriverModule = CryptoDriverModule.vodozemac(),
-                        authProviderData = null
+                        authProviderData = null,
+                        configuration = { configureResilientCrypto() }
                     ).getOrThrow()
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
@@ -242,7 +244,8 @@ class MatrixSyncRepository(
                         repositoriesModule = RepositoriesModule.room(getRoomDatabaseBuilder()),
                         mediaStoreModule = MediaStoreModule.okio(getMediaStorePath()),
                         cryptoDriverModule = CryptoDriverModule.vodozemac(),
-                        authProviderData = authProviderData
+                        authProviderData = authProviderData,
+                        configuration = { configureResilientCrypto() }
                     ).onFailure {
                         println("ERROR [MatrixSyncRepository] Trixnity client restore with credentials failed: ${it.message}")
                     }.getOrNull()

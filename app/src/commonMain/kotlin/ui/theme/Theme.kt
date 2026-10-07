@@ -91,6 +91,8 @@ private val DefaultColorScheme = darkColorScheme(
 
 val LocalActiveTheme = compositionLocalOf<Theme> { Theme.Default }
 val LocalOnThemeChange = compositionLocalOf<(Theme) -> Unit> { {} }
+val LocalThemeSeedColor = compositionLocalOf<Color> { Color(0xFF6750A4) }
+val LocalDynamicThemeIsDark = compositionLocalOf<Boolean> { true }
 
 // `LocalMessageDensity`, `LocalMentionsOnly` and `LocalNotificationSound` were
 // removed: they were provided but never read, and the settings panes that wrote
@@ -409,6 +411,7 @@ private fun lightTokens(cs: androidx.compose.material3.ColorScheme) = CosmicToke
 @Composable
 fun rememberCosmicTokens(): CosmicTokens {
     val cs = MaterialTheme.colorScheme
+    val activeTheme = LocalActiveTheme.current
     // Derive light/dark from the scheme's own luminance rather than the theme
     // enum, so user colour overrides and dynamic schemes stay coherent.
     //
@@ -417,8 +420,13 @@ fun rememberCosmicTokens(): CosmicTokens {
     // colour, so without it every `Text(color = Text_Muted)` built a fresh
     // 70-field token object with ~30 `Color.copy` allocations. ColorScheme is
     // @Immutable, so it is a sound equality key.
-    return remember(cs) {
-        if (cs.background.luminance() < 0.5f) darkTokens(cs) else lightTokens(cs)
+    return remember(cs, activeTheme) {
+        val isDark = cs.background.luminance() < 0.5f
+        if (activeTheme == Theme.M3Dynamic || activeTheme == Theme.Default || activeTheme == Theme.Light || activeTheme == Theme.None) {
+            if (isDark) dynamicDarkTokens(cs) else dynamicLightTokens(cs)
+        } else {
+            if (isDark) darkTokens(cs) else lightTokens(cs)
+        }
     }
 }
 
@@ -584,13 +592,15 @@ enum class Theme {
 
 @Composable
 fun getColorScheme(
-    requestedTheme: Theme
+    requestedTheme: Theme,
+    seedColor: Color = Color(0xFF6750A4),
+    dynamicIsDark: Boolean = true
 ): ColorScheme {
     val systemInDarkTheme = isSystemInDarkTheme()
 
     return when {
-        requestedTheme == Theme.Default -> DefaultColorScheme
-        requestedTheme == Theme.Light -> LightColorScheme
+        requestedTheme == Theme.M3Dynamic || requestedTheme == Theme.Default -> generateMaterialYouColorScheme(seedColor, dynamicIsDark)
+        requestedTheme == Theme.Light -> generateMaterialYouColorScheme(seedColor, false)
         requestedTheme == Theme.Amoled -> AmoledColorScheme
         requestedTheme == Theme.Ocean -> OceanColorScheme
         requestedTheme == Theme.Forest -> ForestColorScheme
@@ -598,9 +608,9 @@ fun getColorScheme(
         requestedTheme == Theme.Cyberpunk -> CyberpunkColorScheme
         requestedTheme == Theme.Graphite -> GraphiteColorScheme
         requestedTheme == Theme.Slate -> SlateColorScheme
-        requestedTheme == Theme.None && systemInDarkTheme -> DefaultColorScheme
-        requestedTheme == Theme.None && !systemInDarkTheme -> LightColorScheme
-        else -> DefaultColorScheme
+        requestedTheme == Theme.None && systemInDarkTheme -> generateMaterialYouColorScheme(seedColor, true)
+        requestedTheme == Theme.None && !systemInDarkTheme -> generateMaterialYouColorScheme(seedColor, false)
+        else -> generateMaterialYouColorScheme(seedColor, dynamicIsDark)
     }
 }
 
@@ -608,9 +618,11 @@ fun getColorScheme(
 fun StoatTheme(
     requestedTheme: Theme,
     requestedUserInterfaceFont: UserInterfaceFont,
+    seedColor: Color = Color(0xFF6750A4),
+    dynamicIsDark: Boolean = true,
     content: @Composable () -> Unit
 ) {
-    val colorScheme = getColorScheme(requestedTheme)
+    val colorScheme = getColorScheme(requestedTheme, seedColor, dynamicIsDark)
     val typography = when (requestedUserInterfaceFont) {
         UserInterfaceFont.Default -> StoatTypography
         UserInterfaceFont.GoogleSansFlex -> GoogleTypography

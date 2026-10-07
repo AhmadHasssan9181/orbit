@@ -9,7 +9,9 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -26,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -37,7 +40,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
-import ui.assets.OrbitBrandMark
+import ui.assets.OrbitAppLogo
 import ui.assets.OrbitServerAssetIcon
 import ui.components.HoverTooltip
 import ui.components.OrbitCountBadge
@@ -83,6 +86,7 @@ fun ServerRail(
     onServerClick: (String) -> Unit,
     onAddServerClick: () -> Unit = {},
     onExploreClick: () -> Unit = {},
+    onOpenSettings: (() -> Unit)? = null,
     unreadByServer: Map<String, Int> = emptyMap(),
     modifier: Modifier = Modifier
 ) {
@@ -97,78 +101,96 @@ fun ServerRail(
             .width(OrbitConceptMetrics.railWidth)
             .background(t.Rail_Bg)
     ) {
-        LazyColumn(
-            state = listState,
+        Column(
             modifier = Modifier.fillMaxHeight(),
-            contentPadding = PaddingValues(
-                top = OrbitSpace.md,
-                bottom = OrbitSpace.md
-            ),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(OrbitSpace.sm)
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            if (dmServer != null) {
-                item(key = "home") {
-                    ServerRailItem(
-                        selected = dmServer.id == selectedServerId,
-                        unreadCount = unreadByServer[dmServer.id] ?: 0,
-                        onClick = { onServerClick(dmServer.id) },
-                        label = dmServer.name
-                    ) { hovered, shape ->
-                        OrbitBrandMark(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(shape),
-                            showGlow = dmServer.id == selectedServerId
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(
+                        top = OrbitSpace.md,
+                        bottom = OrbitSpace.sm
+                    ),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(OrbitSpace.sm)
+                ) {
+                    if (dmServer != null) {
+                        item(key = "home") {
+                            val isDmSelected = dmServer.id == selectedServerId
+                            ServerRailItem(
+                                selected = isDmSelected,
+                                unreadCount = unreadByServer[dmServer.id] ?: 0,
+                                onClick = { onServerClick(dmServer.id) },
+                                label = dmServer.name
+                            ) { hovered, _ ->
+                                val t = rememberCosmicTokens()
+                                val logoTint = if (isDmSelected || hovered) Color.White else t.Text_White
+                                OrbitAppLogo(
+                                    modifier = Modifier.size(28.dp),
+                                    tint = logoTint,
+                                    contentDescription = dmServer.name
+                                )
+                            }
+                        }
+                    }
+
+                    item(key = "divider") { RailDivider() }
+
+                    items(spaces, key = { it.id }, contentType = { "space" }) { server ->
+                        val isSelected = server.id == selectedServerId
+                        ServerRailItem(
+                            selected = isSelected,
+                            unreadCount = unreadByServer[server.id] ?: 0,
+                            onClick = { onServerClick(server.id) },
+                            label = server.name
+                        ) { hovered, shape ->
+                            if (server.avatarUrl != null) {
+                                coil3.compose.AsyncImage(
+                                    model = server.avatarUrl,
+                                    contentDescription = server.name,
+                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                    modifier = Modifier.size(48.dp).clip(shape)
+                                )
+                            } else {
+                                OrbitServerAssetIcon(
+                                    label = initialsOf(server.name),
+                                    color = Color(server.iconColor),
+                                    modifier = Modifier.size(48.dp).clip(shape)
+                                )
+                            }
+                        }
+                    }
+
+                    item(key = "add") {
+                        RailActionTile(
+                            icon = Icons.Default.Add,
+                            description = "Create or join a server",
+                            onClick = onAddServerClick
+                        )
+                    }
+                    item(key = "discover") {
+                        RailActionTile(
+                            icon = Icons.Default.Explore,
+                            description = "Discover servers",
+                            onClick = onExploreClick
                         )
                     }
                 }
+
+                OrbitScrollbar(listState = listState, modifier = Modifier.align(Alignment.CenterEnd))
             }
 
-            item(key = "divider") { RailDivider() }
-
-            items(spaces, key = { it.id }, contentType = { "space" }) { server ->
-                val isSelected = server.id == selectedServerId
-                ServerRailItem(
-                    selected = isSelected,
-                    unreadCount = unreadByServer[server.id] ?: 0,
-                    onClick = { onServerClick(server.id) },
-                    label = server.name
-                ) { hovered, shape ->
-                    if (server.avatarUrl != null) {
-                        coil3.compose.AsyncImage(
-                            model = server.avatarUrl,
-                            contentDescription = server.name,
-                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                            modifier = Modifier.size(48.dp).clip(shape)
-                        )
-                    } else {
-                        OrbitServerAssetIcon(
-                            label = initialsOf(server.name),
-                            color = Color(server.iconColor),
-                            modifier = Modifier.size(48.dp).clip(shape)
-                        )
-                    }
-                }
-            }
-
-            item(key = "add") {
-                RailActionTile(
-                    icon = Icons.Default.Add,
-                    description = "Create or join a server",
-                    onClick = onAddServerClick
-                )
-            }
-            item(key = "discover") {
-                RailActionTile(
-                    icon = Icons.Default.Explore,
-                    description = "Discover servers",
-                    onClick = onExploreClick
-                )
+            if (onOpenSettings != null) {
+                RailSettingsTile(onClick = onOpenSettings)
+                Spacer(Modifier.height(OrbitSpace.sm))
             }
         }
-
-        OrbitScrollbar(listState = listState, modifier = Modifier.align(Alignment.CenterEnd))
     }
 }
 
@@ -349,6 +371,67 @@ private fun RailActionTile(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(icon, contentDescription = description, tint = tint, modifier = Modifier.size(22.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun RailSettingsTile(
+    onClick: () -> Unit
+) {
+    val t = rememberCosmicTokens()
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+
+    val tint by animateColorAsState(
+        targetValue = if (hovered) t.Text_White else t.Text_Muted,
+        animationSpec = OrbitMotion.SnappyColor,
+        label = "railSettingsTint"
+    )
+
+    val fill by animateColorAsState(
+        targetValue = if (hovered) t.CardBg else Color.Transparent,
+        animationSpec = OrbitMotion.SnappyColor,
+        label = "railSettingsFill"
+    )
+
+    val shape = RoundedCornerShape(
+        animateDpAsState(
+            targetValue = if (hovered) 16.dp else 24.dp,
+            animationSpec = OrbitMotion.BouncyDp,
+            label = "railSettingsCorner"
+        ).value
+    )
+
+    Box(modifier = Modifier.fillMaxWidth().height(56.dp), contentAlignment = Alignment.Center) {
+        HoverTooltip(
+            text = "Settings",
+            visible = hovered,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(shape)
+                    .background(fill)
+                    .hoverable(interaction)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        role = Role.Button,
+                        onClick = onClick
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = "Settings",
+                    tint = tint,
+                    modifier = Modifier.size(22.dp)
+                )
             }
         }
     }

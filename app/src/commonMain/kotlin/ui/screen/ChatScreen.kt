@@ -11,6 +11,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
@@ -248,24 +249,17 @@ fun ChatScreen(
      * `memberPanelOpen` rather than surprising you in a new conversation.
      */
     var callChatCollapsed by remember(channel.id) { mutableStateOf(false) }
-    val memberPanelAvailable = ui.theme.LocalShowMemberList.current && windowSize.isExpanded
-    // Opened by tapping a row in the member list. Kept separate from
-    // `directProfile` (which only exists for DMs) so a group-room member can be
-    // inspected without pretending they are the room.
+    val isDM = directProfile != null
+    val memberPanelAvailable = showMemberList && ui.theme.LocalShowMemberList.current && windowSize.isExpanded && !isDM
+    // Opened by tapping a row in the member list or mentions. Kept separate from
+    // `directProfile` so DMs don't force a permanent full-screen-height side panel.
     var memberProfile by remember(channel.id) { mutableStateOf<OrbitUser?>(null) }
-    val shownProfile = memberProfile ?: directProfile
+    val shownProfile = memberProfile
     // Null when the layout or the setting means there is no panel to show, so the
     // header hides the Members button instead of toggling invisible state.
     val memberPanelToggle: (() -> Unit)? = if (memberPanelAvailable) {
         {
             // Clear a selected member when the button is pressed.
-            //
-            // This button used to toggle `memberPanelOpen` and nothing else, but
-            // a non-null `memberProfile` outranks it in the panel switch below —
-            // so pressing it while a profile was open appeared to do nothing at
-            // all. That is one of the two ways the panel became a one-way door;
-            // it is also the affordance people reach for first, so it has to
-            // work.
             if (memberProfile != null) memberProfile = null
             memberPanelOpen = !memberPanelOpen
         }
@@ -289,13 +283,17 @@ fun ChatScreen(
      */
     fun searchResultLabel(count: Int) = "$count result${if (count == 1) "" else "s"}"
 
-    Row(
-        modifier = modifier
-            .fillMaxSize()
-            .background(t.Bg)
-    ) {
-        androidx.compose.runtime.CompositionLocalProvider(ui.theme.LocalRoomMembers provides members) {
-            Column(modifier = Modifier.weight(1f)) {
+    androidx.compose.runtime.CompositionLocalProvider(ui.theme.LocalRoomMembers provides members) {
+        Row(
+            modifier = modifier
+                .fillMaxSize()
+                .background(Color.Transparent)
+        ) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+            ) {
                 ChatHeader(
                     channel = channel,
                     directProfile = directProfile,
@@ -371,22 +369,28 @@ fun ChatScreen(
                             callManager = voiceCallManager,
                             matrixRepository = matrixRepository,
                             channel = channel,
-                            modifier = Modifier.weight(1f).fillMaxWidth()
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                                .padding(start = 6.dp, end = 8.dp, bottom = 8.dp, top = 2.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(t.Bg)
+                                .border(1.dp, t.Separator.copy(alpha = 0.25f), RoundedCornerShape(16.dp))
                         )
                     } else {
                         VoiceChannelUnavailable()
                     }
                 } else {
-                    // Chat in the main column, and a live call takes it over.
-                    //
-                    // Three layouts have been tried here across two days — call
-                    // stacked above chat at 55/45, then call in the side panel with
-                    // chat in the main column. This is the third and it is the
-                    // one that holds: a call is the thing you look at while you are
-                    // in it, and the timeline is the thing you glance at, so the
-                    // call gets the wide centre and the timeline keeps a readable
-                    // column on the right.
-                    Column(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    // Chat in the main column, styled as a floating card inside the outer box
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .padding(start = 6.dp, end = 8.dp, bottom = 8.dp, top = 2.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(t.Bg)
+                            .border(1.dp, t.Separator.copy(alpha = 0.25f), RoundedCornerShape(16.dp))
+                    ) {
                         // Only when a call is live IN THIS ROOM. A call elsewhere
                         // must not displace the room you are reading.
                         if (callHere) {
@@ -495,10 +499,7 @@ fun ChatScreen(
                             DirectProfilePanel(
                                 user = it,
                                 callRoomId = if (directProfile != null) channel.id else null,
-                                // A DM profile is the room itself, so there is
-                                // nothing to go "back" to — only a member-list
-                                // profile can be dismissed.
-                                onClose = if (directProfile != null) null else { { memberProfile = null } }
+                                onClose = { memberProfile = null }
                             )
                         }
                         1 -> PinnedMessagesPanel(
@@ -518,7 +519,7 @@ fun ChatScreen(
                             onKickUser = onKickUser,
                             onBanUser = onBanUser,
                             onSetPowerLevel = onSetPowerLevel,
-                            onSelectUser = { memberProfile = it },
+                            onSelectUser = null,
                             // While a call is live in this room the panel is "who is
                             // in the call". Passing the room roster instead is what
                             // made a live 2-person call read `Members 0`: the room
@@ -584,7 +585,7 @@ fun ChatScreen(
                             channel = channel,
                             onExpand = { callChatCollapsed = false }
                         )
-                        else -> Box(Modifier.fillMaxSize())
+                        else -> {}
                     }
                 }
             }
@@ -938,6 +939,7 @@ private fun PinnedMessagesPanel(
     onUnpin: (String) -> Unit,
     onClose: () -> Unit
 ) {
+    val t = rememberCosmicTokens()
     val listState = rememberLazyListState()
     val roomMembers = ui.theme.LocalRoomMembers.current
 
@@ -953,14 +955,14 @@ private fun PinnedMessagesPanel(
             modifier = Modifier
                 .width(1.dp)
                 .fillMaxHeight()
-                .background(OrbitConceptBorder.subtle())
+                .background(t.Separator)
         )
         Column(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
                 // backgroundColor: var(--bg-secondary)
-                .background(OrbitConceptDark.secondary)
+                .background(t.Drawer_Bg)
         ) {
             // Header: height 48px, padding 0 16px, space-between.
             Row(
@@ -973,14 +975,14 @@ private fun PinnedMessagesPanel(
                 androidx.compose.material3.Icon(
                     imageVector = Icons.Default.PushPin,
                     contentDescription = null,
-                    tint = OrbitConceptDark.textPrimary,
+                    tint = t.Text_White,
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(Modifier.width(OrbitSpace.sm))
                 Text(
                     text = "Pinned Messages",
                     style = MaterialTheme.typography.titleMedium.copy(
-                        color = OrbitConceptDark.textPrimary,
+                        color = t.Text_White,
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp
                     ),
@@ -998,7 +1000,7 @@ private fun PinnedMessagesPanel(
                 )
             }
             // border-bottom: 1px solid var(--border-subtle)
-            HorizontalDivider(color = OrbitConceptBorder.subtle(), thickness = 1.dp)
+            HorizontalDivider(color = t.Separator, thickness = 1.dp)
 
             if (pinned.isEmpty()) {
                 // padding: 16px, gap: 16px — then margin-top: 40px on the block.
@@ -1015,7 +1017,7 @@ private fun PinnedMessagesPanel(
                         androidx.compose.material3.Icon(
                             imageVector = Icons.Default.PushPin,
                             contentDescription = null,
-                            tint = OrbitConceptDark.textMuted,
+                            tint = t.Text_Muted,
                             // size 32, opacity 0.5
                             modifier = Modifier.size(32.dp).alpha(0.5f)
                         )
@@ -1023,7 +1025,7 @@ private fun PinnedMessagesPanel(
                         Text(
                             text = "No pinned messages in this channel yet.",
                             style = MaterialTheme.typography.bodySmall.copy(
-                                color = OrbitConceptDark.textMuted,
+                                color = t.Text_Muted,
                                 fontSize = 13.sp
                             ),
                             textAlign = TextAlign.Center
@@ -1047,8 +1049,8 @@ private fun PinnedMessagesPanel(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(PinnedCardShape)
-                                    .background(OrbitConceptDark.chat)
-                                    .border(1.dp, OrbitConceptBorder.subtle(), PinnedCardShape)
+                                    .background(t.Bg)
+                                    .border(1.dp, t.Separator, PinnedCardShape)
                                     .padding(12.dp)
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1069,7 +1071,7 @@ private fun PinnedMessagesPanel(
                                         Text(
                                             text = message.username,
                                             style = MaterialTheme.typography.labelLarge.copy(
-                                                color = OrbitConceptDark.textPrimary,
+                                                color = t.Text_White,
                                                 fontWeight = FontWeight.SemiBold,
                                                 fontSize = 13.sp
                                             ),
@@ -1079,7 +1081,7 @@ private fun PinnedMessagesPanel(
                                         Text(
                                             text = formatTimestampCompact(message.timestamp),
                                             style = MaterialTheme.typography.labelSmall.copy(
-                                                color = OrbitConceptDark.textMuted,
+                                                color = t.Text_Muted,
                                                 fontSize = 11.sp
                                             ),
                                             maxLines = 1
@@ -1100,7 +1102,7 @@ private fun PinnedMessagesPanel(
                                 Text(
                                     text = message.body,
                                     style = MaterialTheme.typography.bodySmall.copy(
-                                        color = OrbitConceptDark.textNormal,
+                                        color = t.Text_Secondary,
                                         fontSize = 13.sp,
                                         // line-height: 1.4
                                         lineHeight = 18.2.sp
@@ -1128,11 +1130,12 @@ private fun PinnedAuthorAvatar(
     userId: String,
     member: OrbitUser?
 ) {
+    val t = rememberCosmicTokens()
     Box(
         modifier = Modifier
             .size(24.dp)
             .clip(androidx.compose.foundation.shape.CircleShape)
-            .background(OrbitConceptDark.secondary)
+            .background(t.CardBg)
     ) {
         val avatarUrl = member?.avatarUrl
         if (avatarUrl != null) {

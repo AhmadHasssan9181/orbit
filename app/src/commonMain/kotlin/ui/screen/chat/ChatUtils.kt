@@ -133,117 +133,43 @@ internal fun formatDate(date: LocalDate, pattern: String): String {
 internal object ChatConcept {
 
     // ── Surfaces ────────────────────────────────────────────────
-    /** `.chat-container` / `.chat-header { background-color: var(--bg-chat) }` → `t.Bg`. */
-    // (Bg is read from the token set rather than listed here; it is already right.)
-    // Likewise `var(--bg-floating)` is `t.Elevated`, the token set's own
-    // "floats above everything" surface.
+    val secondary: Color @Composable get() = rememberCosmicTokens().CardBg
 
-    /**
-     * `var(--bg-secondary)` — code blocks, reaction pills, the reply banner.
-     *
-     * Only the dark half has a consumer. Every light-theme rule that used
-     * `--bg-secondary` overrides it with a *different* value anyway
-     * (`#ebedef` for the reply banner, `#f2f3f5` for a pill, `#f6f8fa` for a
-     * code block), so a "secondaryLight" member would never be the right answer.
-     * Those three overrides are named individually below.
-     */
-    val secondary = OrbitConceptDark.secondary
+    val input: Color @Composable get() = rememberCosmicTokens().Input_Bg
+    val inputLight: Color @Composable get() = rememberCosmicTokens().Input_Bg
 
-    /** `var(--bg-input)` — the composer frame. `[data-theme=light]` is `#ebedef`. */
-    val input = OrbitConceptDark.input
-    val inputLight = OrbitConceptLight.input
+    val sidebar: Color @Composable get() = rememberCosmicTokens().Drawer_Bg
+    val sidebarLight: Color @Composable get() = rememberCosmicTokens().Drawer_Bg
 
-    /** `var(--bg-sidebar)` — the channel-welcome roundel. Light is `#e3e5e8`. */
-    val sidebar = OrbitConceptDark.sidebar
-    val sidebarLight = OrbitConceptLight.sidebar
-
-    /**
-     * `var(--bg-servers)` — the header search field. Light is `#e3e5e8`.
-     *
-     * Only the dark half again, and for the same reason as [secondary]: the light
-     * override is a concrete value, [pillHoverLight], which reads better where the
-     * reason is a name.
-     */
-    val servers = OrbitConceptDark.servers
+    val servers: Color @Composable get() = rememberCosmicTokens().Rail_Bg
 
     // ── Foregrounds ─────────────────────────────────────────────
-    /**
-     * `var(--header-primary)` in the light theme, `#060607`.
-     *
-     * Only the light half is named. The dark half is `#f2f3f5`, which *is*
-     * `CosmicTokens.Text_White` (DarkFgStrong), so a second copy of it here would
-     * be a second source of truth for a value the token set already owns.
-     */
-    val headerPrimaryLight = OrbitConceptLight.textPrimary
+    val headerPrimaryLight: Color @Composable get() = rememberCosmicTokens().Text_White
 
-    /**
-     * `var(--interactive-normal)` (#b5bac1 / #4e5058) and
-     * `var(--interactive-hover)` (#dbdee1 / #313338).
-     *
-     * `--interactive-hover` is exactly `--text-normal`, so that one is read from
-     * `t.Text_Secondary`. `--interactive-normal` has no token equivalent: it sits
-     * between `--header-primary` and `--text-normal` on the dark ramp, which is
-     * why it is spelled out here rather than approximated with a neighbour.
-     */
-    val interactiveNormal = Color(0xFFB5BAC1)
-    val interactiveNormalLight = Color(0xFF4E5058)
+    val interactiveNormal: Color @Composable get() = rememberCosmicTokens().Text_Secondary
+    val interactiveNormalLight: Color @Composable get() = rememberCosmicTokens().Text_Secondary
 
-    /**
-     * `var(--interactive-muted)` (#4e5058) — the 24dp `#` in the channel header.
-     * Equals `ui.theme.Ink650`; kept local so the header reads off one list.
-     *
-     * The same hex as [interactiveNormalLight], and it has to stay a separate name
-     * anyway: the stylesheet gives `--interactive-muted` no light-theme override at
-     * all, so the light header's `#` is #4e5058 by *omission*, not by rule. Merging
-     * the two would be asserting a relationship the CSS does not make.
-     */
-    val interactiveMuted = Color(0xFF4E5058)
-
-    /** `var(--brand-blurple)` → `t.Accent`. */
+    val interactiveMuted: Color @Composable get() = rememberCosmicTokens().Text_Muted
 
     // ── Lines ───────────────────────────────────────────────────
-    /**
-     * `var(--border-subtle)` (rgba(255,255,255,.08) dark, rgba(0,0,0,.08) light).
-     *
-     * `OrbitConceptBorder.subtle()` is the white-at-8% half;
-     * `OrbitConceptOverlay.hoverLight()` is black at 4%, so the light half is
-     * spelled out.
-     */
-    val borderSubtleLight = Color.Black.copy(alpha = OrbitConceptBorder.SUBTLE)
+    val borderSubtleLight: Color @Composable get() = rememberCosmicTokens().Separator
 
-    // ── Chat-area specifics, hard-coded in the stylesheet ───────
-    /**
-     * `.code-block { color: #e0e0e0 }`; `[data-theme=light] .code-block` overrides
-     * it to `#24292f`, together with `background: #f6f8fa` and
-     * `border: 1px solid #d0d7de`.
-     */
-    val codeText = Color(0xFFE0E0E0)
-    val codeTextLight = Color(0xFF24292F)
-    val codeSurfaceLight = Color(0xFFF6F8FA)
-    val codeBorderLight = Color(0xFFD0D7DE)
+    // ── Chat-area specifics ─────────────────────────────────────
+    val codeText: Color @Composable get() = rememberCosmicTokens().Text_White
+    val codeTextLight: Color @Composable get() = rememberCosmicTokens().Text_White
+    val codeSurfaceLight: Color @Composable get() = rememberCosmicTokens().CodeBg
+    val codeBorderLight: Color @Composable get() = rememberCosmicTokens().Separator
 
-    /**
-     * `.reaction-pill:hover { background: rgba(255,255,255,0.08) }` and
-     * `[data-theme=light] .reaction-pill:hover { background: #e3e5e8 }`.
-     */
     const val PILL_HOVER_ALPHA = 0.08f
-    val pillSurfaceLight = Color(0xFFF2F3F5)
-    val pillBorderLight = Color(0xFFE3E5E8)
-    val pillHoverLight = Color(0xFFE3E5E8)
+    val pillSurfaceLight: Color @Composable get() = rememberCosmicTokens().CardBg
+    val pillBorderLight: Color @Composable get() = rememberCosmicTokens().Separator
+    val pillHoverLight: Color @Composable get() = rememberCosmicTokens().CardBgHover
 
-    /**
-     * `.reaction-pill.reacted { background: rgba(88, 101, 242, 0.2); color: #fff }`
-     * and the light override's `rgba(88, 101, 242, 0.15)` + brand text.
-     */
     const val PILL_REACTED_ALPHA_DARK = 0.20f
     const val PILL_REACTED_ALPHA_LIGHT = 0.15f
 
-    /**
-     * `--elevation-high: 0 8px 16px rgba(0, 0, 0, 0.24)`, light
-     * `0 8px 16px rgba(0, 0, 0, 0.1)` — the hover message toolbar's shadow.
-     */
-    val shadowHigh = Color.Black.copy(alpha = 0.24f)
-    val shadowHighLight = Color.Black.copy(alpha = 0.10f)
+    val shadowHigh: Color = Color.Black.copy(alpha = 0.24f)
+    val shadowHighLight: Color = Color.Black.copy(alpha = 0.10f)
 }
 
 /**
@@ -386,10 +312,20 @@ private val ConceptRoleColors = listOf(
 internal fun resolveUsernameColor(message: OrbitMessage): Color {
     val showRoleColors = ui.theme.LocalShowRoleColors.current
     val t = rememberCosmicTokens()
+    val isLight = isLightChatSurface(t)
     // The concept's fallback: `roleColor || var(--header-primary)`.
-    val fallback = if (isLightChatSurface(t)) ChatConcept.headerPrimaryLight else t.Text_White
+    val fallback = t.Text_White
     if (!showRoleColors) return fallback
-    return ConceptRoleColors[(message.userId.hashCode() and Int.MAX_VALUE) % ConceptRoleColors.size]
+    val base = ConceptRoleColors[(message.userId.hashCode() and Int.MAX_VALUE) % ConceptRoleColors.size]
+    return if (isLight && base.luminance() > 0.45f) {
+        Color(
+            red = (base.red * 0.70f).coerceIn(0f, 1f),
+            green = (base.green * 0.70f).coerceIn(0f, 1f),
+            blue = (base.blue * 0.70f).coerceIn(0f, 1f)
+        )
+    } else {
+        base
+    }
 }
 
 /**

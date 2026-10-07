@@ -48,11 +48,12 @@ import androidx.compose.ui.window.FrameWindowScope
 import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.WindowState
 import ui.theme.OrbitSpace
+import ui.theme.rememberCosmicTokens
 
 /**
  * Window chrome.
  *
- * Rendered in sleek Discord-black (#000000). When in full screen (either OS fullscreen
+ * Rendered seamlessly with the rail background. When in full screen (either OS fullscreen
  * or maximized call stream stage), the title bar completely disappears, maximizing
  * viewing area.
  */
@@ -63,6 +64,7 @@ fun FrameWindowScope.CustomTitleBar(
     title: String = "Orbit",
     trailingContent: (@Composable () -> Unit)? = null
 ) {
+    val t = rememberCosmicTokens()
     val maximized = state.placement == WindowPlacement.Maximized
     val isFullscreen = state.placement == WindowPlacement.Fullscreen || webrtc.CallShortcuts.isStageMaximized
 
@@ -76,21 +78,19 @@ fun FrameWindowScope.CustomTitleBar(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(34.dp)
-                    .background(Color(0xFF000000))
+                    .background(t.Rail_Bg)
                     .padding(start = OrbitSpace.md),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Image(
-                    painter = painterResource("logo.jpeg"),
+                    painter = painterResource("orbit_transparent.png"),
                     contentDescription = null,
-                    modifier = Modifier
-                        .size(15.dp)
-                        .clip(RoundedCornerShape(4.dp))
+                    modifier = Modifier.size(16.dp)
                 )
                 Spacer(Modifier.width(OrbitSpace.sm))
                 Text(
                     text = title,
-                    color = Color(0xFFDBDEE1),
+                    color = t.Text_White,
                     fontSize = 11.5.sp,
                     fontWeight = FontWeight.SemiBold,
                     letterSpacing = 0.3.sp
@@ -140,6 +140,7 @@ private fun TitleBarButton(
     hoverColor: Color? = null,
     content: @Composable (Color) -> Unit
 ) {
+    val t = rememberCosmicTokens()
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
 
@@ -147,12 +148,12 @@ private fun TitleBarButton(
         targetValue = when {
             !hovered -> Color.Transparent
             hoverColor != null -> hoverColor
-            else -> Color(0xFF2B2D31)
+            else -> t.CardBg
         },
         animationSpec = tween(110),
         label = "titleBtnBg"
     )
-    val glyph = if (hovered && hoverColor != null) Color.White else if (hovered) Color.White else Color(0xFF949BA4)
+    val glyph = if (hovered && hoverColor != null) Color.White else if (hovered) t.Text_White else t.Text_Muted
 
     Box(
         modifier = Modifier

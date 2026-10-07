@@ -24,6 +24,12 @@ class SettingsManager {
 
     fun setTheme(theme: Theme) = settings.putString("activeTheme", theme.name)
 
+    val themeSeedColor: Flow<Long> = flowSettings.getLongFlow("themeSeedColor", 0xFF6750A4)
+    fun setThemeSeedColor(color: Long) = settings.putLong("themeSeedColor", color)
+
+    val dynamicThemeIsDark: Flow<Boolean> = flowSettings.getBooleanFlow("dynamicThemeIsDark", true)
+    fun setDynamicThemeIsDark(isDark: Boolean) = settings.putBoolean("dynamicThemeIsDark", isDark)
+
 
     val fontSize = flowSettings.getFloatFlow("fontSize", 50f)
     fun setFontSize(value: Float) = settings.putFloat("fontSize", value)

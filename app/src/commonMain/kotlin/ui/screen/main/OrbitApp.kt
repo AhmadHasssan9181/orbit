@@ -177,13 +177,17 @@ private val coilHttpClient = HttpClient(CIO) {
 @Suppress("UnusedBoxWithConstraintsScope")
 @Composable
 fun OrbitApp(
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    titleBar: (@Composable () -> Unit)? = null
 ) {
     var repository by remember { mutableStateOf<OrbitRepository?>(null) }
     var authResult by remember { mutableStateOf<AuthResult?>(null) }
     
     val settingsManager = remember { SettingsManager() }
     val activeTheme by settingsManager.activeTheme.collectAsState(ui.theme.Theme.Default)
+    val themeSeedColorValue by settingsManager.themeSeedColor.collectAsState(0xFF6750A4)
+    val dynamicThemeIsDark by settingsManager.dynamicThemeIsDark.collectAsState(true)
+    val themeSeedColor = remember(themeSeedColorValue) { Color(themeSeedColorValue.toULong()) }
     val fontSize by settingsManager.fontSize.collectAsState(50f)
     val reduceMotion by settingsManager.reduceMotion.collectAsState(false)
     val chatWallpaper by settingsManager.chatWallpaper.collectAsState("auto")
@@ -217,6 +221,8 @@ fun OrbitApp(
         ui.theme.LocalSettingsManager provides settingsManager,
         ui.theme.LocalActiveTheme provides activeTheme,
         ui.theme.LocalOnThemeChange provides { settingsManager.setTheme(it) },
+        ui.theme.LocalThemeSeedColor provides themeSeedColor,
+        ui.theme.LocalDynamicThemeIsDark provides dynamicThemeIsDark,
         ui.theme.LocalReduceMotion provides reduceMotion,
         ui.theme.LocalChatWallpaper provides chatWallpaper,
         ui.theme.LocalShowTimestamps provides showTimestamps,
@@ -233,12 +239,18 @@ fun OrbitApp(
         CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides customDensity) {
             ui.theme.StoatTheme(
                 requestedTheme = activeTheme,
-                requestedUserInterfaceFont = ui.theme.UserInterfaceFont.Default
+                requestedUserInterfaceFont = ui.theme.UserInterfaceFont.Default,
+                seedColor = themeSeedColor,
+                dynamicIsDark = dynamicThemeIsDark
             ) {
-            // Detect window size and inject into composition tree
-            BoxWithConstraints(
-                modifier = modifier.fillMaxSize()
-            ) {
+                Column(modifier = modifier.fillMaxSize()) {
+                    if (titleBar != null) {
+                        titleBar()
+                    }
+                    // Detect window size and inject into composition tree
+                    BoxWithConstraints(
+                        modifier = Modifier.weight(1f).fillMaxWidth()
+                    ) {
                 val windowSize = windowSizeClassFor(maxWidth)
 
                 CompositionLocalProvider(LocalWindowSizeClass provides windowSize) {
@@ -308,7 +320,8 @@ fun OrbitApp(
                     }
                 }
             }
-            }
+        }
+        }
         }
     }
 }

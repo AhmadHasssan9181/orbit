@@ -52,6 +52,12 @@ class RosterCollapseIsLoggedByDefault {
         originalOut = null
     }
 
+    @Test
+    fun testNativeSetRemoteVideoSink() {
+        val res = OrbitLiveKitNativeRaw.nativeSetRemoteVideoSink(LiveKitNativeRemoteVideoRenderer)
+        kotlin.test.assertEquals(0, res)
+    }
+
     private fun armWithRoster() {
         LiveKitRemoteVideoFrameStore.clear("test-setup")
         LiveKitRemoteVideoFrameStore.beginSession(31L, 9L)
