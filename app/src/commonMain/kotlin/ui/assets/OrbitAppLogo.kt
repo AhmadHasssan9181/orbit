@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 Ahmad Hassan / Orbit Contributors.
+ * Orbit Brand Identity & Asset Component. See LICENSE and LICENSE-COMMERCIAL.
+ */
+
 package ui.assets
 
 import androidx.compose.runtime.Composable

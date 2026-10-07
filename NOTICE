@@ -1,7 +1,8 @@
 Orbit
 Copyright the Orbit contributors
 
-Licensed under the Apache License, Version 2.0 (see LICENSE).
+Licensed under the Apache License, Version 2.0 (see LICENSE) and the Orbit
+Commercial License (see LICENSE-COMMERCIAL).
 
 This product bundles third-party software. Each bundled component keeps its own
 license and, where the upstream provides one, its own NOTICE file alongside it.
@@ -60,9 +61,10 @@ package; nothing here is downloaded at runtime.
 
 First-party / Orbit-built
   orbit_livekit_audio.dll    Orbit's native LiveKit media session (audio, AEC,
-                             media-key registration). Apache-2.0, Orbit.
-  orbit_livekit_video.dll    Orbit's native LiveKit video processor. Apache-2.0,
-                             Orbit.
+                             media-key registration). Dual-licensed: Apache-2.0 /
+                             Orbit Commercial License.
+  orbit_livekit_video.dll    Orbit's native LiveKit video processor. Dual-licensed:
+                             Apache-2.0 / Orbit Commercial License.
   livekit.dll                LiveKit C++ SDK. Apache-2.0.
   livekit_ffi.dll            LiveKit Flutter FFI library, loaded via JNA by
                              `SelfCaptureGuard` / the Windows audio ducker.

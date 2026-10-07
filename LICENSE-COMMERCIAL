@@ -1,0 +1,55 @@
+# Orbit Commercial License
+
+Copyright (c) 2026 Ahmad Hassan / Orbit Contributors. All rights reserved.
+
+Licensees holding a valid commercial license with Orbit may use, modify, embed,
+and distribute this software in accordance with the terms contained in a written
+commercial agreement between you and the Orbit project owners.
+
+---
+
+## 1. Scope of Commercial Licensing
+
+This commercial license applies to the proprietary features, extensions, and
+intellectual property of Orbit, including:
+
+1. **Orbit Native Media & Audio Engine**:
+   - The native C++ LiveKit media session implementation (`orbit_livekit_audio.cpp`,
+     `orbit_livekit_audio.dll`, `orbit_livekit_video.dll`).
+   - The Windows WASAPI low-latency loopback audio capture and mixer pipeline.
+   - Proprietary deterministic delay-subtraction ShareAudio AEC algorithms.
+   - Dynamic noise suppression algorithms and audio ducking subsystems.
+
+2. **Orbit Branding, Trademarks, and Visual Identity**:
+   - The "Orbit" name, wordmark, logo, and mascot ("Orbit Mascot").
+   - Proprietary vector illustrations, custom UI artwork, and doodle backgrounds
+     in `ui/assets/`.
+   - Commercial redistribution or white-labeling under Orbit branding is
+     strictly prohibited without written authorization.
+
+3. **Commercial & Enterprise Distribution**:
+   - Redistribution of Orbit in closed-source, proprietary commercial products.
+   - Embedding Orbit components into proprietary enterprise applications without
+     open-source copyleft or attribution obligations.
+   - Provisioning Orbit as a commercial managed service (SaaS) or white-labeled client.
+
+---
+
+## 2. Third-Party Open Source Components
+
+This Commercial License does NOT apply to, and does not alter the licensing of,
+third-party open-source components bundled with or referenced by Orbit (including
+Trixnity, WebRTC, webrtc-java, LiveKit SDK, OpenSSL, zlib, libyuv, Opus, and OpenCV).
+All third-party components remain subject to their respective open-source licenses as
+enumerated in the `NOTICE` file.
+
+---
+
+## 3. Purchasing a Commercial License
+
+To obtain a commercial license, inquire about enterprise terms, or arrange
+custom integration support, please contact:
+
+- **Email**: licensing@orbitweb.tech
+- **Website**: https://orbitweb.tech
+- **Project Lead**: Ahmad Hassan (https://github.com/AhmadHasssan9181)

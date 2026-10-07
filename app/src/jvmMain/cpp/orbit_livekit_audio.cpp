@@ -1,3 +1,12 @@
+/*
+ * Orbit Desktop — Native LiveKit Audio & Media Engine
+ * Copyright (c) 2026 Ahmad Hassan / Orbit Contributors.
+ *
+ * Dual-licensed under the Apache License, Version 2.0 (for open-source use)
+ * and the Orbit Commercial License (for proprietary/commercial use).
+ * See LICENSE and LICENSE-COMMERCIAL in the project root for details.
+ */
+
 #include <jni.h>
 
 #ifndef NOMINMAX

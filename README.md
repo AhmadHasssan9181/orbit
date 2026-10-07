@@ -886,13 +886,17 @@ When debugging Element interoperability, confirm:
 | [`docs/planning/`](docs/planning) | Working notes, historical plans and call-stack references |
 
 
-## License
+## License & Commercial Use
 
-Orbit is licensed under the [Apache License, Version 2.0](LICENSE).
+Orbit Desktop is made available under a dual-licensing framework:
 
-Orbit bundles third-party software under its own license. See [`NOTICE`](NOTICE) for
-the full list, which covers Trixnity, webrtc-java, the WebRTC native build and LiveKit.
-Vendored source trees keep their upstream `LICENSE` and `NOTICE` files in place.
+1. **Open Source (Community Edition)**: The software source code is licensed under the [Apache License, Version 2.0](LICENSE) for personal, educational, community, and non-commercial open-source usage.
+2. **Commercial & Enterprise Edition**: Any commercial deployment, proprietary embedding, closed-source derivative works, white-label distribution, or commercial utilization of Orbit's proprietary native media engine modules (including WASAPI loopback audio capture, deterministic delay-subtraction AEC, and native bridges) requires an **[Orbit Commercial License](LICENSE-COMMERCIAL)**.
+3. **Trademarks & Brand Assets**: The "Orbit" name, logos, mascot characters, and custom branding assets are proprietary intellectual property and are not licensed for commercial use or redistribution under the Apache 2.0 license.
+
+To inquire about commercial licensing, enterprise SLAs, or custom integrations, please reach out to **licensing@orbitweb.tech** or visit [orbitweb.tech](https://orbitweb.tech).
+
+Orbit bundles third-party software under its own license terms. See [`NOTICE`](NOTICE) for the full inventory, which covers Trixnity, webrtc-java, WebRTC, and LiveKit. Vendored third-party source trees keep their upstream `LICENSE` and `NOTICE` files intact.
 
 ## Credits
 
