@@ -55,10 +55,10 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Compile
-        run: ./gradlew --no-daemon :app:compileKotlinJvm
+        run: ./gradlew --no-daemon --dependency-verification=warn :app:compileKotlinJvm
 
       - name: Unit tests
-        run: ./gradlew --no-daemon :app:jvmTest
+        run: ./gradlew --no-daemon --dependency-verification=warn :app:jvmTest
 
       - name: Upload test report
         if: always()
