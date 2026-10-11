@@ -198,6 +198,59 @@ object LiveKitRemoteVideoFrameStore {
      */
     private val commitLock = Any()
 
+    /**
+     * Tracks that were deliberately stopped and must not be resurrected by a frame
+     * that was already in flight when the stop landed.
+     *
+     * Native stops a reader by clearing `running` and closing the stream, which
+     * does not retract the frames already handed to JNI. Those arrive after
+     * [trackStopped] has run, and `updateFrame` re-registers any track it does not
+     * recognise -- so without this, a stopped track came straight back, along with
+     * its frame, and the tile sat there showing the last picture as if the stream
+     * were still live. That was half of the freeze Element's "stop sharing"
+     * produced; the other half was the reaper never joining the reader it had
+     * stopped, which is fixed on the native side.
+     *
+     * Bounded by [STOP_TOMBSTONE_MS] rather than cleared on the next frame: the
+     * point is to swallow the stragglers, and a genuinely re-subscribed track
+     * announces itself through trackStarted, which clears its entry.
+     */
+    private val stoppedTracks = LinkedHashMap<String, Long>()
+
+    private fun markTrackStopped(trackSid: String) {
+        if (trackSid.isBlank()) return
+        val now = System.currentTimeMillis()
+        synchronized(stoppedTracks) {
+            val cutoff = now - STOP_TOMBSTONE_MS
+            stoppedTracks.entries.removeAll { it.value < cutoff }
+            if (stoppedTracks.size >= MAX_TOMBSTONES && trackSid !in stoppedTracks) {
+                val oldest = stoppedTracks.values.minOrNull() ?: now
+                stoppedTracks.entries.removeAll { it.value == oldest }
+            }
+            stoppedTracks[trackSid] = now
+        }
+    }
+
+    private fun isTrackStopped(trackSid: String): Boolean {
+        val now = System.currentTimeMillis()
+        synchronized(stoppedTracks) {
+            val at = stoppedTracks[trackSid] ?: return false
+            if (now - at >= STOP_TOMBSTONE_MS) {
+                stoppedTracks.remove(trackSid)
+                return false
+            }
+            return true
+        }
+    }
+
+    private fun clearStopTombstone(trackSid: String) {
+        if (trackSid.isBlank()) return
+        synchronized(stoppedTracks) { stoppedTracks.remove(trackSid) }
+    }
+
+    private const val STOP_TOMBSTONE_MS = 5_000L
+    private const val MAX_TOMBSTONES = 64
+
     /** Arms the store for one native session; call before the reader sink is attached. */
     fun beginSession(sessionId: Long, epoch: Long) {
         activeSession = SessionEpoch(sessionId, epoch)
@@ -213,6 +266,32 @@ object LiveKitRemoteVideoFrameStore {
         _remoteParticipants.update { it - participantIdentity }
         _remoteAudioMuted.update { it - participantIdentity }
         _connectionQuality.update { it - participantIdentity }
+        synchronized(commitLock) {
+            val toRemoveTracks = _activeTracks.value.filter { it.value.participantIdentity == participantIdentity }.keys
+            val toRemoveFrames = _framesByTrack.value.filter { it.value.participantIdentity == participantIdentity }.keys
+            val toRemove = (toRemoveTracks + toRemoveFrames)
+            // Tombstone every track this participant had, not just the ones the
+            // maps still know about. The maps are about to lose these entries and a
+            // frame already in flight would otherwise re-register one of them and
+            // leave a ghost tile for a participant who has gone.
+            toRemove.forEach { markTrackStopped(it) }
+            if (toRemove.isNotEmpty()) {
+                _activeTracks.update { current -> current.filterKeys { it !in toRemove } }
+                _framesByTrack.update { current -> current.filterKeys { it !in toRemove } }
+            }
+            if (_latestScreenShareFrame.value?.participantIdentity == participantIdentity) {
+                _latestScreenShareFrame.value = null
+            }
+            if (_latestCameraFrame.value?.participantIdentity == participantIdentity) {
+                _latestCameraFrame.value = null
+            }
+            if (_latestFrame.value?.participantIdentity == participantIdentity ||
+                (_latestFrame.value != null && !_framesByTrack.value.containsKey(_latestFrame.value?.trackSid))) {
+                val remaining = _framesByTrack.value
+                _latestFrame.value = remaining.values.lastOrNull()
+                activeTrackSid = remaining.keys.lastOrNull()
+            }
+        }
     }
 
     fun remoteConnectionQuality(
@@ -256,6 +335,10 @@ object LiveKitRemoteVideoFrameStore {
      */
     fun trackAnnounced(participantIdentity: String, trackSid: String, trackSource: String = "") {
         if (trackSid.isBlank()) return
+        // An announcement is native telling us this track exists, which is exactly
+        // what clears a stop tombstone: the track is back, so frames for it are
+        // wanted again.
+        clearStopTombstone(trackSid)
         if (_activeTracks.value.containsKey(trackSid)) return
         _activeTracks.update {
             it + (
@@ -270,6 +353,10 @@ object LiveKitRemoteVideoFrameStore {
     }
 
     fun trackStarted(participantIdentity: String, trackSid: String, trackSource: String = "", trackName: String = "") {
+        // A track existing at all beats a tombstone: this is the re-subscribe path,
+        // and leaving the tombstone in place would make updateFrame drop the frames
+        // for a track that is demonstrably live again.
+        clearStopTombstone(trackSid)
         // A track existing at all means the share attached after all, so any stuck
         // marker for it is stale. Left in place it would keep offering a reconnect
         // for a share that is working.
@@ -399,6 +486,16 @@ object LiveKitRemoteVideoFrameStore {
         // half-size tile, no spotlight, and `isScreenShare` false on the node the
         // whole CallGrid layout keys off. The native reader already knows the
         // source, so it is passed with every frame.
+        // A track that was deliberately STOPPED is not that race and is not
+        // repaired here. Native clears the reader's `running` flag and closes the
+        // stream, but frames already handed to JNI still arrive, and re-registering
+        // on them brought the tile straight back after Element stopped sharing --
+        // which is the "Orbit still shows the stream as if it were live" half of
+        // the freeze. Dropped instead. trackStarted clears the tombstone, so a real
+        // re-subscribe still registers normally.
+        if (isTrackStopped(trackSid)) {
+            return
+        }
         if (_activeTracks.value[trackSid] == null) {
             trackStarted(participantIdentity, trackSid, trackSource)
         }
@@ -449,21 +546,66 @@ object LiveKitRemoteVideoFrameStore {
         if (_stuckTracks.value.containsKey(trackSid)) {
             _stuckTracks.value = _stuckTracks.value - trackSid
         }
+        // Tombstone, so a frame that was already in flight when the stop landed
+        // cannot re-register the track on its way through updateFrame. Without it
+        // a stopped track always came back, which is the "Orbit still shows the
+        // stream as if it were live" half of the freeze. Cleared by trackStarted,
+        // so a genuine re-subscribe is not blocked.
+        markTrackStopped(trackSid)
         // Under the same lock as the frame commit, so a frame in flight cannot
         // resurrect the track we are removing, and the "promote an arbitrary
         // remaining entry" below cannot observe a map being rebuilt underneath it.
         synchronized(commitLock) {
-            _activeTracks.update { it - trackSid }
-            _framesByTrack.update { it - trackSid }
-            // Clear shared single-slot views only when they display THIS track Ã¢â‚¬â€
+            val matchedTrackKeys = _activeTracks.value.filter { (key, state) ->
+                key == trackSid || state.trackSid == trackSid
+            }.keys
+            val toRemove = (matchedTrackKeys + trackSid).toSet()
+
+            val wasScreenShare = toRemove.any { key ->
+                _activeTracks.value[key]?.isScreenShare == true
+            } || _latestScreenShareFrame.value?.trackSid in toRemove
+
+            // A publication is announced under its publicationSid and started under
+            // its trackSid, so stopping the real track leaves the announcement stub
+            // behind and the tile never goes away. The stub is recognisable: it is a
+            // track with no frame of its own, because only the started trackSid ever
+            // receives one.
+            //
+            // Deliberately narrow. An earlier version instead deleted every
+            // screen-share track the participant had, which meant a sender that
+            // stopped its camera while its screen share was up took the live share
+            // down with it -- and that share DOES have a frame, so it is not a stub
+            // and is not touched here. Purging everything a participant owns is
+            // participantDisconnected's job, and it does that.
+            val announcementStubs = if (participantIdentity.isNotBlank()) {
+                _activeTracks.value.filter { (key, state) ->
+                    state.participantIdentity == participantIdentity &&
+                        state.isScreenShare &&
+                        !_framesByTrack.value.containsKey(key)
+                }.keys
+            } else {
+                emptySet()
+            }
+
+            val allToRemove = toRemove + announcementStubs
+
+            if (allToRemove.any { _stuckTracks.value.containsKey(it) }) {
+                _stuckTracks.update { current -> current.filterKeys { it !in allToRemove } }
+            }
+            _activeTracks.update { current -> current.filterKeys { it !in allToRemove } }
+            _framesByTrack.update { current -> current.filterKeys { it !in allToRemove } }
+            allToRemove.forEach { markTrackStopped(it) }
+
+            // Clear shared single-slot views only when they display THIS track —
             // other same-source tracks may still be flowing.
-            if (_latestScreenShareFrame.value?.trackSid == trackSid) {
+            if (wasScreenShare || _latestScreenShareFrame.value?.trackSid in allToRemove) {
                 _latestScreenShareFrame.value = null
             }
-            if (_latestCameraFrame.value?.trackSid == trackSid) {
+            if (_latestCameraFrame.value?.trackSid in allToRemove) {
                 _latestCameraFrame.value = null
             }
-            if (_latestFrame.value?.trackSid == trackSid) {
+            if (_latestFrame.value?.trackSid in allToRemove ||
+                (_latestFrame.value != null && !_framesByTrack.value.containsKey(_latestFrame.value?.trackSid))) {
                 println(
                     "DEBUG [RemoteVideoUI] render stopped participantIdentity=$participantIdentity " +
                         "trackSid=$trackSid"
@@ -493,6 +635,7 @@ object LiveKitRemoteVideoFrameStore {
             }
             activeTrackSid = null
             activeSession = null
+            synchronized(stoppedTracks) { stoppedTracks.clear() }
             _activeTracks.value = emptyMap()
             _framesByTrack.value = emptyMap()
             _remoteParticipants.value = emptySet()

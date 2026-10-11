@@ -15,10 +15,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Fullscreen
-import androidx.compose.material.icons.filled.FullscreenExit
-import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -31,10 +27,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import ui.icons.TablerIcons
+import ui.icons.ExternalLink
+import ui.icons.Maximize
+import ui.icons.Minimize
 import ui.theme.LocalReduceMotion
 import ui.theme.OrbitMotion
 import ui.theme.rememberCosmicTokens
-
 /**
  * The two circles that sit at the bottom-right of a stage: pop the stream out,
  * and maximise it.
@@ -194,13 +193,13 @@ fun CallStreamBottomActions(
         ) {
             if (onPopout != null) {
                 CallStreamActionButton(
-                    icon = Icons.Filled.OpenInNew,
+                    icon = with(TablerIcons) { ExternalLink },
                     contentDescription = "Pop the stream out",
                     onClick = onPopout
                 )
             }
             CallStreamActionButton(
-                icon = if (isMaximized) Icons.Filled.FullscreenExit else Icons.Filled.Fullscreen,
+                icon = if (isMaximized) with(TablerIcons) { Minimize } else with(TablerIcons) { Maximize },
                 contentDescription = if (isMaximized) {
                     "Exit full screen (Escape)"
                 } else {

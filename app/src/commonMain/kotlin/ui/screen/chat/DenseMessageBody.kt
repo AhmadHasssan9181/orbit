@@ -17,8 +17,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -32,13 +30,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.icons.TablerIcons
+import ui.icons.Dots
 import ui.icons.OrbitIcons
 import ui.model.OrbitMessage
 import ui.theme.LocalShowTimestamps
 import ui.theme.OrbitConceptOverlay
 import ui.theme.OrbitMotion
 import ui.theme.rememberCosmicTokens
-
 /**
  * A grouped message — the follow-on lines of a run, and the whole of a room in
  * compact mode. That makes it the *majority* of messages in a chat, which is why
@@ -182,7 +181,7 @@ internal fun DenseMessageBody(
                 // "More" only earns its place when there is a real action behind
                 // it, so it is rendered conditionally rather than as a no-op.
                 if (onTogglePin != null || onDeleteMessage != null) {
-                    MessageActionBtn(Icons.Default.MoreHoriz, "More") { showMoreMenu = true }
+                    MessageActionBtn(with(TablerIcons) { Dots }, "More") { showMoreMenu = true }
                     MessageMoreMenu(
                         expanded = showMoreMenu,
                         canDelete = onDeleteMessage != null,

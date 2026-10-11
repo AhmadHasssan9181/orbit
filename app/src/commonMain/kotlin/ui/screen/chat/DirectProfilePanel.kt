@@ -3,6 +3,9 @@ package ui.screen.chat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,13 +23,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Call
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Videocam
-import androidx.compose.foundation.hoverable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -36,26 +32,30 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntRect
-import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.unit.LayoutDirection
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupPositionProvider
-import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
+import ui.icons.TablerIcons
+import ui.icons.Phone
+import ui.icons.Video
+import ui.icons.X
 import ui.assets.OrbitDefaultAvatar
 import ui.assets.OrbitMascotAvatar
 import ui.assets.OrbitVerifiedBadge
@@ -68,7 +68,6 @@ import ui.theme.OrbitConceptBorder
 import ui.theme.OrbitConceptDark
 import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
-
 /** The avatar with its presence dot, as every list and header in the app draws it. */
 @Composable
 internal fun SmallUserAvatar(user: OrbitUser, size: Dp) {
@@ -279,11 +278,7 @@ internal fun DirectProfilePanel(
                     contentAlignment = Alignment.Center
                 ) {
                     androidx.compose.material3.Icon(
-                        // `Icons.Default.Close` is in material-icons-extended,
-                        // which this project depends on; the "not in this
-                        // project's icon set" note that used to live here was
-                        // about material-icons-core and no longer applies.
-                        imageVector = Icons.Default.Close,
+                        imageVector = with(TablerIcons) { X },
                         contentDescription = "Close profile",
                         tint = Color.White,
                         modifier = Modifier.size(16.dp)
@@ -345,14 +340,14 @@ internal fun DirectProfilePanel(
                     // obviously intended.
                     OrbitButton(
                         text = "Voice",
-                        icon = Icons.Default.Call,
+                        icon = with(TablerIcons) { Phone },
                         onClick = { callManager?.startCall(callRoomId, false) },
                         tone = OrbitButtonTone.Neutral,
                         modifier = Modifier.weight(1f)
                     )
                     OrbitButton(
                         text = "Video",
-                        icon = Icons.Default.Videocam,
+                        icon = with(TablerIcons) { Video },
                         onClick = { callManager?.startCall(callRoomId, true) },
                         tone = OrbitButtonTone.Primary,
                         modifier = Modifier.weight(1f)
@@ -537,7 +532,7 @@ internal fun CompactUserProfileCard(
                         contentAlignment = Alignment.Center
                     ) {
                         androidx.compose.material3.Icon(
-                            imageVector = Icons.Default.Call,
+                            imageVector = with(TablerIcons) { Phone },
                             contentDescription = "Voice Call",
                             tint = Color.White,
                             modifier = Modifier.size(13.dp)
@@ -554,7 +549,7 @@ internal fun CompactUserProfileCard(
                         contentAlignment = Alignment.Center
                     ) {
                         androidx.compose.material3.Icon(
-                            imageVector = Icons.Default.Videocam,
+                            imageVector = with(TablerIcons) { Video },
                             contentDescription = "Video Call",
                             tint = Color.White,
                             modifier = Modifier.size(14.dp)
@@ -571,7 +566,7 @@ internal fun CompactUserProfileCard(
                         contentAlignment = Alignment.Center
                     ) {
                         androidx.compose.material3.Icon(
-                            imageVector = Icons.Default.Close,
+                            imageVector = with(TablerIcons) { X },
                             contentDescription = "Close",
                             tint = Color.White,
                             modifier = Modifier.size(13.dp)

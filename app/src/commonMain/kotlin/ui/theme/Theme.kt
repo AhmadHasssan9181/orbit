@@ -31,12 +31,12 @@ val LightColorScheme = lightColorScheme(
     errorContainer = Colour.ErrorContainerLight,
     onErrorContainer = Colour.OnErrorContainerLight,
     background = Colour.BackgroundLight,
-    onBackground = Colour.OnBackgroundLight,
+    onBackground = ThemeTint.tintedInk(Colour.PrimaryLight, 0.180f, isDark = false),
     surface = Colour.SurfaceLight,
-    onSurface = Colour.OnSurfaceLight,
+    onSurface = ThemeTint.tintedInk(Colour.PrimaryLight, 0.180f, isDark = false),
     surfaceVariant = Colour.SurfaceVariantLight,
-    onSurfaceVariant = Colour.OnSurfaceVariantLight,
-    outline = Colour.OutlineLight,
+    onSurfaceVariant = ThemeTint.tintedInk(Colour.PrimaryLight, 0.320f, isDark = false),
+    outline = ThemeTint.tintedInk(Colour.PrimaryLight, 0.580f, isDark = false),
     outlineVariant = Colour.OutlineVariantLight,
     scrim = Colour.ScrimLight,
     inverseSurface = Colour.InverseSurfaceLight,
@@ -69,12 +69,12 @@ private val DefaultColorScheme = darkColorScheme(
     errorContainer = Colour.ErrorContainerDark,
     onErrorContainer = Colour.OnErrorContainerDark,
     background = Colour.BackgroundDark,
-    onBackground = Colour.OnBackgroundDark,
+    onBackground = ThemeTint.tintedInk(Colour.PrimaryDark, 0.920f, isDark = true),
     surface = Colour.SurfaceDark,
-    onSurface = Colour.OnSurfaceDark,
+    onSurface = ThemeTint.tintedInk(Colour.PrimaryDark, 0.920f, isDark = true),
     surfaceVariant = Colour.SurfaceVariantDark,
-    onSurfaceVariant = Colour.OnSurfaceVariantDark,
-    outline = Colour.OutlineDark,
+    onSurfaceVariant = ThemeTint.tintedInk(Colour.PrimaryDark, 0.810f, isDark = true),
+    outline = ThemeTint.tintedInk(Colour.PrimaryDark, 0.600f, isDark = true),
     outlineVariant = Colour.OutlineVariantDark,
     scrim = Colour.ScrimDark,
     inverseSurface = Colour.InverseSurfaceDark,
@@ -159,6 +159,31 @@ data class CosmicTokens(
     val AccentGhost: Color,
     val AccentGhostStrong: Color,
     val OnAccent: Color,
+    /**
+     * White glyphs sitting on a NEUTRAL surface -- the rail's selection pill,
+     * icons over the canvas, translucent white overlays.
+     *
+     * Separate from [OnAccent] on purpose. A glyph on an accent-filled button
+     * must stay white to contrast against *the accent*, and tinting it toward
+     * the accent would erase it against its own background. This one is over
+     * neutral greys, so it is safe -- and desirable -- to carry the theme hue.
+     * Conflating the two was what previously left every icon pure white while
+     * the text around it was tinted.
+     */
+    val OnNeutral: Color,
+    /**
+     * White glyphs on a surface that is dark in BOTH themes -- the call stage,
+     * the video canvas, the PiP window.
+     *
+     * [OnNeutral] inverts with the scheme, which is correct for a themed surface
+     * and catastrophic for these: the call screen roots at a hardcoded
+     * `Color.Black`, so in the light theme `OnNeutral` resolves to a near-black
+     * shade and every glyph on the stage disappears into its own background.
+     *
+     * This token is the accent's light shade unconditionally, so it is safe on
+     * anything that is always dark.
+     */
+    val OnDark: Color,
     val AccentBorder: Color,
 
     // ── Type ─────────────────────────────────────────────────────
@@ -233,68 +258,90 @@ data class CosmicTokens(
     // that ARE used pass an elevation directly and let Compose derive the colour.
 }
 
-private fun darkTokens(cs: androidx.compose.material3.ColorScheme) = CosmicTokens(
-    Bg = Ink800,
-    CardBg = Ink700,
-    CardBgHover = Ink650,
-    Elevated = Ink650,
-    ElevatedAlt = Ink600,
-    Sunken = Ink900,
+/**
+ * The dark token set, with every neutral tinted toward [cs]'s accent.
+ *
+ * `surface()` / `ink()` / `line()` are the whole mechanism -- see [ThemeTint].
+ * They are local so the fields below still read as a list of roles rather than
+ * as arithmetic. Semantic colours (Success, Danger, Presence, the pastels) are
+ * deliberately NOT routed through them: a green that has picked up the accent's
+ * hue stops reading as green.
+ */
+private fun darkTokens(cs: androidx.compose.material3.ColorScheme): CosmicTokens {
+    val accent = cs.primary
+    fun surface(c: Color) = ThemeTint.apply(c, accent, ThemeTint.SURFACE)
+    fun ink(c: Color) = ThemeTint.apply(c, accent, ThemeTint.TEXT)
+    fun line(c: Color) = ThemeTint.apply(c, accent, ThemeTint.LINE)
+
+    return CosmicTokens(
+    Bg = surface(Ink800),
+    CardBg = surface(Ink700),
+    CardBgHover = surface(Ink650),
+    Elevated = surface(Ink650),
+    ElevatedAlt = surface(Ink600),
+    Sunken = surface(Ink900),
 
     Accent = cs.primary,
     AccentLight = Iris400,
     AccentGhost = cs.primary.copy(alpha = 0.14f),
     AccentGhostStrong = cs.primary.copy(alpha = 0.24f),
     OnAccent = Color(0xFFFFFFFF),
+    OnNeutral = ThemeTint.tintedInk(accent, 0.920f, isDark = true),
+    OnDark = ThemeTint.tintedInk(accent, 0.920f, isDark = true),
     AccentBorder = cs.primary.copy(alpha = 0.38f),
 
-    Text_White = DarkFgStrong,
-    Text_Secondary = DarkFgDefault,
-    Text_Muted = DarkFgMuted,
-    Text_Subtle = DarkFgSubtle,
+    // The "white" of the app. Tinted hardest of anything -- this is the value
+    // the request was about, and it is the one that reads as "white" at a
+    // glance rather than as a colour.
+    Text_White = ThemeTint.tintedInk(accent, 0.920f, isDark = true),
+    Text_Secondary = ThemeTint.tintedInk(accent, 0.810f, isDark = true),
+    Text_Muted = ThemeTint.tintedInk(accent, 0.700f, isDark = true),
+    Text_Subtle = ThemeTint.tintedInk(accent, 0.600f, isDark = true),
 
     // Discord's divider grey. Deliberately *not* on the Ink ramp: it sits
     // between Ink650 and Ink700, and "tidying" it onto the ramp is what
     // previously gave dividers the wrong hue.
-    Separator = Color(0xFF3F4147),
+    Separator = line(Color(0xFF3F4147)),
     // Was Color(0xFF2E3542), which was the OLD Ink600. Once the Ink ramp moved to
     // Discord's neutrals this literal was stranded on the retired blue-black hue,
     // which made every strong divider the one wrong-coloured line on screen. Kept
     // as its own value because a strong divider is darker than a hairline on
     // Discord, not lighter.
-    SeparatorStrong = Color(0xFF232428),
+    SeparatorStrong = line(Color(0xFF232428)),
 
-    Header_Bg = Ink780,
+    Header_Bg = surface(Ink780),
     // Discord's own chat-input colour (#383A40). This was Ink700 -- identical to
     // CardBg -- so an input sitting on a card had the same colour as the card and
     // no edge at all. Ink780 is darker than the card: the recessed direction, and
     // what Discord actually does.
-    Input_Bg = Ink780,
+    Input_Bg = surface(Ink780),
     // The concept's .member-list-sidebar is --bg-sidebar, #2b2d31. Ink800 is the
     // CHAT CANVAS, so the member list was the same colour as the timeline it
     // sits beside -- precisely the indistinguishable-surfaces failure
     // OrbitConcept.kt was written to prevent.
-    Members_Bg = Ink850,
+    Members_Bg = surface(Ink850),
     // The concept's --bg-servers is #1e1f22. Ink950 (#111214) is the FLOATING
     // surface -- modals and popovers -- so the rail was three steps darker than
     // the design and read as a black gutter rather than a dark column.
-    Rail_Bg = Ink900,
+    Rail_Bg = surface(Ink900),
     // The concept's .server-icon-btn background is --bg-sidebar, i.e. Ink850.
     // It was never given a token and the rail drew a per-server gradient instead,
     // which meant no idle fill existed to flood away from on hover.
-    Rail_Idle = Ink850,
-    Rail_Active = Ink650,   // flat grey, not an accent wash — Discord's server rail
-    Pill_Color = DarkFgStrong,
-    Drawer_Bg = Ink850,
-    UserBar_Bg = Ink950,
+    Rail_Idle = surface(Ink850),
+    Rail_Active = surface(Ink650),   // flat grey, not an accent wash — Discord's server rail
+    Pill_Color = ThemeTint.tintedInk(accent, 0.920f, isDark = true),
+    Drawer_Bg = surface(Ink850),
+    UserBar_Bg = surface(Ink950),
 
-    Hover = Color(0x0AFFFFFF),
-    Pressed = Color(0x14FFFFFF),
+    // Translucent white overlays. Alpha is preserved by ThemeTint, so these stay
+    // overlays rather than turning into solid panels.
+    Hover = surface(Color(0x0AFFFFFF)),
+    Pressed = surface(Color(0x14FFFFFF)),
     Selected_Bg = cs.primary.copy(alpha = 0.14f),
     // Discord uses flat greys for row states, not accent-tinted washes.
-    ChannelSelected_Bg = Ink700,
-    ChannelHover_Bg = Ink750,
-    MessageHover_Bg = Ink750,
+    ChannelSelected_Bg = surface(Ink700),
+    ChannelHover_Bg = surface(Ink750),
+    MessageHover_Bg = surface(Ink750),
     MentionHighlight = cs.primary.copy(alpha = 0.10f),
 
     Success = Sage500,
@@ -312,17 +359,17 @@ private fun darkTokens(cs: androidx.compose.material3.ColorScheme) = CosmicToken
     PresenceDnd = PresenceDnd,
     PresenceOffline = PresenceOffline,
 
-    CodeBg = Ink900,
+    CodeBg = surface(Ink900),
     QuoteBar = Iris500,
     BubbleOwn = Iris800,
-    BubbleOther = Ink700,
+    BubbleOther = surface(Ink700),
     Link = Iris400,
-    AvatarRing = Color(0x14FFFFFF),
+    AvatarRing = surface(Color(0x14FFFFFF)),
 
     // Was Color(0xCC05070A) -- a blue-black, i.e. the old Ink950. The modal
     // backdrop is the one surface that must be darker than everything behind it,
     // so it pins to Discord's deepest neutral rather than a ramp value.
-    Scrim = Color(0xCC111214),
+    Scrim = surface(Color(0xCC111214)),
     FocusRing = Iris400.copy(alpha = 0.55f),
     ScrollbarTrack = Color.Transparent,
     // The concept's scrollbar thumb is near-BLACK (rgba(26,27,30,.7)) in both
@@ -331,50 +378,61 @@ private fun darkTokens(cs: androidx.compose.material3.ColorScheme) = CosmicToken
     // .server-divider is --border-subtle (white at 8%) over the rail, which
     // composites to roughly #232426. t.Separator is an opaque #3F4147 -- a full
     // ramp step lighter and fully opaque, so a 32x2 hairline read as a hard rule.
-    ServerDivider = Color(0x14FFFFFF),
-    ScrollbarThumb = Color(0xB31A1B1E),
-    ScrollbarThumbHover = Color(0xE6111214),
-)
+    ServerDivider = line(Color(0x14FFFFFF)),
+    ScrollbarThumb = surface(Color(0xB31A1B1E)),
+    ScrollbarThumbHover = surface(Color(0xE6111214)),
+    )
+}
 
-private fun lightTokens(cs: androidx.compose.material3.ColorScheme) = CosmicTokens(
-    Bg = Paper0,
-    CardBg = Paper100,
-    CardBgHover = Paper150,
-    Elevated = Paper0,
-    ElevatedAlt = Paper50,
-    Sunken = Paper100,
+private fun lightTokens(cs: androidx.compose.material3.ColorScheme): CosmicTokens {
+    val accent = cs.primary
+    fun surface(c: Color) = ThemeTint.apply(c, accent, ThemeTint.SURFACE)
+    fun ink(c: Color) = ThemeTint.apply(c, accent, ThemeTint.TEXT)
+    fun line(c: Color) = ThemeTint.apply(c, accent, ThemeTint.LINE)
+
+    return CosmicTokens(
+    Bg = surface(Paper0),
+    CardBg = surface(Paper100),
+    CardBgHover = surface(Paper150),
+    Elevated = surface(Paper0),
+    ElevatedAlt = surface(Paper50),
+    Sunken = surface(Paper100),
 
     Accent = cs.primary,
     AccentLight = Iris500,
     AccentGhost = cs.primary.copy(alpha = 0.10f),
     AccentGhostStrong = cs.primary.copy(alpha = 0.16f),
     OnAccent = Color(0xFFFFFFFF),
+    OnNeutral = ThemeTint.tintedInk(accent, 0.220f, isDark = false),
+    OnDark = ThemeTint.tintedInk(accent, 0.920f, isDark = true),
     AccentBorder = cs.primary.copy(alpha = 0.30f),
 
-    Text_White = LightFgStrong,
-    Text_Secondary = LightFgDefault,
-    Text_Muted = LightFgMuted,
-    Text_Subtle = LightFgSubtle,
+    // Same tokens as dark, mirrored: what is "white text" inverts with the
+    // scheme, and both ends take the accent's hue rather than staying neutral.
+    Text_White = ThemeTint.tintedInk(accent, 0.180f, isDark = false),
+    Text_Secondary = ThemeTint.tintedInk(accent, 0.320f, isDark = false),
+    Text_Muted = ThemeTint.tintedInk(accent, 0.460f, isDark = false),
+    Text_Subtle = ThemeTint.tintedInk(accent, 0.580f, isDark = false),
 
-    Separator = Paper200,
-    SeparatorStrong = Paper300,
+    Separator = line(Paper200),
+    SeparatorStrong = line(Paper300),
 
-    Header_Bg = Paper50,
-    Input_Bg = Paper100,
-    Members_Bg = Paper0,
-    Rail_Bg = Paper100,
-    Rail_Idle = Paper200,
+    Header_Bg = surface(Paper50),
+    Input_Bg = surface(Paper100),
+    Members_Bg = surface(Paper0),
+    Rail_Bg = surface(Paper100),
+    Rail_Idle = surface(Paper200),
     Rail_Active = cs.primary.copy(alpha = 0.12f),
-    Pill_Color = LightFgStrong,
-    Drawer_Bg = Paper50,
-    UserBar_Bg = Paper0,
+    Pill_Color = ThemeTint.tintedInk(accent, 0.180f, isDark = false),
+    Drawer_Bg = surface(Paper50),
+    UserBar_Bg = surface(Paper0),
 
-    Hover = Color(0x06000000),
-    Pressed = Color(0x0D000000),
+    Hover = surface(Color(0x06000000)),
+    Pressed = surface(Color(0x0D000000)),
     Selected_Bg = cs.primary.copy(alpha = 0.10f),
     ChannelSelected_Bg = cs.primary.copy(alpha = 0.10f),
-    ChannelHover_Bg = Color(0x07000000),
-    MessageHover_Bg = Color(0x08000000),
+    ChannelHover_Bg = surface(Color(0x07000000)),
+    MessageHover_Bg = surface(Color(0x08000000)),
     MentionHighlight = cs.primary.copy(alpha = 0.08f),
 
     Success = Sage600,
@@ -392,21 +450,22 @@ private fun lightTokens(cs: androidx.compose.material3.ColorScheme) = CosmicToke
     PresenceDnd = Rust600,
     PresenceOffline = LightFgSubtle,
 
-    CodeBg = Paper100,
+    CodeBg = surface(Paper100),
     QuoteBar = Iris600,
     BubbleOwn = Iris050,
-    BubbleOther = Paper100,
+    BubbleOther = surface(Paper100),
     Link = Iris600,
-    AvatarRing = Color(0x14000000),
+    AvatarRing = surface(Color(0x14000000)),
 
-    Scrim = Color(0x59000000),
+    Scrim = surface(Color(0x59000000)),
     FocusRing = cs.primary.copy(alpha = 0.55f),
     ScrollbarTrack = Color.Transparent,
     // The concept keeps the divider dark in the light theme too.
-    ServerDivider = Color(0x14000000),
-    ScrollbarThumb = Color(0x1F000000),
-    ScrollbarThumbHover = Color(0x33000000),
-)
+    ServerDivider = line(Color(0x14000000)),
+    ScrollbarThumb = surface(Color(0x1F000000)),
+    ScrollbarThumbHover = surface(Color(0x33000000)),
+    )
+}
 
 @Composable
 fun rememberCosmicTokens(): CosmicTokens {
@@ -623,10 +682,13 @@ fun StoatTheme(
     content: @Composable () -> Unit
 ) {
     val colorScheme = getColorScheme(requestedTheme, seedColor, dynamicIsDark)
-    val typography = when (requestedUserInterfaceFont) {
-        UserInterfaceFont.Default -> StoatTypography
-        UserInterfaceFont.GoogleSansFlex -> GoogleTypography
-    }
+
+    // Plus Jakarta Sans is the only bundled family, so `requestedUserInterfaceFont`
+    // no longer selects anything -- every value lands on the same scale. The
+    // parameter is kept because `StoatTheme` is called from the app root and
+    // dropping it would churn that call site for no visual gain. Wire it back up
+    // here if a second family is ever added.
+    val typography = orbitTypography()
 
     MaterialTheme(
         colorScheme = colorScheme,

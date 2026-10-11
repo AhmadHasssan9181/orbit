@@ -1,4 +1,4 @@
-﻿package ui.screen.call
+package ui.screen.call
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
@@ -21,25 +21,25 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CropFree
-import androidx.compose.material.icons.filled.FlipCameraAndroid
-import androidx.compose.material.icons.filled.GridView
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.Headphones
-import androidx.compose.material.icons.filled.HeadsetOff
-import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.MicOff
-import androidx.compose.material.icons.filled.MoreHoriz
-import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.NoiseAware
-import androidx.compose.material.icons.filled.PanTool
-import androidx.compose.material.icons.filled.SurroundSound
-import androidx.compose.material.icons.filled.Videocam
-import androidx.compose.material.icons.filled.VideocamOff
-import androidx.compose.material.icons.filled.VolumeUp
-import androidx.compose.material.icons.filled.Wallpaper
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -79,7 +79,20 @@ import ui.theme.OrbitMotion
 import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
 import webrtc.CallManager
-
+import ui.icons.TablerIcons
+import ui.icons.CameraRotate
+import ui.icons.ChevronDown
+import ui.icons.Crop
+import ui.icons.Dots
+import ui.icons.HandStop
+import ui.icons.Headphones
+import ui.icons.HeadphonesOff
+import ui.icons.LayoutGrid
+import ui.icons.Music
+import ui.icons.Palette
+import ui.icons.Speakerphone
+import ui.icons.Volume
+import ui.icons.WaveSine
 /**
  * In-call controls.
  *
@@ -147,7 +160,7 @@ fun CallControlsBar(
                 )
                 Box {
                     CallControlButton(
-                        icon = Icons.Default.KeyboardArrowDown,
+                        icon = with(TablerIcons) { ChevronDown },
                         tooltip = "Choose audio input",
                         size = 28.dp,
                         iconSize = 14.dp,
@@ -165,7 +178,7 @@ fun CallControlsBar(
             // 2. Deafen / Headphones
             if (showDeafen) {
                 CallControlButton(
-                    icon = if (isDeafened) Icons.Default.HeadsetOff else Icons.Default.Headphones,
+                    icon = if (isDeafened) with(TablerIcons) { HeadphonesOff } else with(TablerIcons) { Headphones },
                     tooltip = if (isDeafened) "Undeafen" else "Deafen",
                     state = if (isDeafened) CallControlState.Danger else CallControlState.Off,
                     onClick = onToggleDeafen
@@ -191,7 +204,7 @@ fun CallControlsBar(
             // 5. Raise Hand
             val myHandRaised by callManager.isMyHandRaised.collectAsState()
             CallControlButton(
-                icon = Icons.Default.PanTool,
+                icon = with(TablerIcons) { HandStop },
                 tooltip = if (myHandRaised) "Lower hand" else "Raise hand",
                 state = if (myHandRaised) CallControlState.Active else CallControlState.Off,
                 onClick = { callManager.toggleRaiseHand() }
@@ -199,7 +212,7 @@ fun CallControlsBar(
 
             // 6. Layout Mode Toggle
             CallControlButton(
-                icon = if (layoutMode == CallLayoutMode.Grid) Icons.Default.GridView else Icons.Default.CropFree,
+                icon = if (layoutMode == CallLayoutMode.Grid) with(TablerIcons) { LayoutGrid } else with(TablerIcons) { Crop },
                 tooltip = if (layoutMode == CallLayoutMode.Grid) "Focus mode" else "Grid mode",
                 state = if (layoutMode == CallLayoutMode.Focus) CallControlState.Active else CallControlState.Off,
                 onClick = onLayoutModeToggle
@@ -208,7 +221,7 @@ fun CallControlsBar(
             // 7. Soundboard
             if (onSoundboardToggle != null) {
                 CallControlButton(
-                    icon = Icons.Default.MusicNote,
+                    icon = with(TablerIcons) { Music },
                     tooltip = "Soundboard",
                     state = if (showSoundboard) CallControlState.Active else CallControlState.Off,
                     onClick = { onSoundboardToggle() }
@@ -219,7 +232,7 @@ fun CallControlsBar(
             if (showMoreOptions) {
                 Box {
                     CallControlButton(
-                        icon = Icons.Default.MoreHoriz,
+                        icon = with(TablerIcons) { Dots },
                         tooltip = "Audio and video options",
                         state = if (moreOptionsExpanded) CallControlState.Active else CallControlState.Off,
                         onClick = { moreOptionsExpanded = !moreOptionsExpanded }
@@ -291,19 +304,19 @@ private fun MoreOptionsMenu(
         OrbitMenuHeader("Audio processing")
         OrbitMenuSwitch(
             label = "Noise suppression",
-            icon = Icons.Default.NoiseAware,
+            icon = with(TablerIcons) { WaveSine },
             checked = nsEnabled,
             onCheckedChange = { callManager.setAudioOptions(it, ecEnabled, agcEnabled) }
         )
         OrbitMenuSwitch(
             label = "Echo cancellation",
-            icon = Icons.Default.SurroundSound,
+            icon = with(TablerIcons) { Speakerphone },
             checked = ecEnabled,
             onCheckedChange = { callManager.setAudioOptions(nsEnabled, it, agcEnabled) }
         )
         OrbitMenuSwitch(
             label = "Auto gain control",
-            icon = Icons.Default.VolumeUp,
+            icon = with(TablerIcons) { Volume },
             checked = agcEnabled,
             onCheckedChange = { callManager.setAudioOptions(nsEnabled, ecEnabled, it) }
         )
@@ -339,14 +352,14 @@ private fun MoreOptionsMenu(
         OrbitMenuHeader("Video")
         OrbitMenuSwitch(
             label = "Virtual background",
-            icon = Icons.Default.Wallpaper,
+            icon = with(TablerIcons) { Palette },
             checked = vbEnabled,
             onCheckedChange = { callManager.toggleVirtualBackground() }
         )
         if (isVideoEnabled) {
             OrbitMenuItem(
                 label = "Switch camera",
-                icon = Icons.Default.FlipCameraAndroid,
+                icon = with(TablerIcons) { CameraRotate },
                 onClick = {
                     callManager.switchCamera()
                     onDismiss()

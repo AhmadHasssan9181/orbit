@@ -21,16 +21,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Chat
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ChevronLeft
-import androidx.compose.material.icons.filled.Explore
-import androidx.compose.material.icons.filled.Groups
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Public
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.VolunteerActivism
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -47,12 +37,21 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.icons.TablerIcons
+import ui.icons.ChevronLeft
+import ui.icons.Compass
+import ui.icons.Heart
+import ui.icons.Home
+import ui.icons.Message
+import ui.icons.Plus
+import ui.icons.Settings
+import ui.icons.Users
+import ui.icons.World
 import ui.icons.OrbitIcons
 import ui.model.OrbitChannel
 import ui.model.OrbitServer
 import ui.theme.OrbitMotion
 import ui.theme.rememberCosmicTokens
-
 @Composable
 fun OrbitHomeDashboard(
     server: OrbitServer?,
@@ -80,13 +79,13 @@ fun OrbitHomeDashboard(
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Icon(
-                imageVector = Icons.Default.ChevronLeft,
+                imageVector = with(TablerIcons) { ChevronLeft },
                 contentDescription = null,
                 tint = t.Text_Muted,
                 modifier = Modifier.size(18.dp)
             )
             Icon(
-                imageVector = Icons.Default.Home,
+                imageVector = with(TablerIcons) { Home },
                 contentDescription = null,
                 tint = t.Text_White,
                 modifier = Modifier.size(16.dp)
@@ -127,7 +126,7 @@ fun OrbitHomeDashboard(
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Public,
+                            imageVector = with(TablerIcons) { World },
                             contentDescription = "Orbit",
                             tint = t.Accent,
                             modifier = Modifier.size(24.dp)
@@ -153,14 +152,14 @@ fun OrbitHomeDashboard(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         ActionCard(
-                            icon = Icons.Default.Add,
+                            icon = with(TablerIcons) { Plus },
                             title = "Create a group or server",
                             description = "Invite all of your friends, some cool bots, and throw a big party.",
                             onClick = onCreateServer,
                             modifier = Modifier.weight(1f)
                         )
                         ActionCard(
-                            icon = Icons.Default.Explore,
+                            icon = with(TablerIcons) { Compass },
                             title = "Discover Orbit",
                             description = "Find a community based on your hobbies or interests.",
                             onClick = onDiscover,
@@ -177,7 +176,7 @@ fun OrbitHomeDashboard(
                             it.name.contains("general", ignoreCase = true)
                         }
                         ActionCard(
-                            icon = Icons.Default.Groups,
+                            icon = with(TablerIcons) { Users },
                             title = "Join the Orbit Lounge",
                             description = "You can report issues and discuss improvements with us directly here.",
                             onClick = {
@@ -190,7 +189,7 @@ fun OrbitHomeDashboard(
                             modifier = Modifier.weight(1f)
                         )
                         ActionCard(
-                            icon = Icons.AutoMirrored.Filled.Chat,
+                            icon = with(TablerIcons) { Message },
                             title = "Give feedback on Orbit",
                             description = "Let us know how we can improve our app by giving us feedback.",
                             onClick = {
@@ -207,7 +206,7 @@ fun OrbitHomeDashboard(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         ActionCard(
-                            icon = Icons.Default.VolunteerActivism,
+                            icon = with(TablerIcons) { Heart },
                             title = "Donate to Orbit",
                             description = "Support the project by donating - thank you!",
                             isSpecial = true,
@@ -219,7 +218,7 @@ fun OrbitHomeDashboard(
                             modifier = Modifier.weight(1f)
                         )
                         ActionCard(
-                            icon = Icons.Default.Settings,
+                            icon = with(TablerIcons) { Settings },
                             title = "Open settings",
                             description = "You can also click the gear icon in the bottom left.",
                             onClick = onOpenSettings,

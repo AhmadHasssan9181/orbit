@@ -6,8 +6,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AddAPhoto
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -20,6 +18,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.icons.TablerIcons
+import ui.icons.CameraPlus
 import kotlinx.coroutines.launch
 import repository.OrbitRepository
 import ui.components.OrbitButton
@@ -28,16 +28,14 @@ import ui.components.OrbitNotices
 import ui.components.OrbitNotices.onFailureOrNotify
 import ui.components.OrbitTextField
 import ui.model.OrbitProfileExtras
-import ui.theme.rememberCosmicTokens
-
 import ui.screen.auth.*
-import ui.screen.settings.*
-import ui.screen.drawer.*
-import ui.screen.server.*
 import ui.screen.call.*
-import ui.screen.media.*
+import ui.screen.drawer.*
 import ui.screen.main.*
-
+import ui.screen.media.*
+import ui.screen.server.*
+import ui.screen.settings.*
+import ui.theme.rememberCosmicTokens
 // Privacy, Family Centre, Authorized Apps and Connections were pure mock-ups:
 // no settings category reaches them, and they persisted invented app
 // authorisations and social links into account data. They have been deleted.
@@ -133,7 +131,7 @@ internal fun ProfilesPane(repository: OrbitRepository) {
                         )
                     } else {
                         Icon(
-                            Icons.Default.AddAPhoto,
+                            with(TablerIcons) { CameraPlus },
                             contentDescription = "Change your avatar",
                             tint = t.Text_Muted,
                             modifier = Modifier.size(32.dp)

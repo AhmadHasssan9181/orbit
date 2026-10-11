@@ -8,15 +8,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -28,7 +26,28 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.icons.TablerIcons
+import ui.icons.Accessible
+import ui.icons.Bell
+import ui.icons.Check
+import ui.icons.ChevronRight
+import ui.icons.Copy
+import ui.icons.DeviceDesktop
+import ui.icons.Fingerprint
+import ui.icons.Lock
+import ui.icons.Logout
+import ui.icons.Mail
+import ui.icons.Message
+import ui.icons.MoodSmile
+import ui.icons.Palette
+import ui.icons.Pencil
+import ui.icons.Shield
+import ui.icons.User
+import ui.icons.Video
+import ui.icons.X
 import kotlinx.coroutines.launch
+import repository.OrbitRepository
+import repository.SettingsManager
 import ui.components.OrbitListRow
 import ui.components.OrbitNotices
 import ui.components.OrbitNotices.onFailureOrNotify
@@ -36,36 +55,44 @@ import ui.components.OrbitRowLeading
 import ui.components.OrbitTextField
 import ui.icons.OrbitIcons
 import ui.model.OrbitUser
-import repository.SettingsManager
-import repository.OrbitRepository
+import ui.screen.auth.*
+import ui.screen.call.*
+import ui.screen.drawer.*
+import ui.screen.main.*
+import ui.screen.media.*
+import ui.screen.server.*
+import ui.screen.settings.*
 import ui.theme.OrbitRadius
 import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
-
-import ui.screen.auth.*
-import ui.screen.settings.*
-import ui.screen.drawer.*
-import ui.screen.server.*
-import ui.screen.call.*
-import ui.screen.media.*
-import ui.screen.main.*
-
+import androidx.compose.foundation.hoverable
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.style.TextOverflow
+import ui.assets.OrbitMascotAvatar
+import ui.theme.OrbitMotion
+import androidx.compose.ui.input.key.type
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 // - Cosmic Design Tokens
 
 enum class SettingsCategory(val title: String, val group: String) {
     // User Settings
-    // (Fabricated panes removed: perks, family centre, connections, authorised apps,
-    // keybinds, language and activity/games were pure mock-ups with no backing
-    // engine - hidden until they actually work.)
     MyAccount("My Account", "USER SETTINGS"),
     Profiles("Profiles", "USER SETTINGS"),
 
     // App Settings
-    Appearance("Appearance", "APP SETTINGS"),
-    Accessibility("Accessibility", "APP SETTINGS"),
-    Notifications("Notifications", "APP SETTINGS"),
     VoiceVideo("Voice & Video", "APP SETTINGS"),
+    Appearance("Appearance", "APP SETTINGS"),
+    Notifications("Notifications", "APP SETTINGS"),
     Chat("Chat", "APP SETTINGS"),
+    Accessibility("Accessibility", "APP SETTINGS"),
     Windows("Windows Settings", "APP SETTINGS"),
 
     // Auth
@@ -74,15 +101,11 @@ enum class SettingsCategory(val title: String, val group: String) {
 
 @Composable
 /**
- * Settings shell.
+ * Settings shell with Stoat / Discord-style off-centered layout.
  *
- * The old layout was a 280dp sidebar of clickable text next to a content
- * column padded `start=40, top=60, end=100, bottom=40`, with the close button
- * floating in the top-right corner on a circle outline. On a 2560px monitor
- * that put the settings column at roughly 40% of the window with a third of it
- * empty; the content is now width-capped and centred, the sidebar is a real
- * navigation list, and closing is a labelled control in the header where you
- * expect it.
+ * The sidebar is right-aligned in the left region, placing it close beside
+ * the content column rather than pinned to the far-left screen border.
+ * The ESC close button stays pinned at the top right of the content area.
  */
 fun SettingsScreen(
     repository: OrbitRepository,
@@ -94,145 +117,181 @@ fun SettingsScreen(
     var selectedCategory by remember { mutableStateOf(SettingsCategory.MyAccount) }
     val t = rememberCosmicTokens()
     val listState = rememberLazyListState()
+    val focusRequester = remember { FocusRequester() }
 
-    Row(modifier = modifier.fillMaxSize().background(t.Bg)) {
-        // - Sidebar
-        Column(
-            modifier = Modifier
-                .width(232.dp)
-                .fillMaxHeight()
-                .background(t.Drawer_Bg)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp)
-                    .padding(horizontal = OrbitSpace.lg),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Settings",
-                    style = MaterialTheme.typography.titleSmall.copy(
-                        color = t.Text_White,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 14.sp,
-                        letterSpacing = 0.sp
-                    )
-                )
+    var currentUser by remember { mutableStateOf<OrbitUser?>(null) }
+    LaunchedEffect(Unit) {
+        currentUser = repository.getCurrentUser()
+        focusRequester.requestFocus()
+    }
+
+    Row(
+        modifier = modifier
+            .fillMaxSize()
+            .background(t.Drawer_Bg)
+            .focusRequester(focusRequester)
+            .focusable()
+            .onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                    onBack()
+                    true
+                } else false
             }
-            androidx.compose.material3.HorizontalDivider(color = t.Separator, thickness = 1.dp)
+    ) {
+        // - Left Region: Sidebar aligned to TopEnd (pushed towards center!)
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight(),
+            contentAlignment = Alignment.TopEnd
+        ) {
+            Column(
+                modifier = Modifier
+                    .width(236.dp)
+                    .fillMaxHeight()
+                    .padding(top = 56.dp, start = 12.dp, end = 20.dp, bottom = 32.dp)
+            ) {
+                // Featured "My Account" user tile at top
+                SettingsUserAccountTile(
+                    user = currentUser,
+                    selected = selectedCategory == SettingsCategory.MyAccount,
+                    onClick = { selectedCategory = SettingsCategory.MyAccount }
+                )
 
-            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                androidx.compose.foundation.lazy.LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(
-                        top = OrbitSpace.md,
-                        bottom = OrbitSpace.xxl,
-                        start = OrbitSpace.sm,
-                        end = OrbitSpace.sm
-                    ),
-                    verticalArrangement = Arrangement.spacedBy(1.dp)
-                ) {
-                        val categoriesByGroup = SettingsCategory.entries.groupBy { it.group }
-                    categoriesByGroup.forEach { (group, cats) ->
-                        if (group.isNotEmpty()) {
-                            item(key = "group_$group") {
-                                Text(
-                                    text = group,
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = t.Text_Subtle,
-                                        letterSpacing = 0.8.sp,
-                                        fontSize = 9.5.sp
+                Spacer(Modifier.height(14.dp))
+
+                // Sidebar Navigation List
+                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        val categoriesByGroup = SettingsCategory.entries
+                            .filter { it != SettingsCategory.MyAccount }
+                            .groupBy { it.group }
+
+                        categoriesByGroup.forEach { (group, cats) ->
+                            if (group.isNotEmpty()) {
+                                item(key = "group_$group") {
+                                    Text(
+                                        text = group,
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            color = t.Text_Subtle,
+                                            letterSpacing = 0.8.sp,
+                                            fontSize = 9.5.sp
+                                        ),
+                                        modifier = Modifier.padding(
+                                            start = 10.dp,
+                                            top = OrbitSpace.md,
+                                            bottom = OrbitSpace.xs
+                                        )
+                                    )
+                                }
+                            }
+                            items(cats, key = { it.name }) { cat ->
+                                if (cat == SettingsCategory.Logout) {
+                                    HorizontalDivider(
+                                        color = t.Separator.copy(alpha = 0.5f),
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = OrbitSpace.sm)
+                                    )
+                                }
+                                val isSelected = cat == selectedCategory
+                                val isDanger = cat == SettingsCategory.Logout
+                                OrbitListRow(
+                                    title = cat.title,
+                                    onClick = {
+                                        if (isDanger) onLogout() else selectedCategory = cat
+                                    },
+                                    selected = isSelected,
+                                    height = 34.dp,
+                                    showSelectionBar = false,
+                                    leading = OrbitRowLeading(
+                                        icon = settingsIconFor(cat)
                                     ),
-                                    modifier = Modifier.padding(
-                                        start = 10.dp,
-                                        top = if (group == "USER SETTINGS") 0.dp else OrbitSpace.lg,
-                                        bottom = OrbitSpace.xs
+                                    titleStyle = when {
+                                        isDanger -> MaterialTheme.typography.bodyMedium.copy(color = t.Danger, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                        isSelected -> MaterialTheme.typography.bodyMedium.copy(color = t.Text_White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                        else -> MaterialTheme.typography.bodyMedium.copy(color = t.Text_Muted, fontSize = 13.sp)
+                                    }
+                                )
+                            }
+                        }
+
+                        item(key = "footer") {
+                            Spacer(Modifier.height(OrbitSpace.lg))
+                            Column(modifier = Modifier.padding(start = 10.dp, top = 8.dp, bottom = 12.dp)) {
+                                Text(
+                                    text = "Orbit for Desktop",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        color = t.Text_Subtle,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 11.sp
+                                    )
+                                )
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    text = "v0.1.0 • Stable Release",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        color = t.Text_Muted.copy(alpha = 0.6f),
+                                        fontSize = 10.sp
                                     )
                                 )
                             }
                         }
-                        items(cats, key = { it.name }) { cat ->
-                            if (cat == SettingsCategory.Logout) {
-                                androidx.compose.material3.HorizontalDivider(
-                                    color = t.Separator,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = OrbitSpace.sm)
-                                )
-                            }
-                            OrbitListRow(
-                                title = cat.title,
-                                onClick = {
-                                    if (cat == SettingsCategory.Logout) onLogout() else selectedCategory = cat
-                                },
-                                selected = cat == selectedCategory,
-                                height = 32.dp,
-                                showSelectionBar = false,
-                                leading = OrbitRowLeading(icon = settingsIconFor(cat)),
-                                titleStyle = if (cat == SettingsCategory.Logout) {
-                                    MaterialTheme.typography.bodyMedium.copy(color = t.Danger, fontSize = 13.sp)
-                                } else {
-                                    null
-                                }
-                            )
-                        }
                     }
+                    ui.components.OrbitScrollbar(listState = listState, modifier = Modifier.align(Alignment.CenterEnd))
                 }
-                ui.components.OrbitScrollbar(listState = listState, modifier = Modifier.align(Alignment.CenterEnd))
             }
         }
 
-        // - Content
-        Column(modifier = Modifier.weight(1f).fillMaxHeight().background(t.Bg)) {
+        // - Right Region: Content panel container with distinct background + ESC button
+        Box(
+            modifier = Modifier
+                .weight(1.5f)
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp))
+                .background(t.Sunken)
+                .border(
+                    width = 1.dp,
+                    color = t.Separator.copy(alpha = 0.35f),
+                    shape = RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp)
+                ),
+            contentAlignment = Alignment.TopStart
+        ) {
             Row(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp)
-                    .background(t.Header_Bg)
-                    .padding(horizontal = OrbitSpace.lg),
-                verticalAlignment = Alignment.CenterVertically
+                    .fillMaxSize()
+                    .padding(top = 48.dp, start = 36.dp, end = 32.dp, bottom = 32.dp)
             ) {
-                Text(
-                    text = selectedCategory.title,
-                    style = MaterialTheme.typography.titleSmall.copy(
-                        color = t.Text_White,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 14.sp,
-                        letterSpacing = 0.sp
-                    ),
-                    modifier = Modifier.weight(1f)
-                )
-                ui.components.OrbitButton(
-                    text = "Done",
-                    onClick = onBack,
-                    tone = ui.components.OrbitButtonTone.Neutral,
-                    size = 30.dp
-                )
-            }
-            androidx.compose.material3.HorizontalDivider(color = t.Separator, thickness = 1.dp)
-
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                contentAlignment = Alignment.TopCenter
-            ) {
-                // Cap the measure: settings text at 2560px wide is unreadable.
-                // The column has no scroll of its own, so Voice & Video (~600dp
-                // of cards) and the extras panes (~450dp) ran off the bottom of
-                // the window with no way to reach the last rows.
+                // Scrollable content column
                 Column(
                     modifier = Modifier
-                        .widthIn(max = 720.dp)
-                        .fillMaxSize()
+                        .widthIn(min = 400.dp, max = 680.dp)
+                        .weight(1f, fill = false)
+                        .fillMaxHeight()
                         .verticalScroll(rememberScrollState())
-                        .padding(horizontal = OrbitSpace.xxxl, vertical = OrbitSpace.xxl)
+                        .padding(end = 28.dp)
                 ) {
+                    if (selectedCategory != SettingsCategory.MyAccount) {
+                        Text(
+                            text = selectedCategory.title,
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                color = t.Text_White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 18.sp
+                            ),
+                            modifier = Modifier.padding(bottom = OrbitSpace.lg)
+                        )
+                    }
+
                     when (selectedCategory) {
                         SettingsCategory.MyAccount -> {
-                            settingsItem { MyAccountPane(repository) }
-                            settingsItem { VerifyDeviceCard(repository) }
+                            MyAccountPane(
+                                repository = repository,
+                                onLogout = onLogout
+                            )
                         }
                         SettingsCategory.Profiles -> settingsItem { ProfilesPane(repository) }
 
@@ -256,13 +315,157 @@ fun SettingsScreen(
                         SettingsCategory.Windows -> settingsItem { WindowsSettingsPane(settingsManager) }
 
                         SettingsCategory.Logout -> {}
-                        // No `else -> Unit`: a new SettingsCategory would render a
-                        // blank pane with no compiler complaint. Exhaustive `when`
-                        // over the enum makes the compiler flag it instead.
                     }
                 }
+
+                // Close Button fixed at top right of the content area
+                EscCloseButton(
+                    onClick = onBack,
+                    modifier = Modifier.padding(top = 4.dp, end = 4.dp)
+                )
             }
         }
+    }
+}
+
+@Composable
+private fun SettingsUserAccountTile(
+    user: OrbitUser?,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val t = rememberCosmicTokens()
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+
+    val bg by animateColorAsState(
+        targetValue = when {
+            selected -> t.ChannelSelected_Bg
+            hovered -> t.ChannelHover_Bg
+            else -> Color.Transparent
+        },
+        animationSpec = tween(120),
+        label = "userTileBg"
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(bg)
+            .then(
+                if (selected) Modifier.border(1.dp, t.Separator.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
+                else Modifier
+            )
+            .hoverable(interaction)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(t.CardBg)
+        ) {
+            if (!user?.avatarUrl.isNullOrBlank()) {
+                coil3.compose.AsyncImage(
+                    model = user?.avatarUrl,
+                    contentDescription = null,
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize().clip(CircleShape)
+                )
+            } else {
+                OrbitMascotAvatar(
+                    seed = user?.id ?: "me",
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = user?.displayName ?: "Rumi",
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    color = t.Text_White,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = "My Account",
+                style = MaterialTheme.typography.bodySmall.copy(
+                    color = if (selected) t.Text_White.copy(alpha = 0.85f) else t.Text_Muted,
+                    fontSize = 11.sp
+                )
+            )
+        }
+    }
+}
+
+@Composable
+private fun EscCloseButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val t = rememberCosmicTokens()
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+
+    val borderColor by animateColorAsState(
+        targetValue = if (hovered) t.Text_White else t.Text_Muted.copy(alpha = 0.45f),
+        animationSpec = OrbitMotion.SnappyColor,
+        label = "escBorder"
+    )
+    val iconColor by animateColorAsState(
+        targetValue = if (hovered) t.Text_White else t.Text_Muted,
+        animationSpec = OrbitMotion.SnappyColor,
+        label = "escIcon"
+    )
+    val bgColor by animateColorAsState(
+        targetValue = if (hovered) t.CardBgHover else t.CardBg.copy(alpha = 0.5f),
+        animationSpec = OrbitMotion.SnappyColor,
+        label = "escBg"
+    )
+
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = modifier
+            .hoverable(interaction)
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                role = Role.Button,
+                onClick = onClick
+            )
+    ) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(bgColor)
+                .border(1.5.dp, borderColor, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = with(TablerIcons) { X },
+                contentDescription = "Close (Esc)",
+                tint = iconColor,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+        Spacer(Modifier.height(5.dp))
+        Text(
+            text = "ESC",
+            style = MaterialTheme.typography.labelSmall.copy(
+                color = iconColor,
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.sp,
+                letterSpacing = 0.5.sp
+            )
+        )
     }
 }
 
@@ -272,231 +475,528 @@ private fun ColumnScope.settingsItem(content: @Composable () -> Unit) {
 }
 
 private fun settingsIconFor(cat: SettingsCategory): androidx.compose.ui.graphics.vector.ImageVector = when (cat) {
-    SettingsCategory.MyAccount -> Icons.Default.Person
-    SettingsCategory.Profiles -> Icons.Default.Face
-    SettingsCategory.Appearance -> Icons.Default.Palette
-    SettingsCategory.Accessibility -> Icons.Default.Accessibility
-    SettingsCategory.Notifications -> Icons.Default.Notifications
-    SettingsCategory.VoiceVideo -> Icons.Default.Videocam
-    SettingsCategory.Chat -> Icons.Default.Chat
-    SettingsCategory.Windows -> Icons.Default.DesktopWindows
-    SettingsCategory.Logout -> Icons.Default.Logout
+    SettingsCategory.MyAccount -> with(TablerIcons) { User }
+    SettingsCategory.Profiles -> with(TablerIcons) { MoodSmile }
+    SettingsCategory.Appearance -> with(TablerIcons) { Palette }
+    SettingsCategory.Accessibility -> with(TablerIcons) { Accessible }
+    SettingsCategory.Notifications -> with(TablerIcons) { Bell }
+    SettingsCategory.VoiceVideo -> with(TablerIcons) { Video }
+    SettingsCategory.Chat -> with(TablerIcons) { Message }
+    SettingsCategory.Windows -> with(TablerIcons) { DeviceDesktop }
+    SettingsCategory.Logout -> with(TablerIcons) { Logout }
 }
 
-// - My Account Pane
+// ── My Account Pane (Stoat / Discord Styled) ─────────────────────────────────
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun MyAccountPane(repository: OrbitRepository) {
+private fun MyAccountPane(
+    repository: OrbitRepository,
+    onLogout: () -> Unit
+) {
     val coroutineScope = rememberCoroutineScope()
+    val t = rememberCosmicTokens()
+    val clipboard = LocalClipboardManager.current
     var user by remember { mutableStateOf<OrbitUser?>(null) }
     var isEditingName by remember { mutableStateOf(false) }
     var newName by remember { mutableStateOf("") }
-    
+    var showVerifyDialog by remember { mutableStateOf(false) }
+    var showLogoutConfirm by remember { mutableStateOf(false) }
+    var avatarUploading by remember { mutableStateOf(false) }
+
     LaunchedEffect(Unit) {
         user = repository.getCurrentUser()
         newName = user?.displayName ?: ""
     }
-    
+
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(CardBgHover)
-            .padding(24.dp)
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            // Avatar
-            Box(
-                modifier = Modifier
-                    .size(80.dp)
-                    .clip(CircleShape)
-                    .background(Bg)
-                    .clickable { 
-                        coroutineScope.launch {
-                            val bytes = util.pickImageFile()
-                            if (bytes != null) {
-                                // Both of these refreshed `user` unconditionally,
-                                // so a failed avatar upload or name change
-                                // re-read the server, got the *unchanged* user
-                                // back, and showed the old value as though the
-                                // save had worked. Refresh only on success.
-                                repository.uploadAvatar(bytes)
-                                    .onFailureOrNotify("Avatar upload", "Settings")
-                                    .onSuccess {
-                                        user = repository.getCurrentUser()
-                                        OrbitNotices.info("Avatar updated", "Settings")
+        // ── 1. Top Profile Banner Card ──
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(t.CardBg)
+                .border(1.dp, t.Separator.copy(alpha = 0.4f), RoundedCornerShape(16.dp))
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                // Top Banner Graphic (Sunset Pagoda dusk gradient)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(115.dp)
+                        .background(
+                            Brush.linearGradient(
+                                colors = listOf(
+                                    Color(0xFF241432),
+                                    Color(0xFF4C1D45),
+                                    Color(0xFF8B3654),
+                                    Color(0xFFBA544E),
+                                    Color(0xFFE4885E)
+                                )
+                            )
+                        )
+                ) {
+                    // Edit Profile Pencil Button in top-right of banner
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(12.dp)
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(Color(0x66000000))
+                            .border(1.dp, Color(0x33FFFFFF), CircleShape)
+                            .clickable {
+                                newName = user?.displayName ?: ""
+                                isEditingName = true
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = with(TablerIcons) { Pencil },
+                            contentDescription = "Edit Profile",
+                            // Left as pure white deliberately: this glyph sits on a 40%-black scrim over an
+                            // arbitrary avatar image, so the backdrop's lightness is unknown. Any themed
+                            // token would invert with the scheme and vanish against half the photos.
+                            tint = Color.White,
+                            modifier = Modifier.size(17.dp)
+                        )
+                    }
+                }
+
+                // Profile Info Row overlapping the banner
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 20.dp, end = 20.dp, bottom = 18.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Avatar cutout overlapping the banner
+                    Box(
+                        modifier = Modifier
+                            .offset(y = (-32).dp)
+                            .size(76.dp)
+                            .clip(CircleShape)
+                            .background(t.CardBg)
+                            .border(3.5.dp, t.CardBg, CircleShape)
+                            .clickable(enabled = !avatarUploading) {
+                                coroutineScope.launch {
+                                    avatarUploading = true
+                                    val bytes = util.pickImageFile()
+                                    if (bytes != null) {
+                                        repository.uploadAvatar(bytes)
+                                            .onFailureOrNotify("Avatar upload", "Settings")
+                                            .onSuccess {
+                                                user = repository.getCurrentUser()
+                                                OrbitNotices.info("Avatar updated", "Settings")
+                                            }
                                     }
-                            }
+                                    avatarUploading = false
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        val avatarUrl = user?.avatarUrl
+                        if (!avatarUrl.isNullOrBlank()) {
+                            coil3.compose.AsyncImage(
+                                model = avatarUrl,
+                                contentDescription = "Avatar",
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize().clip(CircleShape)
+                            )
+                        } else {
+                            OrbitMascotAvatar(
+                                seed = user?.id ?: "me",
+                                modifier = Modifier.fillMaxSize()
+                            )
                         }
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                if (user?.avatarUrl != null) {
-                    coil3.compose.AsyncImage(
-                        model = user?.avatarUrl,
-                        contentDescription = "Your avatar",
-                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize().clip(CircleShape)
-                    )
-                } else {
-                    Icon(Icons.Default.AccountCircle, null, modifier = Modifier.fillMaxSize(), tint = Accent)
+                    }
+
+                    Spacer(Modifier.width(16.dp))
+
+                    // User name and handle
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(top = 4.dp)
+                    ) {
+                        Text(
+                            text = user?.displayName?.ifBlank { "Orbit User" } ?: "Orbit User",
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                color = t.Text_White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 17.sp
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = user?.id ?: "@unknown:orbit.chat",
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = t.Text_Muted,
+                                fontSize = 12.sp
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    // Edit Profile button
+                    TextButton(
+                        onClick = {
+                            newName = user?.displayName ?: ""
+                            isEditingName = true
+                        },
+                        colors = ButtonDefaults.textButtonColors(
+                            containerColor = t.Sunken,
+                            contentColor = t.Text_White
+                        ),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = "Edit Profile",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                        )
+                    }
                 }
             }
-            
-            Spacer(Modifier.width(16.dp))
-            
-            // Name Info
-            Column(modifier = Modifier.weight(1f)) {
-                if (isEditingName) {
+        }
+
+        // ── 2. Settings Detail Cards ──
+        // Card 1: Username
+        SettingsDetailCardRow(
+            icon = with(TablerIcons) { Mail },
+            title = "Username",
+            value = user?.displayName ?: "Set display name",
+            onClick = {
+                newName = user?.displayName ?: ""
+                isEditingName = true
+            }
+        )
+
+        // Card 2: Matrix User ID
+        SettingsDetailCardRow(
+            icon = with(TablerIcons) { Fingerprint },
+            title = "Matrix User ID",
+            value = user?.id ?: "@unknown:orbit.chat",
+            actionLabel = "Copy",
+            trailingIcon = with(TablerIcons) { Copy },
+            onClick = {
+                val id = user?.id
+                if (!id.isNullOrBlank()) {
+                    clipboard.setText(AnnotatedString(id))
+                    OrbitNotices.info("Copied Matrix ID to clipboard", "Account")
+                }
+            }
+        )
+
+        // Card 3: Password & Session
+        SettingsDetailCardRow(
+            icon = with(TablerIcons) { Lock },
+            title = "Password & Session",
+            value = "•••••••••••••••• (Active E2EE Session)",
+            onClick = null
+        )
+
+        // Card 4: Device Verification
+        SettingsDetailCardRow(
+            icon = with(TablerIcons) { Shield },
+            title = "Device Verification",
+            value = "Configure cross-signing trust & verify sessions with SAS emojis",
+            actionLabel = "Verify",
+            trailingIcon = with(TablerIcons) { ChevronRight },
+            onClick = { showVerifyDialog = true }
+        )
+
+        // Card 5: Log Out
+        SettingsDetailCardRow(
+            icon = with(TablerIcons) { Logout },
+            iconTint = t.Danger,
+            title = "Log Out of Orbit",
+            value = "Sign out of your session on this computer",
+            valueColor = t.Danger.copy(alpha = 0.85f),
+            titleColor = t.Danger,
+            trailingIcon = with(TablerIcons) { ChevronRight },
+            onClick = { showLogoutConfirm = true }
+        )
+    }
+
+    // ── Edit Display Name Dialog ──
+    if (isEditingName) {
+        var saveBusy by remember { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { if (!saveBusy) isEditingName = false },
+            title = {
+                Text(
+                    text = "Edit Display Name",
+                    style = MaterialTheme.typography.titleMedium.copy(color = t.Text_White, fontWeight = FontWeight.Bold)
+                )
+            },
+            text = {
+                Column {
+                    Text(
+                        text = "Enter a new public display name for your profile.",
+                        style = MaterialTheme.typography.bodySmall.copy(color = t.Text_Muted)
+                    )
+                    Spacer(Modifier.height(14.dp))
                     OrbitTextField(
                         value = newName,
                         onValueChange = { newName = it },
                         placeholder = "Display name",
                         singleLine = true,
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
-                    )
-                    Row {
-                        Button(
-                            onClick = {
-                                coroutineScope.launch {
-                                    // The dialog used to close and the old name
-                                    // stay on screen after a failed save, which
-                                    // reads as "it didn't take" rather than "it
-                                    // errored". Keep it open and say why.
-                                    repository.updateDisplayName(newName)
-                                        .onFailureOrNotify("Display name", "Settings")
-                                        .onSuccess {
-                                            user = repository.getCurrentUser()
-                                            isEditingName = false
-                                        }
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Accent)
-                        ) {
-                            Text("Save")
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        TextButton(onClick = { isEditingName = false }) {
-                            Text("Cancel", color = Text_Muted)
-                        }
-                    }
-                } else {
-                    Text(
-                        text = user?.displayName ?: "Unknown",
-                        style = MaterialTheme.typography.titleLarge.copy(color = Text_White, fontWeight = FontWeight.Bold)
-                    )
-                    Text(
-                        text = user?.id ?: "@unknown",
-                        style = MaterialTheme.typography.bodyMedium.copy(color = Text_Muted)
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
-            }
-            
-            if (!isEditingName) {
+            },
+            confirmButton = {
                 Button(
-                    onClick = { isEditingName = true },
-                    colors = ButtonDefaults.buttonColors(containerColor = Accent)
+                    onClick = {
+                        saveBusy = true
+                        coroutineScope.launch {
+                            repository.updateDisplayName(newName)
+                                .onFailureOrNotify("Display name", "Settings")
+                                .onSuccess {
+                                    user = repository.getCurrentUser()
+                                    isEditingName = false
+                                    OrbitNotices.info("Display name updated", "Settings")
+                                }
+                            saveBusy = false
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = t.Accent),
+                    enabled = !saveBusy && newName.isNotBlank()
                 ) {
-                    Text("Edit Profile")
+                    Text("Save", color = t.OnAccent)
                 }
-            }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { isEditingName = false },
+                    enabled = !saveBusy
+                ) {
+                    Text("Cancel", color = t.Text_Muted)
+                }
+            },
+            containerColor = t.CardBg,
+            shape = RoundedCornerShape(14.dp)
+        )
+    }
+
+    // ── Device Verification Dialog ──
+    if (showVerifyDialog) {
+        DeviceVerificationDialog(
+            repository = repository,
+            onDismiss = { showVerifyDialog = false }
+        )
+    }
+
+    // ── Logout Confirmation Dialog ──
+    if (showLogoutConfirm) {
+        AlertDialog(
+            onDismissRequest = { showLogoutConfirm = false },
+            title = {
+                Text(
+                    text = "Log out of Orbit?",
+                    style = MaterialTheme.typography.titleMedium.copy(color = t.Text_White, fontWeight = FontWeight.Bold)
+                )
+            },
+            text = {
+                Text(
+                    text = "You will be returned to the login screen. Your local encryption keys and credentials remain secure.",
+                    style = MaterialTheme.typography.bodySmall.copy(color = t.Text_Muted)
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showLogoutConfirm = false
+                        onLogout()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = t.Danger)
+                ) {
+                    Text("Log Out", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutConfirm = false }) {
+                    Text("Cancel", color = t.Text_Muted)
+                }
+            },
+            containerColor = t.CardBg,
+            shape = RoundedCornerShape(14.dp)
+        )
+    }
+}
+
+@Composable
+private fun SettingsDetailCardRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    iconTint: Color? = null,
+    title: String,
+    titleColor: Color? = null,
+    value: String,
+    valueColor: Color? = null,
+    actionLabel: String? = null,
+    trailingIcon: androidx.compose.ui.graphics.vector.ImageVector? = with(TablerIcons) { ChevronRight },
+    onClick: (() -> Unit)? = null
+) {
+    val t = rememberCosmicTokens()
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+
+    val cardBg by animateColorAsState(
+        targetValue = if (hovered && onClick != null) t.CardBgHover else t.CardBg,
+        animationSpec = tween(120),
+        label = "cardRowBg"
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(cardBg)
+            .border(1.dp, t.Separator.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+            .then(
+                if (onClick != null) {
+                    Modifier
+                        .hoverable(interaction)
+                        .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+                } else Modifier
+            )
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Leading Icon badge in circular Sunken background
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(t.Sunken),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = iconTint ?: t.Text_Secondary,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+
+        Spacer(Modifier.width(14.dp))
+
+        // Center Column: Title & Subtitle/Value
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    color = titleColor ?: t.Text_White,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.5.sp
+                )
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodySmall.copy(
+                    color = valueColor ?: t.Text_Muted,
+                    fontSize = 12.sp
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+
+        // Trailing elements (Action label or chevron)
+        if (actionLabel != null) {
+            Text(
+                text = actionLabel,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    color = t.Accent,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 11.5.sp
+                ),
+                modifier = Modifier.padding(end = 6.dp)
+            )
+        }
+
+        if (trailingIcon != null && onClick != null) {
+            Icon(
+                imageVector = trailingIcon,
+                contentDescription = null,
+                tint = titleColor ?: t.Text_Subtle,
+                modifier = Modifier.size(18.dp)
+            )
         }
     }
 }
 
-/**
- * Start a device verification.
- *
- * `VerificationOverlay` was already complete: it handles an incoming request, the
- * SAS emoji comparison, cancellation and success. What did not exist anywhere in the
- * app was the call that STARTS one -- so Orbit could verify a second device but only
- * after that device asked first. Someone installing Orbit on a new laptop had no way
- * to establish trust with the session they already had, short of opening a different
- * client and asking from there.
- *
- * SAS only, because that is the one method this overlay can complete. QR would need
- * a scanner, and offering a method with no way to finish it is worse than not
- * offering it.
- */
 @Composable
-private fun VerifyDeviceCard(repository: OrbitRepository) {
+private fun DeviceVerificationDialog(
+    repository: OrbitRepository,
+    onDismiss: () -> Unit
+) {
     val scope = rememberCoroutineScope()
     val t = rememberCosmicTokens()
-    var open by remember { mutableStateOf(false) }
     var draft by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var problem by remember { mutableStateOf<String?>(null) }
 
-    if (open) {
-        AlertDialog(
-            onDismissRequest = { if (!busy) open = false },
-            title = { Text("Verify another device", color = t.Text_White) },
-            text = {
-                Column {
-                    Text(
-                        "Enter the Matrix ID of the other device — the same user, so your own ID. " +
-                            "You will be shown emojis to compare.",
-                        color = t.Text_Muted,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    OrbitTextField(
-                        value = draft,
-                        onValueChange = { draft = it; problem = null },
-                        placeholder = "@you:matrix.org",
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    problem?.let {
-                        Spacer(Modifier.height(8.dp))
-                        Text(it, color = t.Danger, style = MaterialTheme.typography.bodySmall)
-                    }
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = {
+            Text(
+                text = "Verify another device",
+                style = MaterialTheme.typography.titleMedium.copy(color = t.Text_White, fontWeight = FontWeight.Bold)
+            )
+        },
+        text = {
+            Column {
+                Text(
+                    text = "Enter the Matrix ID of the other device — the same user, so your own ID. You will be shown emojis to compare.",
+                    color = t.Text_Muted,
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(Modifier.height(12.dp))
+                OrbitTextField(
+                    value = draft,
+                    onValueChange = { draft = it; problem = null },
+                    placeholder = "@you:matrix.org",
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                problem?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(it, color = t.Danger, style = MaterialTheme.typography.bodySmall)
                 }
-            },
-            confirmButton = {
-                Row {
-                    TextButton(
-                        onClick = {
-                            busy = true
-                            scope.launch {
-                                repository.startDeviceVerification(draft)
-                                    // Keep the dialog open on failure and say why. The
-                                    // overlay takes over on success and the dialog
-                                    // closes behind it, so a silent close on failure
-                                    // would leave nothing on screen at all.
-                                    .onSuccess { open = false }
-                                    .onFailure { problem = it.message ?: "Could not start verification" }
-                                busy = false
-                            }
-                        },
-                        enabled = !busy && draft.isNotBlank()
-                    ) { Text("Start", color = t.Accent) }
-                    TextButton(onClick = { open = false }, enabled = !busy) {
-                        Text("Cancel", color = t.Text_Muted)
-                    }
+            }
+        },
+        confirmButton = {
+            Row {
+                TextButton(
+                    onClick = {
+                        busy = true
+                        scope.launch {
+                            repository.startDeviceVerification(draft)
+                                .onSuccess { onDismiss() }
+                                .onFailure { problem = it.message ?: "Could not start verification" }
+                            busy = false
+                        }
+                    },
+                    enabled = !busy && draft.isNotBlank()
+                ) { Text("Start", color = t.Accent) }
+                TextButton(onClick = onDismiss, enabled = !busy) {
+                    Text("Cancel", color = t.Text_Muted)
                 }
-            },
-            containerColor = t.Bg
-        )
-    }
-
-    PrefCard(
-        "Verify another device",
-        "Confirm a second session belongs to you by comparing emojis. Only needed if that session shows a warning about unverified keys.",
-        vertical = true
-    ) {
-        ui.components.OrbitButton(
-            text = "Verify a device",
-            onClick = { problem = null; open = true },
-            tone = ui.components.OrbitButtonTone.Neutral
-        )
-    }
+            }
+        },
+        containerColor = t.CardBg,
+        shape = RoundedCornerShape(14.dp)
+    )
 }
-
-
-
-
 
 @Composable private fun FontSizeCard(settingsManager: SettingsManager) {
     val fontSize by settingsManager.fontSize.collectAsState(50f)
@@ -660,7 +1160,7 @@ private fun themeLabel(theme: ui.theme.Theme): String = when (theme) {
                         ) {
                             if (isSelected) {
                                 Icon(
-                                    imageVector = Icons.Default.Check,
+                                    imageVector = with(TablerIcons) { Check },
                                     contentDescription = "Selected",
                                     tint = if (seed.color.luminance() > 0.4f) Color.Black else Color.White,
                                     modifier = Modifier.size(18.dp)
@@ -681,5 +1181,4 @@ private fun themeLabel(theme: ui.theme.Theme): String = when (theme) {
         }
     }
 }
-
 

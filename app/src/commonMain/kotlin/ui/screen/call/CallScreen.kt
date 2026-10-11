@@ -6,70 +6,84 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.icons.TablerIcons
+import ui.icons.ArrowLeft
+import ui.icons.ArrowsMaximize
+import ui.icons.Check
+import ui.icons.Copy
+import ui.icons.Crop
+import ui.icons.DeviceDesktop
+import ui.icons.HandStop
+import ui.icons.Headphones
+import ui.icons.HeadphonesOff
+import ui.icons.LayoutGrid
+import ui.icons.Maximize
+import ui.icons.Minimize
+import ui.icons.Pin
+import ui.icons.Volume
+import ui.icons.Volume2
+import ui.icons.Window
+import ui.icons.X
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import livekit.soundboardAddCustomSound
 import livekit.soundboardCustomSounds
 import livekit.soundboardRemoveCustomSound
-import util.rememberFilePickerLauncher
 import ui.assets.OrbitBrandMark
 import ui.assets.OrbitDefaultAvatar
+import ui.components.OrbitIconButton
 import ui.icons.OrbitIcons
+import ui.screen.auth.*
+import ui.screen.call.*
+import ui.screen.drawer.*
+import ui.screen.main.*
+import ui.screen.media.*
+import ui.screen.server.*
+import ui.screen.settings.*
 import ui.theme.OrbitConceptBorder
 import ui.theme.OrbitConceptStatus
 import ui.theme.OrbitMotion
 import ui.theme.rememberCosmicTokens
+import util.rememberFilePickerLauncher
 import webrtc.CallManager
 import webrtc.CallShortcuts
 import webrtc.CallState
 import webrtc.DesktopSourceModel
-import kotlin.math.roundToInt
-
-import ui.screen.auth.*
-import ui.components.OrbitIconButton
-import ui.screen.settings.*
-import ui.screen.drawer.*
-import ui.screen.server.*
-import ui.screen.call.*
-import ui.screen.media.*
-import ui.screen.main.*
-
 // ─── Layout mode enum ───────────────────────────────────────────────────────
 enum class CallLayoutMode { Grid, Focus }
 
@@ -176,7 +190,6 @@ fun CallScreen(
         val s = elapsedSeconds % 60
         if (h > 0) String.format("%d:%02d:%02d", h, m, s) else String.format("%02d:%02d", m, s)
     }
-
 
     // Pulsing animation for ringing
     val infiniteTransition = rememberInfiniteTransition()
@@ -290,7 +303,7 @@ fun CallScreen(
                             Spacer(Modifier.height(8.dp))
                             Text(
                                 text = callerName,
-                                color = Color.White,
+                                color = tokens.OnDark,
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1
@@ -327,9 +340,9 @@ fun CallScreen(
 
                 // Expand icon
                 Icon(
-                    Icons.Default.OpenInFull,
+                    with(TablerIcons) { ArrowsMaximize },
                     contentDescription = "Expand",
-                    tint = Color.White.copy(alpha = 0.8f),
+                    tint = tokens.OnDark.copy(alpha = 0.8f),
                     modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(18.dp)
                 )
 
@@ -485,7 +498,7 @@ fun CallScreen(
                                         )
                                     )
                                 )
-                                .border(3.dp, Color.White.copy(alpha = 0.1f), CircleShape),
+                                .border(3.dp, tokens.OnDark.copy(alpha = 0.1f), CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
                             if (callerAvatarUrl != null) {
@@ -510,7 +523,7 @@ fun CallScreen(
 
                     Text(
                         callerName,
-                        color = Color.White,
+                        color = tokens.OnDark,
                         fontSize = 28.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = (-0.5).sp
@@ -535,7 +548,7 @@ fun CallScreen(
                             CallState.CONNECTING -> "Connecting$statusDots"
                             else -> ""
                         },
-                        color = Color.White.copy(alpha = 0.5f),
+                        color = tokens.OnDark.copy(alpha = 0.5f),
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Medium
                     )
@@ -549,12 +562,12 @@ fun CallScreen(
                         Icon(
                             if (isVideoCall) OrbitIcons.Video else OrbitIcons.Call,
                             contentDescription = null,
-                            tint = Color.White.copy(alpha = 0.3f),
+                            tint = tokens.OnDark.copy(alpha = 0.3f),
                             modifier = Modifier.size(16.dp)
                         )
                         Text(
                             if (isVideoCall) "Video Call" else "Voice Call",
-                            color = Color.White.copy(alpha = 0.3f),
+                            color = tokens.OnDark.copy(alpha = 0.3f),
                             fontSize = 13.sp
                         )
                     }
@@ -602,9 +615,9 @@ fun CallScreen(
                         onClick = { callManager.isMinimized.value = true },
                         modifier = Modifier
                             .size(36.dp)
-                            .background(Color.White.copy(alpha = 0.08f), CircleShape)
+                            .background(tokens.OnDark.copy(alpha = 0.08f), CircleShape)
                     ) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Minimize", tint = Color.White, modifier = Modifier.size(18.dp))
+                        Icon(with(TablerIcons) { ArrowLeft }, contentDescription = "Minimize", tint = tokens.OnDark, modifier = Modifier.size(18.dp))
                     }
 
                     Box(
@@ -634,7 +647,7 @@ fun CallScreen(
                     Column {
                         Text(
                             callerName,
-                            color = Color.White,
+                            color = tokens.OnDark,
                             fontSize = 16.sp,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
@@ -723,7 +736,7 @@ fun CallScreen(
                         // radius, `--interactive-normal`; hover
                         // `--interactive-hover`; `.active` `--interactive-active`.
                         CallHeaderActionButton(
-                            icon = if (layoutMode == CallLayoutMode.Grid) Icons.Default.GridView else Icons.Default.CropFree,
+                            icon = if (layoutMode == CallLayoutMode.Grid) with(TablerIcons) { LayoutGrid } else with(TablerIcons) { Crop },
                             contentDescription = if (layoutMode == CallLayoutMode.Grid) {
                                 "Switch to focus view"
                             } else {
@@ -739,7 +752,7 @@ fun CallScreen(
                             }
                         )
                         CallHeaderActionButton(
-                            icon = if (isStageMaximized) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                            icon = if (isStageMaximized) with(TablerIcons) { Minimize } else with(TablerIcons) { Maximize },
                             contentDescription = if (isStageMaximized) {
                                 "Exit full screen (Escape)"
                             } else {
@@ -815,7 +828,7 @@ fun CallScreen(
                     Spacer(Modifier.height(28.dp))
                     Text(
                         "Incoming Call",
-                        color = Color.White.copy(alpha = 0.5f),
+                        color = tokens.OnDark.copy(alpha = 0.5f),
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
                         letterSpacing = 1.sp
@@ -823,7 +836,7 @@ fun CallScreen(
                     Spacer(Modifier.height(8.dp))
                     Text(
                         callerName,
-                        color = Color.White,
+                        color = tokens.OnDark,
                         fontSize = 28.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = (-0.5).sp
@@ -1001,7 +1014,7 @@ fun SoundboardPanel(
         shape = RoundedCornerShape(16.dp),
         color = ui.theme.Ink650.copy(alpha = 0.95f),
         shadowElevation = 16.dp,
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
+        border = BorderStroke(1.dp, tokens.OnDark.copy(alpha = 0.06f)),
         modifier = modifier.width(360.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -1012,7 +1025,7 @@ fun SoundboardPanel(
             ) {
                 Text(
                     "Soundboard",
-                    color = Color.White,
+                    color = tokens.OnDark,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -1020,7 +1033,7 @@ fun SoundboardPanel(
                     onClick = onDismiss,
                     modifier = Modifier.size(28.dp)
                 ) {
-                    Icon(Icons.Default.Close, null, tint = Color.White.copy(alpha = 0.5f), modifier = Modifier.size(16.dp))
+                    Icon(with(TablerIcons) { X }, null, tint = tokens.OnDark.copy(alpha = 0.5f), modifier = Modifier.size(16.dp))
                 }
             }
 
@@ -1035,15 +1048,15 @@ fun SoundboardPanel(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Icon(
-                        Icons.Default.VolumeOff,
+                        with(TablerIcons) { Volume2 },
                         null,
-                        tint = Color.White.copy(alpha = 0.35f),
+                        tint = tokens.OnDark.copy(alpha = 0.35f),
                         modifier = Modifier.size(28.dp)
                     )
                     Spacer(Modifier.height(12.dp))
                     Text(
                         "Not available in a 1:1",
-                        color = Color.White,
+                        color = tokens.OnDark,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -1052,7 +1065,7 @@ fun SoundboardPanel(
                         "Sounds need to travel to the other person, and this call's audio goes " +
                             "through a path that cannot carry them. Start a call from the room " +
                             "instead, or join one that is already running.",
-                        color = Color.White.copy(alpha = 0.55f),
+                        color = tokens.OnDark.copy(alpha = 0.55f),
                         fontSize = 12.sp,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
@@ -1113,7 +1126,7 @@ fun SoundboardPanel(
                                     Spacer(Modifier.height(2.dp))
                                     Text(
                                         effect.name,
-                                        color = Color.White.copy(alpha = 0.6f),
+                                        color = tokens.OnDark.copy(alpha = 0.6f),
                                         fontSize = 10.sp,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
@@ -1155,9 +1168,9 @@ fun SoundboardPanel(
                                             .size(18.dp)
                                     ) {
                                         Icon(
-                                            Icons.Default.Close,
+                                            with(TablerIcons) { X },
                                             contentDescription = "Remove ${custom.displayName}",
-                                            tint = Color.White.copy(alpha = 0.45f),
+                                            tint = tokens.OnDark.copy(alpha = 0.45f),
                                             modifier = Modifier.size(10.dp)
                                         )
                                     }
@@ -1184,7 +1197,7 @@ fun SoundboardPanel(
                                     Text("＋", fontSize = 22.sp, color = tokens.Accent)
                                     Text(
                                         "Add",
-                                        color = Color.White.copy(alpha = 0.6f),
+                                        color = tokens.OnDark.copy(alpha = 0.6f),
                                         fontSize = 10.sp
                                     )
                                 }
@@ -1205,7 +1218,7 @@ fun SoundboardPanel(
                 Spacer(Modifier.height(6.dp))
                 Text(
                     "Upload your own (WAV/AIFF/AU, max 10 s)",
-                    color = Color.White.copy(alpha = 0.35f),
+                    color = tokens.OnDark.copy(alpha = 0.35f),
                     fontSize = 10.sp
                 )
             }
@@ -1219,7 +1232,7 @@ fun SoundboardPanel(
             ) {
                 Text(
                     "Volume",
-                    color = Color.White.copy(alpha = 0.6f),
+                    color = tokens.OnDark.copy(alpha = 0.6f),
                     fontSize = 12.sp
                 )
                 Slider(
@@ -1232,7 +1245,7 @@ fun SoundboardPanel(
                     modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
                 )
                 TextButton(onClick = { callManager.stopSoundEffects() }) {
-                    Text("Stop All", color = Color.White, fontSize = 12.sp)
+                    Text("Stop All", color = tokens.OnDark, fontSize = 12.sp)
                 }
             }
         }
@@ -1260,7 +1273,7 @@ private fun ShareOptionRow(
     ) {
         Text(
             label,
-            color = Color.White.copy(alpha = 0.6f),
+            color = tokens.OnDark.copy(alpha = 0.6f),
             fontSize = 12.sp,
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.width(72.dp)
@@ -1272,7 +1285,7 @@ private fun ShareOptionRow(
                 color = if (isSelected) tokens.Accent.copy(alpha = 0.25f) else ui.theme.Ink700,
                 border = BorderStroke(
                     1.dp,
-                    if (isSelected) tokens.Accent else Color.White.copy(alpha = 0.08f)
+                    if (isSelected) tokens.Accent else tokens.OnDark.copy(alpha = 0.08f)
                 ),
                 modifier = Modifier
                     .clip(RoundedCornerShape(8.dp))
@@ -1280,7 +1293,7 @@ private fun ShareOptionRow(
             ) {
                 Text(
                     option,
-                    color = if (isSelected) Color.White else Color.White.copy(alpha = 0.7f),
+                    color = if (isSelected) tokens.OnDark else tokens.OnDark.copy(alpha = 0.7f),
                     fontSize = 12.sp,
                     fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
@@ -1328,7 +1341,7 @@ fun ScreenShareDialog(
         title = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(OrbitIcons.ScreenShare, null, tint = tokens.Accent, modifier = Modifier.size(22.dp))
-                Text("Share Your Screen", color = Color.White, fontWeight = FontWeight.Bold)
+                Text("Share Your Screen", color = tokens.OnDark, fontWeight = FontWeight.Bold)
             }
         },
         text = {
@@ -1340,7 +1353,7 @@ fun ScreenShareDialog(
                 Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
                     Text(
                         loadError ?: "",
-                        color = Color.White.copy(alpha = 0.7f),
+                        color = tokens.OnDark.copy(alpha = 0.7f),
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                         modifier = Modifier.padding(horizontal = 24.dp)
                     )
@@ -1382,7 +1395,7 @@ fun ScreenShareDialog(
                                 ),
                                 border = BorderStroke(
                                     1.dp,
-                                    if (isHovered) tokens.Accent.copy(alpha = 0.4f) else Color.White.copy(alpha = 0.06f)
+                                    if (isHovered) tokens.Accent.copy(alpha = 0.4f) else tokens.OnDark.copy(alpha = 0.06f)
                                 ),
                                 shape = RoundedCornerShape(12.dp)
                             ) {
@@ -1392,7 +1405,7 @@ fun ScreenShareDialog(
                                     verticalArrangement = Arrangement.Center
                                 ) {
                                     Icon(
-                                        if (source.isWindow) Icons.Default.Window else Icons.Default.Monitor,
+                                        if (source.isWindow) with(TablerIcons) { Window } else with(TablerIcons) { DeviceDesktop },
                                         contentDescription = null,
                                         tint = tokens.Accent,
                                         modifier = Modifier.size(36.dp)
@@ -1400,7 +1413,7 @@ fun ScreenShareDialog(
                                     Spacer(Modifier.height(8.dp))
                                     Text(
                                         source.name,
-                                        color = Color.White,
+                                        color = tokens.OnDark,
                                         fontSize = 12.sp,
                                         maxLines = 2,
                                         overflow = TextOverflow.Ellipsis,
@@ -1448,8 +1461,8 @@ fun ScreenShareDialog(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Column {
-                                Text("Share System Audio", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                                Text("Others will hear audio from your computer", color = Color.White.copy(alpha = 0.4f), fontSize = 12.sp)
+                                Text("Share System Audio", color = tokens.OnDark, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                Text("Others will hear audio from your computer", color = tokens.OnDark.copy(alpha = 0.4f), fontSize = 12.sp)
                             }
                         }
                     }
@@ -1458,7 +1471,7 @@ fun ScreenShareDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel", color = Color.White.copy(alpha = 0.6f))
+                Text("Cancel", color = tokens.OnDark.copy(alpha = 0.6f))
             }
         }
     )
@@ -1553,6 +1566,7 @@ internal fun identityIsSpeaking(identity: String?, speakers: Set<String>): Boole
  */
 @Composable
 internal fun ConnectionQualityBars(bars: Int, modifier: Modifier = Modifier) {
+    val t = rememberCosmicTokens()
     val litColor = when {
         bars >= 3 -> ui.theme.Sage500
         bars == 2 -> ui.theme.Amber500
@@ -1568,7 +1582,7 @@ internal fun ConnectionQualityBars(bars: Int, modifier: Modifier = Modifier) {
                 modifier = Modifier
                     .size(width = 3.dp, height = height)
                     .background(
-                        if (index < bars) litColor else Color.White.copy(alpha = 0.25f),
+                        if (index < bars) litColor else t.OnDark.copy(alpha = 0.25f),
                         RoundedCornerShape(1.dp)
                     )
             )
@@ -1620,7 +1634,7 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
     // over by it.
     // Discord convention: the speaker's name goes green while they talk.
     val nameColor by animateColorAsState(
-        if (isSpeaking) OrbitConceptStatus.online else Color.White,
+        if (isSpeaking) OrbitConceptStatus.online else tokens.OnDark,
         animationSpec = tween(durationMillis = 240),
         label = "speakerNameColor"
     )
@@ -1784,7 +1798,7 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                         } else {
                             Text(
                                 node.name.take(1).uppercase(),
-                                color = Color.White,
+                                color = tokens.OnDark,
                                 // Scales with the circle, so a large tile does not
                                 // render a single 26sp letter floating in the middle.
                                 fontSize = (avatarSize.value * 0.4f).sp,
@@ -1811,13 +1825,13 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
             ) {
                 Text(
                     "Screen share can't be received",
-                    color = Color.White,
+                    color = tokens.OnDark,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
                     "${node.name}'s share is being sent but its video never attaches.",
-                    color = Color.White.copy(alpha = 0.7f),
+                    color = tokens.OnDark.copy(alpha = 0.7f),
                     fontSize = 12.sp
                 )
                 Button(
@@ -1843,7 +1857,7 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                     .padding(horizontal = 7.dp, vertical = 5.dp)
             ) {
                 Icon(
-                    Icons.Default.PanTool,
+                    with(TablerIcons) { HandStop },
                     contentDescription = "Hand raised",
                     tint = ui.theme.Ink950,
                     modifier = Modifier.size(14.dp)
@@ -1946,7 +1960,7 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                         .padding(horizontal = 6.dp, vertical = 4.dp)
                 ) {
                     Icon(
-                        Icons.Default.HeadsetOff,
+                        with(TablerIcons) { HeadphonesOff },
                         contentDescription = "Deafened",
                         tint = Color.White,
                         modifier = Modifier.size(12.dp)
@@ -2055,9 +2069,9 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                     modifier = Modifier.size(24.dp)
                 ) {
                     Icon(
-                        if (volume == 0f) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp,
+                        if (volume == 0f) with(TablerIcons) { Volume2 } else with(TablerIcons) { Volume },
                         contentDescription = if (volume == 0f) "Unmute participant locally" else "Mute participant locally",
-                        tint = if (volume == 0f) ui.theme.Rust500 else Color.White.copy(alpha = 0.85f),
+                        tint = if (volume == 0f) ui.theme.Rust500 else tokens.OnDark.copy(alpha = 0.85f),
                         modifier = Modifier.size(14.dp)
                     )
                 }
@@ -2088,7 +2102,7 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
 
                 Text(
                     node.name,
-                    color = Color.White.copy(alpha = 0.9f),
+                    color = tokens.OnDark.copy(alpha = 0.9f),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
@@ -2105,9 +2119,9 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Icon(
-                        if (menuVolume == 0f) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp,
+                        if (menuVolume == 0f) with(TablerIcons) { Volume2 } else with(TablerIcons) { Volume },
                         contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.7f),
+                        tint = tokens.OnDark.copy(alpha = 0.7f),
                         modifier = Modifier.size(16.dp)
                     )
                     Slider(
@@ -2118,7 +2132,7 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                     )
                     Text(
                         "${(menuVolume * 100).toInt()}%",
-                        color = Color.White.copy(alpha = 0.7f),
+                        color = tokens.OnDark.copy(alpha = 0.7f),
                         fontSize = 11.sp
                     )
                 }
@@ -2146,7 +2160,7 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                     },
                     leadingIcon = {
                         Icon(
-                            if (menuVolume == 0f) Icons.Filled.VolumeUp else Icons.Filled.VolumeOff,
+                            if (menuVolume == 0f) with(TablerIcons) { Volume } else with(TablerIcons) { Volume2 },
                             contentDescription = null,
                             modifier = Modifier.size(16.dp)
                         )
@@ -2160,7 +2174,7 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                     text = { Text("Copy user ID") },
                     leadingIcon = {
                         Icon(
-                            Icons.Filled.ContentCopy,
+                            with(TablerIcons) { Copy },
                             contentDescription = null,
                             modifier = Modifier.size(16.dp)
                         )
@@ -2175,7 +2189,7 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                         text = { Text(if (isPinned) "Unpin" else "Pin") },
                         leadingIcon = {
                             Icon(
-                                Icons.Filled.PushPin,
+                                with(TablerIcons) { Pin },
                                 contentDescription = null,
                                 modifier = Modifier.size(16.dp)
                             )
@@ -2226,6 +2240,7 @@ fun AudioDeviceMenu(
     expanded: Boolean,
     onDismiss: () -> Unit
 ) {
+    val t = rememberCosmicTokens()
     var inputs by remember { mutableStateOf<List<String>>(emptyList()) }
     var outputs by remember { mutableStateOf<List<String>>(emptyList()) }
     var cameras by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -2257,7 +2272,7 @@ fun AudioDeviceMenu(
             "INPUT DEVICE",
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             style = MaterialTheme.typography.labelSmall.copy(
-                color = Color.White.copy(alpha = 0.4f),
+                color = t.OnDark.copy(alpha = 0.4f),
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 0.5.sp
             )
@@ -2268,7 +2283,7 @@ fun AudioDeviceMenu(
                 text = {
                     Text(
                         device,
-                        color = if (isSelected) Color.White else Color.White.copy(alpha = 0.75f),
+                        color = if (isSelected) t.OnDark else t.OnDark.copy(alpha = 0.75f),
                         fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                         fontSize = 13.sp,
                         maxLines = 2,
@@ -2282,24 +2297,24 @@ fun AudioDeviceMenu(
                     onDismiss()
                 },
                 leadingIcon = {
-                    Icon(OrbitIcons.Mic, null, tint = Color.White.copy(alpha = 0.4f), modifier = Modifier.size(16.dp))
+                    Icon(OrbitIcons.Mic, null, tint = t.OnDark.copy(alpha = 0.4f), modifier = Modifier.size(16.dp))
                 },
                 trailingIcon = {
                     if (isSelected) {
-                        Icon(Icons.Default.Check, contentDescription = "Active device", tint = Color(0xFF23A55A), modifier = Modifier.size(16.dp))
+                        Icon(with(TablerIcons) { Check }, contentDescription = "Active device", tint = Color(0xFF23A55A), modifier = Modifier.size(16.dp))
                     }
                 }
             )
         }
 
-        HorizontalDivider(color = Color.White.copy(alpha = 0.05f), modifier = Modifier.padding(vertical = 4.dp))
+        HorizontalDivider(color = t.OnDark.copy(alpha = 0.05f), modifier = Modifier.padding(vertical = 4.dp))
 
         // ── OUTPUT DEVICE ──
         Text(
             "OUTPUT DEVICE",
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             style = MaterialTheme.typography.labelSmall.copy(
-                color = Color.White.copy(alpha = 0.4f),
+                color = t.OnDark.copy(alpha = 0.4f),
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 0.5.sp
             )
@@ -2310,7 +2325,7 @@ fun AudioDeviceMenu(
                 text = {
                     Text(
                         device,
-                        color = if (isSelected) Color.White else Color.White.copy(alpha = 0.75f),
+                        color = if (isSelected) t.OnDark else t.OnDark.copy(alpha = 0.75f),
                         fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                         fontSize = 13.sp,
                         maxLines = 2,
@@ -2324,23 +2339,23 @@ fun AudioDeviceMenu(
                     onDismiss()
                 },
                 leadingIcon = {
-                    Icon(Icons.Default.Headphones, null, tint = Color.White.copy(alpha = 0.4f), modifier = Modifier.size(16.dp))
+                    Icon(with(TablerIcons) { Headphones }, null, tint = t.OnDark.copy(alpha = 0.4f), modifier = Modifier.size(16.dp))
                 },
                 trailingIcon = {
                     if (isSelected) {
-                        Icon(Icons.Default.Check, contentDescription = "Active device", tint = Color(0xFF23A55A), modifier = Modifier.size(16.dp))
+                        Icon(with(TablerIcons) { Check }, contentDescription = "Active device", tint = Color(0xFF23A55A), modifier = Modifier.size(16.dp))
                     }
                 }
             )
         }
-        HorizontalDivider(color = Color.White.copy(alpha = 0.05f), modifier = Modifier.padding(vertical = 4.dp))
+        HorizontalDivider(color = t.OnDark.copy(alpha = 0.05f), modifier = Modifier.padding(vertical = 4.dp))
 
         // ── CAMERA ──
         Text(
             "CAMERA",
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             style = MaterialTheme.typography.labelSmall.copy(
-                color = Color.White.copy(alpha = 0.4f),
+                color = t.OnDark.copy(alpha = 0.4f),
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 0.5.sp
             )
@@ -2351,7 +2366,7 @@ fun AudioDeviceMenu(
                 text = {
                     Text(
                         device,
-                        color = if (isSelected) Color.White else Color.White.copy(alpha = 0.75f),
+                        color = if (isSelected) t.OnDark else t.OnDark.copy(alpha = 0.75f),
                         fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                         fontSize = 13.sp,
                         maxLines = 2,
@@ -2363,11 +2378,11 @@ fun AudioDeviceMenu(
                     onDismiss()
                 },
                 leadingIcon = {
-                    Icon(OrbitIcons.Video, null, tint = Color.White.copy(alpha = 0.4f), modifier = Modifier.size(16.dp))
+                    Icon(OrbitIcons.Video, null, tint = t.OnDark.copy(alpha = 0.4f), modifier = Modifier.size(16.dp))
                 },
                 trailingIcon = {
                     if (isSelected) {
-                        Icon(Icons.Default.Check, contentDescription = "Active camera", tint = Color(0xFF23A55A), modifier = Modifier.size(16.dp))
+                        Icon(with(TablerIcons) { Check }, contentDescription = "Active camera", tint = Color(0xFF23A55A), modifier = Modifier.size(16.dp))
                     }
                 }
             )

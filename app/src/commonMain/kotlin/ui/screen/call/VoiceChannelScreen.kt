@@ -6,26 +6,24 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.runtime.*
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import webrtc.CallManager
-import repository.MatrixOrbitRepository
-
-import androidx.compose.ui.Alignment
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Call
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import ui.icons.TablerIcons
+import ui.icons.Phone
 import kotlinx.coroutines.launch
-import webrtc.CallState
+import repository.MatrixOrbitRepository
 import ui.model.OrbitChannel
 import ui.screen.call.CallLayoutMode
 import ui.screen.call.ScreenShareDialog
-
+import webrtc.CallManager
+import webrtc.CallState
 /**
  * Join (or start) the MatrixRTC call in [roomId] and connect [callManager] to it.
  *
@@ -146,7 +144,7 @@ fun VoiceChannelScreen(
                                 enabled = !pendingVoiceJoin && callState != CallState.CONNECTING,
                                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                             ) {
-                                Icon(Icons.Filled.Call, contentDescription = null)
+                                Icon(with(TablerIcons) { Phone }, contentDescription = null)
                                 Spacer(Modifier.padding(horizontal = 4.dp))
                                 Text("Connect to Voice")
                             }

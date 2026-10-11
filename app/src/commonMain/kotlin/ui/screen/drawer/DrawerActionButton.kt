@@ -7,15 +7,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Groups
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.icons.TablerIcons
+import ui.icons.Users
 import ui.components.OrbitButton
 import ui.components.OrbitButtonTone
 import ui.components.OrbitCallout
@@ -25,7 +24,6 @@ import ui.components.OrbitRowLeading
 import ui.model.OrbitServer
 import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
-
 // `DrawerActionButton` used to live in this file: a prominent full-width row for
 // "Invite People" / "Roles & permissions" / "Create a room", drawn straight under
 // the server name. It went unused when those three were moved out of the drawer --
@@ -44,7 +42,7 @@ internal fun InviteDialog(server: OrbitServer, onDismiss: () -> Unit) {
     OrbitDialog(
         title = "Invite to ${server.name}",
         subtitle = "Share this server's ID so friends can find it.",
-        icon = Icons.Default.Groups,
+        icon = with(TablerIcons) { Users },
         onDismissRequest = onDismiss,
         confirmLabel = "Copy server ID",
         onConfirm = {

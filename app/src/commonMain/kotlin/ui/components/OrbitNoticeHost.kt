@@ -14,8 +14,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
@@ -35,19 +39,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.systemBars
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
+import ui.icons.TablerIcons
+import ui.icons.X
 import kotlinx.coroutines.delay
 import ui.icons.OrbitIcons
 import ui.theme.LocalReduceMotion
 import ui.theme.OrbitRadius
 import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
-
 /**
  * Renders [OrbitNotices] as a stack anchored to the bottom-end of its parent.
  *
@@ -160,7 +159,7 @@ private fun OrbitNoticeCard(notice: OrbitNotice) {
                     contentAlignment = Alignment.Center
                 ) {
                     androidx.compose.material3.Icon(
-                        imageVector = Icons.Default.Close,
+                        imageVector = with(TablerIcons) { X },
                         contentDescription = "Dismiss",
                         tint = t.Text_Subtle,
                         modifier = Modifier.width(14.dp)

@@ -25,10 +25,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Explore
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -40,6 +36,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import ui.icons.TablerIcons
+import ui.icons.Compass
+import ui.icons.Plus
+import ui.icons.Settings
 import ui.assets.OrbitAppLogo
 import ui.assets.OrbitServerAssetIcon
 import ui.components.HoverTooltip
@@ -50,8 +50,8 @@ import ui.theme.OrbitConceptMetrics
 import ui.theme.OrbitConceptStatus
 import ui.theme.OrbitMotion
 import ui.theme.OrbitSpace
+import ui.theme.pastelServerColor
 import ui.theme.rememberCosmicTokens
-
 /**
  * The server rail.
  *
@@ -114,7 +114,7 @@ fun ServerRail(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(
-                        top = OrbitSpace.md,
+                        top = 0.dp,
                         bottom = OrbitSpace.sm
                     ),
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -144,11 +144,15 @@ fun ServerRail(
 
                     items(spaces, key = { it.id }, contentType = { "space" }) { server ->
                         val isSelected = server.id == selectedServerId
+                        // Stable per server, so a tile keeps its colour across
+                        // restarts and matches everywhere else it appears.
+                        val pastel = pastelServerColor(server.id)
                         ServerRailItem(
                             selected = isSelected,
                             unreadCount = unreadByServer[server.id] ?: 0,
                             onClick = { onServerClick(server.id) },
-                            label = server.name
+                            label = server.name,
+                            idleFill = pastel
                         ) { hovered, shape ->
                             if (server.avatarUrl != null) {
                                 coil3.compose.AsyncImage(
@@ -159,8 +163,8 @@ fun ServerRail(
                                 )
                             } else {
                                 OrbitServerAssetIcon(
-                                    label = initialsOf(server.name),
-                                    color = Color(server.iconColor),
+                                    label = server.name,
+                                    color = pastel,
                                     modifier = Modifier.size(48.dp).clip(shape)
                                 )
                             }
@@ -169,14 +173,14 @@ fun ServerRail(
 
                     item(key = "add") {
                         RailActionTile(
-                            icon = Icons.Default.Add,
+                            icon = with(TablerIcons) { Plus },
                             description = "Create or join a server",
                             onClick = onAddServerClick
                         )
                     }
                     item(key = "discover") {
                         RailActionTile(
-                            icon = Icons.Default.Explore,
+                            icon = with(TablerIcons) { Compass },
                             description = "Discover servers",
                             onClick = onExploreClick
                         )
@@ -216,6 +220,10 @@ private fun RailDivider() {
  * One composable rather than a wrapper with an empty content lambda. The previous
  * version nested the tooltip inside itself, so the popup measured against a
  * zero-content parent and landed in the wrong place.
+ *
+ * [idleFill] is the resting background, overriding the theme's `Rail_Idle`.
+ * Server tiles pass their own pastel so the rail shows the curated set; the DM
+ * tile passes nothing and keeps `Rail_Idle` exactly as before.
  */
 @Composable
 private fun ServerRailItem(
@@ -223,9 +231,16 @@ private fun ServerRailItem(
     unreadCount: Int,
     onClick: () -> Unit,
     label: String,
+    idleFill: Color? = null,
     content: @Composable (hovered: Boolean, shape: androidx.compose.ui.graphics.Shape) -> Unit
 ) {
     val t = rememberCosmicTokens()
+
+    // Null means "no override", which resolves to the theme's `Rail_Idle` --
+    // the DM tile's original resting colour. Defaulting to a concrete colour
+    // here instead would silently repaint that tile, so the nullable form is
+    // what keeps this parameter purely additive.
+    val restFill = idleFill ?: t.Rail_Idle
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
 
@@ -263,7 +278,7 @@ private fun ServerRailItem(
                     .width(4.dp)
                     .height(pillHeight)
                     .clip(RoundedCornerShape(topEnd = 4.dp, bottomEnd = 4.dp))
-                    .background(if (pillVisible) Color.White else Color.Transparent)
+                    .background(if (pillVisible) t.OnNeutral else Color.Transparent)
             )
 
             // Discord's signature shape change: a full circle at rest that squares
@@ -278,9 +293,11 @@ private fun ServerRailItem(
             )
 
             val fill by animateColorAsState(
-                // The flood. This is the change that was missing: hover fills the
-                // whole tile with blurple rather than only reshaping it.
-                targetValue = if (selected || hovered) t.Accent else t.Rail_Idle,
+                // The flood, matching the DM tile exactly: at rest the server's
+                // own pastel, then blurple on hover or selection. Clicking does
+                // not need a second colour signal because the shape animation
+                // above already carries selection on its own.
+                targetValue = if (selected || hovered) t.Accent else restFill,
                 animationSpec = OrbitMotion.SnappyColor,
                 label = "railTileFill"
             )
@@ -427,7 +444,7 @@ private fun RailSettingsTile(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Default.Settings,
+                    imageVector = with(TablerIcons) { Settings },
                     contentDescription = "Settings",
                     tint = tint,
                     modifier = Modifier.size(22.dp)

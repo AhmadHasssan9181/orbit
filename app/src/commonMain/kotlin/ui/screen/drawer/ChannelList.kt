@@ -26,8 +26,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -50,6 +48,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.icons.TablerIcons
+import ui.icons.ChevronDown
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.flowOf
@@ -69,7 +69,6 @@ import ui.theme.OrbitMotion
 import ui.theme.OrbitRadius
 import ui.theme.OrbitSpace
 import webrtc.LocalCallManager
-
 /**
  * The channel list. The concept's `.channels-scrollable` plus every category and
  * row inside it.
@@ -259,7 +258,7 @@ internal fun ChannelSectionHeader(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
-                    imageVector = Icons.Default.KeyboardArrowDown,
+                    imageVector = with(TablerIcons) { ChevronDown },
                     contentDescription = null,
                     // The concept does not colour the chevron separately; it
                     // inherits the heading's own colour, which is why it steps to

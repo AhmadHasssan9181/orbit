@@ -1,7 +1,5 @@
 package ui.screen.drawer
 
-import webrtc.LocalCallManager
-
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -28,12 +26,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Chat
-import androidx.compose.material.icons.filled.Groups
-import androidx.compose.material.icons.filled.Monitor
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -57,6 +49,12 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.icons.TablerIcons
+import ui.icons.DeviceDesktop
+import ui.icons.DeviceGamepad
+import ui.icons.Message
+import ui.icons.Search
+import ui.icons.Users
 import kotlinx.coroutines.flow.flowOf
 import ui.assets.OrbitVerifiedBadge
 import ui.assets.isOrbitVerifiedUser
@@ -69,7 +67,7 @@ import ui.theme.OrbitConceptMetrics
 import ui.theme.OrbitConceptStatus
 import ui.theme.OrbitRadius
 import ui.theme.rememberCosmicTokens
-
+import webrtc.LocalCallManager
 /**
  * One person in the friends list.
  *
@@ -313,7 +311,7 @@ private fun FriendsHeader(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Groups,
+                        imageVector = with(TablerIcons) { Users },
                         contentDescription = null,
                         // `<Users size={22} color="var(--interactive-muted)" />`.
                         tint = SidebarConcept.interactiveMuted,
@@ -486,7 +484,7 @@ private fun FriendsListPane(
             }
             Spacer(Modifier.width(8.dp))
             Icon(
-                imageVector = Icons.Default.Search,
+                imageVector = with(TablerIcons) { Search },
                 contentDescription = null,
                 tint = conceptTextMuted(),
                 modifier = Modifier.size(18.dp)
@@ -677,7 +675,7 @@ private fun FriendRow(
             // `display: flex; align-items: center; gap: 8px`.
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FriendActionButton(
-                    icon = Icons.Default.Chat,
+                    icon = with(TablerIcons) { Message },
                     contentDescription = "Message ${friend.user.displayName}",
                     onClick = onOpenDm
                 )
@@ -909,7 +907,7 @@ private fun ActivityCard(
     onAction: () -> Unit
 ) {
     val accent = if (friend.inCall) OrbitConceptStatus.online else conceptBrand
-    val icon = if (friend.inCall) Icons.Default.Monitor else Icons.Default.SportsEsports
+    val icon = if (friend.inCall) with(TablerIcons) { DeviceDesktop } else with(TablerIcons) { DeviceGamepad }
     val actionLabel = if (friend.inCall) "Join call" else "Message"
 
     Column(

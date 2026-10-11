@@ -23,9 +23,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.People
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -45,6 +42,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.icons.TablerIcons
+import ui.icons.Home
+import ui.icons.Users
 import ui.assets.OrbitDefaultAvatar
 import ui.assets.OrbitMascotAvatar
 import ui.assets.OrbitVerifiedBadge
@@ -56,7 +56,6 @@ import ui.model.OrbitChannel
 import ui.model.UserStatus
 import ui.theme.OrbitConceptStatus
 import ui.theme.OrbitRadius
-
 /**
  * The direct-message list: the concept's DM branch of `.channel-sidebar`.
  *
@@ -427,7 +426,7 @@ private fun HomeRow(isSelected: Boolean, onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
-            imageVector = Icons.Default.Home,
+            imageVector = with(TablerIcons) { Home },
             contentDescription = null,
             tint = if (hovered || isSelected) conceptInteractiveHover() else SidebarConcept.interactiveMuted,
             modifier = Modifier.size(18.dp)
@@ -499,7 +498,7 @@ private fun FriendsRow(isSelected: Boolean, onClick: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically
         ) {
         Icon(
-            imageVector = Icons.Default.People,
+            imageVector = with(TablerIcons) { Users },
             contentDescription = null,
             tint = if (hovered || isSelected) conceptInteractiveHover() else SidebarConcept.interactiveMuted,
             modifier = Modifier.size(18.dp)

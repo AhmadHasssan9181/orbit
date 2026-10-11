@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -22,7 +21,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -62,6 +60,19 @@ enum class OrbitEmptyScene {
     TemplateCommunity
 }
 
+/**
+ * The Orbit emblem, drawn with a transparent backdrop.
+ *
+ * This used to paint an opaque `tokens.Bg` disc at 0.30 of the mark's width
+ * behind the ring, which meant the emblem carried its own background plate and
+ * read as a filled chip rather than a logo -- most visibly on the login
+ * header, where it sat on an accent-tinted gradient and showed a dark circle
+ * around a transparent mark. It now matches `OrbitAppLogo`, the transparent
+ * emblem the direct-messages tile uses, so the two render identically.
+ *
+ * The accent glow is kept: it fades to fully transparent, so it tints rather
+ * than plates, and the boot splash relies on it.
+ */
 @Composable
 fun OrbitBrandMark(
     modifier: Modifier = Modifier,
@@ -83,7 +94,6 @@ fun OrbitBrandMark(
                     center = center
                 )
             }
-            drawCircle(tokens.Bg, radius = s * 0.30f, center = center)
             drawCircle(
                 color = tokens.Accent,
                 radius = s * 0.30f,
@@ -134,53 +144,46 @@ fun OrbitDefaultAvatar(
     )
 }
 
+/**
+ * A server tile: flat pastel fill with the server's initials.
+ *
+ * Rebuilt as a plain disc. The previous version drew an illustrated "planet" --
+ * a coloured core inside a larger `tokens.Bg` disc, a rotated stroke for a ring,
+ * a highlight dot and an underline -- and layered a 1dp border on top of it.
+ * At rail size that read as noise rather than as identity: the initials sat on
+ * top of artwork nobody could parse, and the ring plus the border put a visible
+ * outline around every tile in the column. Flat fill, no ring, glyph only.
+ *
+ * The shape is NOT set here. Callers clip with whatever shape they want, which
+ * is what lets the rail animate circle -> squircle on selection without the
+ * icon fighting it.
+ *
+ * [color] is expected to come from `ui.theme.pastelServerColor` so that tiles
+ * stay within the curated set; a raw saturated colour here will look like a bug
+ * because the palette is deliberately low-chroma.
+ */
 @Composable
 fun OrbitServerAssetIcon(
     label: String,
     color: Color,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    inkColor: Color = ui.theme.pastelServerInk
 ) {
-    val tokens = rememberCosmicTokens()
     Box(
-        modifier = modifier
-            .aspectRatio(1f)
-            .clip(RoundedCornerShape(15.dp))
-            .background(tokens.Bg)
-            .border(1.dp, tokens.Text_White.copy(alpha = 0.08f), RoundedCornerShape(15.dp)),
+        modifier = modifier.aspectRatio(1f),
         contentAlignment = Alignment.Center
     ) {
-        Canvas(Modifier.fillMaxSize()) {
-            val s = size.minDimension
-            val center = Offset(size.width / 2f, size.height / 2f)
-            drawRoundRect(
-                color = tokens.Bg,
-                topLeft = Offset.Zero,
-                size = size,
-                cornerRadius = androidx.compose.ui.geometry.CornerRadius(s * 0.28f, s * 0.28f)
-            )
-            drawCircle(color, radius = s * 0.35f, center = center)
-            rotate(-18f, center) {
-                drawOval(
-                    color = Color.White.copy(alpha = 0.42f),
-                    topLeft = Offset(center.x - s * 0.50f, center.y - s * 0.17f),
-                    size = Size(s, s * 0.34f),
-                    style = Stroke(width = s * 0.042f)
-                )
-            }
-            drawCircle(Color.White, radius = s * 0.070f, center = Offset(center.x + s * 0.24f, center.y - s * 0.17f))
-            drawLine(
-                color = Color.White.copy(alpha = 0.16f),
-                start = Offset(s * 0.28f, s * 0.68f),
-                end = Offset(s * 0.74f, s * 0.68f),
-                strokeWidth = s * 0.06f
-            )
-        }
         Text(
             text = initialsFor(label),
-            color = Color.White,
+            color = inkColor,
             style = MaterialTheme.typography.labelSmall.copy(
                 fontWeight = FontWeight.ExtraBold,
-                fontSize = 10.sp
+                // 14sp, up from 10. Two letters in a 48dp tile at 10sp read as a
+                // smudge at normal viewing distance, and the tile has no artwork
+                // left to carry the identity now that the planet art is gone.
+                // Kept to labelSmall's slot so the scale stays the single source
+                // of truth for size, with only the weight and colour overridden.
+                fontSize = 14.sp
             )
         )
     }

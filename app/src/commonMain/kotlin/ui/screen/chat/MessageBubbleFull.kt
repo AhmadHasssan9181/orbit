@@ -26,10 +26,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -49,6 +45,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.icons.TablerIcons
+import ui.icons.Dots
+import ui.icons.Pencil
+import ui.icons.Trash
 import ui.assets.OrbitDefaultAvatar
 import ui.assets.OrbitVerifiedBadge
 import ui.assets.isOrbitVerifiedUser
@@ -69,7 +69,6 @@ import ui.theme.OrbitMotion
 import ui.theme.OrbitRadius
 import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
-
 /**
  * A message.
  *
@@ -315,10 +314,10 @@ internal fun MessageBubbleFull(
                     )
                 }
                 if (canEdit) {
-                    MessageActionBtn(Icons.Default.Edit, "Edit") { showEditDialog = true }
+                    MessageActionBtn(with(TablerIcons) { Pencil }, "Edit") { showEditDialog = true }
                 }
                 if (canDelete || !isOwn) {
-                    MessageActionBtn(Icons.Default.MoreHoriz, "More") { showMoreMenu = true }
+                    MessageActionBtn(with(TablerIcons) { Dots }, "More") { showMoreMenu = true }
                     MessageMoreMenu(
                         expanded = showMoreMenu,
                         canDelete = canDelete,
@@ -355,7 +354,7 @@ internal fun MessageBubbleFull(
             ui.components.OrbitDialog(
                 title = "Delete this message?",
                 subtitle = "It will be removed for everyone in the room. This cannot be undone.",
-                icon = Icons.Default.Delete,
+                icon = with(TablerIcons) { Trash },
                 onDismissRequest = { showDeleteConfirm = false },
                 confirmLabel = "Delete",
                 confirmTone = OrbitButtonTone.Danger,
@@ -535,7 +534,7 @@ internal fun MessageMoreMenu(
         if (canDelete) {
             OrbitMenuItem(
                 label = "Delete message",
-                icon = Icons.Default.Delete,
+                icon = with(TablerIcons) { Trash },
                 danger = true,
                 onClick = onDelete
             )
@@ -552,7 +551,7 @@ private fun MessageEditDialog(
     var editBody by remember { mutableStateOf(initialBody) }
     OrbitDialog(
         title = "Edit message",
-        icon = Icons.Default.Edit,
+        icon = with(TablerIcons) { Pencil },
         onDismissRequest = onDismiss,
         confirmLabel = "Save",
         onConfirm = { onConfirm(editBody.trim()) },

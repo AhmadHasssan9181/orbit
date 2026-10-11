@@ -1,14 +1,12 @@
 package ui.screen.main
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -20,17 +18,18 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.icons.TablerIcons
+import ui.icons.LayoutGrid
+import ui.icons.Search
 import ui.icons.OrbitIcons
-import ui.theme.rememberCosmicTokens
-
 import ui.screen.auth.*
-import ui.screen.settings.*
-import ui.screen.drawer.*
-import ui.screen.server.*
 import ui.screen.call.*
-import ui.screen.media.*
+import ui.screen.drawer.*
 import ui.screen.main.*
-
+import ui.screen.media.*
+import ui.screen.server.*
+import ui.screen.settings.*
+import ui.theme.rememberCosmicTokens
 /**
  * Bottom navigation bar for compact (phone) layouts.
  * Replaces the ServerRail on small screens.
@@ -99,13 +98,13 @@ enum class BottomNavTab(
     ),
     Servers(
         label = "Servers",
-        icon = Icons.Default.GridView,
-        selectedIcon = Icons.Default.GridView
+        icon = with(TablerIcons) { LayoutGrid },
+        selectedIcon = with(TablerIcons) { LayoutGrid }
     ),
     Search(
         label = "Search",
-        icon = Icons.Default.Search,
-        selectedIcon = Icons.Default.Search
+        icon = with(TablerIcons) { Search },
+        selectedIcon = with(TablerIcons) { Search }
     ),
     Profile(
         label = "Profile",

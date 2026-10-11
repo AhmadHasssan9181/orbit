@@ -20,10 +20,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Block
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.PersonRemove
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -42,6 +38,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.icons.TablerIcons
+import ui.icons.Ban
+import ui.icons.DotsVertical
+import ui.icons.UserOff
 import kotlinx.coroutines.delay
 import repository.MemberRoleInfo
 import ui.assets.OrbitVerifiedBadge
@@ -57,13 +57,12 @@ import ui.components.OrbitMenuItem
 import ui.components.OrbitRowLeading
 import ui.components.OrbitScrollbar
 import ui.model.OrbitUser
-import ui.screen.SidePanelHeader
 import ui.model.UserStatus
+import ui.screen.SidePanelHeader
 import ui.theme.OrbitMetrics
 import ui.theme.OrbitRadius
 import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
-
 /**
  * Member list.
  *
@@ -409,7 +408,7 @@ private fun MemberItem(
         OrbitDialog(
             title = "Ban ${user.displayName}?",
             subtitle = "They will be removed from this room and unable to rejoin without an invite.",
-            icon = Icons.Default.Block,
+            icon = with(TablerIcons) { Ban },
             onDismissRequest = { banConfirmOpen = false },
             confirmLabel = "Ban",
             confirmTone = OrbitButtonTone.Danger,
@@ -461,7 +460,7 @@ private fun MemberItem(
                 }
                 if (anyAction) {
                     OrbitIconButton(
-                        icon = Icons.Default.MoreVert,
+                        icon = with(TablerIcons) { DotsVertical },
                         contentDescription = "Moderate ${user.displayName}",
                         onClick = { moderationMenuOpen = true },
                         size = 24.dp,
@@ -495,7 +494,7 @@ private fun MemberItem(
                         if (kickVisible) {
                             OrbitMenuItem(
                                 label = "Kick",
-                                icon = Icons.Default.PersonRemove,
+                                icon = with(TablerIcons) { UserOff },
                                 danger = true,
                                 onClick = {
                                     moderationMenuOpen = false
@@ -506,7 +505,7 @@ private fun MemberItem(
                         if (banVisible) {
                             OrbitMenuItem(
                                 label = "Ban",
-                                icon = Icons.Default.Block,
+                                icon = with(TablerIcons) { Ban },
                                 danger = true,
                                 onClick = {
                                     moderationMenuOpen = false

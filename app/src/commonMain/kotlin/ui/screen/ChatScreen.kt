@@ -1,8 +1,7 @@
 package ui.screen
 
-import ui.screen.chat.*
-
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -11,9 +10,6 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,19 +20,16 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.PushPin
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -46,6 +39,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -54,6 +48,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.icons.TablerIcons
+import ui.icons.Pin
+import ui.icons.X
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import ui.assets.OrbitDefaultAvatar
@@ -66,6 +63,13 @@ import ui.model.ChannelType
 import ui.model.OrbitChannel
 import ui.model.OrbitMessage
 import ui.model.OrbitUser
+import ui.screen.call.LiveKitGroupCallSurface
+import ui.screen.call.VoiceChannelScreen
+import ui.screen.chat.*
+import ui.screen.chat.DirectProfilePanel
+import ui.screen.chat.MessageInputBar
+import ui.screen.chat.ReplyPreview
+import ui.screen.chat.formatTimestampCompact
 import ui.theme.LocalReduceMotion
 import ui.theme.OrbitConceptBorder
 import ui.theme.OrbitConceptDark
@@ -75,13 +79,6 @@ import ui.theme.OrbitMotion
 import ui.theme.OrbitRadius
 import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
-import ui.screen.call.LiveKitGroupCallSurface
-import ui.screen.call.VoiceChannelScreen
-import ui.screen.chat.DirectProfilePanel
-import ui.screen.chat.MessageInputBar
-import ui.screen.chat.ReplyPreview
-import ui.screen.chat.formatTimestampCompact
-
 /**
  * The room surface.
  *
@@ -973,7 +970,7 @@ private fun PinnedMessagesPanel(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 androidx.compose.material3.Icon(
-                    imageVector = Icons.Default.PushPin,
+                    imageVector = with(TablerIcons) { Pin },
                     contentDescription = null,
                     tint = t.Text_White,
                     modifier = Modifier.size(18.dp)
@@ -991,7 +988,7 @@ private fun PinnedMessagesPanel(
                     modifier = Modifier.weight(1f)
                 )
                 OrbitIconButton(
-                    icon = Icons.Default.Close,
+                    icon = with(TablerIcons) { X },
                     contentDescription = "Close pinned messages",
                     onClick = onClose,
                     size = 28.dp,
@@ -1015,7 +1012,7 @@ private fun PinnedMessagesPanel(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         androidx.compose.material3.Icon(
-                            imageVector = Icons.Default.PushPin,
+                            imageVector = with(TablerIcons) { Pin },
                             contentDescription = null,
                             tint = t.Text_Muted,
                             // size 32, opacity 0.5
@@ -1089,7 +1086,7 @@ private fun PinnedMessagesPanel(
                                     }
                                     if (canUnpin) {
                                         OrbitIconButton(
-                                            icon = Icons.Default.Close,
+                                            icon = with(TablerIcons) { X },
                                             contentDescription = "Unpin message",
                                             onClick = { onUnpin(message.id) },
                                             size = 22.dp,

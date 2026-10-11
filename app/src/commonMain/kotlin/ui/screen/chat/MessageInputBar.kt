@@ -23,8 +23,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.shape.CircleShape
@@ -63,13 +61,15 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.icons.TablerIcons
+import ui.icons.X
 import io.ktor.client.HttpClient
-import ui.screen.media.GifPicker
 import ui.components.OrbitIconButton
 import ui.components.OrbitTooltip
 import ui.components.orbitClickable
 import ui.components.rememberOrbitInteraction
 import ui.icons.OrbitIcons
+import ui.screen.media.GifPicker
 import ui.theme.OrbitConceptBorder
 import ui.theme.OrbitConceptOverlay
 import ui.theme.OrbitMotion
@@ -77,7 +77,6 @@ import ui.theme.OrbitRadius
 import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
 import util.rememberFilePickerLauncher
-
 /**
  * The composer.
  *
@@ -234,7 +233,7 @@ internal fun MessageInputBar(
                     )
                     if (onCancelReply != null) {
                         OrbitIconButton(
-                            icon = Icons.Default.Close,
+                            icon = with(TablerIcons) { X },
                             contentDescription = "Cancel reply",
                             onClick = onCancelReply,
                             size = 24.dp,

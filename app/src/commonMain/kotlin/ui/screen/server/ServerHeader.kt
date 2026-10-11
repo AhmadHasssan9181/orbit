@@ -17,8 +17,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -39,6 +37,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.icons.TablerIcons
+import ui.icons.ChevronDown
 import ui.assets.OrbitVerifiedBadge
 import ui.assets.isOrbitVerifiedUser
 import ui.model.OrbitServer
@@ -54,7 +54,6 @@ import ui.screen.drawer.conceptTextNormal
 import ui.theme.OrbitConceptMetrics
 import ui.theme.OrbitConceptStatus
 import ui.theme.OrbitMotion
-
 /**
  * One row of the server dropdown.
  *
@@ -198,7 +197,7 @@ internal fun ServerHeader(
                 // `color: var(--interactive-normal)` — the concept does NOT
                 // lighten the chevron on hover, only the row behind it.
                 androidx.compose.material3.Icon(
-                    imageVector = Icons.Default.ExpandMore,
+                    imageVector = with(TablerIcons) { ChevronDown },
                     contentDescription = null,
                     tint = conceptInteractiveNormal(),
                     modifier = Modifier

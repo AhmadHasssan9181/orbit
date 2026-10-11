@@ -10,15 +10,11 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -34,21 +30,36 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.icons.TablerIcons
+import ui.icons.Ban
+import ui.icons.Check
+import ui.icons.CirclePlus
+import ui.icons.Copy
+import ui.icons.Download
+import ui.icons.FileMusic
+import ui.icons.FileText
+import ui.icons.FileZip
+import ui.icons.Paperclip
+import ui.icons.Photo
+import ui.icons.PlayerPause
+import ui.icons.PlayerPlay
+import ui.icons.Video
+import ui.icons.X
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import ui.components.NativeVideoPlayer
 import ui.components.OrbitTooltip
+import ui.screen.auth.*
+import ui.screen.call.*
+import ui.screen.drawer.*
+import ui.screen.main.*
+import ui.screen.media.*
+import ui.screen.server.*
+import ui.screen.settings.*
 import ui.theme.OrbitConceptBorder
 import ui.theme.OrbitConceptStatus
 import ui.theme.OrbitMotion
 import ui.theme.rememberCosmicTokens
-
-import ui.screen.auth.*
-import ui.screen.settings.*
-import ui.screen.drawer.*
-import ui.screen.server.*
-import ui.screen.call.*
-import ui.screen.media.*
-import ui.screen.main.*
-
 @Composable
 internal fun MessageContentView(
     content: ui.model.MessageContent,
@@ -225,7 +236,7 @@ private fun ImageMessageCard(content: ui.model.MessageContent.Image) {
                     .clickable { scope.launch { util.openAuthenticatedMedia(content.url) } }
                     .padding(6.dp)
             ) {
-                Icon(Icons.Default.Download, contentDescription = "Download", tint = Color.White, modifier = Modifier.size(20.dp))
+                Icon(with(TablerIcons) { Download }, contentDescription = "Download", tint = Color.White, modifier = Modifier.size(20.dp))
             }
         }
     }
@@ -278,7 +289,7 @@ private fun AudioMessageCard(content: ui.model.MessageContent.Audio) {
                 .background(tokens.Accent)
         ) {
             Icon(
-                imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                imageVector = if (isPlaying) with(TablerIcons) { PlayerPause } else with(TablerIcons) { PlayerPlay },
                 contentDescription = if (isPlaying) "Pause" else "Play",
                 tint = Color.White,
                 modifier = Modifier.size(20.dp)
@@ -396,7 +407,7 @@ private fun VideoMessageCard(content: ui.model.MessageContent.Video) {
                         .clickable { isPlaying = false }
                         .padding(6.dp)
                 ) {
-                    Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White, modifier = Modifier.size(20.dp))
+                    Icon(with(TablerIcons) { X }, contentDescription = "Close", tint = Color.White, modifier = Modifier.size(20.dp))
                 }
             } else {
                 if (!content.thumbnailUrl.isNullOrBlank()) {
@@ -414,7 +425,7 @@ private fun VideoMessageCard(content: ui.model.MessageContent.Video) {
                         modifier = Modifier.fillMaxWidth().height(220.dp).background(tokens.CardBg),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Default.VideoFile, contentDescription = null, tint = tokens.Text_Muted,
+                        Icon(with(TablerIcons) { Video }, contentDescription = null, tint = tokens.Text_Muted,
                             modifier = Modifier.size(48.dp))
                     }
                 }
@@ -429,7 +440,7 @@ private fun VideoMessageCard(content: ui.model.MessageContent.Video) {
                             .background(Color.Black.copy(alpha = 0.6f)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = "Play video",
+                        Icon(with(TablerIcons) { PlayerPlay }, contentDescription = "Play video",
                             tint = Color.White, modifier = Modifier.size(28.dp))
                     }
                 }
@@ -442,7 +453,7 @@ private fun VideoMessageCard(content: ui.model.MessageContent.Video) {
                         .clickable { scope.launch { util.openAuthenticatedMedia(content.url) } }
                         .padding(6.dp)
                 ) {
-                    Icon(Icons.Default.Download, contentDescription = "Download", tint = Color.White, modifier = Modifier.size(20.dp))
+                    Icon(with(TablerIcons) { Download }, contentDescription = "Download", tint = Color.White, modifier = Modifier.size(20.dp))
                 }
                 if (durationText != null) {
                     Box(
@@ -482,13 +493,13 @@ private fun FileMessageCard(content: ui.model.MessageContent.File) {
         }
     }
     val icon = when {
-        content.mimeType?.startsWith("image/") == true -> Icons.Default.Image
-        content.mimeType?.startsWith("video/") == true -> Icons.Default.VideoFile
-        content.mimeType?.startsWith("audio/") == true -> Icons.Default.AudioFile
-        content.mimeType?.contains("pdf") == true -> Icons.Default.PictureAsPdf
+        content.mimeType?.startsWith("image/") == true -> with(TablerIcons) { Photo }
+        content.mimeType?.startsWith("video/") == true -> with(TablerIcons) { Video }
+        content.mimeType?.startsWith("audio/") == true -> with(TablerIcons) { FileMusic }
+        content.mimeType?.contains("pdf") == true -> with(TablerIcons) { FileText }
         content.mimeType?.contains("zip") == true ||
-                content.mimeType?.contains("archive") == true -> Icons.Default.FolderZip
-        else -> Icons.Default.AttachFile
+                content.mimeType?.contains("archive") == true -> with(TablerIcons) { FileZip }
+        else -> with(TablerIcons) { Paperclip }
     }
     Row(
         modifier = Modifier
@@ -521,7 +532,7 @@ private fun FileMessageCard(content: ui.model.MessageContent.File) {
                 )
             }
         }
-        Icon(Icons.Default.Download, contentDescription = "Download", tint = tokens.Text_Muted,
+        Icon(with(TablerIcons) { Download }, contentDescription = "Download", tint = tokens.Text_Muted,
             modifier = Modifier.size(18.dp))
     }
 }
@@ -777,7 +788,7 @@ private fun CodeCopyButton(copied: Boolean, onClick: () -> Unit) {
             // whole accessible name of this control: the word beside it already
             // says "Copy" or "Copied!", so announcing "Check, Copied!" over it is
             // two labels for one button.
-            imageVector = if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
+            imageVector = if (copied) with(TablerIcons) { Check } else with(TablerIcons) { Copy },
             contentDescription = null,
             tint = if (copied) OrbitConceptStatus.online else tint,
             modifier = Modifier.size(14.dp)
@@ -939,7 +950,7 @@ private fun ReactionPill(
             reacted && light -> t.Accent.copy(alpha = ChatConcept.PILL_REACTED_ALPHA_LIGHT)
             reacted -> t.Accent.copy(alpha = ChatConcept.PILL_REACTED_ALPHA_DARK)
             hovered && light -> ChatConcept.pillHoverLight
-            hovered -> Color.White.copy(alpha = ChatConcept.PILL_HOVER_ALPHA)
+            hovered -> t.OnNeutral.copy(alpha = ChatConcept.PILL_HOVER_ALPHA)
             else -> if (light) ChatConcept.pillSurfaceLight else ChatConcept.secondary
         },
         animationSpec = OrbitMotion.SnappyColor,
@@ -1007,7 +1018,7 @@ private fun ReactionPill(
                 )
             } else {
                 Icon(
-                    imageVector = Icons.Default.AddCircle,
+                    imageVector = with(TablerIcons) { CirclePlus },
                     // The name of this one is on the Row above, from `label`; a
                     // second one here would be announced twice.
                     contentDescription = null,
@@ -1058,7 +1069,7 @@ private fun UnsupportedBody(content: ui.model.MessageContent.Unsupported) {
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(Icons.Default.Block, contentDescription = null, tint = Text_Muted,
+        Icon(with(TablerIcons) { Ban }, contentDescription = null, tint = Text_Muted,
             modifier = Modifier.size(12.dp))
         Text(
             text = if (content.fallbackBody.isNotBlank()) content.fallbackBody

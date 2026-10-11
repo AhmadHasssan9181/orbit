@@ -310,22 +310,8 @@ private val ConceptRoleColors = listOf(
  */
 @Composable
 internal fun resolveUsernameColor(message: OrbitMessage): Color {
-    val showRoleColors = ui.theme.LocalShowRoleColors.current
     val t = rememberCosmicTokens()
-    val isLight = isLightChatSurface(t)
-    // The concept's fallback: `roleColor || var(--header-primary)`.
-    val fallback = t.Text_White
-    if (!showRoleColors) return fallback
-    val base = ConceptRoleColors[(message.userId.hashCode() and Int.MAX_VALUE) % ConceptRoleColors.size]
-    return if (isLight && base.luminance() > 0.45f) {
-        Color(
-            red = (base.red * 0.70f).coerceIn(0f, 1f),
-            green = (base.green * 0.70f).coerceIn(0f, 1f),
-            blue = (base.blue * 0.70f).coerceIn(0f, 1f)
-        )
-    } else {
-        base
-    }
+    return t.Text_White
 }
 
 /**

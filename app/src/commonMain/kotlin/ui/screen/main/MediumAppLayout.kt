@@ -84,8 +84,7 @@ fun MediumLayout(
             onAddServerClick = onAddServer,
             onExploreClick = { showExplore = true },
             onOpenSettings = onOpenSettings,
-            unreadByServer = unreadByServer,
-            modifier = Modifier.width(64.dp).fillMaxHeight()
+            unreadByServer = unreadByServer
         )
 
         // The unified big card starting immediately after ServerRail and extending all the way to the right edge!
@@ -93,7 +92,7 @@ fun MediumLayout(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
-                .padding(top = 8.dp, bottom = 8.dp, start = 6.dp, end = 8.dp)
+                .padding(top = 0.dp, bottom = 8.dp, start = 0.dp, end = 8.dp)
                 .clip(RoundedCornerShape(16.dp))
                 .background(tokens.Drawer_Bg)
                 .border(1.dp, tokens.Separator.copy(alpha = 0.25f), RoundedCornerShape(16.dp))

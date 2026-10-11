@@ -18,12 +18,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Headset
-import androidx.compose.material.icons.filled.HeadsetOff
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.SettingsInputComponent
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -46,6 +40,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.icons.TablerIcons
+import ui.icons.HeadphonesOff
+import ui.icons.Headset
+import ui.icons.Microphone
+import ui.icons.Settings
+import ui.icons.SettingsAutomation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.withContext
@@ -65,7 +65,6 @@ import ui.theme.OrbitRadius
 import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
 import webrtc.LocalCallManager
-
 /**
  * Drawer footer: who you are, and your audio state. The concept's `.user-panel`.
  *
@@ -235,7 +234,7 @@ internal fun UserProfileBar(
         Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
             Box {
                 UserControlButton(
-                    icon = Icons.Default.SettingsInputComponent,
+                    icon = with(TablerIcons) { SettingsAutomation },
                     contentDescription = "Audio devices",
                     isDanger = false,
                     onClick = { showVoicePopover = !showVoicePopover }
@@ -258,7 +257,7 @@ internal fun UserProfileBar(
                 onClick = { callManager?.toggleMute(isAudioEnabled) }
             )
             UserControlButton(
-                icon = if (isDeafened) Icons.Default.HeadsetOff else Icons.Default.Headset,
+                icon = if (isDeafened) with(TablerIcons) { HeadphonesOff } else with(TablerIcons) { Headset },
                 contentDescription = if (isDeafened) "Undeafen" else "Deafen",
                 isDanger = isDeafened,
                 onClick = { callManager?.toggleDeafen() }
@@ -367,7 +366,7 @@ internal fun VoiceControlPopover(onSettingsClick: () -> Unit) {
     Column(modifier = Modifier.padding(OrbitSpace.sm)) {
         OrbitMenuItem(
             label = inputDeviceName,
-            icon = Icons.Default.Mic,
+            icon = with(TablerIcons) { Microphone },
             onClick = { showInputDevices = !showInputDevices }
         )
         if (showInputDevices) {
@@ -382,7 +381,7 @@ internal fun VoiceControlPopover(onSettingsClick: () -> Unit) {
                 inputDevices.forEach { device ->
                     OrbitMenuItem(
                         label = device,
-                        icon = Icons.Default.Mic,
+                        icon = with(TablerIcons) { Microphone },
                         selected = device == inputDeviceName,
                         onClick = {
                             inputDeviceName = device
@@ -435,7 +434,7 @@ internal fun VoiceControlPopover(onSettingsClick: () -> Unit) {
 
         OrbitMenuItem(
             label = "Voice & video settings",
-            icon = Icons.Default.Settings,
+            icon = with(TablerIcons) { Settings },
             onClick = onSettingsClick
         )
     }
@@ -526,7 +525,7 @@ internal fun ProfilePopoverContent(
 
         OrbitMenuItem(
             label = "Profile settings",
-            icon = Icons.Default.Settings,
+            icon = with(TablerIcons) { Settings },
             onClick = onSettingsClick
         )
     }
@@ -580,7 +579,6 @@ internal fun UserAvatar(
         )
     }
 }
-
 
 /** Presence colour, sourced from the token set so themes stay coherent. */
 @Composable

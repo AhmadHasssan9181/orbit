@@ -431,25 +431,41 @@ class CallManager(
             ) { matrixRoster, liveKitIds, state ->
                 // CONNECTED, not merely "not idle".
                 //
-                // During CONNECTING/RINGING the LiveKit participant set is empty,
-                // and `visibleUserIds` treats an empty LiveKit view as "we have no
-                // better information" and returns the Matrix roster VERBATIM. That
-                // is the correct choice for a guard against a native-wiring
-                // regression, and it is exactly wrong for a call that has not
-                // finished joining: the roster it falls back to is a 12-hour-expiry
-                // membership list, so a two-person call announced six participants
-                // from the moment you pressed Join until the moment you connected.
+                // Two different situations present LiveKit with an EMPTY
+                // participant set, and the roster must answer differently for
+                // each:
                 //
-                // So the two cases are separated here rather than inside
-                // `visibleUserIds`, which stays a pure function of its inputs:
-                // only reconcile once CONNECTED, and report nobody until then.
+                //  1. A call you have not finished joining. LiveKit has not
+                //     reported anything yet, so the Matrix record is the only
+                //     information available — but it is a 12-hour-expiry
+                //     membership list, so showing it announced six participants
+                //     from the moment you pressed Join until you connected.
+                //     => report nobody until CONNECTED.
+                //
+                //  2. A call you are alone in. LiveKit is not silent here, it is
+                //     accurate: `onRemoteParticipantConnected` fires for every
+                //     remote whether or not it publishes media, so an empty set
+                //     really does mean nobody else is in the room. Falling back
+                //     to the Matrix record rendered all 8 stale members in the
+                //     drawer beside a stage that read "No one else is here".
+                //     => report just yourself.
+                //
+                // Case 1 is separated here rather than inside `visibleUserIds`,
+                // which stays a pure function of its inputs: only reconcile once
+                // CONNECTED, and tell `visibleUserIds` that from there on the
+                // LiveKit view is the answer rather than a silence.
                 if (state != CallState.CONNECTED) {
                     emptyList()
                 } else {
                     val visible = livekit.CallRosterReconciliation.visibleUserIds(
                         matrixUserIds = matrixRoster.map { it.id },
                         livekitIdentities = liveKitIds,
-                        ownUserId = CredentialManager.userId
+                        ownUserId = CredentialManager.userId,
+                        // CONNECTED means an empty LiveKit set is not missing
+                        // information, it is the answer: you are alone. Falling
+                        // back to the Matrix record here rendered all 8 stale
+                        // members beside a stage that read "No one else is here".
+                        livekitIsAuthoritative = true
                     )
                     if (visible.size == matrixRoster.size) {
                         matrixRoster

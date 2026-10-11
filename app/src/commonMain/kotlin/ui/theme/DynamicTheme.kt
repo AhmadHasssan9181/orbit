@@ -42,7 +42,10 @@ private fun linearToSrgb(c: Float): Float {
 private fun cbrt(x: Float): Float =
     if (x >= 0f) x.pow(1f / 3f) else -(-x).pow(1f / 3f)
 
-private fun colorToOklab(c: Color): FloatArray {
+// Internal rather than private: `ThemeTint` reuses these to shift a neutral's
+// hue without touching its lightness. Duplicating the matrices would guarantee
+// the two tint paths drift apart.
+internal fun colorToOklab(c: Color): FloatArray {
     val rL = srgbToLinear(c.red)
     val gL = srgbToLinear(c.green)
     val bL = srgbToLinear(c.blue)
@@ -61,7 +64,7 @@ private fun colorToOklab(c: Color): FloatArray {
     return floatArrayOf(oL, oa, ob)
 }
 
-private fun oklabToColor(oL: Float, oa: Float, ob: Float): Color {
+internal fun oklabToColor(oL: Float, oa: Float, ob: Float): Color {
     val l_ = oL + 0.3963377774f * oa + 0.2158037573f * ob
     val m_ = oL - 0.1055613458f * oa - 0.0638541728f * ob
     val s_ = oL - 0.0894841775f * oa - 1.2914855480f * ob
@@ -79,6 +82,21 @@ private fun oklabToColor(oL: Float, oa: Float, ob: Float): Color {
         green = linearToSrgb(gL),
         blue = linearToSrgb(bL)
     )
+}
+
+/**
+ * WCAG relative luminance (Y) in linear light.
+ *
+ * Same coefficients as the `l` row in [colorToOklab] -- Y *is* that row -- but
+ * returned on its own so contrast can be reasoned about directly.
+ *
+ * Internal for [ThemeTint], which uses it to hold luminance constant while
+ * raising chroma.
+ */
+internal fun linearLuminance(c: Color): Float {
+    return 0.2126f * srgbToLinear(c.red) +
+        0.7152f * srgbToLinear(c.green) +
+        0.0722f * srgbToLinear(c.blue)
 }
 
 private class TonalPalette(val hue: Float, val chroma: Float) {
@@ -112,10 +130,29 @@ fun generateMaterialYouColorScheme(seedColor: Color, isDark: Boolean): ColorSche
         val secondary = TonalPalette(hue, 0.050f)
         val tertiary = TonalPalette(hue + (PI.toFloat() / 3f), 0.060f)
 
-        val surfacePalette = TonalPalette(hue, 0.018f)
-        val surfaceContainerPalette = TonalPalette(hue, 0.024f)
+// Surface chroma stays deliberately tiny. These values are the muted base the
+        // whole dark palette is built on; an earlier pass pushed them to 0.048 /
+        // 0.055 and every surface in the app turned visibly coloured, which read as
+        // a garish theme rather than a muted one. They are now below the original
+        // 0.018 / 0.024 -- grey is what makes a dark theme look calm, and the
+        // reference this is matched against is a near-neutral warm grey.
+        val surfacePalette = TonalPalette(hue, 0.013f)
+        val surfaceContainerPalette = TonalPalette(hue, 0.017f)
         val pillPalette = TonalPalette(hue, 0.110f)
-        val outlinePalette = TonalPalette(hue, 0.024f)
+        val outlinePalette = TonalPalette(hue, 0.018f)
+
+        // Text and icons. Previously hard-coded `#E6E3E0` / `#A5A09C` -- warm
+        // neutral greys that ignored the seed completely, so surfaces picked up the
+        // theme colour while every glyph on top stayed grey. This is the one place
+        // the tint is meant to be visible, and it is kept on a short leash:
+        //
+        //  - tone 92, not 95. Tone 95 renders at luminance ~0.85 against the
+        //    original grey's ~0.77, and the extra brightness is far more
+        //    noticeable than the added colour -- it is what made the whole theme
+        //    read as brighter than the reference.
+        //  - chroma 0.020, not 0.028. `tone()` tapers this to roughly 0.007, a
+        //    visible warm cast on near-white without tipping into neon.
+        val inkPalette = TonalPalette(hue, 0.020f)
 
         darkColorScheme(
             primary = primary.tone(75),
@@ -131,12 +168,19 @@ fun generateMaterialYouColorScheme(seedColor: Color, isDark: Boolean): ColorSche
             tertiaryContainer = pillPalette.tone(28),
             onTertiaryContainer = tertiary.tone(90),
             background = surfacePalette.tone(16),         // Tone 16: chat canvas (#140C0A / #100E07 / #0B0F0A)
-            onBackground = Color(0xFFE6E3E0),             // Soft off-white
+            // Lightness values are chosen to reproduce the muted greys these
+            // replaced, NOT by picking round tone numbers. Oklab L is a poor
+            // proxy for perceived brightness: L 0.810 renders at WCAG luminance
+            // 0.53, which made secondary text nearly as bright as primary and
+            // flattened the type hierarchy. The greys being matched:
+            //   primary   #E6E3E0 -> luminance 0.771 -> L 0.920
+            //   secondary #A5A09C -> luminance 0.355 -> L 0.708
+            onBackground = ThemeTint.tintedInk(hue, rawChroma, 0.920f, isDark = true),
             surface = surfacePalette.tone(16),            // Tone 16: chat canvas
-            onSurface = Color(0xFFE6E3E0),                // Soft off-white
+            onSurface = ThemeTint.tintedInk(hue, rawChroma, 0.920f, isDark = true),
             surfaceVariant = surfaceContainerPalette.tone(20),
-            onSurfaceVariant = Color(0xFFA5A09C),         // Soft secondary neutral
-            outline = outlinePalette.tone(50),
+            onSurfaceVariant = ThemeTint.tintedInk(hue, rawChroma, 0.708f, isDark = true),
+            outline = ThemeTint.tintedInk(hue, rawChroma, 0.520f, isDark = true),
             outlineVariant = outlinePalette.tone(24),
             surfaceContainerLowest = surfacePalette.tone(16),         // Tone 16: deepest canvas
             surfaceContainerLow = surfaceContainerPalette.tone(23),   // Tone 23: darker sidebar drawer (#231917 / #1E1B13 / #191D17)
@@ -156,10 +200,21 @@ fun generateMaterialYouColorScheme(seedColor: Color, isDark: Boolean): ColorSche
         val secondary = TonalPalette(hue, 0.060f)
         val tertiary = TonalPalette(hue + (PI.toFloat() / 3f), 0.070f)
 
+// Light surfaces carry a little more colour than dark ones do, which is the
+        // normal asymmetry -- a low-chroma surface reads as neutral on a dark
+        // canvas but as flat and dead on white. A modest lift over the original
+        // 0.024 / 0.038, well short of the 0.048 / 0.062 that made it garish.
         val surfacePalette = TonalPalette(hue, 0.024f)           // Soft pastel tint
-        val surfaceContainerPalette = TonalPalette(hue, 0.038f)  // Warm pastel foundation
+        val surfaceContainerPalette = TonalPalette(hue, 0.040f)  // Warm pastel foundation
         val pillPalette = TonalPalette(hue, 0.075f)              // Signature pastel pill
         val outlinePalette = TonalPalette(hue, 0.030f)
+
+        // Text and icons. Were hard-coded `#1B1A19` / `#524C49` greys that ignored
+        // the seed, which is why light mode read as plain charcoal even with a
+        // strong theme colour selected. Kept well down from the 0.055 first tried
+        // here: against a near-white surface even a small chroma reads as a
+        // saturated colour, and grey is what keeps light mode calm.
+        val inkPalette = TonalPalette(hue, 0.028f)
 
         lightColorScheme(
             primary = primary.tone(40),
@@ -175,12 +230,12 @@ fun generateMaterialYouColorScheme(seedColor: Color, isDark: Boolean): ColorSche
             tertiaryContainer = tertiary.tone(88),
             onTertiaryContainer = Color(0xFF1B1A19),
             background = surfacePalette.tone(96),         // Tone 96: high luminance light background
-            onBackground = Color(0xFF1B1A19),             // Deep charcoal for crisp contrast
+            onBackground = ThemeTint.tintedInk(hue, rawChroma, 0.180f, isDark = false),
             surface = surfacePalette.tone(96),            // Tone 96: light surface
-            onSurface = Color(0xFF1B1A19),                // Deep charcoal
+            onSurface = ThemeTint.tintedInk(hue, rawChroma, 0.180f, isDark = false),
             surfaceVariant = surfaceContainerPalette.tone(91),
-            onSurfaceVariant = Color(0xFF524C49),         // Medium charcoal
-            outline = outlinePalette.tone(55),
+            onSurfaceVariant = ThemeTint.tintedInk(hue, rawChroma, 0.412f, isDark = false),
+            outline = ThemeTint.tintedInk(hue, rawChroma, 0.580f, isDark = false),
             outlineVariant = outlinePalette.tone(84),
             surfaceContainerLowest = Color(0xFFFFFFFF),               // Pure white
             surfaceContainerLow = surfacePalette.tone(96),            // Tone 96: soft pastel outer card (drawer) (#FFF0ED)
@@ -200,8 +255,8 @@ fun generateMaterialYouColorScheme(seedColor: Color, isDark: Boolean): ColorSche
 
 fun dynamicDarkTokens(cs: ColorScheme) = CosmicTokens(
     Bg = cs.background,                              // Tone 16: darkest chat canvas (#140C0A / #100E07 / #0B0F0A)
-    CardBg = cs.surfaceContainerLow,                 // Tone 23: darker sidebar drawer (#231917 / #1E1B13 / #191D17)
-    CardBgHover = cs.surfaceContainer,               // Tone 25
+    CardBg = cs.surfaceContainer,                    // Tone 25: distinct card surface!
+    CardBgHover = cs.surfaceContainerHigh,           // Tone 29: card hover
     Elevated = cs.surfaceContainerHigh,              // Tone 29: lightest surface (#322825 / #2D2A21 / #272B25)
     ElevatedAlt = cs.surfaceContainerHighest,        // Tone 40
     Sunken = cs.surfaceContainerLowest,              // Tone 16
@@ -211,11 +266,17 @@ fun dynamicDarkTokens(cs: ColorScheme) = CosmicTokens(
     AccentGhost = cs.primary.copy(alpha = 0.14f),
     AccentGhostStrong = cs.primary.copy(alpha = 0.22f),
     OnAccent = cs.onPrimary,
+    // A glyph over a NEUTRAL surface, not over the accent. The tonal palette's
+    // onSurface is already seed-derived, but it is the *darkest* end of the
+    // ramp; this is the bright end carrying the same hue, which is what the
+    // rail pill and canvas icons need.
+    OnNeutral = ThemeTint.tintedInk(cs.primary, 0.920f, isDark = true),
+    OnDark = ThemeTint.tintedInk(cs.primary, 0.920f, isDark = true),
     AccentBorder = cs.primary.copy(alpha = 0.35f),
 
     Text_White = cs.onSurface,
     Text_Secondary = cs.onSurfaceVariant,
-    Text_Muted = Color(0xFF78736F),
+    Text_Muted = ThemeTint.tintedInk(cs.primary, 0.700f, isDark = true),
     Text_Subtle = cs.outline,
 
     Separator = cs.outlineVariant.copy(alpha = 0.35f),
@@ -281,12 +342,21 @@ fun dynamicLightTokens(cs: ColorScheme) = CosmicTokens(
     AccentLight = cs.primaryContainer,
     AccentGhost = cs.primary.copy(alpha = 0.10f),
     AccentGhostStrong = cs.primary.copy(alpha = 0.18f),
-    OnAccent = cs.onPrimary,
+OnAccent = cs.onPrimary,
+    // A glyph over a NEUTRAL surface, not over the accent, so it has to take the
+    // seed's hue directly -- the tonal palette's onSurface is already
+    // seed-derived, but it is tuned for text, not for a small mark that needs to
+    // separate from a mid-tone surface.
+    //
+    // Light mode takes the DARK end of the seed's ramp, since a glyph there sits
+    // on a light surface and needs to be dark to read at all.
+    OnNeutral = ThemeTint.tintedInk(cs.primary, 0.220f, isDark = false),
+    OnDark = ThemeTint.tintedInk(cs.primary, 0.920f, isDark = true),
     AccentBorder = cs.primary.copy(alpha = 0.28f),
 
-    Text_White = cs.onSurface,                       // Crisp deep charcoal text (#1B1A19)
-    Text_Secondary = cs.onSurfaceVariant,           // Medium charcoal (#524C49)
-    Text_Muted = Color(0xFF78736F),
+    Text_White = cs.onSurface,                       // Tinted deep charcoal
+    Text_Secondary = cs.onSurfaceVariant,           // Tinted medium charcoal
+    Text_Muted = ThemeTint.tintedInk(cs.primary, 0.460f, isDark = false),
     Text_Subtle = cs.outline,
 
     Separator = cs.outlineVariant.copy(alpha = 0.40f),

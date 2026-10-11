@@ -1,4 +1,4 @@
-﻿package ui.screen.server
+package ui.screen.server
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
@@ -14,12 +14,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.People
-import androidx.compose.material.icons.filled.School
-import androidx.compose.material.icons.filled.SportsEsports
+
+
+
+
+
+
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -64,7 +64,12 @@ import ui.screen.server.*
 import ui.screen.call.*
 import ui.screen.media.*
 import ui.screen.main.*
-
+import ui.icons.TablerIcons
+import ui.icons.DeviceGamepad
+import ui.icons.School
+import ui.icons.Stars
+import ui.icons.Users
+import ui.icons.X
 private enum class ServerDialogMode {
     Join,
     Create
@@ -390,7 +395,7 @@ fun JoinServerScreen(
                     ) {
                         ConceptMenuItem(
                             label = "Create My Own",
-                            icon = { Icon(Icons.Default.AutoAwesome, null, tint = OrbitConceptDark.brand, modifier = Modifier.size(20.dp)) },
+                            icon = { Icon(with(TablerIcons) { Stars }, null, tint = OrbitConceptDark.brand, modifier = Modifier.size(20.dp)) },
                             onClick = { input = "My Server's Community"; createStep = 2 },
                             enabled = !isWorking
                         )
@@ -413,19 +418,19 @@ fun JoinServerScreen(
 
                         ConceptMenuItem(
                             label = "Gaming",
-                            icon = { Icon(Icons.Default.SportsEsports, null, tint = OrbitConceptStatus.online, modifier = Modifier.size(20.dp)) },
+                            icon = { Icon(with(TablerIcons) { DeviceGamepad }, null, tint = OrbitConceptStatus.online, modifier = Modifier.size(20.dp)) },
                             onClick = { input = "Gaming Squad's Community"; createStep = 2 },
                             enabled = !isWorking
                         )
                         ConceptMenuItem(
                             label = "School Club",
-                            icon = { Icon(Icons.Default.School, null, tint = OrbitConceptStatus.idle, modifier = Modifier.size(20.dp)) },
+                            icon = { Icon(with(TablerIcons) { School }, null, tint = OrbitConceptStatus.idle, modifier = Modifier.size(20.dp)) },
                             onClick = { input = "Study Group's Community"; createStep = 2 },
                             enabled = !isWorking
                         )
                         ConceptMenuItem(
                             label = "Friends",
-                            icon = { Icon(Icons.Default.People, null, tint = ConceptPink, modifier = Modifier.size(20.dp)) },
+                            icon = { Icon(with(TablerIcons) { Users }, null, tint = ConceptPink, modifier = Modifier.size(20.dp)) },
                             onClick = { input = "Friends Hangout's Community"; createStep = 2 },
                             enabled = !isWorking
                         )
@@ -529,7 +534,7 @@ fun JoinServerScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Default.Close,
+                    imageVector = with(TablerIcons) { X },
                     contentDescription = "Close",
                     // --interactive-normal
                     tint = OrbitConceptDark.textSecondary,
@@ -828,9 +833,10 @@ private fun ConceptTextButton(
     val interaction = rememberOrbitInteraction()
     val hovered by interaction.hoverSource.collectIsHoveredAsState()
     val pressed by interaction.pressSource.collectIsPressedAsState()
+    val t = rememberCosmicTokens()
 
     val fg by animateColorAsState(
-        targetValue = if (hovered || pressed) Color.White else OrbitConceptTheme.textNormal,
+        targetValue = if (hovered || pressed) t.Text_White else OrbitConceptTheme.textNormal,
         animationSpec = ConceptHoverSpec,
         label = "conceptTextBtnFg"
     )

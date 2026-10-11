@@ -8,45 +8,26 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ErrorOutline
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Language
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,6 +47,12 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.icons.TablerIcons
+import ui.icons.AlertTriangle
+import ui.icons.InfoCircle
+import ui.icons.Language
+import ui.icons.Lock
+import ui.icons.User
 import kotlinx.coroutines.launch
 import repository.AuthFlow
 import repository.AuthStage
@@ -81,7 +68,6 @@ import ui.screen.server.SelfHostingScreen
 import ui.theme.OrbitRadius
 import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
-
 /**
  * Sign in.
  *
@@ -425,11 +411,15 @@ var pendingSsoRetry by remember { mutableStateOf(false) }
                         Spacer(Modifier.width(OrbitSpace.md))
                         Text(
                             text = "Orbit",
-                            style = MaterialTheme.typography.titleMedium.copy(
+                            style = MaterialTheme.typography.titleLarge.copy(
                                 color = t.Text_White,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 18.sp,
-                                letterSpacing = 0.2.sp
+                                // ExtraBold, matching the app's heaviest weight for
+                                // headers. The wordmark is the largest text on the
+                                // login screen and SemiBold left it reading as a
+                                // label rather than as branding.
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 20.sp,
+                                letterSpacing = (-0.2).sp
                             )
                         )
                     }
@@ -475,8 +465,8 @@ var pendingSsoRetry by remember { mutableStateOf(false) }
                             text = "Orbit",
                             style = MaterialTheme.typography.titleSmall.copy(
                                 color = t.Text_White,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 15.sp
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 17.sp
                             )
                         )
                     }
@@ -512,7 +502,7 @@ var pendingSsoRetry by remember { mutableStateOf(false) }
                     value = homeserverUrl,
                     onValueChange = { homeserverUrl = it },
                     placeholder = "https://matrix.org",
-                    leadingIcon = Icons.Default.Language,
+                    leadingIcon = with(TablerIcons) { Language },
                     keyboardType = KeyboardType.Uri,
                     imeAction = ImeAction.Next,
                     modifier = Modifier.fillMaxWidth()
@@ -620,7 +610,7 @@ var pendingSsoRetry by remember { mutableStateOf(false) }
                     value = identifier,
                     onValueChange = { identifier = it },
                     placeholder = if (isRegistering) "alice" else "@alice:example.org",
-                    leadingIcon = Icons.Default.Person,
+                    leadingIcon = with(TablerIcons) { User },
                     imeAction = ImeAction.Next,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -630,7 +620,7 @@ var pendingSsoRetry by remember { mutableStateOf(false) }
                     value = password,
                     onValueChange = { password = it },
                     placeholder = "••••••••",
-                    leadingIcon = Icons.Default.Lock,
+                    leadingIcon = with(TablerIcons) { Lock },
                     isPassword = true,
                     imeAction = ImeAction.Done,
                     // onImeAction ONLY, no companion onKeyEvent. The field is
@@ -654,7 +644,7 @@ var pendingSsoRetry by remember { mutableStateOf(false) }
                     errorMessage?.let {
                         OrbitCallout(
                             text = it,
-                            icon = Icons.Default.ErrorOutline,
+                            icon = with(TablerIcons) { AlertTriangle },
                             // Not a Danger: nothing has gone wrong and no data is at
                             // risk yet -- the homeserver just cannot do something Orbit
                             // prefers. Colouring this red alongside every other error
@@ -705,7 +695,7 @@ var pendingSsoRetry by remember { mutableStateOf(false) }
                         is AuthStage.Dummy -> {
                             OrbitCallout(
                                 text = "This homeserver needs to confirm you're not a bot before it will create an account.",
-                                icon = Icons.Default.Info,
+                                icon = with(TablerIcons) { InfoCircle },
                                 tone = OrbitButtonTone.Neutral
                             )
                             Spacer(Modifier.height(OrbitSpace.xs))
@@ -726,7 +716,7 @@ var pendingSsoRetry by remember { mutableStateOf(false) }
                         is AuthStage.Terms -> {
                             OrbitCallout(
                                 text = "This homeserver asks you to accept its policies first.",
-                                icon = Icons.Default.Info,
+                                icon = with(TablerIcons) { InfoCircle },
                                 tone = OrbitButtonTone.Neutral
                             )
                             Spacer(Modifier.height(OrbitSpace.xs))
@@ -777,7 +767,7 @@ var pendingSsoRetry by remember { mutableStateOf(false) }
                             OrbitCallout(
                                 text = stage.reason?.takeIf { it.isNotBlank() }
                                     ?: "This homeserver requires a registration token. Ask its administrator for one.",
-                                icon = Icons.Default.Info,
+                                icon = with(TablerIcons) { InfoCircle },
                                 tone = OrbitButtonTone.Neutral
                             )
                             Spacer(Modifier.height(OrbitSpace.xs))
@@ -823,7 +813,7 @@ var pendingSsoRetry by remember { mutableStateOf(false) }
                             OrbitCallout(
                                 text = "This homeserver requires a captcha, which Orbit cannot display. " +
                                     "Create the account once in the homeserver's own web client, then sign in here.",
-                                icon = Icons.Default.ErrorOutline,
+                                icon = with(TablerIcons) { AlertTriangle },
                                 tone = OrbitButtonTone.Danger
                             )
                         }
@@ -832,13 +822,13 @@ var pendingSsoRetry by remember { mutableStateOf(false) }
                             text = "This homeserver requires an extra sign-in step (${stage.stageType}) " +
                                 "that Orbit cannot complete. Finish setting up the account in the " +
                                 "homeserver's own web client, then sign in here.",
-                            icon = Icons.Default.ErrorOutline,
+                            icon = with(TablerIcons) { AlertTriangle },
                             tone = OrbitButtonTone.Danger
                         )
 
                         is AuthStage.Malformed -> OrbitCallout(
                             text = stage.detail,
-                            icon = Icons.Default.ErrorOutline,
+                            icon = with(TablerIcons) { AlertTriangle },
                             tone = OrbitButtonTone.Danger
                         )
 

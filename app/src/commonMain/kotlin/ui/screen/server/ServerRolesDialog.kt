@@ -21,8 +21,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -48,6 +46,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import ui.icons.TablerIcons
+import ui.icons.X
 import kotlinx.coroutines.launch
 import repository.OrbitRepository
 import ui.assets.OrbitEmptyIllustration
@@ -61,16 +61,14 @@ import ui.model.OrbitRoleDefaults
 import ui.model.OrbitServer
 import ui.model.OrbitServerRolesState
 import ui.model.PermissionGrant
-import ui.theme.rememberCosmicTokens
-
 import ui.screen.auth.*
-import ui.screen.settings.*
-import ui.screen.drawer.*
-import ui.screen.server.*
 import ui.screen.call.*
-import ui.screen.media.*
+import ui.screen.drawer.*
 import ui.screen.main.*
-
+import ui.screen.media.*
+import ui.screen.server.*
+import ui.screen.settings.*
+import ui.theme.rememberCosmicTokens
 @Composable
 fun ServerRolesDialog(
     repository: OrbitRepository,
@@ -280,7 +278,7 @@ private fun RoleDialogHeader(
             }
         }
         IconButton(onClick = onDismiss) {
-            Icon(Icons.Default.Close, contentDescription = "Close roles", tint = tokens.Text_Muted)
+            Icon(with(TablerIcons) { X }, contentDescription = "Close roles", tint = tokens.Text_Muted)
         }
     }
 }

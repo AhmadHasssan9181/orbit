@@ -14,12 +14,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CallEnd
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.GraphicEq
-import androidx.compose.material.icons.filled.HeadsetOff
-import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -41,13 +35,18 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.rememberWindowState
+import ui.icons.TablerIcons
+import ui.icons.ChartBar
+import ui.icons.HeadphonesOff
+import ui.icons.MicrophoneOff
+import ui.icons.PhoneOff
+import ui.icons.X
 import livekit.LiveKitRemoteVideoFrameStore
 import livekit.liveKitActiveSpeakers
 import ui.theme.rememberCosmicTokens
 import webrtc.ActiveCallBridge
 import webrtc.CallManager
 import webrtc.CallState
-
 private val PIP_ACTIVE_STATES = setOf(CallState.CONNECTING, CallState.CONNECTED)
 
 /**
@@ -162,7 +161,7 @@ private fun PipWindowContent(
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
-                            Icons.Default.GraphicEq,
+                            with(TablerIcons) { ChartBar },
                             contentDescription = null,
                             tint = tokens.Accent,
                             modifier = Modifier.size(22.dp)
@@ -170,10 +169,10 @@ private fun PipWindowContent(
                     }
                 }
                 Spacer(Modifier.height(8.dp))
-                Text("Orbit call", color = Color.White, fontSize = 13.sp)
+                Text("Orbit call", color = tokens.OnDark, fontSize = 13.sp)
                 Text(
                     "${remoteParticipants.size + 1} in call",
-                    color = Color.White.copy(alpha = 0.55f),
+                    color = tokens.OnDark.copy(alpha = 0.55f),
                     fontSize = 11.sp
                 )
             }
@@ -187,10 +186,10 @@ private fun PipWindowContent(
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             if (!isAudioEnabled) PipBadge(container = Color(0xFFD65A54)) {
-                Icon(Icons.Default.MicOff, "Muted", tint = Color.White, modifier = Modifier.size(13.dp))
+                Icon(with(TablerIcons) { MicrophoneOff }, "Muted", tint = Color.White, modifier = Modifier.size(13.dp))
             }
             if (isDeafened) PipBadge(container = Color(0xFFD65A54)) {
-                Icon(Icons.Default.HeadsetOff, "Deafened", tint = Color.White, modifier = Modifier.size(13.dp))
+                Icon(with(TablerIcons) { HeadphonesOff }, "Deafened", tint = Color.White, modifier = Modifier.size(13.dp))
             }
         }
 
@@ -206,9 +205,9 @@ private fun PipWindowContent(
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                Icons.Default.Close,
+                with(TablerIcons) { X },
                 "Close mini window",
-                tint = Color.White.copy(alpha = 0.85f),
+                tint = tokens.OnDark.copy(alpha = 0.85f),
                 modifier = Modifier.size(14.dp)
             )
         }
@@ -225,7 +224,7 @@ private fun PipWindowContent(
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                Icons.Default.CallEnd,
+                with(TablerIcons) { PhoneOff },
                 "Hang up",
                 tint = Color.White,
                 modifier = Modifier.size(18.dp)

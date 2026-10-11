@@ -1,7 +1,5 @@
 package ui.screen.main
 
-import ui.screen.chat.*
-
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -22,27 +20,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.SolidColor
-import ui.components.OrbitListRow
-import ui.components.OrbitNoticeHost
-import ui.components.OrbitNotices
-// Member extension on Result — needs its own import even though the object is
-// imported, exactly like any extension declared inside an object.
-import ui.components.OrbitNotices.onFailureOrNotify
-import ui.components.OrbitRowLeading
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ChatBubbleOutline
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.GridView
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Tag
-import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -68,7 +47,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -76,10 +58,19 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.window.Dialog
+import coil3.ImageLoader
+import coil3.compose.setSingletonImageLoaderFactory
+import coil3.network.ktor3.KtorNetworkFetcherFactory
+import coil3.request.crossfade
+import ui.icons.TablerIcons
+import ui.icons.Search
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.cio.CIO
+import io.ktor.client.request.header
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
@@ -98,6 +89,12 @@ import ui.assets.OrbitDefaultAvatar
 import ui.assets.OrbitEmptyIllustration
 import ui.assets.OrbitEmptyScene
 import ui.assets.OrbitServerAssetIcon
+import ui.components.OrbitListRow
+import ui.components.OrbitNoticeHost
+import ui.components.OrbitNotices
+import ui.components.OrbitNotices.onFailureOrNotify
+import ui.components.OrbitRowLeading
+import ui.icons.*
 import ui.icons.OrbitIcons
 import ui.layout.LocalWindowSizeClass
 import ui.layout.WindowSizeClass
@@ -107,36 +104,26 @@ import ui.model.ChannelType
 import ui.model.MessageContent
 import ui.model.OrbitChannel
 import ui.model.OrbitMessage
-import ui.model.applyLiveAmendments
 import ui.model.OrbitServer
 import ui.model.OrbitUser
 import ui.model.UserStatus
+import ui.model.applyLiveAmendments
+import ui.screen.ChatScreen
+import ui.screen.auth.*
+import ui.screen.call.*
+import ui.screen.chat.*
+import ui.screen.drawer.*
+import ui.screen.main.*
+import ui.screen.media.*
+import ui.screen.orbitGlobalShortcuts
+import ui.screen.server.*
+import ui.screen.settings.*
+import ui.theme.*
 import ui.theme.rememberCosmicTokens
 import webrtc.CallManager
 import webrtc.CallState
 import webrtc.LocalCallManager
 import webrtc.createWebRtcClient
-
-import coil3.ImageLoader
-import coil3.compose.setSingletonImageLoaderFactory
-import coil3.network.ktor3.KtorNetworkFetcherFactory
-import coil3.request.crossfade
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
-import io.ktor.client.request.header
-
-import ui.screen.auth.*
-import ui.screen.settings.*
-import ui.screen.drawer.*
-import ui.screen.server.*
-import ui.screen.call.*
-import ui.screen.media.*
-import ui.screen.main.*
-import ui.screen.orbitGlobalShortcuts
-import ui.screen.ChatScreen
-import ui.icons.*
-import ui.theme.*
-
 // ─── Cosmic Design Tokens ──────────────────────────────────────
 
 private val coilHttpClient = HttpClient(CIO) {
@@ -1515,7 +1502,7 @@ private fun QuickSwitcherDialog(
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
                 ) {
                     Icon(
-                        Icons.Filled.Search,
+                        with(TablerIcons) { Search },
                         contentDescription = null,
                         tint = t.Text_Subtle,
                         modifier = Modifier.size(17.dp)
@@ -1616,8 +1603,6 @@ private fun QuickSwitcherRow(
         }
     )
 }
-
-
 
 /**
  * How many messages one page of history is.

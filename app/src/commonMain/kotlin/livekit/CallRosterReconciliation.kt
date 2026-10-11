@@ -75,26 +75,34 @@ object CallRosterReconciliation {
      *   departed member can never be shown again while their membership record
      *   is still unexpired.
      *
-     * ## "Empty LiveKit view" is ambiguous, and callers must resolve it
+     * ## "Empty LiveKit view" is ambiguous, and the caller resolves it
      *
-     * The first branch cannot tell a native-wiring regression from a call that
+     * The Matrix fallback cannot tell a native-wiring regression from a call that
      * simply has not finished joining, because in both cases LiveKit has told us
      * nothing. For the E2EE key exchange the Matrix fallback is right either
      * way: over-including a peer costs a wasted key send, under-including one
      * costs a silent participant, and the exchange has its own convergence sweep
      * to recover.
      *
-     * For DISPLAY it is not the same trade. A caller that is still CONNECTING
-     * gets a 12-hour-expiry membership list rendered as the live participant
-     * count, which is how a two-person call announced six people from the moment
-     * Join was pressed. So `CallManager`'s reconciliation collector gates on
-     * `CallState.CONNECTED` and reports an empty roster before that, rather than
-     * relying on this function to guess.
+     * For DISPLAY it is not the same trade, and this is why the fallback is a
+     * parameter rather than the default. A caller that is still CONNECTING gets
+     * a 12-hour-expiry membership list rendered as the live participant count,
+     * which is how a two-person call announced six people from the moment Join
+     * was pressed; `CallManager` therefore gates on `CallState.CONNECTED` and
+     * reports an empty roster before that.
      *
-     * The fix belongs at the call site because the information needed to
-     * disambiguate — the call state — is not an input here, and adding a
-     * parameter that every existing caller would pass as `true` would be worse
-     * than leaving the ambiguity documented.
+     * Gating on CONNECTED is not on its own sufficient, because a call you are
+     * alone in produces exactly the same empty LiveKit set as one you have not
+     * finished joining. Falling back there rendered the whole stale membership
+     * record — the "8 in call" next to a stage reading "No one else is here".
+     * So once the call is CONNECTED the caller passes
+     * `livekitIsAuthoritative = true` and an empty LiveKit view is read as the
+     * thing it now unambiguously means: nobody else is here.
+     *
+     * The information needed to disambiguate — the call state — is not an input
+     * here, which is why the caller owns the decision. There is exactly one
+     * production caller and it passes `true`, so the default stays `false` and
+     * a future key-exchange caller keeps the forgiving fallback it needs.
      *
      * The local user is always kept while the LiveKit view is populated: they
      * are in the room by definition (we are connected to it), but
@@ -107,12 +115,16 @@ object CallRosterReconciliation {
     fun visibleUserIds(
         matrixUserIds: List<String>,
         livekitIdentities: Set<String>,
-        ownUserId: String? = null
+        ownUserId: String? = null,
+        livekitIsAuthoritative: Boolean = false
     ): List<String> {
         val roster = matrixUserIds.filter { it.isNotBlank() }.distinct()
-        if (livekitIdentities.isEmpty()) return roster
         val live = userIdsInRoom(livekitIdentities)
-        if (live.isEmpty()) return roster
+        // Empty LiveKit view, and we have been told to believe it. Note this also
+        // covers "populated, but no identity parsed" — an opaque service identity
+        // tells us nothing about who is in the room either, and guessing from the
+        // stale record would be worse than admitting the room looks empty.
+        if (live.isEmpty() && !livekitIsAuthoritative) return roster
         val out = LinkedHashSet<String>()
         for (userId in roster) {
             if (userId == ownUserId || userId in live) out += userId

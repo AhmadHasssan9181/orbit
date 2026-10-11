@@ -46,16 +46,100 @@ class CallRosterReconciliationTest {
         // A native-wiring regression. Mirrors the `livekitIds.isEmpty() ||` guard
         // in nudgeMissingPeers: a regression must never blank the list.
         //
-        // It is NOT the pre-join case, and that distinction is the whole reason
-        // the display path gates on CallState.CONNECTED upstream. This function
-        // cannot tell the two apart -- in both, LiveKit has said nothing -- so a
-        // caller that renders its result before it has connected is displaying a
-        // 12-hour-expiry membership list as a live participant count. See the
-        // class doc on `CallRosterReconciliation.visibleUserIds`.
+        // This is the DEFAULT, and the only caller (the display path in
+        // `CallManager`) opts out of it once the call is CONNECTED -- see
+        // `authoritativeLiveKitDropsGhostsFromAnAloneCall`. Callers that render
+        // this result before LiveKit has spoken are displaying a 12-hour-expiry
+        // membership list as a live participant count; see the class doc on
+        // `CallRosterReconciliation.visibleUserIds`.
         val matrixRoster = listOf(alice, bob, carol)
         assertEquals(
             matrixRoster,
             CallRosterReconciliation.visibleUserIds(matrixRoster, emptySet(), ownUserId = alice)
+        )
+    }
+
+    @Test
+    fun authoritativeLiveKitDropsGhostsFromAnAloneCall() {
+        // A solo call in a room with a stale Matrix membership record.
+        //
+        // LiveKit is not silent here, it is accurate: `onRemoteParticipantConnected`
+        // fires for every remote participant whether or not it publishes media, so
+        // an empty set while CONNECTED means genuinely nobody else is in the room.
+        // Falling back to `m.call.member` rendered all eight ghosts in the drawer
+        // and "Voice - 8 here" on the channel row, directly beside a call stage
+        // reading "No one else is here".
+        val staleMatrixRoster = listOf(
+            alice, bob, carol, dave, "@eve:example.org", "@frank:example.org",
+            "@grace:example.org", "@heidi:example.org"
+        )
+        val visible = CallRosterReconciliation.visibleUserIds(
+            matrixUserIds = staleMatrixRoster,
+            livekitIdentities = emptySet(),
+            ownUserId = alice,
+            livekitIsAuthoritative = true
+        )
+        assertEquals(
+            listOf(alice),
+            visible,
+            "an empty authoritative LiveKit view means alone in the call, not everybody who ever joined"
+        )
+    }
+
+    @Test
+    fun authoritativeLiveKitReportsAnEmptyRosterWithoutALocalUser() {
+        // Same as above but with no local id known: the roster is empty rather
+        // than the whole stale record. An empty roster is the honest answer when
+        // we cannot even identify ourselves.
+        val visible = CallRosterReconciliation.visibleUserIds(
+            matrixUserIds = listOf(alice, bob, carol),
+            livekitIdentities = emptySet(),
+            ownUserId = null,
+            livekitIsAuthoritative = true
+        )
+        assertEquals(emptyList(), visible)
+    }
+
+    @Test
+    fun authoritativeLiveKitStillIntersectsWhenPeersArePresent() {
+        // The flag only changes what an EMPTY LiveKit view means. A populated one
+        // must reconcile exactly as before, or a departing member whose membership
+        // record is still unexpired would reappear.
+        val staleMatrixRoster = listOf(alice, bob, carol, dave)
+        val visible = CallRosterReconciliation.visibleUserIds(
+            matrixUserIds = staleMatrixRoster,
+            livekitIdentities = setOf(id(bob, "BBB")),
+            ownUserId = alice,
+            livekitIsAuthoritative = true
+        )
+        assertEquals(listOf(alice, bob), visible)
+    }
+
+    @Test
+    fun authoritativeLiveKitDropsOpaqueIdentitiesInsteadOfFallingBack() {
+        // The default falls back when the LiveKit set is populated but nothing in
+        // it parses. Once the caller has said the LiveKit view is the answer, an
+        // identity we cannot map tells us nothing about who is in the room, and
+        // guessing from the stale record would be worse than admitting the room
+        // looks empty.
+        val visible = CallRosterReconciliation.visibleUserIds(
+            matrixUserIds = listOf(alice, bob, carol),
+            livekitIdentities = setOf("opaque-abc123"),
+            ownUserId = alice,
+            livekitIsAuthoritative = true
+        )
+        assertEquals(listOf(alice), visible)
+    }
+
+    @Test
+    fun unparseableIdentitiesFallBackRatherThanBlanking() {
+        // A service-generated opaque identity is not parseable. Blanking the
+        // roster here would be worse than showing the membership record -- for a
+        // caller that has NOT claimed the LiveKit view is authoritative.
+        val matrixRoster = listOf(alice, bob)
+        assertEquals(
+            matrixRoster,
+            CallRosterReconciliation.visibleUserIds(matrixRoster, setOf("opaque-abc123"), ownUserId = alice)
         )
     }
 
@@ -83,17 +167,6 @@ class CallRosterReconciliationTest {
             listOf(alice, bob),
             visible,
             "only the two connected identities may survive; the four stale records must not"
-        )
-    }
-
-    @Test
-    fun unparseableIdentitiesFallBackRatherThanBlanking() {
-        // A service-generated opaque identity is not parseable. Blanking the
-        // roster here would be worse than showing the membership record.
-        val matrixRoster = listOf(alice, bob)
-        assertEquals(
-            matrixRoster,
-            CallRosterReconciliation.visibleUserIds(matrixRoster, setOf("opaque-abc123"), ownUserId = alice)
         )
     }
 

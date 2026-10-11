@@ -494,6 +494,7 @@ private fun GroupCallJoinStatus(
     onLeave: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val t = rememberCosmicTokens()
     Column(
         modifier = modifier.padding(horizontal = 32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -511,7 +512,7 @@ private fun GroupCallJoinStatus(
             CircularProgressIndicator(color = accentColor)
             Text(
                 text = joinStageLabel(connection.stage, videoRequested, connection.attempt),
-                color = Color.White.copy(alpha = 0.85f)
+                color = t.OnDark.copy(alpha = 0.85f)
             )
         }
     }

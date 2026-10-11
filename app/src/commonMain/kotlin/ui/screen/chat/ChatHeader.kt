@@ -3,6 +3,7 @@ package ui.screen.chat
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -21,12 +22,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.foundation.clickable
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.NotificationsOff
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -36,18 +31,23 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.semantics.Role
-import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.icons.TablerIcons
+import ui.icons.ArrowLeft
+import ui.icons.Bell
+import ui.icons.BellOff
+import ui.icons.Search
+import kotlinx.coroutines.delay
 import ui.components.OrbitIconButton
 import ui.components.OrbitTooltip
 import ui.components.orbitClickable
@@ -64,7 +64,6 @@ import ui.theme.OrbitMotion
 import ui.theme.OrbitRadius
 import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
-
 /**
  * Room header.
  *
@@ -187,7 +186,7 @@ internal fun ChatHeader(
             ) {
                 if (onBack != null && !windowSize.isExpanded) {
                     OrbitIconButton(
-                        icon = Icons.Default.ArrowBack,
+                        icon = with(TablerIcons) { ArrowLeft },
                         contentDescription = "Back",
                         onClick = onBack,
                         size = 28.dp,
@@ -323,7 +322,7 @@ internal fun ChatHeader(
                     )
                 } else {
                     HeaderActionBtn(
-                        icon = Icons.Default.Search,
+                        icon = with(TablerIcons) { Search },
                         contentDescription = "Search this room",
                         active = searchActive,
                         tooltip = "Search",
@@ -347,9 +346,9 @@ internal fun ChatHeader(
                 if (onCycleNotificationMode != null) {
                     HeaderActionBtn(
                         icon = if (notifMode == "MUTE") {
-                            Icons.Default.NotificationsOff
+                            with(TablerIcons) { BellOff }
                         } else {
-                            Icons.Default.Notifications
+                            with(TablerIcons) { Bell }
                         },
                         contentDescription = when (notifMode) {
                             "MUTE" -> "Notifications muted"
@@ -548,7 +547,7 @@ private fun ChatSearchBar(value: String, onValueChange: (String) -> Unit, light:
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Icon(
-            imageVector = Icons.Default.Search,
+            imageVector = with(TablerIcons) { Search },
             contentDescription = null,
             tint = if (focused) t.Text_Secondary else t.Text_Muted,
             modifier = Modifier.size(16.dp)

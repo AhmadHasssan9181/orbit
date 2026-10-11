@@ -20,10 +20,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Code
-import androidx.compose.material.icons.filled.Headphones
-import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -32,7 +28,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,13 +39,17 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.icons.TablerIcons
+import ui.icons.Code
+import ui.icons.DeviceGamepad
+import ui.icons.Headphones
+import kotlinx.coroutines.delay
 import ui.assets.OrbitDefaultAvatar
 import ui.model.OrbitUser
 import ui.model.UserStatus
 import ui.theme.OrbitConceptMetrics
 import ui.theme.OrbitConceptOverlay
 import ui.theme.rememberCosmicTokens
-
 /** One heading and the members under it. */
 data class MemberGroup(
     val label: String,
@@ -315,9 +314,9 @@ fun MemberAvatarWithStatus(
 @Composable
 private fun ActivityGlyph(activity: MemberActivity) {
     val icon = when (activity) {
-        is MemberActivity.Playing -> Icons.Filled.SportsEsports
-        is MemberActivity.Listening -> Icons.Filled.Headphones
-        is MemberActivity.Coding -> Icons.Filled.Code
+        is MemberActivity.Playing -> with(TablerIcons) { DeviceGamepad }
+        is MemberActivity.Listening -> with(TablerIcons) { Headphones }
+        is MemberActivity.Coding -> with(TablerIcons) { Code }
     }
     // Literals from the concept's `renderActivityIcon`: #23a55a, #1db954, #007acc.
     val tint = when (activity) {

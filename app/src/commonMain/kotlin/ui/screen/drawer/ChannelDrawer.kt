@@ -1,6 +1,5 @@
 package ui.screen.drawer
 
-import ui.screen.call.VoiceConnectedPanel
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,8 +17,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -37,18 +34,21 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.icons.TablerIcons
+import ui.icons.ExternalLink
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import repository.MatrixOrbitRepository
 import repository.SettingsManager
-import ui.components.OrbitSearchField
 import ui.components.OrbitNotices
+import ui.components.OrbitSearchField
 import ui.icons.OrbitIcons
 import ui.layout.LocalWindowSizeClass
 import ui.model.ChannelCategory
 import ui.model.OrbitChannel
 import ui.model.OrbitServer
 import ui.model.OrbitUser
+import ui.screen.call.VoiceConnectedPanel
 import ui.screen.server.ServerHeader
 import ui.screen.server.ServerMenuEntry
 import ui.theme.OrbitConceptMetrics
@@ -56,7 +56,6 @@ import ui.theme.OrbitRadius
 import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
 import webrtc.LocalCallManager
-
 /**
  * The channel sidebar. The concept's `.channel-sidebar`.
  *
@@ -472,7 +471,7 @@ private fun MiniScreenPreviewSlot(
                 modifier = Modifier.weight(1f)
             )
             Icon(
-                imageVector = Icons.Default.OpenInNew,
+                imageVector = with(TablerIcons) { ExternalLink },
                 contentDescription = null,
                 // `.screen-popout-btn { color: var(--interactive-normal) }`,
                 // hover `#ffffff`.

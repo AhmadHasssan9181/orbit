@@ -1,4 +1,4 @@
-﻿package ui.screen.server
+package ui.screen.server
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
@@ -33,9 +33,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Search
+
+
+
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -76,7 +76,9 @@ import ui.theme.OrbitConceptBorder
 import ui.theme.OrbitConceptDark
 import ui.theme.OrbitConceptTheme
 import ui.theme.OrbitSpace
-
+import ui.icons.TablerIcons
+import ui.icons.Search
+import ui.icons.X
 // ── Concept modal geometry ────────────────────────────────────────────────
 // ExploreModal.jsx: a 840px card, `border-radius: 10px`, `overflow: hidden`,
 // `max-height: 85vh`, on `.modal-overlay`.
@@ -399,7 +401,7 @@ private fun ExploreHero(onClose: () -> Unit) {
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Default.Close,
+                    imageVector = with(TablerIcons) { X },
                     contentDescription = "Close",
                     tint = Color.White,
                     modifier = Modifier.size(18.dp)
@@ -470,7 +472,7 @@ private fun ExploreSearchField(
             }
             Spacer(Modifier.width(OrbitSpace.sm))
             Icon(
-                imageVector = Icons.Default.Search,
+                imageVector = with(TablerIcons) { Search },
                 contentDescription = null,
                 tint = OrbitConceptTheme.textMuted,
                 modifier = Modifier.size(18.dp)
@@ -541,12 +543,16 @@ private fun ExploreServerCard(space: OrbitServer, onOpen: () -> Unit) {
                             .border(3.dp, OrbitConceptTheme.secondary, ExploreIconShape)
                     )
                 } else {
+                    // Same curated pastel as the rail, so a server looks the
+                    // same here as it does once you have joined it.
+                    val pastel = ui.theme.pastelServerColor(space.id)
                     OrbitServerAssetIcon(
                         label = initialsOf(space.name),
-                        color = Color(space.iconColor),
+                        color = pastel,
                         modifier = Modifier
                             .size(48.dp)
                             .clip(ExploreIconShape)
+                            .background(pastel)
                             .border(3.dp, OrbitConceptTheme.secondary, ExploreIconShape)
                     )
                 }
@@ -656,7 +662,7 @@ private fun ExploreJoinCard(target: String, isJoining: Boolean, onJoin: () -> Un
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Default.Search,
+                    imageVector = with(TablerIcons) { Search },
                     contentDescription = null,
                     tint = Color.White,
                     modifier = Modifier.size(22.dp)

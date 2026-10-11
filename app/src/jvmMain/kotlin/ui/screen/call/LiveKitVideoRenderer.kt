@@ -13,9 +13,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import livekit.LiveKitRemoteVideoFrameStore
+import ui.theme.rememberCosmicTokens
 
 @Composable
 actual fun LiveKitVideoRenderer(modifier: Modifier) {
+    val t = rememberCosmicTokens()
     val remoteFrame by LiveKitRemoteVideoFrameStore.latestFrame.collectAsState()
 
     Box(
@@ -31,7 +33,7 @@ actual fun LiveKitVideoRenderer(modifier: Modifier) {
                 modifier = Modifier.fillMaxSize()
             )
         } else {
-            Text("Voice Call Connected (No Video)", color = Color.White)
+            Text("Voice Call Connected (No Video)", color = t.OnDark)
         }
     }
 }

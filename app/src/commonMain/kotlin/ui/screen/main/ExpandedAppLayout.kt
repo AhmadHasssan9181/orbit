@@ -87,7 +87,7 @@ fun ExpandedLayout(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
-                .padding(top = 8.dp, bottom = 8.dp, start = 6.dp, end = 8.dp)
+                .padding(top = 0.dp, bottom = 8.dp, start = 0.dp, end = 8.dp)
                 .clip(RoundedCornerShape(16.dp))
                 .background(tokens.Drawer_Bg)
                 .border(1.dp, tokens.Separator.copy(alpha = 0.25f), RoundedCornerShape(16.dp))

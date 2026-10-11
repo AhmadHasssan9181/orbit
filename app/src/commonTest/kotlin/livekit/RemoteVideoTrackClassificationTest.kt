@@ -8,6 +8,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
+import kotlin.test.assertFalse
 
 /**
  * A remote screen share must be filed as a screen share.
@@ -288,5 +289,41 @@ class RemoteVideoTrackClassificationTest {
 
         val state = LiveKitRemoteVideoFrameStore.activeTracks.value[cameraTrackSid]
         assertTrue(state != null && !state.isScreenShare, "trackAdded did not take over: $state")
+    }
+
+    @Test
+    fun `stopping a screen share purges both publicationSid and trackSid and clears latestScreenShareFrame`() {
+        val pubSid = "TR_pub_screenshare_123"
+        val trackSid = "TR_track_screenshare_456"
+        LiveKitRemoteVideoFrameStore.trackAnnounced(identity, pubSid, trackSource = "screen_share")
+        LiveKitRemoteVideoFrameStore.trackStarted(identity, trackSid, trackSource = "screen_share")
+        pushFrame(trackSource = "screenshare", track = trackSid)
+
+        assertEquals(trackSid, LiveKitRemoteVideoFrameStore.latestScreenShareFrame.value?.trackSid)
+        assertTrue(LiveKitRemoteVideoFrameStore.activeTracks.value.containsKey(pubSid))
+        assertTrue(LiveKitRemoteVideoFrameStore.activeTracks.value.containsKey(trackSid))
+
+        LiveKitRemoteVideoFrameStore.trackStopped(identity, trackSid)
+
+        assertNull(LiveKitRemoteVideoFrameStore.latestScreenShareFrame.value)
+        assertFalse(LiveKitRemoteVideoFrameStore.activeTracks.value.containsKey(trackSid))
+        assertFalse(LiveKitRemoteVideoFrameStore.activeTracks.value.containsKey(pubSid))
+        assertNull(LiveKitRemoteVideoFrameStore.framesByTrack.value[trackSid])
+    }
+
+    @Test
+    fun `participantDisconnected cleans up all tracks and frames for participant`() {
+        val pubSid = "TR_pub_789"
+        val trackSid = "TR_track_789"
+        LiveKitRemoteVideoFrameStore.trackAnnounced(identity, pubSid, trackSource = "screen_share")
+        LiveKitRemoteVideoFrameStore.trackStarted(identity, trackSid, trackSource = "screen_share")
+        pushFrame(trackSource = "screenshare", track = trackSid)
+
+        LiveKitRemoteVideoFrameStore.participantDisconnected(identity)
+
+        assertNull(LiveKitRemoteVideoFrameStore.latestScreenShareFrame.value)
+        assertFalse(LiveKitRemoteVideoFrameStore.activeTracks.value.containsKey(pubSid))
+        assertFalse(LiveKitRemoteVideoFrameStore.activeTracks.value.containsKey(trackSid))
+        assertNull(LiveKitRemoteVideoFrameStore.framesByTrack.value[trackSid])
     }
 }

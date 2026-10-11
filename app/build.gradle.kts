@@ -32,7 +32,6 @@ kotlin {
                 implementation(compose.material)
                 implementation(compose.material3)
                 implementation(compose.components.resources)
-                implementation(compose.materialIconsExtended)
 
                 implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
                 implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
@@ -49,6 +48,10 @@ kotlin {
 
                 implementation("io.coil-kt.coil3:coil-compose:3.0.0")
                 implementation("io.coil-kt.coil3:coil-network-ktor3:3.0.0")
+
+                // Tabler icons (MIT) are vendored as generated ImageVectors in
+                // ui/icons/TablerIcons.kt -- see tools/tabler-codegen. No icon dependency
+                // is needed because TablerIcons.kt only uses Compose's own vector APIs.
 
                 // Room KMP
                 implementation("androidx.room:room-runtime:2.7.0-alpha11")
@@ -85,6 +88,9 @@ kotlin {
                 
                 // VLCJ for Native Video Playback
                 implementation("uk.co.caprica:vlcj:4.8.2")
+
+                // FlatLaf for Native Windows 11 Window Decorations & Snap Layouts
+                implementation("com.formdev:flatlaf:3.5.4")
                 // Keep native dependencies if needed, or remove them if the DLL is loaded from resources
                 // implementation("dev.onvoid.webrtc:webrtc-java:0.14.0:windows-x86_64")
                 // implementation("dev.onvoid.webrtc:webrtc-java:0.14.0:linux-x86_64")

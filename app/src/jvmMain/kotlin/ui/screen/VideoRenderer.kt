@@ -25,10 +25,12 @@ import livekit.LiveKitLocalVideoFrameStore
 import livekit.LiveKitRemoteVideoFrame
 import livekit.LiveKitRemoteVideoFrameStore
 import livekit.LiveKitVideoTileRenderer
+import ui.theme.rememberCosmicTokens
 import webrtc.DesktopVideoRenderer
 
 @Composable
 actual fun VideoRenderer(renderer: Any?, modifier: Modifier) {
+    val t = rememberCosmicTokens()
     when (renderer) {
         is LiveKitVideoTileRenderer.LocalPreview -> {
             val frame by LiveKitLocalVideoFrameStore.latestFrame.collectAsState()
@@ -113,7 +115,7 @@ actual fun VideoRenderer(renderer: Any?, modifier: Modifier) {
                     contentAlignment = Alignment.Center
                 ) {
                     CircularProgressIndicator(
-                        color = Color.White.copy(alpha = 0.75f),
+                        color = t.OnDark.copy(alpha = 0.75f),
                         strokeWidth = 2.dp,
                         modifier = Modifier.size(28.dp)
                     )
@@ -143,7 +145,7 @@ actual fun VideoRenderer(renderer: Any?, modifier: Modifier) {
                             }
                     )
                 } else {
-                    Text("Starting video", color = Color.White)
+                    Text("Starting video", color = t.OnDark)
                 }
             }
         }
@@ -155,7 +157,7 @@ actual fun VideoRenderer(renderer: Any?, modifier: Modifier) {
                 modifier = modifier.background(Color.Black),
                 contentAlignment = Alignment.Center
             ) {
-                Text("Starting video", color = Color.White)
+                Text("Starting video", color = t.OnDark)
             }
         }
     }
@@ -168,6 +170,7 @@ private fun LiveKitFrameRenderer(
     contentScale: ContentScale,
     fallbackText: String
 ) {
+    val t = rememberCosmicTokens()
     Box(
         modifier = modifier
             .clipToBounds()
@@ -182,7 +185,7 @@ private fun LiveKitFrameRenderer(
                 modifier = Modifier.fillMaxSize()
             )
         } else if (fallbackText.isNotBlank()) {
-            Text(fallbackText, color = Color.White)
+            Text(fallbackText, color = t.OnDark)
         }
     }
 }

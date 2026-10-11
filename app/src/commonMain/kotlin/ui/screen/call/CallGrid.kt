@@ -1,4 +1,4 @@
-﻿package ui.screen.call
+package ui.screen.call
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ui.theme.CosmicTokens
+import ui.theme.rememberCosmicTokens
 import ui.icons.OrbitIcons
 
 import ui.screen.auth.*
@@ -54,8 +55,8 @@ fun CallGrid(
      * black and the participant strip steps aside.
      *
      * This is a VIEWPORT state, not a layout mode. The concept's maximise button
-     * does not choose between grid and theatre — it makes the container fill the
-     * window — and in Orbit the container is already full size, so the only
+     * does not choose between grid and theatre � it makes the container fill the
+     * window � and in Orbit the container is already full size, so the only
      * honest reading of the same gesture is "the presentation, and nothing else,
      * is on screen". The two layout rules the tests pin are untouched by it: the
      * share still goes on top at a 16:9 box sized by [sharePanelSizeIn], and the
@@ -68,7 +69,7 @@ fun CallGrid(
         Box(modifier = modifier.fillMaxSize().background(tokens.Sunken), contentAlignment = Alignment.Center) {
             Text(
                 "Waiting for participants...",
-                color = Color.White.copy(alpha = 0.4f),
+                color = tokens.OnDark.copy(alpha = 0.4f),
                 fontSize = 14.sp
             )
         }
@@ -183,7 +184,7 @@ fun CallGrid(
             // The presentation area: everything above the participant strip, or
             // the whole stage once the call is maximised. The panel is centred in
             // it, and `.stream-bottom-right-actions` is pinned to ITS bottom-right
-            // — which is where the concept pins them, because there the parent
+            // � which is where the concept pins them, because there the parent
             // `.stream-theater-stage` holds nothing but the stream.
             Box(
                 modifier = Modifier
@@ -245,7 +246,7 @@ fun CallGrid(
         return
     }
 
-    // ── Focus Mode: spotlight one participant, thumbnails on side ──
+    // -- Focus Mode: spotlight one participant, thumbnails on side --
     // A pinned tile forces the spotlight layout regardless of mode toggle;
     // pinned beats paged shares beats default remote pick.
     if ((layoutMode == CallLayoutMode.Focus || pinnedNodeId != null) && nodes.size >= 2) {
@@ -303,7 +304,7 @@ fun CallGrid(
         return
     }
 
-    // ── Grid Mode ──
+    // -- Grid Mode --
     // The stage behind the tiles.
     //
     // Discord's call view is a dark room with slightly lighter tiles floating in
@@ -323,7 +324,7 @@ fun CallGrid(
     ) {
     when {
         nodes.size == 1 -> {
-            // Single participant — centered large card with empty panel below
+            // Single participant � centered large card with empty panel below
             Column(
                 modifier = modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -403,7 +404,7 @@ fun CallGrid(
                         ) {
                             Text(
                                 "+$hiddenCount",
-                                color = Color.White.copy(alpha = 0.7f),
+                                color = tokens.OnDark.copy(alpha = 0.7f),
                                 fontSize = 20.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
@@ -624,6 +625,7 @@ private fun SharePagerArrows(
     onPageChange: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val t = rememberCosmicTokens()
     Box(modifier = modifier) {
         PagerArrowButton(
             icon = OrbitIcons.ChevronLeft,
@@ -646,7 +648,7 @@ private fun SharePagerArrows(
         ) {
             Text(
                 text = "${page + 1} / $count",
-                color = Color.White.copy(alpha = 0.75f),
+                color = t.OnDark.copy(alpha = 0.75f),
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium
             )
@@ -661,6 +663,7 @@ private fun PagerArrowButton(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
+    val t = rememberCosmicTokens()
     val interaction = remember { MutableInteractionSource() }
     val isHovered by interaction.collectIsHoveredAsState()
     IconButton(
@@ -669,12 +672,12 @@ private fun PagerArrowButton(
             .hoverable(interaction)
             .size(36.dp)
             .background(ui.theme.Ink950.copy(alpha = if (isHovered) 0.85f else 0.55f), CircleShape)
-            .border(1.dp, Color.White.copy(alpha = 0.08f), CircleShape)
+            .border(1.dp, t.OnDark.copy(alpha = 0.08f), CircleShape)
     ) {
         Icon(
             icon,
             contentDescription = contentDescription,
-            tint = Color.White.copy(alpha = 0.9f),
+            tint = t.OnDark.copy(alpha = 0.9f),
             modifier = Modifier.size(18.dp)
         )
     }

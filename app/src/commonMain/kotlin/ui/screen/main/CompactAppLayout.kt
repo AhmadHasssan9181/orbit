@@ -1,38 +1,37 @@
 package ui.screen.main
 
-import ui.screen.auth.*
-import ui.screen.settings.*
-import ui.screen.drawer.*
-import ui.screen.server.*
-import ui.screen.call.*
-import ui.screen.media.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Modifier
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
-import androidx.compose.foundation.lazy.items
-import ui.model.*
-import ui.assets.*
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.background
-import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.clickable
-import androidx.compose.ui.draw.clip
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.automirrored.filled.*
-import ui.screen.chat.*
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import ui.icons.*
-import ui.components.OrbitSearchField
-import ui.theme.*
+import ui.icons.TablerIcons
+import ui.icons.Pencil
+import ui.icons.Settings
 import repository.*
-
+import ui.assets.*
+import ui.components.OrbitSearchField
+import ui.icons.*
+import ui.model.*
+import ui.screen.auth.*
+import ui.screen.call.*
+import ui.screen.chat.*
+import ui.screen.drawer.*
+import ui.screen.media.*
+import ui.screen.server.*
+import ui.screen.settings.*
+import ui.theme.*
 @Composable
 fun CompactLayout(
     servers: List<OrbitServer>,
@@ -207,7 +206,7 @@ fun CompactChannelList(
             )
             if (onCreateRoom != null) {
                 IconButton(onClick = onCreateRoom) {
-                    Icon(Icons.Default.Edit, contentDescription = "New Chat",
+                    Icon(with(TablerIcons) { Pencil }, contentDescription = "New Chat",
                         tint = tokens.Text_Muted, modifier = Modifier.size(20.dp))
                 }
             }
@@ -344,6 +343,10 @@ fun CompactServerList(
 @Composable
 fun CompactServerChip(server: OrbitServer, isSelected: Boolean, onClick: () -> Unit) {
     val tokens = rememberCosmicTokens()
+    // Hoisted so the chip background and the glyph agree. The old version read
+    // `server.iconColor` here and the pastel in the child, so the gradient and
+    // the initials could disagree.
+    val pastel = ui.theme.pastelServerColor(server.id)
     Column(
         modifier = Modifier.width(64.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -359,7 +362,7 @@ fun CompactServerChip(server: OrbitServer, isSelected: Boolean, onClick: () -> U
                         )
                     else
                         androidx.compose.ui.graphics.Brush.linearGradient(
-                            listOf(Color(server.iconColor), Color(server.iconColor).copy(alpha = 0.7f))
+                            listOf(pastel, pastel.copy(alpha = 0.7f))
                         )
                 )
                 .clickable(onClick = onClick),
@@ -375,8 +378,10 @@ fun CompactServerChip(server: OrbitServer, isSelected: Boolean, onClick: () -> U
             } else {
                 OrbitServerAssetIcon(
                     label = server.name,
-                    color = Color(server.iconColor),
-                    modifier = Modifier.fillMaxSize()
+                    color = pastel,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(pastel)
                 )
             }
         }
@@ -531,7 +536,7 @@ fun CompactProfilePane(currentUser: OrbitUser?, onOpenSettings: () -> Unit) {
             colors = ButtonDefaults.buttonColors(containerColor = tokens.Accent),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
+            Icon(with(TablerIcons) { Settings }, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
             Text("Settings")
         }

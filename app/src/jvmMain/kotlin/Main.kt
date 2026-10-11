@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Tray
 import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
@@ -51,7 +52,28 @@ private fun armForcedExitWatchdog(budgetMs: Long = 5_000) {
     }.start()
 }
 
-fun main() = application {
+fun main() {
+    try {
+        com.formdev.flatlaf.FlatDarkLaf.setup()
+        javax.swing.JFrame.setDefaultLookAndFeelDecorated(true)
+        javax.swing.JDialog.setDefaultLookAndFeelDecorated(true)
+        javax.swing.UIManager.put("TitlePane.buttonSize", java.awt.Dimension(44, 22))
+        javax.swing.UIManager.put("TitlePane.buttonMaximizedHeight", 22)
+        javax.swing.UIManager.put("TitlePane.background", java.awt.Color(0x12, 0x13, 0x1A))
+        javax.swing.UIManager.put("TitlePane.inactiveBackground", java.awt.Color(0x12, 0x13, 0x1A))
+        javax.swing.UIManager.put("TitlePane.foreground", java.awt.Color.WHITE)
+        javax.swing.UIManager.put("TitlePane.inactiveForeground", java.awt.Color(0x8A, 0x8D, 0x9B))
+        javax.swing.UIManager.put("TitlePane.buttonHoverBackground", java.awt.Color(0x22, 0x24, 0x30))
+        javax.swing.UIManager.put("TitlePane.buttonPressBackground", java.awt.Color(0x2D, 0x30, 0x40))
+        javax.swing.UIManager.put("TitlePane.closeHoverBackground", java.awt.Color(0xE8, 0x11, 0x23))
+        javax.swing.UIManager.put("TitlePane.closeHoverForeground", java.awt.Color.WHITE)
+        javax.swing.UIManager.put("TitlePane.useWindowDecorations", true)
+        javax.swing.UIManager.put("TitlePane.menuBarEmbedded", true)
+        javax.swing.UIManager.put("TitlePane.unifiedBackground", false)
+    } catch (_: Throwable) {
+    }
+
+    application {
     // File sink FIRST. The packaged launcher is a GUI-subsystem binary with no
     // console, so `println` is discarded by the OS -- without this the only
     // destination for a diagnostic was a void. Installed before the console
@@ -132,7 +154,7 @@ fun main() = application {
         onCloseRequest = ::closeRequested,
         state = state,
         title = "Orbit",
-        undecorated = true,
+        undecorated = false,
         transparent = false,
         icon = painterResource("orbit_logo.png"),
         onPreviewKeyEvent = { event -> dispatchOrbitShortcut(event, pttBinding) }
@@ -144,8 +166,23 @@ fun main() = application {
         LaunchedEffect(Unit) {
             windowRef = window
             util.CallNotifier.attachWindow(window)
+            WindowsDwmHelper.updateTitleBarColor(window, androidx.compose.ui.graphics.Color(0xFF12, 0x13, 0x1A))
+            if (window is javax.swing.JFrame) {
+                window.rootPane.putClientProperty("JRootPane.titleBarBackground", java.awt.Color(18, 19, 26))
+                window.rootPane.putClientProperty("JRootPane.titleBarForeground", java.awt.Color.WHITE)
+            }
         }
         DisposableEffect(Unit) {
+            val stateListener = java.awt.event.WindowStateListener { e ->
+                val isMax = (e.newState and java.awt.Frame.MAXIMIZED_BOTH) != 0
+                if (isMax && state.placement != WindowPlacement.Maximized) {
+                    state.placement = WindowPlacement.Maximized
+                } else if (!isMax && state.placement == WindowPlacement.Maximized) {
+                    state.placement = WindowPlacement.Floating
+                }
+            }
+            window.addWindowStateListener(stateListener)
+
             // Push-to-talk latches on KeyUp of its combo; if the window loses
             // focus while the key is still down no further key event will ever
             // arrive, so release it here or the mic stays hot.
@@ -155,6 +192,7 @@ fun main() = application {
             }
             window.addWindowFocusListener(focusListener)
             onDispose {
+                window.removeWindowStateListener(stateListener)
                 window.removeWindowFocusListener(focusListener)
                 util.CallNotifier.detachWindow(window)
                 forceReleasePushToTalk()
@@ -181,4 +219,5 @@ fun main() = application {
         mainWindowPresentable = mainWindowPresentable && !state.isMinimized,
         onRestoreMainWindow = ::restoreMainWindow
     )
+    }
 }

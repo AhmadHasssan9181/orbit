@@ -1,0 +1,91 @@
+# Tabler glyphs referenced by Orbit's Kotlin sources.
+#
+# One PascalCase symbol name per line. Blank lines and #-comments are ignored.
+# Resolve against the upstream set:
+#   outline -> https://tabler.io/icons   (Style: Outline)
+#   filled  -> https://tabler.io/icons   (Style: Filled)
+#
+# The generator emits, for every symbol here:
+#   val TablerIcons.<Name>         filled variant when one exists, else outline
+#   val TablerIcons.<Name>Outline  outline variant, always
+# One symbol per line; resolved to icons/outline/<name>.svg / icons/filled/<name>.svg
+Accessible
+AlertTriangle
+ArrowLeft
+ArrowsMaximize
+Ban
+Bell
+BellOff
+CameraPlus
+CameraRotate
+ChartBar
+Check
+Checks
+ChevronDown
+ChevronLeft
+ChevronRight
+CircleCheck
+CirclePlus
+Code
+Compass
+Copy
+Crop
+DeviceDesktop
+DeviceGamepad
+Dots
+DotsVertical
+Download
+ExternalLink
+FileMusic
+FileText
+FileZip
+Fingerprint
+HandStop
+Headphones
+HeadphonesOff
+Headset
+Heart
+Home
+InfoCircle
+Language
+LayoutGrid
+Lock
+Logout
+Mail
+Maximize
+Message
+Microphone
+MicrophoneOff
+Minimize
+MoodSmile
+Music
+Palette
+Paperclip
+Pencil
+Phone
+PhoneOff
+Photo
+Pin
+PlayerPause
+PlayerPlay
+Plus
+School
+Search
+Server
+Settings
+SettingsAutomation
+Shield
+Speakerphone
+Stars
+Trash
+User
+UserOff
+Users
+Video
+VideoOff
+Volume
+Volume2
+WaveSine
+Window
+World
+X

@@ -256,6 +256,24 @@ std::mutex g_announcedVideoMutex;
 std::unordered_set<std::string> g_announcedVideoPublications;
 std::unordered_map<std::string, int> g_tracklessTicks;
 
+// Consecutive rescan ticks a remote video publication has been ABSENT from
+// participant->trackPublications() while a reader is still running for it.
+//
+// The rescan prune that reads this exists because a withdrawn publication does
+// not always raise onTrackUnpublished. But a single missing sighting is not
+// proof of anything: the SDK can drop a publication from that map for a tick
+// while a sender replaces one track with another on the same m-line, and
+// pruning on that tore down a live reader. Each prune published a track-removed
+// into Java, so the tile came back on the next in-flight frame, the next tick
+// pruned it again, and that cycle is what pinned the UI thread.
+std::mutex g_absentVideoTicksMutex;
+std::unordered_map<std::string, int> g_absentVideoTicks;
+
+// Two ticks is 4s of the publication being genuinely gone, which is well under
+// the time it takes a human to notice a stale tile and far longer than a
+// bookkeeping blip in the SDK's publication map.
+constexpr int kAbsentVideoTicksBeforePrune = 2;
+
 // Consecutive trackless sightings (2 s apart) at which to make the SDK
 // renegotiate, and the tick at which to give up and tell the UI.
 //
@@ -2423,14 +2441,14 @@ void drainPendingReaderJoins() {
         SessionLock lock;
         readers.swap(g_pendingReaderJoins);
         videoReaders.swap(g_pendingVideoReaderJoins);
-        g_audioMixer.clearParticipants();
     }
     for (const auto& reader : readers) {
+        if (reader != nullptr) {
+            g_audioMixer.removeParticipant(reader->trackSid);
+        }
         stopReader(reader);
     }
-    // Joined here, with no lock held. This is the whole point for video: the
-    // reader's own exit path needs g_sessionMutex, so joining it from inside a
-    // caller that holds the mutex cannot complete. See the KDoc above.
+    // Joined/detached here, with no lock held.
     for (const auto& entry : videoReaders) {
         stopVideoReader(entry.first, entry.second);
     }
@@ -3733,6 +3751,7 @@ void dispatchRemoteVideoTrackRemoved(const std::shared_ptr<RemoteVideoReader>& r
         }
         if (participantIdentity != nullptr) env->DeleteLocalRef(participantIdentity);
         if (trackSid != nullptr) env->DeleteLocalRef(trackSid);
+
         env->DeleteLocalRef(sink);
     }
 
@@ -3952,6 +3971,25 @@ void stopVideoReader(const std::shared_ptr<RemoteVideoReader>& reader, const std
         if (reader->thread.get_id() == std::this_thread::get_id()) {
             reader->thread.detach();
         } else {
+            // JOINED, and this is the right place for it.
+            //
+            // This function is reached from drainPendingReaderJoins, which runs on
+            // the reaper with g_sessionMutex NOT held -- the reaper takes the mutex
+            // only to swap the pending queue out and releases it before calling in
+            // here. So the join cannot deadlock, and it must not be skipped.
+            //
+            // Detaching here instead is what wedged the UI when Element stopped
+            // sharing. Detach returns while the reader is still parked inside
+            // VideoStream::read() holding a shared_ptr to a stream owned by the
+            // Room, and the reader's own exit path (which takes g_sessionMutex)
+            // never runs. The room is then destroyed underneath that thread, and
+            // every later native entry point that takes g_sessionMutex -- including
+            // the ones the Compose thread makes -- contends with a thread the SDK
+            // will never release. The window stops repainting and stops taking
+            // input, which is the "Orbit froze, I had to terminate it" report.
+            //
+            // read() is already unblocked by the close() above, so this returns
+            // as soon as the in-flight frame finishes being delivered.
             reader->thread.join();
         }
     }
@@ -3988,9 +4026,14 @@ void stopAllRemoteVideoReadersLocked(const std::string& reason = "all") {
         if (entry.second->stream != nullptr) {
             entry.second->stream->close();
         }
+        notifyRemoteVideoTrackRemoved(entry.second, reason);
         g_pendingVideoReaderJoins.emplace_back(entry.second, reason);
     }
     g_remoteVideoReaders.clear();
+    {
+        std::lock_guard<std::mutex> lock(g_announcedVideoMutex);
+        g_announcedVideoPublications.clear();
+    }
     ensureReaderReaper();
 }
 
@@ -4001,11 +4044,25 @@ void stopRemoteVideoReaderLocked(const std::string& rawTrackSid, const std::stri
     }
     auto it = g_remoteVideoReaders.find(trackSid);
     if (it == g_remoteVideoReaders.end()) {
-        return;
+        // Also check if any reader matches publicationSid
+        for (auto readerIt = g_remoteVideoReaders.begin(); readerIt != g_remoteVideoReaders.end(); ++readerIt) {
+            if (readerIt->second != nullptr && normalizedSid(readerIt->second->publicationSid) == trackSid) {
+                it = readerIt;
+                break;
+            }
+        }
+        if (it == g_remoteVideoReaders.end()) {
+            return;
+        }
     }
 
     auto reader = it->second;
     g_remoteVideoReaders.erase(it);
+    {
+        std::lock_guard<std::mutex> lock(g_announcedVideoMutex);
+        g_announcedVideoPublications.erase(reader->publicationSid);
+        g_announcedVideoPublications.erase(reader->trackSid);
+    }
     // Same reasoning as stopAllRemoteVideoReadersLocked: the entry is already
     // out of the map, so the reader cannot self-detach, and joining it here
     // while the caller holds g_sessionMutex would wait on a thread that needs
@@ -4014,6 +4071,8 @@ void stopRemoteVideoReaderLocked(const std::string& rawTrackSid, const std::stri
     if (reader->stream != nullptr) {
         reader->stream->close();
     }
+    // Publish track removal immediately into Java so the UI tile is cleaned up right away.
+    notifyRemoteVideoTrackRemoved(reader, reason);
     g_pendingVideoReaderJoins.emplace_back(reader, reason);
     ensureReaderReaper();
 }
@@ -4048,8 +4107,17 @@ void stopRemoteVideoReadersForParticipantLocked(const std::string& participantId
         }
     }
 
+    // Queue to reaper and notify immediately, NEVER join inline while holding g_sessionMutex!
     for (const auto& reader : readers) {
-        stopVideoReader(reader, reason);
+        reader->running = false;
+        if (reader->stream != nullptr) {
+            reader->stream->close();
+        }
+        notifyRemoteVideoTrackRemoved(reader, reason);
+        g_pendingVideoReaderJoins.emplace_back(reader, reason);
+    }
+    if (!readers.empty()) {
+        ensureReaderReaper();
     }
 }
 
@@ -8198,6 +8266,8 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeRescanRemoteVideoTracks(JNIEnv*, jclass
     // printed only on a real change to the tracks present in the room.
     std::string inventory;
     int startedAudio = 0;
+    std::unordered_set<std::string> activeVideoPubSidsInRoom;
+    std::unordered_set<std::string> activeVideoTrackSidsInRoom;
     for (const auto& participant : g_room->remoteParticipants()) {
         if (participant == nullptr) {
             continue;
@@ -8218,6 +8288,12 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeRescanRemoteVideoTracks(JNIEnv*, jclass
                 continue;
             }
             const auto track = publication->track();
+            if (publication->kind() == livekit::TrackKind::KIND_VIDEO) {
+                activeVideoPubSidsInRoom.insert(normalizedSid(publication->sid()));
+                if (track != nullptr && !track->sid().empty()) {
+                    activeVideoTrackSidsInRoom.insert(normalizedSid(track->sid()));
+                }
+            }
             inventory += " " + trackSourceLabel(publication->source()) + "/" +
                 publication->sid() + (publication->subscribed() ? "=sub" : "=UNSUB") +
                 (publication->muted() ? "/muted" : "") +
@@ -8413,6 +8489,54 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeRescanRemoteVideoTracks(JNIEnv*, jclass
                 }
             }
         }
+    }
+    // Prune video readers for publications that were withdrawn from the room
+    // without an unpublish event.
+    //
+    // Gated on consecutive absences (see g_absentVideoTicksMutex). Pruning on the
+    // first missing sighting is what made this destructive rather than a safety
+    // net: it fired for publications that were still live, and because every prune
+    // publishes a track-removed into Java, the UI could never settle on a state.
+    std::vector<std::string> withdrawnVideoTracks;
+    {
+        std::lock_guard<std::mutex> absentLock(g_absentVideoTicksMutex);
+        // Counters are keyed by reader sid; drop the ones whose reader is gone so
+        // the map cannot grow across a long call.
+        for (auto it = g_absentVideoTicks.begin(); it != g_absentVideoTicks.end();) {
+            if (g_remoteVideoReaders.count(it->first) == 0) {
+                it = g_absentVideoTicks.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        for (const auto& entry : g_remoteVideoReaders) {
+            const auto& reader = entry.second;
+            if (reader == nullptr) continue;
+            const std::string normTrack = normalizedSid(reader->trackSid);
+            const std::string normPub = normalizedSid(reader->publicationSid);
+            const bool inRoom = (activeVideoTrackSidsInRoom.count(normTrack) > 0) ||
+                                (!normPub.empty() && activeVideoPubSidsInRoom.count(normPub) > 0);
+            if (inRoom) {
+                g_absentVideoTicks.erase(entry.first);
+                continue;
+            }
+            const int absentTicks = ++g_absentVideoTicks[entry.first];
+            if (absentTicks >= kAbsentVideoTicksBeforePrune) {
+                withdrawnVideoTracks.push_back(entry.first);
+            } else {
+                std::cout << "DEBUG [RemoteVideo] rescan saw video publication absent, tick "
+                          << absentTicks << "/" << kAbsentVideoTicksBeforePrune
+                          << " sid=" << entry.first << " (not pruning yet)" << std::endl;
+            }
+        }
+    }
+    for (const auto& sid : withdrawnVideoTracks) {
+        {
+            std::lock_guard<std::mutex> absentLock(g_absentVideoTicksMutex);
+            g_absentVideoTicks.erase(sid);
+        }
+        std::cout << "DEBUG [RemoteVideo] rescan detected video track withdrawn from room sid=" << sid << std::endl;
+        stopRemoteVideoReaderLocked(sid, "rescan-withdrawn");
     }
     if (inventory != g_remotePublicationInventory) {
         g_remotePublicationInventory = inventory;

@@ -18,24 +18,26 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.window.WindowDraggableArea
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.awt.awtEventOrNull
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isPrimaryPressed
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -67,68 +69,47 @@ fun FrameWindowScope.CustomTitleBar(
     val t = rememberCosmicTokens()
     val maximized = state.placement == WindowPlacement.Maximized
     val isFullscreen = state.placement == WindowPlacement.Fullscreen || webrtc.CallShortcuts.isStageMaximized
+    val hasNativeButtons = remember {
+        try {
+            com.formdev.flatlaf.ui.FlatNativeWindowBorder.isSupported()
+        } catch (_: Throwable) {
+            false
+        }
+    }
 
+    LaunchedEffect(t.Rail_Bg) {
+        WindowsDwmHelper.updateTitleBarColor(window, t.Rail_Bg)
+        if (window is javax.swing.JFrame) {
+            val r = (t.Rail_Bg.red * 255f).toInt().coerceIn(0, 255)
+            val g = (t.Rail_Bg.green * 255f).toInt().coerceIn(0, 255)
+            val b = (t.Rail_Bg.blue * 255f).toInt().coerceIn(0, 255)
+            val awtColor = java.awt.Color(r, g, b)
+            window.rootPane.putClientProperty("JRootPane.titleBarBackground", awtColor)
+            val isDark = (r * 0.299 + g * 0.587 + b * 0.114) < 128
+            window.rootPane.putClientProperty(
+                "JRootPane.titleBarForeground",
+                if (isDark) java.awt.Color.WHITE else java.awt.Color.BLACK
+            )
+        }
+    }
+
+    // Only render the secondary bar if there is custom trailing content (e.g. stage/call controls)
+    // because the native title bar already displays the Orbit logo, title, and caption buttons.
     AnimatedVisibility(
-        visible = !isFullscreen,
+        visible = !isFullscreen && trailingContent != null,
         enter = expandVertically(tween(160)) + fadeIn(tween(160)),
         exit = shrinkVertically(tween(160)) + fadeOut(tween(160))
     ) {
-        WindowDraggableArea {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(34.dp)
-                    .background(t.Rail_Bg)
-                    .padding(start = OrbitSpace.md),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Image(
-                    painter = painterResource("orbit_transparent.png"),
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(Modifier.width(OrbitSpace.sm))
-                Text(
-                    text = title,
-                    color = t.Text_White,
-                    fontSize = 11.5.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    letterSpacing = 0.3.sp
-                )
-
-                if (trailingContent != null) {
-                    Spacer(Modifier.width(OrbitSpace.md))
-                    trailingContent()
-                }
-
-                Spacer(Modifier.weight(1f))
-
-                TitleBarButton(
-                    description = "Minimise",
-                    onClick = { state.isMinimized = true }
-                ) { glyph -> MinimiseGlyph(glyph) }
-
-                TitleBarButton(
-                    description = if (maximized) "Restore" else "Maximise",
-                    onClick = {
-                        state.placement =
-                            if (maximized) WindowPlacement.Floating else WindowPlacement.Maximized
-                    }
-                ) { glyph -> MaximiseGlyph(maximized, glyph) }
-
-                TitleBarButton(
-                    description = "Close",
-                    onClick = onClose,
-                    hoverColor = Color(0xFFE81123)
-                ) { glyph ->
-                    Icon(
-                        Icons.Default.Close,
-                        contentDescription = null,
-                        tint = glyph,
-                        modifier = Modifier.size(13.dp)
-                    )
-                }
-            }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(34.dp)
+                .background(t.Rail_Bg),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Spacer(Modifier.weight(1f))
+            trailingContent?.invoke()
+            Spacer(Modifier.width(OrbitSpace.md))
         }
     }
 }

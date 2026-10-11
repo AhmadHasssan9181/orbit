@@ -131,3 +131,53 @@ val PastelAvatarSeeds: List<Pair<Color, Color>> = listOf(
 fun pastelAvatarSeedColors(seed: String): Pair<Color, Color> =
     PastelAvatarSeeds[(seed.hashCode() and Int.MAX_VALUE) % PastelAvatarSeeds.size]
 
+// ─── Pastel server tiles ─────────────────────────────────────────────────
+// The fills behind server initials in the rail.
+//
+// These replace a hash-to-ARGB scheme that took three bytes straight off
+// `String.hashCode()`, so a server's colour was effectively random at full
+// saturation: a rail of them read as confetti, and two adjacent servers could
+// land on near-identical or clashing hues. Fixed to a curated set so every
+// tile is a deliberate matte pastel.
+//
+// Deliberately LIGHT and low-chroma, which inverts the usual relationship to the
+// text: [pastelServerInk] is near-black, not white. A white initial on these
+// fills lands around 1.4:1 and is unreadable.
+//
+// PastelAvatarSeeds above is the opposite choice on purpose -- those back
+// illustrated mascot avatars, where a light fill carries artwork rather than
+// glyphs. Do not merge the two lists.
+val PastelServerSeeds: List<Color> = listOf(
+    Color(0xFFE8C9A8), // Sand
+    Color(0xFFB9DCA6), // Sage
+    Color(0xFFAFD0EC), // Sky
+    Color(0xFFD4C2EE), // Lilac
+    Color(0xFFF2BDC4), // Rose
+    Color(0xFFA3DCD6), // Teal
+    Color(0xFFC4C9EC), // Periwinkle
+    Color(0xFFE8D9A8), // Wheat
+    Color(0xFFE9C4D8), // Mauve
+    Color(0xFFEBC4A4), // Clay
+    Color(0xFFB2DCC0), // Seafoam
+    Color(0xFFD3C9DE), // Heather
+)
+
+/**
+ * Glyph colour for a server tile.
+ *
+ * Near-black rather than white. Every fill in [PastelServerSeeds] is light
+ * enough that dark ink clears 9.9:1 against the worst of them, while white
+ * would sit at roughly 1.4:1 and simply vanish.
+ */
+val pastelServerInk: Color = Color(0xFF2B2A33)
+
+/**
+ * The pastel assigned to a server, stable for a given id.
+ *
+ * Hashed off [seed] so a server keeps its colour across restarts and across
+ * every surface that renders it. `and Int.MAX_VALUE` guards the negative half
+ * of `hashCode()`: without it a server could index negative and throw.
+ */
+fun pastelServerColor(seed: String): Color =
+    PastelServerSeeds[(seed.hashCode() and Int.MAX_VALUE) % PastelServerSeeds.size]
+

@@ -16,12 +16,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.GraphicEq
-import androidx.compose.material.icons.filled.Monitor
-import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.Videocam
-import androidx.compose.material.icons.filled.VideocamOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -37,12 +31,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.icons.TablerIcons
+import ui.icons.ChartBar
+import ui.icons.DeviceDesktop
+import ui.icons.Music
+import ui.icons.Video
+import ui.icons.VideoOff
 import ui.icons.OrbitIcons
 import ui.theme.OrbitConceptBorder
 import ui.theme.OrbitConceptStatus
 import ui.theme.OrbitMotion
 import ui.theme.rememberCosmicTokens
-
 /**
  * The "Voice Connected" panel: who you are connected to, and the four controls
  * you reach for without leaving the room.
@@ -101,7 +100,7 @@ fun VoiceConnectedPanel(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.GraphicEq,
+                            imageVector = with(TablerIcons) { ChartBar },
                             contentDescription = null,
                             tint = OrbitConceptStatus.online,
                             modifier = Modifier.size(14.dp)
@@ -163,7 +162,7 @@ fun VoiceConnectedPanel(
                     onClick = onToggleMute
                 )
                 VoiceToolButton(
-                    icon = Icons.Filled.Monitor,
+                    icon = with(TablerIcons) { DeviceDesktop },
                     contentDescription = "Share or stop sharing your screen",
                     // `.voice-tool-compact-btn.active-green` — the concept hard-codes
                     // this one green because in the concept it only ever means "go
@@ -174,14 +173,14 @@ fun VoiceConnectedPanel(
                     onClick = onToggleScreenShare
                 )
                 VoiceToolButton(
-                    icon = if (isVideoEnabled) Icons.Filled.Videocam else Icons.Filled.VideocamOff,
+                    icon = if (isVideoEnabled) with(TablerIcons) { Video } else with(TablerIcons) { VideoOff },
                     contentDescription = if (isVideoEnabled) "Turn off camera" else "Turn on camera",
                     active = isVideoEnabled,
                     danger = false,
                     onClick = onToggleCamera
                 )
                 VoiceToolButton(
-                    icon = Icons.Filled.MusicNote,
+                    icon = with(TablerIcons) { Music },
                     contentDescription = "Soundboard",
                     active = false,
                     danger = false,

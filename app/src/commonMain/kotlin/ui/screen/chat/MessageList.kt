@@ -23,9 +23,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.DoneAll
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -48,7 +45,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.icons.TablerIcons
+import ui.icons.Checks
+import ui.icons.ChevronDown
 import kotlinx.coroutines.launch
+import kotlinx.datetime.DateTimeUnit
+import kotlinx.datetime.Instant
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.minus
+import kotlinx.datetime.toLocalDateTime
 import ui.assets.OrbitChatDoodleBackground
 import ui.components.OrbitButton
 import ui.components.OrbitButtonTone
@@ -63,12 +68,6 @@ import ui.theme.OrbitConceptBorder
 import ui.theme.OrbitMotion
 import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
-import kotlinx.datetime.DateTimeUnit
-import kotlinx.datetime.Instant
-import kotlinx.datetime.minus
-import kotlinx.datetime.TimeZone
-import kotlinx.datetime.toLocalDateTime
-
 /**
  * The message list.
  *
@@ -374,7 +373,7 @@ internal fun MessageList(
             ) {
                 OrbitButton(
                     text = "Jump to new messages",
-                    icon = Icons.Default.KeyboardArrowDown,
+                    icon = with(TablerIcons) { ChevronDown },
                     onClick = {
                         scope.launch {
                             unreadSeparatorIndex?.let { target ->
@@ -404,7 +403,7 @@ internal fun MessageList(
                         .clip(CircleShape)
                 ) {
                     OrbitIconButtonRound(
-                        icon = Icons.Default.KeyboardArrowDown,
+                        icon = with(TablerIcons) { ChevronDown },
                         contentDescription = "Scroll to the latest message",
                         onClick = {
                             scope.launch {
@@ -687,7 +686,7 @@ private fun SeenIndicator() {
         horizontalArrangement = Arrangement.spacedBy(3.dp)
     ) {
         Icon(
-            imageVector = Icons.Default.DoneAll,
+            imageVector = with(TablerIcons) { Checks },
             contentDescription = "Seen",
             tint = t.Accent,
             modifier = Modifier.size(13.dp)

@@ -19,10 +19,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -41,12 +37,15 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.icons.TablerIcons
+import ui.icons.Check
+import ui.icons.Copy
+import ui.icons.Server
 import ui.components.OrbitButton
 import ui.components.OrbitButtonTone
 import ui.theme.OrbitRadius
 import ui.theme.OrbitSpace
 import ui.theme.rememberCosmicTokens
-
 /**
  * "Host your own server", in the app.
  *
@@ -166,7 +165,7 @@ fun SelfHostingScreen(
                     .background(t.Sunken),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Default.Dns, contentDescription = null, tint = t.Text_Muted, modifier = Modifier.size(15.dp))
+                Icon(with(TablerIcons) { Server }, contentDescription = null, tint = t.Text_Muted, modifier = Modifier.size(15.dp))
             }
             Spacer(Modifier.width(OrbitSpace.sm))
             Text(
@@ -419,7 +418,7 @@ private fun Section(
             Spacer(Modifier.weight(1f))
             OrbitButton(
                 text = if (copied) "Copied" else "Copy",
-                icon = if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
+                icon = if (copied) with(TablerIcons) { Check } else with(TablerIcons) { Copy },
                 onClick = {
                     onCopy()
                     copied = true
