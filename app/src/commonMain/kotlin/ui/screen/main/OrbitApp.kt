@@ -530,6 +530,9 @@ private fun MainAppContent(
     LaunchedEffect(Unit) {
         (repository as? MatrixOrbitRepository)?.observeSpaces()?.collect { newServers ->
             servers = newServers
+            if (newServers.none { it.id == selectedServerId }) {
+                selectedServerId = "dm"
+            }
         }
     }
 
@@ -570,9 +573,12 @@ private fun MainAppContent(
                 channels = emptyList()
             } else {
                 channels = loaded
-                val firstText = loaded.firstOrNull { it.type == ChannelType.TEXT }
+                val firstText = loaded.firstOrNull { it.type == ChannelType.TEXT } ?: loaded.firstOrNull()
                 if (firstText != null && windowSize.isExpanded) {
                     // Auto-select only on desktop — on phone/tablet user taps to navigate
+                    scope.launch {
+                        runCatching { repository.joinChannelIfNeeded(firstText.id) }
+                    }
                     selectedChannelId = firstText.id
                 }
             }
@@ -670,6 +676,9 @@ private fun MainAppContent(
         // `Friends` row stayed selected while a conversation filled the main
         // column, so the sidebar claimed a destination that was not on screen.
         friendsTabActive = false
+        scope.launch {
+            runCatching { repository.joinChannelIfNeeded(id) }
+        }
         navigateTo(id)
     }
 

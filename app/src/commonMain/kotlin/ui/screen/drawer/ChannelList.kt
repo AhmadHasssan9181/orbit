@@ -1,5 +1,7 @@
 package ui.screen.drawer
 
+import ui.components.OrbitAvatarImage
+
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -50,6 +52,25 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ui.icons.TablerIcons
 import ui.icons.ChevronDown
+import ui.icons.Settings
+import ui.icons.Trash
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.runtime.rememberCoroutineScope
+import ui.components.OrbitMenu
+import ui.components.OrbitMenuItem
+import ui.components.OrbitMenuDivider
+import ui.components.OrbitDialog
+import ui.components.OrbitButton
+import ui.components.OrbitButtonTone
+import ui.components.OrbitTextField
+import ui.components.OrbitNotices
+import ui.components.rememberOrbitInteraction
+import ui.components.orbitClickable
+import ui.theme.rememberCosmicTokens
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.flowOf
@@ -115,6 +136,8 @@ internal fun ChannelListContent(
      * `ChannelGrouping.uncategorisedLabel`.
      */
     spaceName: String? = null,
+    spaceId: String? = null,
+    onChannelDeleted: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     // Which groups the user has collapsed. Keyed by group key, NOT by index or
@@ -136,8 +159,8 @@ internal fun ChannelListContent(
             contentPadding = PaddingValues(
                 top = 12.dp,
                 bottom = 12.dp,
-                start = 8.dp,
-                end = 8.dp
+                start = 12.dp,
+                end = 12.dp
             ),
             // `.channels-scrollable { gap: 16px }` — the gap BETWEEN groups. The
             // 2px that separates a heading from its rows and the rows from each
@@ -162,7 +185,10 @@ internal fun ChannelListContent(
             groups.forEach { group ->
                 val isCollapsed = group.key in collapsed.value
                 item(key = "grp_${group.key}", contentType = "group") {
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
                         ChannelSectionHeader(
                             name = group.label,
                             isExpanded = !isCollapsed,
@@ -189,7 +215,9 @@ internal fun ChannelListContent(
                                     repository = repository,
                                     unreadCount = chUnread,
                                     onClick = { onChannelClick(ch.id) },
-                                    onJoinCall = onJoinCall
+                                    onJoinCall = onJoinCall,
+                                    spaceId = spaceId,
+                                    onChannelDeleted = onChannelDeleted
                                 )
                             }
                         }
@@ -248,7 +276,9 @@ internal fun ChannelSectionHeader(
             )
     ) {
         Row(
-            modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 8.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -329,8 +359,13 @@ internal fun ChannelItem(
     repository: repository.OrbitRepository? = null,
     unreadCount: Int = 0,
     onClick: () -> Unit,
-    onJoinCall: ((roomId: String, isActiveCall: Boolean) -> Unit)? = null
+    onJoinCall: ((roomId: String, isActiveCall: Boolean) -> Unit)? = null,
+    spaceId: String? = null,
+    onChannelDeleted: ((String) -> Unit)? = null
 ) {
+    var showContextMenu by remember { mutableStateOf(false) }
+    var showEditDialog by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
     val callManager = LocalCallManager.current
     // Hoisted out of the `?:` so the number of remembered slots does not change
     // when callManager flips between null and non-null.
@@ -474,43 +509,62 @@ internal fun ChannelItem(
         else -> emptyList()
     }
 
-    Column {
-        ConceptChannelRow(
-            channel = channel,
-            displayName = displayName,
-            isSelected = isSelected,
-            isLive = isLive,
-            unreadCount = unreadCount,
-            onClick = onClick
-        )
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Box(modifier = Modifier.fillMaxWidth()) {
+            ConceptChannelRow(
+                channel = channel,
+                displayName = displayName,
+                isSelected = isSelected,
+                isLive = isLive,
+                unreadCount = unreadCount,
+                onClick = {
+                    if (channel.type == ChannelType.VOICE && onJoinCall != null) {
+                        onJoinCall(roomId, isActiveCallInChannel)
+                    } else {
+                        onClick()
+                    }
+                },
+                onSecondaryClick = {
+                    showContextMenu = true
+                },
+                onEditClick = {
+                    showEditDialog = true
+                }
+            )
 
-        // The Voice row.
-        //
-        // A separate row under every room, and pressing it is the ONLY way to
-        // start or join a call. The in-room "join call" banner that used to sit
-        // above the timeline is gone: two affordances for one action is how you
-        // end up with a call running that the UI is still inviting you to start.
-        //
-        // It is deliberately NOT a room. An earlier version of this file
-        // synthesised a `ChannelType.VOICE` entry pointing at the first text
-        // room, which is what produced a space with three rooms called "General"
-        // where clicking one opened another. This row has no `OrbitChannel`, no
-        // id in the `channels` list, and no category: it is a **call action on
-        // the room above it**. Clicking the room row still opens its chat, so the
-        // two are genuinely different actions on the same room.
-        if (onJoinCall != null) {
+            OrbitMenu(
+                expanded = showContextMenu,
+                onDismissRequest = { showContextMenu = false },
+                width = 180.dp
+            ) {
+                OrbitMenuItem(
+                    label = "Edit Channel",
+                    icon = with(TablerIcons) { Settings },
+                    onClick = {
+                        showContextMenu = false
+                        showEditDialog = true
+                    }
+                )
+                OrbitMenuDivider()
+                OrbitMenuItem(
+                    label = "Delete Channel",
+                    icon = with(TablerIcons) { Trash },
+                    danger = true,
+                    onClick = {
+                        showContextMenu = false
+                        showDeleteDialog = true
+                    }
+                )
+            }
+        }
+
+        // For TEXT channels: only show the inline Voice row if someone has started an active live call in an external/Element room.
+        // In Orbit-managed servers, TEXT channels are strictly pure text chat (no voice rows under them).
+        if (!channel.isOrbitManaged && channel.type == ChannelType.TEXT && isLive && onJoinCall != null) {
             VoiceChannelRow(
-                // A dot for a call you are connected to, or one running elsewhere.
-                // While you are still CONNECTING this is deliberately false: the
-                // row says "connecting" instead, because a pulsing live dot next
-                // to a roster that is not there yet is a lie in two places at
-                // once.
-                isLive = isLive && !isConnectingInChannel,
+                isLive = !isConnectingInChannel,
                 isHere = isActiveCallInChannel,
                 isConnecting = isConnectingInChannel,
-                // Only ever the CONNECTED roster. Before that this is zero, which
-                // is the point: the count must not be a number of stale
-                // membership records.
                 participantCount = if (isConnectedInChannel) visibleMembers.size else 0,
                 onClick = { onJoinCall(roomId, isActiveCallInChannel) }
             )
@@ -531,6 +585,32 @@ internal fun ChannelItem(
                 // you as the sole participant of a call you have not joined.
                 showLocalFallback = isConnectedInChannel,
                 callManager = callManager
+            )
+        }
+
+        if (showEditDialog) {
+            EditChannelDialog(
+                channel = channel,
+                spaceId = spaceId,
+                repository = repository,
+                onDismiss = { showEditDialog = false },
+                onOpenDelete = {
+                    showEditDialog = false
+                    showDeleteDialog = true
+                }
+            )
+        }
+
+        if (showDeleteDialog) {
+            DeleteChannelDialog(
+                channel = channel,
+                spaceId = spaceId,
+                repository = repository,
+                onDismiss = { showDeleteDialog = false },
+                onDeleted = {
+                    showDeleteDialog = false
+                    onChannelDeleted?.invoke(channel.id)
+                }
             )
         }
     }
@@ -558,7 +638,9 @@ private fun ConceptChannelRow(
     isSelected: Boolean,
     isLive: Boolean,
     unreadCount: Int,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onSecondaryClick: (() -> Unit)? = null,
+    onEditClick: (() -> Unit)? = null
 ) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
@@ -589,6 +671,21 @@ private fun ConceptChannelRow(
             .clip(OrbitRadius.xsShape)
             .background(bg)
             .hoverable(interaction)
+            .then(
+                if (onSecondaryClick != null) {
+                    Modifier.pointerInput(channel.id) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                if (event.type == PointerEventType.Press && event.buttons.isSecondaryPressed) {
+                                    event.changes.forEach { it.consume() }
+                                    onSecondaryClick()
+                                }
+                            }
+                        }
+                    }
+                } else Modifier
+            )
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -603,7 +700,7 @@ private fun ConceptChannelRow(
         // `.channel-row-content { display: flex; align-items: center; gap: 8px;
         // overflow: hidden; text-overflow: ellipsis; white-space: nowrap }`.
         Row(
-            modifier = Modifier.weight(1f, fill = false),
+            modifier = Modifier.weight(1f),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // `.channel-icon { color: var(--interactive-muted) }` at rest, and
@@ -636,15 +733,29 @@ private fun ConceptChannelRow(
             )
         }
 
-        // The concept also prints the live call's elapsed time here, in 11px
-        // `--status-online`, on the voice channel you are connected to. Orbit's
-        // `CallManager` exposes no per-call start timestamp, so the dot stands in
-        // for it rather than a number that would have to be invented.
-        if (isLive) {
-            LiveDot(label = "Live call in progress", color = OrbitConceptStatus.online)
-        }
-        if (unreadCount > 0 && !isSelected) {
-            OrbitCountBadge(count = unreadCount, color = conceptBrand)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            if (isLive) {
+                LiveDot(label = "Live call in progress", color = OrbitConceptStatus.online)
+            }
+            if (unreadCount > 0 && !isSelected) {
+                OrbitCountBadge(count = unreadCount, color = conceptBrand)
+            }
+            if (hovered && onEditClick != null) {
+                androidx.compose.material3.IconButton(
+                    onClick = onEditClick,
+                    modifier = Modifier.size(20.dp)
+                ) {
+                    Icon(
+                        imageVector = with(TablerIcons) { Settings },
+                        contentDescription = "Edit Channel",
+                        tint = if (isSelected) conceptInteractiveActive() else conceptInteractiveHover(),
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+            }
         }
     }
 }
@@ -893,8 +1004,8 @@ private fun RosterRow(
     ) {
         Box(modifier = Modifier.size(20.dp)) {
             if (member.avatarUrl != null) {
-                coil3.compose.AsyncImage(
-                    model = member.avatarUrl,
+                OrbitAvatarImage(
+                    url = member.avatarUrl,
                     contentDescription = member.displayName,
                     contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                     // size() LAST is load-bearing: this sits in a Row whose Text
@@ -953,4 +1064,284 @@ internal fun channelDisplayName(channel: OrbitChannel): String {
     val withoutCall = channel.name.removeSuffix(" (Call)")
     val cleaned = withoutCall.replace(VoiceChannelSuffixRegex, "").trim('-', '_', ' ')
     return cleaned.ifBlank { withoutCall }
+}
+
+@Composable
+private fun EditChannelDialog(
+    channel: OrbitChannel,
+    spaceId: String?,
+    repository: repository.OrbitRepository?,
+    onDismiss: () -> Unit,
+    onOpenDelete: () -> Unit
+) {
+    val t = rememberCosmicTokens()
+    val scope = rememberCoroutineScope()
+    var channelName by remember { mutableStateOf(channel.name) }
+    var channelType by remember { mutableStateOf(channel.type) }
+    var isSaving by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    val canSave = !isSaving && channelName.trim().isNotBlank()
+
+    OrbitDialog(
+        title = "Edit Channel",
+        subtitle = "Settings for #${channel.name}",
+        icon = with(TablerIcons) { Settings },
+        confirmLabel = if (isSaving) "Saving…" else "Save Changes",
+        dismissLabel = "Cancel",
+        confirmEnabled = canSave,
+        confirmTone = OrbitButtonTone.Primary,
+        onConfirm = {
+            if (!canSave) return@OrbitDialog
+            val repo = repository as? repository.MatrixOrbitRepository
+            isSaving = true
+            errorMessage = null
+            scope.launch {
+                val result = repo?.updateChannel(
+                    spaceId = spaceId ?: "",
+                    channelId = channel.id,
+                    name = channelName.trim(),
+                    type = channelType
+                ) ?: Result.failure(IllegalStateException("Repository unavailable"))
+                isSaving = false
+                if (result.isSuccess) {
+                    OrbitNotices.info("Channel updated")
+                    onDismiss()
+                } else {
+                    errorMessage = result.exceptionOrNull()?.message ?: "Failed to update channel"
+                }
+            }
+        },
+        onDismissRequest = onDismiss,
+        width = 440.dp
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = OrbitSpace.md, vertical = OrbitSpace.sm),
+            verticalArrangement = Arrangement.spacedBy(OrbitSpace.md)
+        ) {
+            Text(
+                text = "CHANNEL TYPE",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    color = t.Text_Subtle,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 10.sp,
+                    letterSpacing = 0.8.sp
+                )
+            )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(OrbitRadius.smShape)
+                    .background(t.CardBg)
+                    .border(1.dp, t.Separator, OrbitRadius.smShape)
+                    .padding(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                ChannelTypeOption(
+                    title = "Text",
+                    description = "Post messages, images, and files",
+                    icon = OrbitIcons.TextChannel,
+                    selected = channelType == ChannelType.TEXT,
+                    onClick = { channelType = ChannelType.TEXT },
+                    modifier = Modifier.weight(1f)
+                )
+                ChannelTypeOption(
+                    title = "Voice",
+                    description = "Hang out with voice and video",
+                    icon = OrbitIcons.VoiceChannel,
+                    selected = channelType == ChannelType.VOICE,
+                    onClick = { channelType = ChannelType.VOICE },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            Text(
+                text = "CHANNEL NAME",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    color = t.Text_Subtle,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 10.sp,
+                    letterSpacing = 0.8.sp
+                )
+            )
+
+            OrbitTextField(
+                value = channelName,
+                onValueChange = {
+                    channelName = it.replace(" ", "-").lowercase()
+                    errorMessage = null
+                },
+                placeholder = if (channelType == ChannelType.VOICE) "general-voice" else "general",
+                leadingIcon = if (channelType == ChannelType.VOICE) OrbitIcons.VoiceChannel else OrbitIcons.TextChannel,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            if (errorMessage != null) {
+                Text(
+                    text = errorMessage ?: "",
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        color = t.Danger,
+                        fontSize = 12.sp
+                    )
+                )
+            }
+
+            Spacer(Modifier.height(4.dp))
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(OrbitRadius.smShape)
+                    .background(t.DangerGhost)
+                    .border(1.dp, t.Danger.copy(alpha = 0.25f), OrbitRadius.smShape)
+                    .padding(OrbitSpace.sm),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Delete Channel",
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            color = t.Danger,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    )
+                    Text(
+                        text = "Permanently remove this channel from the server.",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = t.Text_Muted,
+                            fontSize = 11.sp
+                        )
+                    )
+                }
+                OrbitButton(
+                    text = "Delete",
+                    icon = with(TablerIcons) { Trash },
+                    tone = OrbitButtonTone.Danger,
+                    onClick = onOpenDelete
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChannelTypeOption(
+    title: String,
+    description: String,
+    icon: ImageVector,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val t = rememberCosmicTokens()
+    val interaction = rememberOrbitInteraction()
+    val hovered by interaction.hoverSource.collectIsHoveredAsState()
+
+    val bg by animateColorAsState(
+        targetValue = when {
+            selected -> t.AccentGhostStrong
+            hovered -> t.Hover
+            else -> Color.Transparent
+        },
+        animationSpec = OrbitMotion.SnappyColor,
+        label = "typeOptBg"
+    )
+
+    Column(
+        modifier = modifier
+            .clip(OrbitRadius.xsShape)
+            .background(bg)
+            .hoverable(interaction.hoverSource)
+            .orbitClickable(interaction, onClick = onClick)
+            .padding(OrbitSpace.sm),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = if (selected) t.Accent else t.Text_Secondary,
+                modifier = Modifier.size(16.dp)
+            )
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    color = if (selected) t.Text_White else t.Text_Secondary,
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                    fontSize = 13.sp
+                )
+            )
+        }
+        Text(
+            text = description,
+            style = MaterialTheme.typography.bodySmall.copy(
+                color = t.Text_Muted,
+                fontSize = 11.sp
+            ),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun DeleteChannelDialog(
+    channel: OrbitChannel,
+    spaceId: String?,
+    repository: repository.OrbitRepository?,
+    onDismiss: () -> Unit,
+    onDeleted: () -> Unit
+) {
+    val t = rememberCosmicTokens()
+    val scope = rememberCoroutineScope()
+    var isDeleting by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    OrbitDialog(
+        title = "Delete Channel",
+        subtitle = "Are you sure you want to delete #${channel.name}? This action cannot be undone.",
+        icon = with(TablerIcons) { Trash },
+        confirmLabel = if (isDeleting) "Deleting…" else "Delete Channel",
+        dismissLabel = "Cancel",
+        confirmTone = OrbitButtonTone.Danger,
+        confirmEnabled = !isDeleting,
+        onConfirm = {
+            if (isDeleting) return@OrbitDialog
+            val repo = repository as? repository.MatrixOrbitRepository
+            isDeleting = true
+            errorMessage = null
+            scope.launch {
+                val result = repo?.deleteChannel(
+                    spaceId = spaceId ?: "",
+                    channelId = channel.id
+                ) ?: Result.failure(IllegalStateException("Repository unavailable"))
+                isDeleting = false
+                if (result.isSuccess) {
+                    OrbitNotices.info("Deleted #${channel.name}")
+                    onDeleted()
+                } else {
+                    errorMessage = result.exceptionOrNull()?.message ?: "Failed to delete channel"
+                }
+            }
+        },
+        onDismissRequest = onDismiss,
+        width = 400.dp
+    ) {
+        if (errorMessage != null) {
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = OrbitSpace.md, vertical = OrbitSpace.xs)) {
+                Text(
+                    text = errorMessage ?: "",
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        color = t.Danger,
+                        fontSize = 12.sp
+                    )
+                )
+            }
+        }
+    }
 }

@@ -36,7 +36,8 @@ data class OrbitChannel(
     val topic: String = "",
     val avatarUrl: String? = null,
     val activeCallUrl: String? = null,
-    val matrixRoomId: String = id
+    val matrixRoomId: String = id,
+    val isOrbitManaged: Boolean = false
 )
 
 enum class ChannelType {

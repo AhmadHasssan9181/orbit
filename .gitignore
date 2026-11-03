@@ -135,3 +135,12 @@ generate.stamp.list
 *.orig
 *.rej
 *~
+
+# Local SQLite databases
+memory.db*
+*.db-shm
+*.db-wal
+
+# Cargo / Rust build caches
+target/
+**/target/

@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <cmath>
@@ -43,6 +44,7 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -112,6 +114,9 @@ std::atomic_bool g_shareLoopbackModeResolved{false};
 std::mutex g_shareAecMutex;
 jclass g_shareAecRouterClass = nullptr;
 jmethodID g_shareAecOnFrameMethod = nullptr;
+std::mutex g_streamDiagMutex;
+jclass g_streamDiagClass = nullptr;
+jmethodID g_streamDiagOnLineMethod = nullptr;
 // Raw publisher source handed to the AEC round-trip. Deliberately NOT guarded
 // by g_sessionMutex: teardown clears it before joining the loopback thread,
 // and the source outlives every in-flight feed call because destruction only
@@ -221,6 +226,7 @@ struct RemoteVideoReader {
     std::string trackSid;
     std::string trackName;
     std::string trackSource;
+    bool isScreenShare{false};
     bool muted{false};
     std::shared_ptr<livekit::VideoStream> stream;
     std::thread thread;
@@ -392,19 +398,20 @@ constexpr int kCatchUpResyncMs = 200;
 // roughly 1 GB/s of allocation — which is why a 1080p share was invisible while
 // a 640x360 camera (about 12 MB/s) was fine.
 //
-// Two bounds, both applied while the pixels are still in native memory so the
-// detail is thrown away once rather than copied four times and discarded later:
+// These are CAMERA bounds, applied while the pixels are still in native memory
+// so the detail is thrown away once rather than copied four times and discarded
+// later:
 //
-//   * long edge capped at 1280 px — the standard "big layer" size, and about
-//     what a call tile can actually resolve. 1080p -> 1280x720 is 2.25x less
-//     data per frame.
-//   * delivery capped at 20 fps. Nobody distinguishes 20 from 30 on a talking
-//     head or a shared window, and it is another 1.44x off the byte rate.
+//   * long edge capped at 1280 px — about what a talking-head tile resolves.
+//   * delivery capped at 20 fps.
 //
-// Both are one-line changes if the log says the rate is still too high; that is
-// the point of logging the achieved rate below rather than guessing again.
+// Screen shares are content, not talking heads, and bypass both guards below.
+// The old code applied them to every track, which is why a 1080p/60 share
+// arrived as 1280x720 at 20 fps. 3840 keeps 1440p and 4K intact while still
+// bounding an accidental 8K capture.
 constexpr int kRemoteVideoMaxLongEdge = 1280;
 constexpr long long kRemoteVideoMinFrameIntervalNs = 50'000'000;  // 20 fps
+constexpr int kRemoteScreenShareMaxLongEdge = 3840;
 
 // H6: receiver jitter-buffer recovery. When the SDK's NetEQ target stays
 // inflated (post-E2EE-key arrival storm, key rotations) the only cure is a
@@ -429,7 +436,7 @@ constexpr int kMinVideoMaxBitrateBps = 150000;
 constexpr int kMaxVideoMaxBitrateBps = 6000000;
 constexpr int kDefaultScreenShareMaxBitrateBps = 2500000;
 constexpr int kMinScreenShareMaxBitrateBps = 300000;
-constexpr int kMaxScreenShareMaxBitrateBps = 8000000;
+constexpr int kMaxScreenShareMaxBitrateBps = 25000000;
 constexpr int kDefaultShareAudioMaxBitrateBps = 128000;
 constexpr jlong kRawSessionId = 1;
 // g_rawEpoch is written under g_sessionMutex. Several dispatch helpers run on
@@ -3042,9 +3049,303 @@ std::string trackSourceLabel(livekit::TrackSource source);
 std::atomic<bool> g_txStatsRunning{false};
 std::thread g_txStatsThread;
 
+const char* qualityLimitationLabel(livekit::QualityLimitationReason reason) {
+    switch (reason) {
+    case livekit::QualityLimitationReason::None:
+        return "none";
+    case livekit::QualityLimitationReason::Cpu:
+        return "cpu";
+    case livekit::QualityLimitationReason::Bandwidth:
+        return "bandwidth";
+    case livekit::QualityLimitationReason::Other:
+        return "other";
+    }
+    return "unknown";
+}
+
+void resolveStreamDiagCallback(JNIEnv* env) {
+    if (env == nullptr) return;
+    {
+        std::lock_guard<std::mutex> lock(g_streamDiagMutex);
+        if (g_streamDiagClass != nullptr && g_streamDiagOnLineMethod != nullptr) return;
+    }
+    jclass localClass = env->FindClass("livekit/NativeStreamDiag");
+    if (localClass == nullptr) {
+        env->ExceptionClear();
+        return;
+    }
+    jmethodID method = env->GetStaticMethodID(localClass, "onNativeLine", "(Ljava/lang/String;)V");
+    if (method == nullptr) {
+        env->ExceptionClear();
+        env->DeleteLocalRef(localClass);
+        return;
+    }
+    jclass globalClass = static_cast<jclass>(env->NewGlobalRef(localClass));
+    env->DeleteLocalRef(localClass);
+    if (globalClass == nullptr) return;
+    bool installed = false;
+    {
+        std::lock_guard<std::mutex> lock(g_streamDiagMutex);
+        if (g_streamDiagClass == nullptr) {
+            g_streamDiagClass = globalClass;
+            g_streamDiagOnLineMethod = method;
+            installed = true;
+        }
+    }
+    if (!installed) {
+        env->DeleteGlobalRef(globalClass);
+    }
+}
+
+void emitNativeStatLine(const std::string& line) {
+    std::cout << line << std::endl;
+    JNIEnv* env = nullptr;
+    bool attached = false;
+    if (!getJniEnv(&env, &attached, "stream-diag") || env == nullptr) {
+        return;
+    }
+    resolveStreamDiagCallback(env);
+    jclass diagClass = nullptr;
+    jmethodID onLineMethod = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_streamDiagMutex);
+        diagClass = g_streamDiagClass;
+        onLineMethod = g_streamDiagOnLineMethod;
+    }
+    if (diagClass != nullptr && onLineMethod != nullptr) {
+        jstring payload = env->NewStringUTF(line.c_str());
+        if (payload != nullptr) {
+            env->CallStaticVoidMethod(diagClass, onLineMethod, payload);
+            if (env->ExceptionCheck() == JNI_TRUE) {
+                env->ExceptionClear();
+            }
+            env->DeleteLocalRef(payload);
+        }
+    }
+    releaseJniEnv(attached);
+}
+
+// SHARESTAT -- the screen share's half of the same question TXSTAT answers for
+// audio: are frames actually leaving the machine, and if not, why not?
+//
+// The Java side can prove capture and submission (`STREAMDIAG phase=capture`
+// and `phase=sink`), and CallPathStats can prove the Java track sink was called.
+// Neither can see
+// the encoder. This line reports the native outbound RTP stats, so a share that
+// looks frozen on the far side can be classified without guessing:
+//
+//   framesEncoded rising + fps near target  -> encoder is producing; look at
+//                                              the wire/remote decoder
+//   quality=cpu                            -> the encoder cannot keep up
+//   quality=bandwidth + targetBitrate low  -> congestion control throttled it
+//   no-outbound / stalled                  -> nothing reached RTP at all
+void logShareStatsIfDue() {
+    std::shared_ptr<livekit::LocalVideoTrack> track;
+    bool accepting = false;
+    int fpsTarget = 0;
+    {
+        SessionLock lock;
+        track = g_screenShareTrack;
+        accepting = g_acceptingScreenShareFrames;
+        fpsTarget = g_screenShareFps;
+    }
+    if (track == nullptr) {
+        return;
+    }
+
+    try {
+        auto statsFuture = track->getStats();
+        if (statsFuture.wait_for(std::chrono::milliseconds(50)) != std::future_status::ready) {
+            std::ostringstream out;
+            out << "DEBUG [OrbitLiveKitAudio] SHARESTAT verdict=stats-not-ready"
+                << " accepting=" << (accepting ? "true" : "false")
+                << " fpsTarget=" << fpsTarget;
+            emitNativeStatLine(out.str());
+            return;
+        }
+
+        long long packetsSent = -1;
+        long long bytesSent = -1;
+        long long framesEncoded = -1;
+        long long framesSent = -1;
+        long long keyFramesEncoded = -1;
+        long long headerBytesSent = -1;
+        long long retransmittedPackets = -1;
+        long long retransmittedBytes = -1;
+        long long nackCount = -1;
+        long long firCount = -1;
+        long long pliCount = -1;
+        double fps = -1.0;
+        double targetBitrate = -1.0;
+        double totalEncodeTime = -1.0;
+        double totalPacketSendDelay = -1.0;
+        int width = -1;
+        int height = -1;
+        const char* quality = "unknown";
+        std::string encoder = "unknown";
+        std::string scalabilityMode = "unknown";
+        bool active = false;
+        bool found = false;
+        double availableOutgoingBitrate = -1.0;
+
+        for (const auto& stat : statsFuture.get()) {
+            if (const auto* pair = std::get_if<livekit::RtcCandidatePairStats>(&stat.stats)) {
+                if (pair->candidate_pair.nominated ||
+                    pair->candidate_pair.state == livekit::IceCandidatePairState::Succeeded) {
+                    if (pair->candidate_pair.available_outgoing_bitrate > availableOutgoingBitrate) {
+                        availableOutgoingBitrate = pair->candidate_pair.available_outgoing_bitrate;
+                    }
+                }
+                if (pair->candidate_pair.nominated) {
+                    std::ostringstream out;
+                    out << "DEBUG [OrbitLiveKitAudio] SHARETRANSPORT"
+                        << " state="
+                        << (pair->candidate_pair.state.has_value()
+                                ? static_cast<int>(*pair->candidate_pair.state)
+                                : -1)
+                        << " nominated=true"
+                        << " availableOutgoingBitrate="
+                        << pair->candidate_pair.available_outgoing_bitrate
+                        << " currentRttMs=" << (pair->candidate_pair.current_round_trip_time * 1000.0)
+                        << " totalRttMs=" << (pair->candidate_pair.total_round_trip_time * 1000.0)
+                        << " packetsSent=" << pair->candidate_pair.packets_sent
+                        << " bytesSent=" << pair->candidate_pair.bytes_sent
+                        << " packetsReceived=" << pair->candidate_pair.packets_received
+                        << " packetsDiscardedOnSend=" << pair->candidate_pair.packets_discarded_on_send
+                        << " bytesDiscardedOnSend=" << pair->candidate_pair.bytes_discarded_on_send;
+                    emitNativeStatLine(out.str());
+                }
+            }
+
+            if (const auto* remote = std::get_if<livekit::RtcRemoteInboundRtpStats>(&stat.stats)) {
+                if (remote->stream.kind == "video") {
+                    std::ostringstream out;
+                    out << "DEBUG [OrbitLiveKitAudio] SHAREREMOTE"
+                        << " localId=" << remote->remote_inbound.local_id
+                        << " fractionLost=" << remote->remote_inbound.fraction_lost
+                        << " rttMs=" << (remote->remote_inbound.round_trip_time * 1000.0)
+                        << " totalRttMs=" << (remote->remote_inbound.total_round_trip_time * 1000.0)
+                        << " rttSamples=" << remote->remote_inbound.round_trip_time_measurements;
+                    emitNativeStatLine(out.str());
+                }
+            }
+
+            const auto* outbound = std::get_if<livekit::RtcOutboundRtpStats>(&stat.stats);
+            if (outbound == nullptr) {
+                continue;
+            }
+            if (outbound->stream.kind == "video") {
+                std::ostringstream out;
+                out << "DEBUG [OrbitLiveKitAudio] SHARELAYER"
+                    << " ssrc=" << outbound->stream.ssrc
+                    << " mid=" << outbound->outbound.mid
+                    << " active=" << (outbound->outbound.active ? "true" : "false")
+                    << " fps=" << outbound->outbound.frames_per_second
+                    << " framesEncoded=" << outbound->outbound.frames_encoded
+                    << " framesSent=" << outbound->outbound.frames_sent
+                    << " keyFramesEncoded=" << outbound->outbound.key_frames_encoded
+                    << " targetBitrate=" << outbound->outbound.target_bitrate
+                    << " width=" << outbound->outbound.frame_width
+                    << " height=" << outbound->outbound.frame_height
+                    << " quality=" << qualityLimitationLabel(outbound->outbound.quality_limitation_reason)
+                    << " encoder=" << outbound->outbound.encoder_implementation
+                    << " powerEfficient=" << (outbound->outbound.power_efficient_encoder ? "true" : "false")
+                    << " nackCount=" << outbound->outbound.nack_count
+                    << " firCount=" << outbound->outbound.fir_count
+                    << " pliCount=" << outbound->outbound.pli_count
+                    << " headerBytesSent=" << outbound->outbound.header_bytes_sent
+                    << " retransmittedPackets=" << outbound->outbound.retransmitted_packets_sent
+                    << " retransmittedBytes=" << outbound->outbound.retransmitted_bytes_sent
+                    << " totalEncodeTime=" << outbound->outbound.total_encode_time
+                    << " totalPacketSendDelay=" << outbound->outbound.total_packet_send_delay
+                    << " bytesSent=" << outbound->sent.bytes_sent
+                    << " scalabilityMode=" << outbound->outbound.scalability_mode;
+                emitNativeStatLine(out.str());
+            }
+            // An outbound video sender can expose RTX/FEC streams alongside the
+            // primary one. Keep the stream that has actually carried the most
+            // bytes; the small retransmit streams would otherwise overwrite the
+            // numbers that matter.
+            if (found && static_cast<long long>(outbound->sent.bytes_sent) < bytesSent) {
+                continue;
+            }
+            found = true;
+            packetsSent = static_cast<long long>(outbound->sent.packets_sent);
+            bytesSent = static_cast<long long>(outbound->sent.bytes_sent);
+            framesEncoded = static_cast<long long>(outbound->outbound.frames_encoded);
+            framesSent = static_cast<long long>(outbound->outbound.frames_sent);
+            keyFramesEncoded = static_cast<long long>(outbound->outbound.key_frames_encoded);
+            headerBytesSent = static_cast<long long>(outbound->outbound.header_bytes_sent);
+            retransmittedPackets = static_cast<long long>(outbound->outbound.retransmitted_packets_sent);
+            retransmittedBytes = static_cast<long long>(outbound->outbound.retransmitted_bytes_sent);
+            nackCount = static_cast<long long>(outbound->outbound.nack_count);
+            firCount = static_cast<long long>(outbound->outbound.fir_count);
+            pliCount = static_cast<long long>(outbound->outbound.pli_count);
+            fps = outbound->outbound.frames_per_second;
+            targetBitrate = outbound->outbound.target_bitrate;
+            totalEncodeTime = outbound->outbound.total_encode_time;
+            totalPacketSendDelay = outbound->outbound.total_packet_send_delay;
+            width = static_cast<int>(outbound->outbound.frame_width);
+            height = static_cast<int>(outbound->outbound.frame_height);
+            quality = qualityLimitationLabel(outbound->outbound.quality_limitation_reason);
+            encoder = outbound->outbound.encoder_implementation;
+            scalabilityMode = outbound->outbound.scalability_mode;
+            active = outbound->outbound.active;
+        }
+
+        const char* verdict = "unknown";
+        if (!accepting) {
+            verdict = "not-accepting";
+        } else if (!found) {
+            verdict = "no-outbound";
+        } else if (framesEncoded <= 0) {
+            verdict = "stalled";
+        } else {
+            verdict = "sending";
+        }
+
+        std::ostringstream out;
+        out << "DEBUG [OrbitLiveKitAudio] SHARESTAT verdict=" << verdict
+            << " accepting=" << (accepting ? "true" : "false")
+            << " active=" << (active ? "true" : "false")
+            << " fpsTarget=" << fpsTarget
+            << " fps=" << fps
+            << " framesEncoded=" << framesEncoded
+            << " framesSent=" << framesSent
+            << " keyFramesEncoded=" << keyFramesEncoded
+            << " targetBitrate=" << targetBitrate
+            << " availableOutgoingBitrate=" << availableOutgoingBitrate
+            << " quality=" << quality
+            << " width=" << width
+            << " height=" << height
+            << " packetsSent=" << packetsSent
+            << " bytesSent=" << bytesSent
+            << " headerBytesSent=" << headerBytesSent
+            << " retransmittedPackets=" << retransmittedPackets
+            << " retransmittedBytes=" << retransmittedBytes
+            << " nackCount=" << nackCount
+            << " firCount=" << firCount
+            << " pliCount=" << pliCount
+            << " totalEncodeTime=" << totalEncodeTime
+            << " totalPacketSendDelay=" << totalPacketSendDelay
+            << " encoder=" << encoder
+            << " scalabilityMode=" << scalabilityMode;
+        emitNativeStatLine(out.str());
+    } catch (const std::exception& error) {
+        std::ostringstream out;
+        out << "DEBUG [OrbitLiveKitAudio] SHARESTAT verdict=stats-threw what="
+            << error.what();
+        emitNativeStatLine(out.str());
+    } catch (...) {
+        emitNativeStatLine("DEBUG [OrbitLiveKitAudio] SHARESTAT verdict=stats-threw unknown");
+    }
+}
+
 void logTxStatsIfDue() {
     while (g_txStatsRunning.load(std::memory_order_relaxed)) {
         std::this_thread::sleep_for(std::chrono::seconds(5));
+
+        logShareStatsIfDue();
 
         std::shared_ptr<livekit::LocalAudioTrack> track;
         bool muted = false;
@@ -4190,6 +4491,21 @@ void startRemoteVideoReaderLocked(
         reader->trackSid = trackSid;
         reader->trackName = track->name();
         reader->trackSource = publication != nullptr ? trackSourceLabel(publication->source()) : optionalTrackSourceLabel(track->source());
+        const std::string lowerTrackName = [&] {
+            std::string name = track->name();
+            std::transform(name.begin(), name.end(), name.begin(),
+                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            return name;
+        }();
+        // The source enum is authoritative for Orbit and modern Element clients.
+        // Older publishers leave it unset, so fall back to the conventional
+        // track name instead of treating their share as a 20 fps camera.
+        reader->isScreenShare =
+            (publication != nullptr && publication->source() == livekit::TrackSource::SOURCE_SCREENSHARE) ||
+            lowerTrackName.find("screen") != std::string::npos ||
+            lowerTrackName.find("share") != std::string::npos ||
+            lowerTrackName.find("desktop") != std::string::npos ||
+            lowerTrackName.find("display") != std::string::npos;
         reader->muted = (publication != nullptr && publication->muted()) || track->muted();
         reader->stream = livekit::VideoStream::fromTrack(track, options);
         if (reader->stream == nullptr) {
@@ -4235,14 +4551,20 @@ void startRemoteVideoReaderLocked(
                     }
                     sequence += 1;
 
-                    // Rate cap. Read as fast as the SFU produces, so without this
-                    // the delivery rate is whatever the sender's encoder decided,
-                    // and every one of those frames costs a JNI copy plus three
-                    // UI-side allocations. Skipping here, before the copy, is the
-                    // only place the saving is real.
+                    // Rate cap for cameras. Screen shares keep the frame rate
+                    // the sender chose (15/30/60) and are not downscaled below
+                    // their selected resolution; a 1080p share must not arrive
+                    // as 720p20. Camera frames still use the cheaper guard.
+                    const int maxLongEdge = reader->isScreenShare
+                        ? kRemoteScreenShareMaxLongEdge
+                        : kRemoteVideoMaxLongEdge;
+                    const long long minFrameIntervalNs = reader->isScreenShare
+                        ? 0
+                        : kRemoteVideoMinFrameIntervalNs;
                     const auto nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
                         std::chrono::steady_clock::now().time_since_epoch()).count();
-                    if (lastDeliveredNs != 0 && (nowNs - lastDeliveredNs) < kRemoteVideoMinFrameIntervalNs) {
+                    if (minFrameIntervalNs > 0 && lastDeliveredNs != 0 &&
+                        (nowNs - lastDeliveredNs) < minFrameIntervalNs) {
                         rateSkipped += 1;
                         continue;
                     }
@@ -4260,7 +4582,7 @@ void startRemoteVideoReaderLocked(
                             reinterpret_cast<const std::uint8_t*>(frame.data()),
                             static_cast<int>(frame.width()),
                             static_cast<int>(frame.height()),
-                            kRemoteVideoMaxLongEdge,
+                            maxLongEdge,
                             scratch,
                             outWidth,
                             outHeight);
@@ -4286,6 +4608,7 @@ void startRemoteVideoReaderLocked(
                                   << " height=" << (didDownscale ? outHeight : frame.height())
                                   << " srcWidth=" << frame.width()
                                   << " srcHeight=" << frame.height()
+                                  << " screenShare=" << (reader->isScreenShare ? "true" : "false")
                                   << " downscaledFrames=" << downscaled
                                   << " format=" << static_cast<int>(frame.type())
                                   << " bytes=" << (didDownscale ? scratch.size() : frame.dataSize())
@@ -7424,6 +7747,10 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePublishVideo(
 
         livekit::TrackPublishOptions publishOptions;
         publishOptions.source = livekit::TrackSource::SOURCE_CAMERA;
+        // Match the "simulcast=false" line this has always logged. Leaving the
+        // optional unset let the SDK choose instead, so the log was a claim the
+        // code never made.
+        publishOptions.simulcast = false;
         int effectiveVideoMaxBitrateBps = maxBitrateBps > 0 ? static_cast<int>(maxBitrateBps) : kDefaultVideoMaxBitrateBps;
         if (effectiveVideoMaxBitrateBps < kMinVideoMaxBitrateBps) effectiveVideoMaxBitrateBps = kMinVideoMaxBitrateBps;
         if (effectiveVideoMaxBitrateBps > kMaxVideoMaxBitrateBps) effectiveVideoMaxBitrateBps = kMaxVideoMaxBitrateBps;
@@ -7464,6 +7791,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePublishVideo(
             g_videoTrack->unmute();
         }
 
+        const bool simulcasted = publication->simulcasted();
         g_videoPublicationSid = publication->sid();
         g_videoLocalTrackSid = g_videoTrack->sid();
         g_videoPublished = true;
@@ -7482,6 +7810,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePublishVideo(
                   << "trackSource=SOURCE_CAMERA "
                   << " publicationWidth=" << publication->width()
                   << " publicationHeight=" << publication->height()
+                  << " publicationSimulcasted=" << (simulcasted ? "true" : "false")
                   << std::endl;
         dumpLocalParticipantPublicationsLocked("after_video_publish");
     } catch (const std::exception& error) {
@@ -7644,6 +7973,10 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePublishScreenShare(
     jint height,
     jint fps,
     jint maxBitrateBps) {
+    // Resolve the stream-diag upcall on this JVM-attached thread, before the
+    // native stats thread emits its first SHARE line. FindClass from a detached
+    // native thread uses the system loader, which is not where app classes live.
+    resolveStreamDiagCallback(env);
     std::lock_guard<std::timed_mutex> lock(g_sessionMutex);
     if (!isRawSessionValid(sessionId)) {
         setRawErrorLocked("STALE_EVENT", "Unknown native media session", "nativePublishScreenShare", false);
@@ -7702,6 +8035,12 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePublishScreenShare(
 
             livekit::TrackPublishOptions publishOptions;
             publishOptions.source = livekit::TrackSource::SOURCE_SCREENSHARE;
+            // Screen share is a single full-resolution stream. Leaving this
+            // unset lets the Rust SDK default to simulcast, which wraps the
+            // encoder in SimulcastEncoderAdapter and splits the target bitrate
+            // across layers. Observed in SHARESTAT: two libvpx encoders, a
+            // 30 kbps initial target, and ~60 s to reach the configured max.
+            publishOptions.simulcast = false;
             livekit::VideoEncodingOptions videoEncoding;
             videoEncoding.max_bitrate = static_cast<std::uint64_t>(effectiveShareMaxBitrateBps);
             videoEncoding.max_framerate = static_cast<double>(g_screenShareFps);
@@ -7715,6 +8054,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePublishScreenShare(
                       << " fps=" << g_screenShareFps
                       << " format=I420"
                       << " maxBitrateBps=" << effectiveShareMaxBitrateBps
+                      << " simulcast=false"
                       << std::endl;
             g_room->localParticipant()->publishTrack(g_screenShareTrack, publishOptions);
 
@@ -7725,6 +8065,14 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePublishScreenShare(
                 setRawErrorLocked("PUBLISH_VIDEO_FAILED", "Native C++ screenshare publish returned no publication", "nativePublishScreenShare", true);
                 return kStatusPublishVideoFailed;
             }
+
+            const bool simulcasted = publication->simulcasted();
+            std::cout << "ScreenSharePublish publication "
+                      << "publicationSid=" << publication->sid()
+                      << " simulcasted=" << (simulcasted ? "true" : "false")
+                      << " width=" << publication->width()
+                      << " height=" << publication->height()
+                      << std::endl;
 
             if (g_screenShareTrack->muted()) {
                 g_screenShareTrack->unmute();
@@ -8116,6 +8464,68 @@ Java_livekit_OrbitLiveKitNativeRaw_nativePushScreenShareFrame(
     }
 }
 
+#if defined(_MSC_VER)
+static bool safeAudioTrackSetMuted(livekit::LocalAudioTrack* track, bool muted) {
+    if (!track) return false;
+    __try {
+        if (muted) {
+            track->mute();
+        } else {
+            track->unmute();
+        }
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        std::cerr << "WARN [OrbitLiveKitAudio] safeAudioTrackSetMuted caught SEH exception code="
+                  << GetExceptionCode() << std::endl;
+        return false;
+    }
+}
+
+static bool safeVideoTrackSetMuted(livekit::LocalVideoTrack* track, bool muted) {
+    if (!track) return false;
+    __try {
+        if (muted) {
+            track->mute();
+        } else {
+            track->unmute();
+        }
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        std::cerr << "WARN [OrbitLiveKitAudio] safeVideoTrackSetMuted caught SEH exception code="
+                  << GetExceptionCode() << std::endl;
+        return false;
+    }
+}
+#else
+static bool safeAudioTrackSetMuted(livekit::LocalAudioTrack* track, bool muted) {
+    if (!track) return false;
+    try {
+        if (muted) {
+            track->mute();
+        } else {
+            track->unmute();
+        }
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+static bool safeVideoTrackSetMuted(livekit::LocalVideoTrack* track, bool muted) {
+    if (!track) return false;
+    try {
+        if (muted) {
+            track->mute();
+        } else {
+            track->unmute();
+        }
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+#endif
+
 extern "C" JNIEXPORT jint JNICALL
 Java_livekit_OrbitLiveKitNativeRaw_nativeSetAudioMuted(JNIEnv*, jclass, jlong sessionId, jlong epoch, jboolean muted) {
     std::shared_ptr<livekit::LocalAudioTrack> track;
@@ -8142,11 +8552,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetAudioMuted(JNIEnv*, jclass, jlong se
     }
 
     try {
-        if (muted == JNI_TRUE) {
-            track->mute();
-        } else {
-            track->unmute();
-        }
+        safeAudioTrackSetMuted(track.get(), muted == JNI_TRUE);
         // Authoritative write of the worker's fail-closed mute gate input; the
         // worker only refreshes this opportunistically when it wins the session
         // mutex.
@@ -8189,11 +8595,7 @@ Java_livekit_OrbitLiveKitNativeRaw_nativeSetVideoMuted(JNIEnv*, jclass, jlong se
     }
 
     try {
-        if (muted == JNI_TRUE) {
-            track->mute();
-        } else {
-            track->unmute();
-        }
+        safeVideoTrackSetMuted(track.get(), muted == JNI_TRUE);
         std::cout << "DEBUG [VideoPublish] native video muted="
                   << (muted == JNI_TRUE ? "true" : "false")
                   << " trackMuted=" << (track->muted() ? "true" : "false")
@@ -8644,11 +9046,21 @@ JNI_OnUnload(JavaVM* vm, void*) {
     const bool haveEnv =
         vm != nullptr && vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_8) == JNI_OK;
     if (haveEnv && env != nullptr) {
-        std::lock_guard<std::mutex> lock(g_shareAecMutex);
-        if (g_shareAecRouterClass != nullptr) {
-            env->DeleteGlobalRef(g_shareAecRouterClass);
-            g_shareAecRouterClass = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(g_shareAecMutex);
+            if (g_shareAecRouterClass != nullptr) {
+                env->DeleteGlobalRef(g_shareAecRouterClass);
+                g_shareAecRouterClass = nullptr;
+            }
+            g_shareAecOnFrameMethod = nullptr;
         }
-        g_shareAecOnFrameMethod = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(g_streamDiagMutex);
+            if (g_streamDiagClass != nullptr) {
+                env->DeleteGlobalRef(g_streamDiagClass);
+                g_streamDiagClass = nullptr;
+            }
+            g_streamDiagOnLineMethod = nullptr;
+        }
     }
 }

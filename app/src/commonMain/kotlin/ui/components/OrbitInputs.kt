@@ -37,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
@@ -83,6 +84,7 @@ fun OrbitTextField(
     onValueChange: (String) -> Unit,
     placeholder: String,
     modifier: Modifier = Modifier,
+    shape: Shape = OrbitRadius.mdShape,
     leadingIcon: ImageVector? = null,
     trailing: (@Composable () -> Unit)? = null,
     singleLine: Boolean = true,
@@ -128,11 +130,11 @@ fun OrbitTextField(
     Box(
         modifier = modifier
             .defaultMinSize(minHeight = 34.dp)
-            .clip(OrbitRadius.mdShape)
+            .clip(shape)
             .background(t.Input_Bg)
             // 0.dp when unfocused, so the resting field is a filled shape with no
             // edge at all -- the fill is the affordance.
-            .border(frameWidth.dp, frame, OrbitRadius.mdShape)
+            .border(frameWidth.dp, frame, shape)
             .padding(horizontal = OrbitSpace.sm, vertical = OrbitSpace.xs),
         contentAlignment = Alignment.CenterStart
     ) {
@@ -196,6 +198,7 @@ fun OrbitSearchField(
     onValueChange: (String) -> Unit,
     placeholder: String,
     modifier: Modifier = Modifier,
+    shape: Shape = CircleShape,
     onSubmit: (() -> Unit)? = null
 ) {
     val t = rememberCosmicTokens()
@@ -204,6 +207,7 @@ fun OrbitSearchField(
         onValueChange = onValueChange,
         placeholder = placeholder,
         modifier = modifier,
+        shape = shape,
         leadingIcon = with(TablerIcons) { Search },
         imeAction = ImeAction.Search,
         onImeAction = onSubmit,

@@ -1,5 +1,7 @@
 package ui.screen.chat
 
+import ui.components.OrbitAvatarImage
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
@@ -281,8 +283,8 @@ fun MemberAvatarWithStatus(
     val ring = ringColor ?: rememberCosmicTokens().Members_Bg
     Box(modifier = modifier.size(size)) {
         if (user.avatarUrl != null) {
-            coil3.compose.AsyncImage(
-                model = user.avatarUrl,
+            OrbitAvatarImage(
+                url = user.avatarUrl,
                 contentDescription = user.displayName,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize().clip(CircleShape)

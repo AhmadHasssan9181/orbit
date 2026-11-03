@@ -87,6 +87,9 @@ against Element sources), `docs/planning/headache_medicine.md` (UI architecture 
 | A peer's video is frozen / blocky / smeared | [H22](#h22--the-degenerate-frame-stretched-across-the-tile) |
 | A peer shows up once but the log announces them 8 times | [H23](#h23--one-person-announced-eight-times) |
 | App exits with `0xC0000409` / "VM attach current thread failed" | [H24](#h24--the-0xc0000409-termination-abort-native-threads-outlived-the-jvm) |
+| Hangup shows "waiting for media", a hashed ghost, or extra beeps | [H25](#h25---the-waiting-for-media-hangup-hash-ghost-and-extra-beeps) |
+| Screen share looks soft/blocky even at 1080p/Source | FIXED - [H26](#h26---the-screen-share-that-renders-at-720p20) |
+| Text & voice channels mixed in one flat list / awkward voice sub-row | FIXED - [H27](#h27---the-hybrid-channel-trap--why-voice-lived-under-text-rooms) |
 | What's still broken or unbuilt? | [Unfinished Business](#unfinished-business) |
 
 ---
@@ -956,6 +959,13 @@ mirror video, background blur, bitrate, attenuation, SFU override.
    no consumer. Replaced with truthful fixed-combo text; Keybinds pane card
    updated to match ("Ctrl + Shift + Space (Hold)").
 
+**Found misleading and FIXED:** the call share dialog offered 60 fps but
+persisted 30, and offered 1440p/Source while the native group receiver never
+rendered more than 1280 px on the long edge or 20 fps. The Settings pane and
+the share dialog also disagreed on the FPS choices. The saved FPS, capture
+rate, native publish rate, receiver exception, and bitrate budget now agree;
+see [H26](#h26---the-screen-share-that-renders-at-720p20).
+
 **Left on the table deliberately:** Start/Stop Stream shortcut (needs
 source-picker flow first), Navigation-pane shortcuts (unaudited this round).
 Rebindable PTT keys — deferred that day, SHIPPED the next: see H18 below.
@@ -1263,6 +1273,243 @@ confirmed it since.
 **Files:** `orbit_livekit_audio.cpp` (`JNI_OnUnload`, `ensureReaderReaper`),
 and the Bestiary entry above, which was wrong.
 
+## H25 - The "waiting for media" hangup, hash ghost, and extra beeps
+
+**You see:** Hanging up leaves the other side showing Orbit in the call with
+"waiting for media" for a couple of seconds. Quitting mid-call can leave a
+membership ghost for hours. Element shows a second, opaque participant for
+Orbit, and joining/leaving plays two or three beeps instead of one.
+
+**It was four separate faults wearing one costume:**
+
+1. **Leave blocked teardown.** `CallManager.endCall` waited up to 1.5 s for
+   `onLeaveGroupCall` before disconnecting LiveKit. Orbit had already stopped
+   publishing local tracks, so Element sat on an attached participant with no
+   media. On unmount/logout `notifyRemote=false` skipped the leave entirely.
+   The wait also ran on the caller's `rememberCoroutineScope()`, which Compose
+   cancels on dispose.
+2. **Element's subscriber transport was treated as a participant.** Element
+   creates a separate subscriber connection per transport and keys it by `url`;
+   Orbit's membership advertises only `livekit_service_url`, so Element did not
+   deduplicate it and issued a hashed identity via `/get_token`. Orbit rendered
+   every raw LiveKit participant, so that pure subscriber appeared as a ghost.
+3. **The leave was both slow and duplicated.** `endGroupCall` scanned all room
+   state and published termination before leaving; `WebRtcEffects` then called
+   `leaveGroupCall` again. `leaveGroupCall` cleared the remembered membership
+   shape *before* the PUT succeeded, so a cancelled leave fell back to the wrong
+   state key, and the call-manager timeout could cancel it mid-flight.
+4. **The sync collector and poller both wrote the device roster.** The member
+   roster was expiry-filtered, but the per-device mirror added any non-leave
+   event, resurrecting devices from other calls for the E2EE exchange.
+
+**Fix set:**
+
+- `CallManager` now owns a `SupervisorJob + Dispatchers.IO` background scope.
+  Group `endCall` announces the native teardown synchronously, disconnects the
+  LiveKit session immediately, then clears the P2P-side media state in the same
+  background teardown. `stopLocalMedia` used to run first on the UI thread; its
+  capture/factory teardown delayed `bridge.disconnect()`, which is exactly the
+  couple of seconds Element spent showing an attached participant with no media.
+  The membership leave is published once in the background — including when
+  `notifyRemote=false` because the app is quitting. `teardownNativeMedia` and
+  `release` run on the same scope, so disposal cannot cancel them. The leave
+  budget is 4 s.
+- Quitting waits for that leave: `CallManager` retains the leave `Job` and
+  exposes `awaitMembershipLeave()`; `Main.kt` runs it before `exitApplication()`
+  and gives the forced-exit watchdog 7 s. Previously `exitApplication()` killed
+  the JVM while the PUT was still in flight, leaving the account visible in
+  Element's call after Orbit was gone.
+- `endGroupCall` leaves first, then does the termination scan. `leaveGroupCall`
+  issues its distinct state-key clears in parallel, retries once, remembers a
+  successful leave for 60 s (cleared by a new publish), and removes the cached
+  membership shape only after every PUT succeeds.
+- `LiveKitRemoteVideoFrameStore` now keeps two views:
+  `rawRemoteParticipants` (everything LiveKit reports, consumed by the E2EE key
+  exchange) and `remoteParticipants` (display). The display view admits an
+  identity only if it has emitted media or parses as a Matrix user id. Track
+  announce/start, audio mute state, and connection-quality samples mark the
+  identity as publishing; disconnect clears the mark. The opaque subscriber
+  never publishes, so it disappears from tiles, counts, and chime deltas, while
+  a legitimate opaque publisher becomes visible on its first track.
+- The sync collector's per-device mirror now runs the same
+  `MatrixRtcMembership.isCurrentlyValid` check as the member roster, so it
+  cannot resurrect devices from an expired or previous call.
+
+**Prove it:** Hang up in an Orbit↔Element call — Element should drop the tile
+immediately, with no "waiting for media". Quit mid-call and check the room state
+for `membership: leave`; the account must disappear from Element after the
+process is gone. The extra opaque participant and extra beeps should be gone.
+E2EE must still work for a hashed modern publisher after it starts media.
+
+**Files:** `webrtc/CallManager.kt`, `jvmMain/kotlin/Main.kt`,
+`repository/MatrixCallsRepository.kt`, `repository/MatrixSyncRepository.kt`,
+`livekit/LiveKitRemoteVideoFrameStore.kt`, `livekit/CallMediaKeyExchange.kt`,
+`commonTest/kotlin/livekit/RemoteRosterClearTest.kt`.
+
+## H26 - The screen share that renders at 720p20
+
+**Status: FIXED IN CODE (2026-10-23), live verification pending.** Kotlin and
+native builds pass, the bitrate helper has unit coverage, the Java-side capture
+pacing path sustains ~60 fps in a local probe (120/120 frames at 59.9 fps; 178
+frames through a 1280x720 `VideoTrack` in 3 s), and a 1:1 P2P loopback probe
+received 45-55 fps at 1080p60. The fresh build routes Java `STREAMDIAG` lines
+and native `SHARESTAT`/`SHARELAYER`/`SHAREREMOTE`/`SHARETRANSPORT` lines to
+`%LOCALAPPDATA%\Orbit\logs\orbit-stream.log`; the remaining question is what a
+real remote peer sees. Test procedure:
+`docs/planning/STREAM_TEST_INSTRUCTIONS.md`.
+
+**You see (before the fix):** The share dialog offers 720p/1080p/1440p/Source
+and 15/30/60. The sender's stats report the selected source size. On the other
+side the share is soft, text is blocky, motion is not smooth, and switching
+720p -> 1440p does not make it sharper. Sometimes it looks worse.
+
+**It was not capture and not the decoder.** On the native LiveKit group-call
+path, the receiver capped every remote video frame at **1280 px on the long
+edge and 20 fps**, while the sender always published screen share at a
+**fixed 2.5 Mbps regardless of the chosen resolution**:
+
+1. **Fixed publish bitrate.** `WebRtcClientImpl.jvm.kt` called
+   `armScreenSharePublish(fps, 0)`. The `0` selected
+   `kDefaultScreenShareMaxBitrateBps = 2500000`, used by the publish options.
+   Quality changed only the capturer's max frame size and frame rate; no
+   corresponding bitrate change existed. More pixels at the same 2.5 Mbps meant
+   fewer bits per pixel, so 1440p/Source could look WORSE than 720p.
+2. **Receiver downscale + rate limit.** `kRemoteVideoMaxLongEdge = 1280` and
+   `kRemoteVideoMinFrameIntervalNs = 50'000'000` were applied by
+   `startRemoteVideoReaderLocked` with no screen-share exception: a 1080p share
+   became 1280x720; a 4K share still became 1280x720.
+3. **60 fps was a lie in three places.** The share dialog persisted 60 as 30,
+   `WebRtcClientImpl` clamped it again, and `LiveKitNativeMediaSession` clamped
+   its native arm state to 30. Even a real 30 was capped to 20 by the receiver.
+   The Settings pane offered only 15/30.
+4. **One layer only.** `publishOptions.simulcast` is never set. There is no
+   lower-quality layer to request when a receiver is bandwidth-starved, so
+   congestion turns into blockiness instead of graceful layer fallback.
+5. **The metrics described the wrong side of the wire.** The `RemoteVideo`
+   line's `srcWidth` was the capture source; the rendered `width` was the
+   1280-wide receiver copy. The sender could truthfully log 1920 while the
+   viewer was watching 1280.
+6. **Red and blue were swapped.** The Java desktop callback converts its BGRx
+   buffer with `libyuv::FOURCC_ABGR`, while the native
+   `VideoTrackDesktopSource` uses `FOURCC_ARGB`. Every frame reached the
+   encoder with R and B exchanged, so text fringing and tint were baked into
+   the share before any bitrate was spent.
+
+**The fix (all except simulcast, in one change):**
+
+- **Bitrate scales with resolution and frame rate.**
+  `screenShareBitrateBps(quality, fps)` uses 2.5 Mbps at 720p, 5 Mbps at 1080p,
+  8 Mbps at 1440p, and 12 Mbps at Source. It multiplies by 0.6 at <=15 fps, 1.0
+  at 16-30 fps, and 1.6 above 30 fps, then clamps to 500 kbps-25 Mbps. At 60 fps
+  the budgets are 4.0 / 8.0 / 12.8 / 19.2 Mbps. These are encoder ceilings, not
+  reservations; congestion control still backs off.
+- **The native receiver treats screen shares as content.** It detects
+  `SOURCE_SCREENSHARE` (with a track-name fallback for older publishers) and
+  skips both the 1280 px downscale and the 20 fps gate. The screen-share long
+  edge is capped at 3840 px. Camera tracks keep the old 1280 px/20 fps guards.
+- **15/30/60 are honest end to end.** The share dialog persists all three, the
+  capture source receives that rate, `armScreenSharePublish` accepts 1-60, and
+  the native publish options receive `max_framerate = fps` plus the scaled
+  bitrate. The Settings pane now offers the same 15/30/60 choices and Source.
+- **The call badge reports the selected values.** It shows the persisted
+  quality/FPS while sharing instead of a hardcoded `720p 30FPS`.
+- **The UI conversion path no longer walks every pixel.** `AsyncVideoFrameImage`
+  installs the RGBA buffer directly into a Skia `Bitmap`
+  (`RGBA_8888`/`UNPREMUL`) and wraps it with `asComposeImageBitmap()` instead of
+  doing RGBA -> AWT `BufferedImage` -> Skia. This removes the per-pixel loops
+  that made 60 fps shares starve the audio mixer.
+- **Capture is paced against a deadline, not sleep-after-capture.**
+  `VideoTrackDesktopSource.cpp` did `CaptureFrame()` and then slept a full
+  frame interval, so a 60 fps request actually ran at `1 / (captureTime +
+  16.6 ms)`. The source lives in the prebuilt `webrtc-java` DLL, so the runtime
+  now uses `PacedDesktopVideoSource`: Java `ScreenCapturer`/`WindowCapturer`
+  feeding `CustomVideoSource`, with a high-priority capture thread, absolute
+  deadlines, last-frame reuse for minimized windows, and I420 scaling to the
+  selected quality. The `[ScreenCapture] last5s captured=... pushed=...` log
+  line is the sender-side truth. The Orbit LiveKit bridge itself is rebuilt
+  locally by `:app:compileJniBridge` with VS 2022; the prebuilt WebRTC DLL still
+  contains the old native desktop source.
+- **Color conversion is corrected in place.** The desktop callback's
+  `FOURCC_ABGR` label exchanges red and blue relative to the native
+  `FOURCC_ARGB` path. `PacedDesktopVideoSource.correctColors()` converts each
+  I420 frame to ARGB with `FOURCC_ARGB`, then back to I420 with `FOURCC_ABGR`,
+  using reusable direct scratch buffers. Measured cost is ~3.8 ms per 1080p
+  frame; the local probe now reports red/green/blue correctly at 1080p60.
+- **P2P shares use the same resolution/FPS budget.** The P2P path had only
+  `replaceTrack`, no encoding ceiling. `applyScreenShareSenderEncoding()` now
+  sets `active=true`, `maxBitrate=screenShareBitrateBps(...)`,
+  `maxFramerate=fps`, and `scaleResolutionDownBy=1.0`; stopping the share clears
+  those fields before the camera track is restored. A native `RTCRtpSender`
+  probe verified the apply/clear roundtrip. This is a ceiling fix, not a proven
+  FPS fix: loopback measured 54.7 fps untuned and 45-52 fps tuned, within run
+  variance.
+- **The group sender reports its own truth.** A native `SHARESTAT` line is
+  emitted every 5 s alongside `TXSTAT`: `verdict`, `accepting`, `fpsTarget`,
+  achieved `fps`, `framesEncoded`, `framesSent`, `targetBitrate`, `quality`
+  (`none`/`cpu`/`bandwidth`/`other`), encoded size, packets/bytes sent, and
+  encoder implementation. This distinguishes capture, encoder, and congestion
+  limits without guessing from the Java sink counters.
+- **Telemetry has its own file.** `StreamDiag` writes `phase=config`,
+  `phase=capture`, `phase=sink`, `phase=preview`, and `CallPathStats` summaries
+  to `orbit-stream.log` (4 MB x 2 rotation). Native SHARE lines reach the same
+  file through `NativeStreamDiag.onNativeLine`, resolved on a JVM-attached
+  thread before screen-share publish. The general `orbit.log` remains the app
+  log; native SHARE lines no longer exist only in the Gradle console.
+
+**Still not done:** no simulcast/dynacast, so there is still one layer and
+congestion appears as quality loss rather than layer fallback. Source above 4K
+is downscaled to 3840 px. The P2P path now applies the same ceiling through
+`RTCRtpSender`, but still has no simulcast. 4K60 remains the memory/CPU stress
+case and needs live observation. Orbit's local preview is deliberately throttled
+to ~10 fps; it is not a measurement of remote share FPS.
+
+**Prove it:** Follow `docs/planning/STREAM_TEST_INSTRUCTIONS.md` and send
+`%LOCALAPPDATA%\Orbit\logs\orbit-stream.log`. Share a text-heavy 1080p window in
+a group call and compare colors and motion on the remote tile, not the local
+preview. `phase=config` should show `quality=1080p fps=60 max=1920x1080
+bitrateBps=8000000`. `phase=capture` should report `captureFps` near 60 plus
+`captureCallAvgMs`; `phase=sink` should report `fpsIn`/`fpsPushed` plus
+`pushAvgMs`. After 5 s, `SHARESTAT` should show `verdict=sending`, `fps` near the
+target, and `quality=none` or `bandwidth`; `quality=cpu` means encoder CPU,
+falling `targetBitrate`/`availableOutgoingBitrate` means congestion, and flat
+`framesEncoded` means the encoder never ran. On the receiver, `RemoteVideo`
+should show `screenShare=true`, `srcWidth=1920`, `width=1920`, and no
+`rateSkipped` climb at a 20 fps ceiling. There is no remote-side log in this
+run, so remote observations are subjective. For a 1:1 call, the P2P sender
+probe should log `VERDICT applied` with the same bitrate/FPS values.
+
+**Files:** `app/src/jvmMain/kotlin/webrtc/WebRtcClientImpl.jvm.kt`,
+`app/src/jvmMain/kotlin/webrtc/PacedDesktopVideoSource.kt`,
+`app/src/jvmMain/kotlin/livekit/LiveKitNativeMediaSession.kt`,
+`app/src/jvmMain/kotlin/livekit/LiveKitLocalTrack.kt`,
+`app/src/jvmMain/kotlin/livekit/CallPathStats.kt`,
+`app/src/jvmMain/kotlin/livekit/NativeStreamDiag.kt`,
+`app/src/jvmMain/kotlin/util/StreamLogFile.jvm.kt`,
+`app/src/jvmMain/cpp/orbit_livekit_audio.cpp`,
+`docs/planning/STREAM_TEST_INSTRUCTIONS.md`,
+`app/src/jvmMain/kotlin/ui/screen/call/AsyncVideoFrameImage.kt`,
+`app/src/commonMain/kotlin/ui/screen/call/CallScreen.kt`,
+
+## H27 - The Hybrid Channel Trap — Why Voice Lived Under Text Rooms
+
+**Status: FIXED IN CODE (2026-10-24).**
+
+**You see (before the fix):** Creating a new server in Orbit created only a single `# general` channel. In the channel drawer, every room rendered an indented sub-row underneath it saying `Voice · you are here` or `Voice`. Clicking a voice channel was awkward because the channel row opened chat while the little sub-row joined the call. Without custom categories, the whole server collapsed into a single flat list titled with the space name instead of Discord-style `TEXT CHANNELS` and `VOICE CHANNELS` headers.
+
+**It was an overcorrection from Element's all-in-one room philosophy.** Under Matrix (MSC1772 Spaces & MSC3401 MatrixRTC), any room can have a timeline and can also host group calls. Early Orbit code reasoned that because Matrix has no hard distinction between text and voice rooms, splitting channels into text vs voice categories was "wrong". But in doing so, it created the worst of both worlds: every text room was saddled with an awkward call sub-row, users could not create dedicated voice channels that joined on click, and newly created spaces only had one room.
+
+**The Fix (1:1 Discord Model with Dedicated Matrix Timelines):**
+1. **Server Creation (`JoinServerScreen.kt`):** Creating a server now automatically provisions both `# general` (`ChannelType.TEXT`) and `🔊 General` (`ChannelType.VOICE`).
+2. **Category Grouping (`ChannelGrouping.kt`):** Default/uncategorized spaces now cleanly group into `TEXT CHANNELS` and `VOICE CHANNELS` dropdown categories.
+3. **Dedicated Voice Interaction (`ChannelList.kt`):** Clicking a `ChannelType.VOICE` row directly connects to the MatrixRTC / LiveKit call and expands the voice call view with its dedicated chat. The redundant inline `Voice` sub-row is eliminated from voice channels, and text channels only show an inline call pill if a live call is actively running in that text room.
+4. **Independent In-Call Chat:** Because each channel is a distinct Matrix room, messages in `🔊 General`'s voice chat are isolated to that voice room and do not bleed into `# general`.
+
+**Files:** `app/src/commonMain/kotlin/ui/screen/server/JoinServerScreen.kt`, `app/src/commonMain/kotlin/ui/model/ChannelGrouping.kt`, `app/src/commonMain/kotlin/ui/screen/drawer/ChannelList.kt`, `docs/planning/TEXT_AND_VOICE_CHANNELS.md`.
+`app/src/commonMain/kotlin/ui/screen/settings/SettingsExtraPanes.kt`,
+`webrtc-java-fork/webrtc-jni/src/main/cpp/src/media/video/desktop/DesktopCaptureCallback.cpp`,
+`webrtc-java-fork/webrtc-jni/src/main/cpp/src/media/video/VideoTrackDesktopSource.cpp`,
+`app/src/jvmTest/kotlin/webrtc/ScreenShareBitrateTest.kt`.
+
 ## H20 - The two-key same map: why volume and mute were dead
 
 > 🕯️ *Three people, one build, and each of them heard a different subset. The
@@ -1356,17 +1603,23 @@ stayed resident in the tray. The "zombie" was the app, alive and well, invisible
 2. `CallShortcuts.onAppQuitRequested` hook registered in WebRtcEffects — fires
    `callManager.endCall()` if not IDLE so quitting mid-call publishes the
    MSC3401 leave instead of halt-killing it into a TTL ghost that confuses
-   peers for hours.
+   peers for hours. H25 moved that leave onto a manager-owned scope; the
+   original Compose scope was cancelled by disposal before the PUT completed.
 3. Main.kt `quitOrbit()` local fun INSIDE the application{} scope:
-   armForcedExitWatchdog (5s daemon → Runtime.halt) → hook → exitApplication().
-   Wired to ✕/titlebar close and tray Quit.
+   armForcedExitWatchdog (7s daemon → Runtime.halt) → hook → await the
+   membership leave → exitApplication(). Wired to ✕/titlebar close and tray Quit.
+   Without the await, the JVM exited while the leave PUT was still in flight and
+   the account stayed visible in Element's call.
 
 The quit path, verbatim shape from `Main.kt`:
 
 ```kotlin
 fun quitOrbit() {          // LOCAL fun inside application{} — see Kotlin trap below
-    armForcedExitWatchdog()                             // 5s daemon → Runtime.halt(0)
-    webrtc.CallShortcuts.onAppQuitRequested?.invoke()   // publishes MSC3401 leave if in call
+    armForcedExitWatchdog(7_000)                        // daemon → Runtime.halt(0)
+    webrtc.CallShortcuts.onAppQuitRequested?.invoke()   // endCall → background leave
+    webrtc.ActiveCallBridge.callManager?.let { manager ->
+        kotlinx.coroutines.runBlocking { manager.awaitMembershipLeave() }
+    }
     exitApplication()                                   // ApplicationScope extension
 }
 ```
@@ -1881,6 +2134,7 @@ Do NOT file bugs against these:
 | "Mic suppression not working" reports | Explained: suppression is the SPEAKER-side client's TX setting (their NS/EC), not yours to toggle | NS/EC/AGC toggles now SHIP in Voice & Video (Voice Processing section); RX-side suppression remains out of scope |
 | Long-session partial deafness field reports | Hardened (H8-V4) + fully instrumented; await reproduction logs | Grep `ERROR [CallMediaKeyExchange] olm encryption failed` + nudge lines; if clean, suspect sendToDevice silent loss / OTK pool on SERVER side |
 | H11 RAM under load | Capped + instrumented, verify under 3-person+share load | Read STATS fields; if pendingFin grows → bitmap reuse/dispose path |
+| Screen-share quality ceiling | FIXED ([H26](#h26---the-screen-share-that-renders-at-720p20)) - bitrate scales with resolution/FPS, screen-share receiver skips 1280px/20fps, and 15/30/60 persist end to end | Build/unit verified; live two-client verification still required. Simulcast/dynacast remains unimplemented; watch audio and RAM at 1440p/4K60 |
 | Cold-decode storm | Throttled (H11), not eliminated | Fires at first peer-key install; revisit if latency regressions return |
 | D1 AEC/AGC speakers test | Untested | Native APM flags (`orbit.apm.*`) exist for this |
 | orbit→element residual TX glitch | Open polish item | Element hears slight artifact; direction-specific |
@@ -1942,15 +2196,17 @@ Do NOT file bugs against these:
   Hands clear on call end.
 - ✅ Spotlight / pin participant — right-click a tile → Pin; forces Focus-style
   spotlight even in Grid mode, beats paged shares in slot priority.
-- ✅ Screen-share resolution/FPS picker — ScreenShareDialog now has Quality
+- ✅ Screen-share resolution/FPS picker — ScreenShareDialog has Quality
   (720p/1080p/1440p/Source) and Frame rate (15/30/60) pill rows; selection is
-  persisted to the EXISTING screenShareQuality/screenShareFps settings on
-  source pick, which both capture paths already read at startScreenShare
-  (P2P: VideoDesktopSource.setMaxFrameSize/setFrameRate; group: same capturer
-  + armScreenSharePublish fps → native videoEncoding.max_framerate). Limits:
-  applied at share START only (changing mid-share needs stop/restart); group-
-  path resolution cap comes from the shared capturer, native publish takes
-  dims lazily from the first frame.
+  persisted to the screenShareQuality/screenShareFps settings on source pick.
+  Both capture paths read those settings at startScreenShare (P2P:
+  VideoDesktopSource.setMaxFrameSize/setFrameRate; group: same capturer +
+  armScreenSharePublish fps → native videoEncoding.max_framerate). Group
+  bitrate now scales with quality/FPS, and the native receiver exempts
+  screen shares from the camera's 1280 px/20 fps guard. See
+  [H26](#h26---the-screen-share-that-renders-at-720p20). Limits: applied at
+  share START only (changing mid-share needs stop/restart); Source above 4K is
+  downscaled to 3840 px; no simulcast/dynacast yet.
 - **Simulcast/bandwidth adaptation** — LiveKit supports it natively; verify
   dynacast enabled; low priority while group sizes stay small.
 - **Custom image virtual background** — only Blur wired today

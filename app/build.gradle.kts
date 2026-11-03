@@ -111,6 +111,8 @@ dependencies {
 // happened to pass them to a dev `run`. Project properties are explicit, so
 // `-Porbit.apm.enabled=false` now reliably reaches the packaged app.
 val orbitDebugFlagNames = listOf(
+    "orbit.profile",
+    "orbit.dir",
     "orbit.audio.testTone",
     "orbit.audio.testToneStereo",
     "orbit.audio.inputDeviceName",

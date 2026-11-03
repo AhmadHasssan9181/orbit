@@ -41,7 +41,7 @@ object SoundboardMixer {
     private var monitorLine: javax.sound.sampled.SourceDataLine? = null
 
     private val customDir: File by lazy {
-        File(System.getProperty("user.home"), ".orbit/sounds").apply { mkdirs() }
+        util.OrbitPaths.soundsDir
     }
     private val customSamples = LinkedHashMap<String, FloatArray>()
     private val _customSounds = MutableStateFlow<List<SoundboardCustomSound>>(emptyList())

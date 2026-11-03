@@ -31,7 +31,7 @@ import java.io.File
  * from loading.
  */
 actual fun getMediaStorePath(): Path {
-    val mediaDir = File(System.getProperty("user.home"), ".orbit/media")
+    val mediaDir = OrbitPaths.mediaDir
     mediaDir.mkdirs()
     restrictDirectoryToOwner(mediaDir)
     return mediaDir.absolutePath.toPath()

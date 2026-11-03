@@ -55,7 +55,7 @@ private object JvmMessageCacheStore : MessageCacheStore {
     private val writerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private fun cacheDir(): File =
-        File(System.getProperty("user.home"), ".orbit/cache/rooms").apply { mkdirs() }
+        OrbitPaths.cacheDir
 
     /**
      * SECURITY: this cache holds **decrypted** E2EE message bodies.

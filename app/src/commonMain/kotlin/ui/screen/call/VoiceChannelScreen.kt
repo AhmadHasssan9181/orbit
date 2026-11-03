@@ -77,7 +77,7 @@ fun VoiceChannelScreen(
     channel: OrbitChannel,
     modifier: Modifier = Modifier
 ) {
-    Column(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+    Column(modifier = modifier.fillMaxSize()) {
         Box(modifier = Modifier.fillMaxSize()) {
             val callState by callManager.callState.collectAsState()
             val scope = rememberCoroutineScope()

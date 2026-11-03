@@ -64,10 +64,10 @@ object OrbitIcons {
             )
         ).also { _videoOff = it }
 
-    private var _mic: ImageVector? = null
-    val Mic: ImageVector
-        get() = _mic ?: collectionIcon(
-            name = "Mic",
+    private var _waveform: ImageVector? = null
+    val Waveform: ImageVector
+        get() = _waveform ?: collectionIcon(
+            name = "Waveform",
             originX = 310f,
             originY = 831f,
             paths = listOf(
@@ -77,12 +77,15 @@ object OrbitIcons {
                 CollectionPath("""M390 876.431C390 878.609 388.208 880.375 385.999 880.375H385.11C382.9 880.375 381.109 878.609 381.109 876.431V866.57C381.109 864.391 382.9 862.625 385.11 862.625H385.999C388.208 862.625 390 864.391 390 866.57V876.431Z"""),
                 CollectionPath("""M367.334 853.75C365.124 853.75 363.333 855.516 363.333 857.694V885.306C363.333 887.484 365.124 889.25 367.334 889.25H368.223C370.432 889.25 372.223 887.484 372.223 885.306V857.694C372.223 855.516 370.432 853.75 368.223 853.75H367.334Z"""),
             )
-        ).also { _mic = it }
+        ).also { _waveform = it }
 
-    private var _micOff: ImageVector? = null
-    val MicOff: ImageVector
-        get() = _micOff ?: collectionIcon(
-            name = "MicOff",
+    val AudioWave: ImageVector
+        get() = Waveform
+
+    private var _waveformOff: ImageVector? = null
+    val WaveformOff: ImageVector
+        get() = _waveformOff ?: collectionIcon(
+            name = "WaveformOff",
             originX = 425f,
             originY = 831f,
             paths = listOf(
@@ -94,7 +97,16 @@ object OrbitIcons {
                 CollectionPath("""M505 876.431C505 878.609 503.209 880.375 501 880.375H500.112C497.903 880.375 496.112 878.609 496.112 876.431V866.569C496.112 864.391 497.903 862.625 500.112 862.625H501C503.209 862.625 505 864.391 505 866.569V876.431Z"""),
                 CollectionPath("""M500.986 841.009L495.907 836L428.992 901.99L434.071 907L450.83 890.512L455.75 885.621L500.986 841.009Z"""),
             )
-        ).also { _micOff = it }
+        ).also { _waveformOff = it }
+
+    val AudioWaveOff: ImageVector
+        get() = WaveformOff
+
+    val Mic: ImageVector
+        get() = with(TablerIcons) { Microphone }
+
+    val MicOff: ImageVector
+        get() = with(TablerIcons) { MicrophoneOff }
 
     private var _screenShare: ImageVector? = null
     val ScreenShare: ImageVector

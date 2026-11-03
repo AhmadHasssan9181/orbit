@@ -91,7 +91,8 @@ internal fun MemberListPanel(
      * ghost. The header count below reads from the SAME list the rows render,
      * which is what keeps the badge and the list from disagreeing.
      */
-    liveCallMembers: List<OrbitUser>? = null
+    liveCallMembers: List<OrbitUser>? = null,
+    modifier: Modifier = Modifier.width(OrbitMetrics.sidePanelWidth)
 ) {
     val t = rememberCosmicTokens()
     val allUsers = liveCallMembers ?: members
@@ -130,8 +131,7 @@ internal fun MemberListPanel(
     val rowCount = sections.sumOf { it.users.size }
 
     Row(
-        modifier = Modifier
-            .width(OrbitMetrics.sidePanelWidth)
+        modifier = modifier
             .fillMaxHeight()
     ) {
         Box(
@@ -166,8 +166,8 @@ internal fun MemberListPanel(
                 contentPadding = PaddingValues(
                     top = OrbitSpace.sm,
                     bottom = OrbitSpace.xxl,
-                    start = OrbitSpace.sm,
-                    end = OrbitSpace.sm
+                    start = 12.dp,
+                    end = 12.dp
                 ),
                 verticalArrangement = Arrangement.spacedBy(1.dp)
             ) {

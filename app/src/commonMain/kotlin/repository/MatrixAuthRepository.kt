@@ -105,6 +105,7 @@ import ui.model.OrbitChannel
 import ui.model.OrbitMessage
 import ui.model.OrbitServer
 import ui.model.OrbitUser
+import ui.model.OrbitProfileExtras
 import ui.model.UserStatus
 import ui.model.displayText
 import util.getMediaStorePath
@@ -488,6 +489,25 @@ class MatrixAuthRepository(private val context: MatrixContext) : OrbitAuthReposi
             val trixnity = context.trixnityClient ?: return null
             val profile = trixnity.api.user.getProfile(de.connect2x.trixnity.core.model.UserId(userId)).getOrThrow()
 
+            val bannerUrl = try {
+                val cached = context.accountDataCache["im.orbit.profile_extras"]?.value as? OrbitProfileExtras
+                cached?.bannerUrl ?: run {
+                    val response = context.httpClient.get(context.fullUrl("/user/$userId/account_data/im.orbit.profile_extras")) {
+                        header(io.ktor.http.HttpHeaders.Authorization, "Bearer ${context.accessToken}")
+                    }
+                    if (response.status.value == 200) {
+                        val extras = context.jsonConfig.decodeFromString(OrbitProfileExtras.serializer(), response.bodyAsText())
+                        val flow = context.accountDataCache.computeIfAbsent("im.orbit.profile_extras") {
+                            kotlinx.coroutines.flow.MutableStateFlow<Any?>(null)
+                        }
+                        flow.value = extras
+                        extras.bannerUrl
+                    } else null
+                }
+            } catch (e: Exception) {
+                null
+            }
+
             OrbitUser(
                 id = userId,
                 username = userId.split(":").first().removePrefix("@"),
@@ -495,7 +515,8 @@ class MatrixAuthRepository(private val context: MatrixContext) : OrbitAuthReposi
                 avatarColor = context.hashToColor(userId),
                 status = UserStatus.ONLINE,
                 isBot = false,
-                avatarUrl = profile.avatarUrl?.let { context.convertMxcUrl(it.toString()) }
+                avatarUrl = profile.avatarUrl?.let { context.convertMxcUrl(it.toString()) },
+                bannerUrl = bannerUrl
             )
         } catch (e: Exception) {
             null

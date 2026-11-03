@@ -327,7 +327,7 @@ private val olmStore: OlmStore? =
                 delay(LATECOMER_WATCH_INTERVAL_MS)
                 if (stopped) break
                 val livekitIds = runCatching {
-                    LiveKitRemoteVideoFrameStore.remoteParticipants.value
+                    LiveKitRemoteVideoFrameStore.rawRemoteParticipants.value
                 }.getOrNull().orEmpty()
                 if (livekitIds.isEmpty()) continue
                 val now = nowMs()
@@ -439,7 +439,7 @@ private val olmStore: OlmStore? =
                         if ((deviceLastSeenMs[id] ?: 0L) >= now - SWEEP_DEVICE_TTL_MS) put(id, dev)
                     }
                     val livekitDevices = runCatching {
-                        LiveKitRemoteVideoFrameStore.remoteParticipants.value
+                        LiveKitRemoteVideoFrameStore.rawRemoteParticipants.value
                     }.getOrNull().orEmpty()
                     for (identity in livekitDevices) {
                         val dev = callDeviceFromParticipantIdentity(identity) ?: continue
@@ -845,7 +845,7 @@ private val olmStore: OlmStore? =
      * can never silence the nudges entirely.
      */
     private fun nudgeMissingPeers(targets: Set<CallDevice>): List<CallDevice> {
-        val livekitIds = runCatching { LiveKitRemoteVideoFrameStore.remoteParticipants.value }
+        val livekitIds = runCatching { LiveKitRemoteVideoFrameStore.rawRemoteParticipants.value }
             .getOrNull().orEmpty()
         return targets.filter { dev ->
             val identity = CallMediaKeys.participantIdentity(dev.userId, dev.deviceId)

@@ -3,7 +3,14 @@ package ui.screen.server
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -12,6 +19,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -19,6 +27,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.layout.ContentScale
+import coil3.compose.AsyncImage
+
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -109,6 +123,7 @@ internal fun ServerHeader(
     // keeps the CSS `:hover` fill, because that rule is on `.server-header`
     // itself and not on the button inside it.
     val interactive = menuEntries.isNotEmpty()
+    val hasBanner = !server.isDM && !server.bannerUrl.isNullOrBlank()
 
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
@@ -118,7 +133,7 @@ internal fun ServerHeader(
     // Kept even when there is no menu: the concept's DM bar keeps it too, and a
     // title bar that never acknowledges the pointer reads as a dead strip.
     val hoverFill by animateColorAsStateCompat(
-        if (hovered) conceptHoverOverlay() else Color.Transparent,
+        if (hovered && !hasBanner) conceptHoverOverlay() else Color.Transparent,
         label = "serverHeaderHover"
     )
     // `transform: rotate(180deg)` when the menu is open,
@@ -129,81 +144,181 @@ internal fun ServerHeader(
         label = "serverChevron"
     )
 
+    val clickModifier = if (!interactive) {
+        Modifier
+    } else {
+        Modifier
+            .pointerInput(interactive) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        if (event.type == androidx.compose.ui.input.pointer.PointerEventType.Press && event.buttons.isSecondaryPressed) {
+                            event.changes.forEach { it.consume() }
+                            menuOpen = true
+                        }
+                    }
+                }
+            }
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                role = Role.Button,
+                onClickLabel = "Open the ${server.name} menu",
+                onClick = { menuOpen = !menuOpen }
+            )
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(hoverFill)
             .hoverable(interaction)
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(OrbitConceptMetrics.headerHeight)
-                .then(
-                    // Before the padding: `.server-header` is the clickable box
-                    // in the concept, padding included. Applying `padding`
-                    // first would inset the hit area by 16dp at each end, so
-                    // the outer 16dp of the bar would do nothing.
-                    if (!interactive) {
-                        Modifier
-                    } else {
-                        Modifier.clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            role = Role.Button,
-                            onClickLabel = "Open the ${server.name} menu",
-                            onClick = { menuOpen = !menuOpen }
+        if (hasBanner) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 4.dp)
+                    .shadow(elevation = 6.dp, shape = RoundedCornerShape(12.dp), clip = false)
+                    .clip(RoundedCornerShape(12.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(12.dp))
+                    .height(120.dp)
+                    .then(clickModifier)
+            ) {
+                AsyncImage(
+                    model = server.bannerUrl,
+                    contentDescription = server.name,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+                // Top subtle scrim + bottom gradient dark wash for perfect text readability
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    Color(0x33000000),
+                                    Color(0x10000000),
+                                    Color(0x99111214),
+                                    Color(0xF2111214)
+                                )
+                            )
+                        )
+                )
+                if (hovered) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color(0x1F000000))
+                    )
+                }
+
+                // Server title row at the bottom of the floating banner card
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(42.dp)
+                        .align(Alignment.BottomCenter)
+                        .padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (isOrbitVerifiedUser(server.name)) {
+                            OrbitVerifiedBadge(
+                                tint = conceptBrand,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.size(6.dp))
+                        }
+                        Text(
+                            text = server.name,
+                            style = MaterialTheme.typography.titleSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                letterSpacing = 0.sp,
+                                shadow = Shadow(
+                                    color = Color(0xCC000000),
+                                    offset = Offset(0f, 1.5f),
+                                    blurRadius = 4f
+                                )
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
                         )
                     }
-                )
-                // `padding: 0 16px` and `justify-content: space-between`.
-                .padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // `.server-header-info { display: flex; align-items: center; gap: 8px;
-            // overflow: hidden }`.
+
+                    if (showArrow && interactive) {
+                        Spacer(Modifier.size(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(Color.Black.copy(alpha = 0.35f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            androidx.compose.material3.Icon(
+                                imageVector = with(TablerIcons) { ChevronDown },
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier
+                                    .size(16.dp)
+                                    .rotate(chevronRotation)
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
             Row(
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(OrbitConceptMetrics.headerHeight)
+                    .then(clickModifier)
+                    .padding(horizontal = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // `.server-header-badge { color: #5865f2 }` — the verified tick.
-                // The concept paints it in the brand colour rather than a muted
-                // one because it is a mark of the thing itself, not chrome.
-                if (isOrbitVerifiedUser(server.name)) {
-                    OrbitVerifiedBadge(
-                        tint = conceptBrand,
-                        modifier = Modifier.size(16.dp)
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (isOrbitVerifiedUser(server.name)) {
+                        OrbitVerifiedBadge(
+                            tint = conceptBrand,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.size(8.dp))
+                    }
+                    Text(
+                        text = server.name,
+                        style = MaterialTheme.typography.titleSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = conceptHeaderPrimary(),
+                            fontSize = 15.sp,
+                            letterSpacing = 0.sp
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
-                    Spacer(Modifier.size(8.dp))
                 }
-                Text(
-                    text = server.name,
-                    // `.server-header-title { font-size: 15px; font-weight: 700;
-                    // color: var(--header-primary) }`.
-                    style = MaterialTheme.typography.titleSmall.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = conceptHeaderPrimary(),
-                        fontSize = 15.sp,
-                        letterSpacing = 0.sp
-                    ),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false)
-                )
-            }
 
-            if (showArrow && interactive) {
-                Spacer(Modifier.size(8.dp))
-                // `color: var(--interactive-normal)` — the concept does NOT
-                // lighten the chevron on hover, only the row behind it.
-                androidx.compose.material3.Icon(
-                    imageVector = with(TablerIcons) { ChevronDown },
-                    contentDescription = null,
-                    tint = conceptInteractiveNormal(),
-                    modifier = Modifier
-                        .size(18.dp)
-                        .rotate(chevronRotation)
-                )
+                if (showArrow && interactive) {
+                    Spacer(Modifier.size(8.dp))
+                    androidx.compose.material3.Icon(
+                        imageVector = with(TablerIcons) { ChevronDown },
+                        contentDescription = null,
+                        tint = conceptInteractiveNormal(),
+                        modifier = Modifier
+                            .size(18.dp)
+                            .rotate(chevronRotation)
+                    )
+                }
             }
         }
 
@@ -218,7 +333,7 @@ internal fun ServerHeader(
                 modifier = Modifier
                     .width(SidebarConcept.dropdownWidth)
                     .padding(SidebarConcept.dropdownPadding),
-                offset = serverMenuOffset(),
+                offset = if (hasBanner) DpOffset(12.dp, 4.dp) else serverMenuOffset(),
                 shape = SidebarConcept.dropdownShape,
                 containerColor = conceptFloatingSurface(),
                 border = BorderStroke(1.dp, conceptBorderSubtle()),
@@ -241,15 +356,14 @@ internal fun ServerHeader(
         }
 
         // `.server-header { border-bottom: 1px solid var(--border-subtle) }`.
-        // `--elevation-low` on top of it is a 1px black hairline at 20%, which is
-        // indistinguishable from the border rule on every surface in the concept,
-        // so only the rule is drawn.
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(1.dp)
-                .background(conceptBorderSubtle())
-        )
+        if (!hasBanner) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(conceptBorderSubtle())
+            )
+        }
     }
 }
 

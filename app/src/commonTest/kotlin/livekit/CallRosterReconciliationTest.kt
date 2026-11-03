@@ -63,9 +63,9 @@ class CallRosterReconciliationTest {
     fun authoritativeLiveKitDropsGhostsFromAnAloneCall() {
         // A solo call in a room with a stale Matrix membership record.
         //
-        // LiveKit is not silent here, it is accurate: `onRemoteParticipantConnected`
-        // fires for every remote participant whether or not it publishes media, so
-        // an empty set while CONNECTED means genuinely nobody else is in the room.
+        // LiveKit is not silent here, it is accurate: the store filters opaque
+        // subscriber connections that never publish media, so an empty set while
+        // CONNECTED means genuinely nobody else is in the room.
         // Falling back to `m.call.member` rendered all eight ghosts in the drawer
         // and "Voice - 8 here" on the channel row, directly beside a call stage
         // reading "No one else is here".

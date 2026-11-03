@@ -13,9 +13,10 @@ package livekit
  * While a call is CONNECTED the authoritative answer is the LiveKit room
  * itself, and the key exchange already proved that: `nudgeMissingPeers`
  * (`CallMediaKeyExchange`) intersects the very same roster with
- * `LiveKitRemoteVideoFrameStore.remoteParticipants` before it spends any work.
+ * `LiveKitRemoteVideoFrameStore.rawRemoteParticipants` before it spends any work.
  * This object is that same intersection, lifted out so the DISPLAY path can use
- * it too — without touching the device roster the E2EE exchange consumes.
+ * it too — against the filtered `remoteParticipants` view, without touching the
+ * device roster the E2EE exchange consumes.
  *
  * Pure string logic (no trixnity, no JNI, no Compose) so it stays unit-testable
  * in isolation, exactly like [CallMediaKeys].

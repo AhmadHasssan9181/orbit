@@ -55,8 +55,8 @@ fun CallGrid(
      * black and the participant strip steps aside.
      *
      * This is a VIEWPORT state, not a layout mode. The concept's maximise button
-     * does not choose between grid and theatre — it makes the container fill the
-     * window — and in Orbit the container is already full size, so the only
+     * does not choose between grid and theatre â€” it makes the container fill the
+     * window â€” and in Orbit the container is already full size, so the only
      * honest reading of the same gesture is "the presentation, and nothing else,
      * is on screen". The two layout rules the tests pin are untouched by it: the
      * share still goes on top at a 16:9 box sized by [sharePanelSizeIn], and the
@@ -184,7 +184,7 @@ fun CallGrid(
             // The presentation area: everything above the participant strip, or
             // the whole stage once the call is maximised. The panel is centred in
             // it, and `.stream-bottom-right-actions` is pinned to ITS bottom-right
-            // — which is where the concept pins them, because there the parent
+            // â€” which is where the concept pins them, because there the parent
             // `.stream-theater-stage` holds nothing but the stream.
             Box(
                 modifier = Modifier
@@ -320,25 +320,26 @@ fun CallGrid(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(if (maximized) callStageBlack else tokens.Sunken)
+            .background(if (maximized) callStageBlack else Color.Transparent)
     ) {
     when {
         nodes.size == 1 -> {
-            // Single participant — centered large card with empty panel below
-            Column(
-                modifier = modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                VideoNodeCard(nodes.first(), tokens, callManager = callManager, isPinned = nodes.first().id == pinnedNodeId, onPinToggle = onPinToggle, modifier = Modifier.weight(1f).fillMaxWidth())
-                EmptyVoicePanel(modifier = Modifier.weight(1f).fillMaxWidth())
-            }
+            // Single participant â€” centered large card with empty panel below
+            VideoNodeCard(
+                node = nodes.first(),
+                tokens = tokens,
+                callManager = callManager,
+                isPinned = nodes.first().id == pinnedNodeId,
+                onPinToggle = onPinToggle,
+                modifier = Modifier.fillMaxSize()
+            )
         }
 
         nodes.size == 2 -> {
             // Equal side-by-side. A share never reaches here -- it was laid out
             // on top and returned from before this branch could be selected.
             Row(
-                modifier = modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 nodes.forEach { node ->
@@ -359,7 +360,7 @@ fun CallGrid(
             // before this branch could be selected.
             val (visibleRows, hiddenCount) = gridRowsFor(nodes)
             Column(
-                modifier = modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 visibleRows.forEach { rowNodes ->

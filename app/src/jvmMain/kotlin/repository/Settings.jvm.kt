@@ -17,7 +17,9 @@ import javax.crypto.spec.SecretKeySpec
  * transparently and re-encrypted on first read.
  */
 actual fun createCredentialSettings(): Settings {
-    val prefs = Preferences.userRoot().node("com/noobdev/orbit/credentials")
+    val profile = util.OrbitPaths.profile
+    val nodePath = if (profile.isNotEmpty()) "com/noobdev/orbit/credentials/$profile" else "com/noobdev/orbit/credentials"
+    val prefs = Preferences.userRoot().node(nodePath)
     val plain = object : Settings {
         override fun getStringOrNull(key: String): String? {
             val value = prefs.get(key, "")
@@ -130,7 +132,9 @@ private fun encrypt(plainText: String): String {
  */
 private fun recordDegraded(degraded: Boolean) {
     runCatching {
-        val prefs = Preferences.userRoot().node("com/noobdev/orbit/credentials")
+        val profile = util.OrbitPaths.profile
+        val nodePath = if (profile.isNotEmpty()) "com/noobdev/orbit/credentials/$profile" else "com/noobdev/orbit/credentials"
+        val prefs = Preferences.userRoot().node(nodePath)
         if (degraded) prefs.put(DEGRADED_KEY, "1") else prefs.remove(DEGRADED_KEY)
     }
 }
@@ -197,7 +201,7 @@ private fun restrictToOwner(target: File) {
 
 /** AES-256-GCM fallback for non-Windows hosts; key lives in ~/.orbit/.credkey. */
 private fun aesCipher(data: ByteArray, encryptMode: Boolean): ByteArray {
-    val keyFile = File(System.getProperty("user.home"), ".orbit/.credkey")
+    val keyFile = util.OrbitPaths.credentialsKeyFile
     keyFile.parentFile.mkdirs()
     val keyBytes = if (keyFile.exists() && keyFile.length() == 32L) {
         keyFile.readBytes()

@@ -107,4 +107,116 @@ class NativeSymbolAvailabilityTest {
             "NativeLoader is the class that loads webrtc-java-orbit"
         )
     }
+
+    @Test
+    fun neuralDenoiserLoadsSuccessfully() {
+        assertNotNull(
+            livekit.OrbitRNNoiseLib.INSTANCE,
+            "OrbitRNNoiseLib.INSTANCE failed to load!"
+        )
+    }
+
+    @Test
+    fun neuralDenoiserProcessesAudio() {
+        val lib = assertNotNull(livekit.OrbitRNNoiseLib.INSTANCE, "OrbitRNNoiseLib.INSTANCE failed to load!")
+        val handle = assertNotNull(lib.orbit_rnnoise_create(), "orbit_rnnoise_create returned null")
+
+        val inPcm = FloatArray(480) { 5000.0f }
+        val outPcm = FloatArray(480)
+        val vad = lib.orbit_rnnoise_process(handle, inPcm, outPcm)
+        println("TEST RNNoise VAD: $vad, out sample 0: ${outPcm[0]}")
+        lib.orbit_rnnoise_destroy(handle)
+    }
+
+    class LadspaDescriptor(p: com.sun.jna.Pointer) : com.sun.jna.Structure(p) {
+        @JvmField var uniqueId: Int = 0
+        @JvmField var label: String? = null
+        @JvmField var properties: Int = 0
+        @JvmField var name: String? = null
+        @JvmField var maker: String? = null
+        @JvmField var copyright: String? = null
+        @JvmField var portCount: Int = 0
+        @JvmField var portDescriptors: com.sun.jna.Pointer? = null
+        @JvmField var portNames: com.sun.jna.Pointer? = null
+        @JvmField var portRangeHints: com.sun.jna.Pointer? = null
+        @JvmField var implementationData: com.sun.jna.Pointer? = null
+        @JvmField var instantiate: com.sun.jna.Pointer? = null
+        @JvmField var connect_port: com.sun.jna.Pointer? = null
+        @JvmField var activate: com.sun.jna.Pointer? = null
+        @JvmField var run: com.sun.jna.Pointer? = null
+        @JvmField var run_adding: com.sun.jna.Pointer? = null
+        @JvmField var set_run_adding_gain: com.sun.jna.Pointer? = null
+        @JvmField var deactivate: com.sun.jna.Pointer? = null
+        @JvmField var cleanup: com.sun.jna.Pointer? = null
+
+        override fun getFieldOrder(): List<String> = listOf(
+            "uniqueId", "label", "properties", "name", "maker", "copyright",
+            "portCount", "portDescriptors", "portNames", "portRangeHints",
+            "implementationData", "instantiate", "connect_port", "activate",
+            "run", "run_adding", "set_run_adding_gain", "deactivate", "cleanup"
+        )
+    }
+
+    @Test
+    fun deepFilterLadspaLoads() {
+        val path = "G:/projects/orbit/deep_filter_ladspa.dll"
+        val lib = com.sun.jna.NativeLibrary.getInstance(path)
+        val func = lib.getFunction("ladspa_descriptor")
+        assertNotNull(func, "ladspa_descriptor not found in deep_filter_ladspa.dll")
+        val descPtr = func.invokePointer(arrayOf(0L))
+        assertNotNull(descPtr, "ladspa_descriptor(0) returned null")
+        val desc = LadspaDescriptor(descPtr)
+        desc.read()
+        println("LADSPA Plugin Name: ${desc.name}")
+        println("LADSPA Label: ${desc.label}")
+        println("LADSPA PortCount: ${desc.portCount}")
+        val portNamesPtr = desc.portNames
+        if (portNamesPtr != null) {
+            val names = portNamesPtr.getPointerArray(0, desc.portCount)
+            for (i in 0 until desc.portCount) {
+                println("Port $i: ${names[i].getString(0)}")
+            }
+        }
+
+        // Test instantiation and processing
+        val instantiateFunc = com.sun.jna.Function.getFunction(desc.instantiate)
+        val handle = instantiateFunc.invokePointer(arrayOf(desc.pointer, 48000))
+        assertNotNull(handle, "Failed to instantiate DeepFilterNet LADSPA")
+
+        val connectFunc = com.sun.jna.Function.getFunction(desc.connect_port)
+        val activateFunc = com.sun.jna.Function.getFunction(desc.activate)
+        val runFunc = com.sun.jna.Function.getFunction(desc.run)
+        val cleanupFunc = com.sun.jna.Function.getFunction(desc.cleanup)
+
+        val inMem = com.sun.jna.Memory(480 * 4L)
+        val outMem = com.sun.jna.Memory(480 * 4L)
+        val p2 = com.sun.jna.Memory(4L).apply { setFloat(0, -60.0f) }
+        val p3 = com.sun.jna.Memory(4L).apply { setFloat(0, -20.0f) }
+        val p4 = com.sun.jna.Memory(4L).apply { setFloat(0, 20.0f) }
+        val p5 = com.sun.jna.Memory(4L).apply { setFloat(0, 20.0f) }
+        val p6 = com.sun.jna.Memory(4L).apply { setFloat(0, 0.0f) }
+        val p7 = com.sun.jna.Memory(4L).apply { setFloat(0, 0.02f) }
+
+        connectFunc.invokeVoid(arrayOf(handle, 0, inMem))
+        connectFunc.invokeVoid(arrayOf(handle, 1, outMem))
+        connectFunc.invokeVoid(arrayOf(handle, 2, p2))
+        connectFunc.invokeVoid(arrayOf(handle, 3, p3))
+        connectFunc.invokeVoid(arrayOf(handle, 4, p4))
+        connectFunc.invokeVoid(arrayOf(handle, 5, p5))
+        connectFunc.invokeVoid(arrayOf(handle, 6, p6))
+        connectFunc.invokeVoid(arrayOf(handle, 7, p7))
+
+        activateFunc.invokeVoid(arrayOf(handle))
+
+        // Fill with a 440 Hz test sine
+        for (i in 0 until 480) {
+            val f = kotlin.math.sin(i * 440.0 * 2.0 * Math.PI / 48000.0).toFloat() * 0.5f
+            inMem.setFloat(i * 4L, f)
+        }
+
+        runFunc.invokeVoid(arrayOf(handle, 480))
+        val sample0 = outMem.getFloat(0)
+        println("DeepFilterNet processed 480 samples successfully! Output sample 0: $sample0")
+        cleanupFunc.invokeVoid(arrayOf(handle))
+    }
 }

@@ -1,5 +1,7 @@
 package ui.screen.call
 
+import coil3.toBitmap
+import ui.components.OrbitAvatarImage
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
@@ -118,6 +120,9 @@ fun CallScreen(
     val isRemoteScreenSharing by callManager.isRemoteScreenSharing.collectAsState()
     val hasRemoteStream by callManager.hasRemoteStream.collectAsState()
     val tokens = rememberCosmicTokens()
+    val shareSettings = remember { repository.SettingsManager() }
+    val shareQuality by shareSettings.screenShareQuality.collectAsState("1080p")
+    val shareFps by shareSettings.screenShareFps.collectAsState(30)
 
     var showScreenShareDialog by remember { mutableStateOf(false) }
     var showSoundboard by remember { mutableStateOf(false) }
@@ -160,7 +165,7 @@ fun CallScreen(
             callManager = callManager,
             onDismiss = { showScreenShareDialog = false },
             onSourceSelected = { source ->
-                callManager.startScreenShare(source.id)
+                callManager.startScreenShare(source)
                 showScreenShareDialog = false
             }
         )
@@ -502,8 +507,8 @@ fun CallScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             if (callerAvatarUrl != null) {
-                                coil3.compose.AsyncImage(
-                                    model = callerAvatarUrl,
+                                OrbitAvatarImage(
+                                    url = callerAvatarUrl,
                                     contentDescription = callerName,
                                     contentScale = ContentScale.Crop,
                                     modifier = Modifier.fillMaxSize().clip(CircleShape)
@@ -628,8 +633,8 @@ fun CallScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         if (callerAvatarUrl != null) {
-                            coil3.compose.AsyncImage(
-                                model = callerAvatarUrl,
+                            OrbitAvatarImage(
+                                url = callerAvatarUrl,
                                 contentDescription = callerName,
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize().clip(CircleShape)
@@ -694,7 +699,11 @@ fun CallScreen(
                                 .padding(horizontal = 8.dp, vertical = 3.dp)
                         ) {
                             Text(
-                                if (isScreenSharing) "720p 30FPS" else "HD 1080p 60fps",
+                                if (isScreenSharing) {
+                                    "${shareQuality.replaceFirstChar { it.uppercase() }} ${shareFps}FPS"
+                                } else {
+                                    "HD 1080p 60fps"
+                                },
                                 color = tokens.Text_Secondary,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
@@ -809,8 +818,8 @@ fun CallScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             if (callerAvatarUrl != null) {
-                                coil3.compose.AsyncImage(
-                                    model = callerAvatarUrl,
+                                OrbitAvatarImage(
+                                    url = callerAvatarUrl,
                                     contentDescription = callerName,
                                     contentScale = ContentScale.Crop,
                                     modifier = Modifier.fillMaxSize().clip(CircleShape)
@@ -1312,10 +1321,12 @@ fun ScreenShareDialog(
     var sources by remember { mutableStateOf<List<webrtc.DesktopSourceModel>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var loadError by remember { mutableStateOf<String?>(null) }
-    var shareSystemAudio by remember { mutableStateOf(false) }
+    val shareSettings = remember { repository.SettingsManager() }
+    var shareSystemAudio by remember {
+        mutableStateOf(runCatching { shareSettings.screenShareAudioSync() }.getOrDefault(true))
+    }
     // Pre-share pickers for the SAME settings the capture paths read at
     // startScreenShare; persisted on source selection below.
-    val shareSettings = remember { repository.SettingsManager() }
     var shareQuality by remember {
         mutableStateOf(runCatching { shareSettings.screenShareQualitySync() }.getOrDefault("1080p"))
     }
@@ -1382,12 +1393,10 @@ fun ScreenShareDialog(
                                     .aspectRatio(1.5f)
                                     .hoverable(hoverInteraction)
                                     .clickable {
+                                        shareSettings.setScreenShareAudio(shareSystemAudio)
                                         callManager.setStreamAudioEnabled(shareSystemAudio)
                                         shareSettings.setScreenShareQuality(shareQuality.lowercase())
-                                        // Capped to 30: publishing at 60 starves the
-                                        // audio mixer on this machine. See the
-                                        // Frame Rate card in Settings for the numbers.
-                                        shareSettings.setScreenShareFps(shareFps.coerceIn(5, 30))
+                                        shareSettings.setScreenShareFps(shareFps.coerceIn(5, 60))
                                         onSourceSelected(source)
                                     },
                                 colors = CardDefaults.cardColors(
@@ -1399,27 +1408,10 @@ fun ScreenShareDialog(
                                 ),
                                 shape = RoundedCornerShape(12.dp)
                             ) {
-                                Column(
-                                    modifier = Modifier.fillMaxSize().padding(12.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.Center
-                                ) {
-                                    Icon(
-                                        if (source.isWindow) with(TablerIcons) { Window } else with(TablerIcons) { DeviceDesktop },
-                                        contentDescription = null,
-                                        tint = tokens.Accent,
-                                        modifier = Modifier.size(36.dp)
-                                    )
-                                    Spacer(Modifier.height(8.dp))
-                                    Text(
-                                        source.name,
-                                        color = tokens.OnDark,
-                                        fontSize = 12.sp,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                        textAlign = TextAlign.Center
-                                    )
-                                }
+                                DesktopSourceThumbnail(
+                                    source = source,
+                                    modifier = Modifier.fillMaxSize()
+                                )
                             }
                         }
                     }
@@ -1450,13 +1442,20 @@ fun ScreenShareDialog(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { shareSystemAudio = !shareSystemAudio }
+                                .clickable {
+                                    val newVal = !shareSystemAudio
+                                    shareSystemAudio = newVal
+                                    shareSettings.setScreenShareAudio(newVal)
+                                }
                                 .padding(12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Checkbox(
                                 checked = shareSystemAudio,
-                                onCheckedChange = { shareSystemAudio = it },
+                                onCheckedChange = {
+                                    shareSystemAudio = it
+                                    shareSettings.setScreenShareAudio(it)
+                                },
                                 colors = CheckboxDefaults.colors(checkedColor = tokens.Accent, checkmarkColor = Color.White)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
@@ -1557,7 +1556,12 @@ internal fun identityHasRaisedHand(identity: String?, raisedUserIds: Set<String>
 internal fun identityIsSpeaking(identity: String?, speakers: Set<String>): Boolean {
     if (identity.isNullOrBlank() || speakers.isEmpty()) return false
     if (identity in speakers) return true
-    return speakers.any { it.substringBeforeLast(':') == identity }
+    val normIdentity = if (identity.count { it == ':' } >= 2) identity.substringBeforeLast(':') else identity
+    if (normIdentity in speakers) return true
+    return speakers.any { s ->
+        val normS = if (s.count { it == ':' } >= 2) s.substringBeforeLast(':') else s
+        normS == normIdentity || s == identity || identity.startsWith(s) || s.startsWith(identity)
+    }
 }
 
 /**
@@ -1595,7 +1599,14 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
     // Active-speaker glow: native mixer meters remote voices; a tile whose
     // participant is talking gets an animated green ring + halo.
     val speakers = if (callManager != null) callManager.activeSpeakers.collectAsState().value else emptySet()
-    val isSpeaking = identityIsSpeaking(node.participantIdentity, speakers) && !node.isMuted && !node.isMicMuted
+    val isLocallySpeaking = if (callManager != null) callManager.isLocallySpeaking.collectAsState().value else false
+    val myUserId = repository.CredentialManager.userId
+    val isLocalUser = node.id == "local" || (myUserId != null && (node.participantIdentity == myUserId || node.participantIdentity?.startsWith(myUserId) == true))
+    val isSpeaking = if (isLocalUser) {
+        (isLocallySpeaking || identityIsSpeaking(node.participantIdentity, speakers)) && !node.isMuted && !node.isMicMuted
+    } else {
+        identityIsSpeaking(node.participantIdentity, speakers) && !node.isMuted && !node.isMicMuted
+    }
     val speakGlow by animateFloatAsState(
         targetValue = if (isSpeaking) 1f else 0f,
         animationSpec = tween(durationMillis = 240),
@@ -1633,8 +1644,9 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
     // composites on top of a full-bleed video child rather than being painted
     // over by it.
     // Discord convention: the speaker's name goes green while they talk.
+    val strokeColor = speakingStrokeColor(tokens)
     val nameColor by animateColorAsState(
-        if (isSpeaking) OrbitConceptStatus.online else tokens.OnDark,
+        if (isSpeaking) strokeColor else tokens.OnDark,
         animationSpec = tween(durationMillis = 240),
         label = "speakerNameColor"
     )
@@ -1645,15 +1657,43 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
     // `0 0 20px rgba(35,165,90,0.35)`, and a hovered share is
     // `0 0 24px rgba(242,63,67,0.4)`. Both are coloured glows, so the shadow is
     // tinted as well as raised.
-    val cardGlow = if (node.isScreenShare) shareHoverGlow else speakGlow
-    val cardElevation by animateDpAsState(
-        targetValue = 8.dp + 12.dp * cardGlow,
-        animationSpec = OrbitMotion.SnappyDp,
-        label = "cardElevation"
-    )
-    val cardShadowTint = if (node.isScreenShare) CallShareRingHover else CallSpeakingGlow
+    val cardElevation = 4.dp
+    val cardShadowTint = Color.Black.copy(alpha = 0.25f)
 
     var participantMenuOpen by remember { mutableStateOf(false) }
+
+    val platformContext = coil3.compose.LocalPlatformContext.current
+    var extractedAvatarBg by remember(node.avatarUrl) { mutableStateOf<Color?>(null) }
+
+    LaunchedEffect(node.avatarUrl) {
+        val url = node.avatarUrl ?: return@LaunchedEffect
+        try {
+            val loader = coil3.SingletonImageLoader.get(platformContext)
+            val request = coil3.request.ImageRequest.Builder(platformContext)
+                .data(url)
+                .memoryCacheKey("$url#palette")
+                .build()
+            val result = loader.execute(request)
+            if (result is coil3.request.SuccessResult) {
+                val bmp = result.image.toBitmap()
+                val sampled = sampleAvatarPerimeterColor(bmp)
+                if (sampled != null) {
+                    extractedAvatarBg = sampled
+                }
+            }
+        } catch (_: Throwable) {
+            // Keep null, fall back to node.avatarColor
+        }
+    }
+
+    val avatarSeed = node.participantIdentity ?: node.name
+    val defaultAvatarBg = remember(avatarSeed) { ui.theme.pastelAvatarSeedColors(avatarSeed).first }
+    val sourceColor = extractedAvatarBg ?: defaultAvatarBg
+    val cardBackground by animateColorAsState(
+        targetValue = callCardSurface(tokens, sourceColor),
+        animationSpec = tween(durationMillis = 280),
+        label = "videoCardBackground"
+    )
 
     BoxWithConstraints(
         modifier = modifier
@@ -1674,8 +1714,16 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
             // fill. Hardcoding a colour that also exists in the ramp means the tile
             // silently stops matching the app the moment the ramp moves -- which
             // is exactly what happened.
-            .background(callCardSurface(tokens))
-            .border(borderWidth, ringColor, CallTileShape)
+            .background(cardBackground)
+            .then(
+                if (node.isScreenShare) {
+                    Modifier.border(
+                        width = 2.dp,
+                        color = if (shareHoverGlow > 0f) CallShareRingHover else CallShareRing,
+                        shape = CallTileShape
+                    )
+                } else Modifier
+            )
             .hoverable(hoverInteraction)
             .pointerInput(node.participantIdentity) {
                 if (node.participantIdentity == null) return@pointerInput
@@ -1720,7 +1768,7 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                     .fillMaxSize()
                     .background(
                         Brush.radialGradient(
-                            listOf(Color(node.avatarColor).copy(alpha = 0.1f), Color.Transparent),
+                            listOf(sourceColor.copy(alpha = 0.15f), Color.Transparent),
                             radius = 400f
                         )
                     ),
@@ -1772,7 +1820,7 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                                 .clip(CircleShape)
                                 .border(
                                     CallWaveRingWidth,
-                                    OrbitConceptStatus.online,
+                                    strokeColor,
                                     CircleShape
                                 )
                                 // Drawn first, so it sits UNDER the avatar:
@@ -1785,24 +1833,21 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                         modifier = Modifier
                             .fillMaxSize()
                             .clip(CircleShape)
-                            .background(Color(node.avatarColor).copy(alpha = 0.3f)),
+                            .background(sourceColor.copy(alpha = 0.3f)),
                         contentAlignment = Alignment.Center
                     ) {
                         if (node.avatarUrl != null) {
-                            coil3.compose.AsyncImage(
-                                model = node.avatarUrl,
+                            OrbitAvatarImage(
+                                url = node.avatarUrl,
                                 contentDescription = "Avatar",
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize().clip(CircleShape)
                             )
                         } else {
-                            Text(
-                                node.name.take(1).uppercase(),
-                                color = tokens.OnDark,
-                                // Scales with the circle, so a large tile does not
-                                // render a single 26sp letter floating in the middle.
-                                fontSize = (avatarSize.value * 0.4f).sp,
-                                fontWeight = FontWeight.Bold
+                            OrbitDefaultAvatar(
+                                label = node.name,
+                                seed = avatarSeed,
+                                modifier = Modifier.fillMaxSize()
                             )
                         }
                     }
@@ -1911,7 +1956,7 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                             .scale(nameDotScale)
                             .alpha(nameDotAlpha)
                             .clip(CircleShape)
-                            .background(OrbitConceptStatus.online)
+                            .background(strokeColor)
                     )
                 }
                 Text(
@@ -2011,6 +2056,32 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
                         fontSize = 12.sp,
                         fontWeight = FontWeight.ExtraBold
                     )
+                }
+                val isAudioSharing = callManager?.isStreamAudioEnabled?.collectAsState()?.value == true
+                if (isAudioSharing) {
+                    Box(
+                        modifier = Modifier
+                            .background(CallOverlayScrim, CallIconPillShape)
+                            .padding(horizontal = 6.dp, vertical = 4.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                with(TablerIcons) { Volume },
+                                contentDescription = "Audio sharing active",
+                                tint = tokens.Accent,
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Text(
+                                "AUDIO",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                 }
             }
             // Connection-quality signal bars: 3 lit green / 2 yellow / 1 red from
@@ -2217,15 +2288,22 @@ fun VideoNodeCard(node: RenderNode, tokens: ui.theme.CosmicTokens, modifier: Mod
         // `if`, so a tile does not gain/lose a layout node every time someone
         // starts and stops talking.
         if (!node.isScreenShare) {
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .border(
-                        width = 2.dp + 1.dp * speakGlow,
-                        color = OrbitConceptStatus.online.copy(alpha = speakGlow),
-                        shape = CallTileShape
-                    )
+            val strokeAlpha by animateFloatAsState(
+                targetValue = if (isSpeaking) 1f else 0f,
+                animationSpec = tween(durationMillis = 180),
+                label = "speakingStrokeAlpha"
             )
+            if (strokeAlpha > 0.01f) {
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .border(
+                            width = 2.dp,
+                            color = strokeColor.copy(alpha = strokeAlpha),
+                            shape = CallTileShape
+                        )
+                )
+            }
         }
     }
 }
@@ -2392,3 +2470,6 @@ fun AudioDeviceMenu(
 
 @Composable
 expect fun VideoRenderer(renderer: Any?, modifier: Modifier = Modifier)
+
+@Composable
+expect fun DesktopSourceThumbnail(source: webrtc.DesktopSourceModel, modifier: Modifier = Modifier)

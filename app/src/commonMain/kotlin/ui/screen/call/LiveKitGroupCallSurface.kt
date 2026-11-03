@@ -162,7 +162,7 @@ fun LiveKitGroupCallSurface(
             callManager = callManager,
             onDismiss = { showScreenShareDialog = false },
             onSourceSelected = { source ->
-                callManager.startScreenShare(source.id)
+                callManager.startScreenShare(source)
                 showScreenShareDialog = false
             }
         )
@@ -171,7 +171,7 @@ fun LiveKitGroupCallSurface(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(ui.theme.Ink950)
+            .background(tokens.Bg)
     ) {
         if (renderingGrid) {
             val localRenderer = if (isVideoEnabled && hasLocalFrame) {
@@ -311,6 +311,7 @@ fun LiveKitGroupCallSurface(
                         isMuted = isMuted,
                         isDeafened = isDeafened,
                         isHandRaised = myHandRaised,
+                        participantIdentity = selfId,
                         // Our OWN avatar, not a coloured circle with "Y" in it.
                         avatarUrl = callManager.profileForIdentity(selfId)?.avatarUrl,
                         avatarColor = callManager.profileForIdentity(selfId)?.avatarColor

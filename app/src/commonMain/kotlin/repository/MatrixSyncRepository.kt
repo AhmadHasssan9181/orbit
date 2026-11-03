@@ -6,6 +6,7 @@ import de.connect2x.trixnity.client.MatrixClient
 import de.connect2x.trixnity.client.MediaStoreModule
 import de.connect2x.trixnity.client.RepositoriesModule
 import de.connect2x.trixnity.client.create
+import de.connect2x.trixnity.client.flattenValues
 import livekit.configureResilientCrypto
 import de.connect2x.trixnity.client.media
 import de.connect2x.trixnity.client.room
@@ -324,14 +325,8 @@ class MatrixSyncRepository(
             }
 
             launch {
-                trixnity.room.getAll().collectLatest { allRoomsMap ->
+                trixnity.room.getAll().flattenValues().collectLatest {
                     context.roomListFlow.emit(spacesRepository.getSpaces())
-                    for (roomId in allRoomsMap.keys) {
-                        // Note: To avoid cyclic dependency on CallsRepo for observeActiveGroupCall,
-                        // we'll rely on the calls repo being observed elsewhere, or move the logic.
-                        // Actually, observeActiveGroupCall is simple.
-                        // For now, let's keep the core syncing logic
-                    }
                 }
             }
 
@@ -411,6 +406,7 @@ class MatrixSyncRepository(
                                     val membership = realContent["membership"]?.jsonPrimitive?.content
                                     val membersFlow = context.activeCallMembers.getOrPut(roomId) { MutableStateFlow(emptyList()) }
                                     val currentMembers = membersFlow.value.toMutableList()
+                                    val callStartedAt = context.activeCallStartedAt[roomId]
 
                                     if (membership != "leave") {
                                         // An m.call.member event is a MEMBERSHIP
@@ -438,7 +434,6 @@ class MatrixSyncRepository(
                                         // newer than the current call's start,
                                         // which the roster poller publishes from
                                         // the room's m.call definition event.
-                                        val callStartedAt = context.activeCallStartedAt[roomId]
                                         if (!MatrixRtcMembership.isCurrentlyValid(realContent, callStartedAt)) {
                                             currentMembers.removeAll { it.id == sender }
                                         } else if (currentMembers.none { it.id == sender }) {
@@ -456,7 +451,9 @@ class MatrixSyncRepository(
                                         val devicesFlow = context.activeCallDevices.getOrPut(roomId) { MutableStateFlow(emptySet()) }
                                         val updatedDevices = devicesFlow.value.toMutableSet()
                                         val deviceEntry = livekit.CallDevice(sender, eventDeviceId)
-                                        if (membership != "leave") {
+                                        if (membership != "leave" &&
+                                            MatrixRtcMembership.isCurrentlyValid(realContent, callStartedAt)
+                                        ) {
                                             updatedDevices.add(deviceEntry)
                                         } else {
                                             updatedDevices.remove(deviceEntry)

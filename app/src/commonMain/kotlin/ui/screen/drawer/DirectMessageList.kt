@@ -1,5 +1,7 @@
 package ui.screen.drawer
 
+import ui.components.OrbitAvatarImage
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -45,6 +47,8 @@ import androidx.compose.ui.unit.sp
 import ui.icons.TablerIcons
 import ui.icons.Home
 import ui.icons.Users
+import ui.icons.Bell
+import kotlinx.coroutines.isActive
 import ui.assets.OrbitDefaultAvatar
 import ui.assets.OrbitMascotAvatar
 import ui.assets.OrbitVerifiedBadge
@@ -104,6 +108,17 @@ internal fun DmListContent(
         dmContacts = repo.resolveDmContacts(channelIds)
     }
 
+    var incomingInvites by remember { mutableStateOf<List<ui.model.ServerInvite>>(emptyList()) }
+    var showInvitesDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(repository) {
+        val repo = repository ?: return@LaunchedEffect
+        while (true) {
+            incomingInvites = repo.getIncomingInvites()
+            kotlinx.coroutines.delay(4000)
+        }
+    }
+
     Box(modifier = modifier.fillMaxWidth()) {
         LazyColumn(
             state = listState,
@@ -143,17 +158,50 @@ internal fun DmListContent(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(
-                        text = "DIRECT MESSAGES",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = conceptTextMuted(),
-                            fontSize = 12.sp,
-                            letterSpacing = 0.24.sp
-                        ),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = "DIRECT MESSAGES",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = conceptTextMuted(),
+                                fontSize = 12.sp,
+                                letterSpacing = 0.24.sp
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(22.dp)
+                                .clip(CircleShape)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    role = Role.Button,
+                                    onClickLabel = "Server Invitations",
+                                    onClick = { showInvitesDialog = true }
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = with(TablerIcons) { Bell },
+                                contentDescription = "Server Invitations",
+                                tint = if (incomingInvites.isNotEmpty()) conceptBrand else conceptTextMuted(),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            if (incomingInvites.isNotEmpty()) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .align(Alignment.TopEnd)
+                                        .background(OrbitConceptStatus.dnd, CircleShape)
+                                )
+                            }
+                        }
+                    }
                     Icon(
                         imageVector = OrbitIcons.Add,
                         contentDescription = "Start a new conversation",
@@ -196,6 +244,16 @@ internal fun DmListContent(
             }
         }
         OrbitScrollbar(listState = listState, modifier = Modifier.align(Alignment.CenterEnd))
+    }
+
+    if (showInvitesDialog) {
+        ui.screen.server.ServerInvitesDialog(
+            repository = repository,
+            onDismiss = { showInvitesDialog = false },
+            onInviteAccepted = {
+                showInvitesDialog = false
+            }
+        )
     }
 }
 
@@ -269,8 +327,8 @@ internal fun DmItem(
                 .fillMaxWidth()
                 // `style={{ height: '42px' }}` on the concept's DM row, over the
                 // `.channel-row { padding: 6px 8px }` it also carries.
-                .height(42.dp)
-                .clip(OrbitRadius.xsShape)
+                .height(48.dp)
+                .clip(CircleShape)
                 .background(bg)
                 .hoverable(interaction)
                 .clickable(
@@ -283,17 +341,15 @@ internal fun DmItem(
                         onClick()
                     }
                 )
-                .padding(horizontal = 8.dp, vertical = 6.dp),
+                .padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // `.channel-row-content` with `gap: 10px` rather than the 8px a channel
-            // row uses, because the leading glyph here is a 28px avatar.
             DmAvatar(
                 displayName = displayName,
                 avatarColor = avatarColor,
                 status = status,
                 avatarUrl = avatarUrl,
-                size = 28.dp,
+                size = 36.dp,
                 userId = user?.id
             )
         Spacer(Modifier.width(10.dp))
@@ -411,8 +467,8 @@ private fun HomeRow(isSelected: Boolean, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .defaultMinSize(minHeight = 32.dp)
-            .clip(OrbitRadius.xsShape)
+            .defaultMinSize(minHeight = 36.dp)
+            .clip(CircleShape)
             .background(bg)
             .hoverable(interaction)
             .clickable(
@@ -422,7 +478,7 @@ private fun HomeRow(isSelected: Boolean, onClick: () -> Unit) {
                 onClickLabel = "Show home dashboard",
                 onClick = onClick
             )
-            .padding(horizontal = 8.dp, vertical = 6.dp),
+            .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
@@ -483,8 +539,8 @@ private fun FriendsRow(isSelected: Boolean, onClick: () -> Unit) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .defaultMinSize(minHeight = 30.dp)
-                .clip(OrbitRadius.xsShape)
+                .defaultMinSize(minHeight = 36.dp)
+                .clip(CircleShape)
                 .background(bg)
                 .hoverable(interaction)
                 .clickable(
@@ -494,7 +550,7 @@ private fun FriendsRow(isSelected: Boolean, onClick: () -> Unit) {
                     onClickLabel = "Show friends",
                     onClick = onClick
                 )
-                .padding(horizontal = 8.dp, vertical = 6.dp),
+                .padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
         Icon(
@@ -572,8 +628,8 @@ internal fun DmAvatar(
 ) {
     Box(modifier = Modifier.size(size)) {
         if (avatarUrl != null) {
-            coil3.compose.AsyncImage(
-                model = avatarUrl,
+            OrbitAvatarImage(
+                url = avatarUrl,
                 contentDescription = displayName,
                 contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                 modifier = Modifier

@@ -1,7 +1,12 @@
 package ui.screen.settings
 
+import ui.components.OrbitAvatarImage
+
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -22,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -29,6 +35,7 @@ import androidx.compose.ui.unit.sp
 import ui.icons.TablerIcons
 import ui.icons.Accessible
 import ui.icons.Bell
+import ui.icons.CameraPlus
 import ui.icons.Check
 import ui.icons.ChevronRight
 import ui.icons.Copy
@@ -54,6 +61,7 @@ import ui.components.OrbitNotices.onFailureOrNotify
 import ui.components.OrbitRowLeading
 import ui.components.OrbitTextField
 import ui.icons.OrbitIcons
+import ui.model.OrbitProfileExtras
 import ui.model.OrbitUser
 import ui.screen.auth.*
 import ui.screen.call.*
@@ -369,8 +377,8 @@ private fun SettingsUserAccountTile(
                 .background(t.CardBg)
         ) {
             if (!user?.avatarUrl.isNullOrBlank()) {
-                coil3.compose.AsyncImage(
-                    model = user?.avatarUrl,
+                OrbitAvatarImage(
+                    url = user?.avatarUrl!!,
                     contentDescription = null,
                     contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                     modifier = Modifier.fillMaxSize().clip(CircleShape)
@@ -503,6 +511,12 @@ private fun MyAccountPane(
     var showVerifyDialog by remember { mutableStateOf(false) }
     var showLogoutConfirm by remember { mutableStateOf(false) }
     var avatarUploading by remember { mutableStateOf(false) }
+    var bannerUploading by remember { mutableStateOf(false) }
+
+    val profileExtras by repository
+        .observeAccountData("im.orbit.profile_extras", OrbitProfileExtras.serializer())
+        .collectAsState(null)
+    val displayBannerUrl = user?.bannerUrl ?: profileExtras?.bannerUrl
 
     LaunchedEffect(Unit) {
         user = repository.getCurrentUser()
@@ -522,7 +536,7 @@ private fun MyAccountPane(
                 .border(1.dp, t.Separator.copy(alpha = 0.4f), RoundedCornerShape(16.dp))
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
-                // Top Banner Graphic (Sunset Pagoda dusk gradient)
+                // Top Banner Graphic (Sunset Pagoda dusk gradient fallback)
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -539,30 +553,66 @@ private fun MyAccountPane(
                             )
                         )
                 ) {
-                    // Edit Profile Pencil Button in top-right of banner
+                    val bannerUrl = displayBannerUrl
+                    if (!bannerUrl.isNullOrBlank()) {
+                        OrbitAvatarImage(
+                            url = bannerUrl,
+                            contentDescription = "Profile Banner",
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+
+                    // Edit Profile / Change Banner Pencil Button in top-right of banner
+                    val bannerBtnInteraction = remember { MutableInteractionSource() }
+                    val bannerBtnHovered by bannerBtnInteraction.collectIsHoveredAsState()
+
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
                             .padding(12.dp)
                             .size(34.dp)
                             .clip(CircleShape)
-                            .background(Color(0x66000000))
+                            .background(if (bannerBtnHovered) Color(0x99000000) else Color(0x66000000))
                             .border(1.dp, Color(0x33FFFFFF), CircleShape)
-                            .clickable {
-                                newName = user?.displayName ?: ""
-                                isEditingName = true
+                            .hoverable(bannerBtnInteraction)
+                            .clickable(
+                                interactionSource = bannerBtnInteraction,
+                                indication = null,
+                                enabled = !bannerUploading
+                            ) {
+                                coroutineScope.launch {
+                                    bannerUploading = true
+                                    val bytes = util.pickImageFile()
+                                    if (bytes != null) {
+                                        repository.uploadBanner(bytes)
+                                            .onFailureOrNotify("Banner upload", "Settings")
+                                            .onSuccess { uploadedUrl ->
+                                                val extras = (profileExtras ?: OrbitProfileExtras()).copy(bannerUrl = uploadedUrl)
+                                                repository.setAccountData("im.orbit.profile_extras", extras, OrbitProfileExtras.serializer())
+                                                user = user?.copy(bannerUrl = uploadedUrl)
+                                                OrbitNotices.info("Banner updated", "Settings")
+                                            }
+                                    }
+                                    bannerUploading = false
+                                }
                             },
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = with(TablerIcons) { Pencil },
-                            contentDescription = "Edit Profile",
-                            // Left as pure white deliberately: this glyph sits on a 40%-black scrim over an
-                            // arbitrary avatar image, so the backdrop's lightness is unknown. Any themed
-                            // token would invert with the scheme and vanish against half the photos.
-                            tint = Color.White,
-                            modifier = Modifier.size(17.dp)
-                        )
+                        if (bannerUploading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                color = Color.White,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Icon(
+                                imageVector = with(TablerIcons) { Pencil },
+                                contentDescription = "Change Banner",
+                                tint = Color.White,
+                                modifier = Modifier.size(17.dp)
+                            )
+                        }
                     }
                 }
 
@@ -574,6 +624,13 @@ private fun MyAccountPane(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // Avatar cutout overlapping the banner
+                    val avatarInteraction = remember { MutableInteractionSource() }
+                    val isAvatarHovered by avatarInteraction.collectIsHoveredAsState()
+                    val avatarOverlayAlpha by animateFloatAsState(
+                        targetValue = if (isAvatarHovered || avatarUploading) 1f else 0f,
+                        animationSpec = tween(150)
+                    )
+
                     Box(
                         modifier = Modifier
                             .offset(y = (-32).dp)
@@ -581,7 +638,12 @@ private fun MyAccountPane(
                             .clip(CircleShape)
                             .background(t.CardBg)
                             .border(3.5.dp, t.CardBg, CircleShape)
-                            .clickable(enabled = !avatarUploading) {
+                            .hoverable(avatarInteraction)
+                            .clickable(
+                                interactionSource = avatarInteraction,
+                                indication = null,
+                                enabled = !avatarUploading
+                            ) {
                                 coroutineScope.launch {
                                     avatarUploading = true
                                     val bytes = util.pickImageFile()
@@ -600,8 +662,8 @@ private fun MyAccountPane(
                     ) {
                         val avatarUrl = user?.avatarUrl
                         if (!avatarUrl.isNullOrBlank()) {
-                            coil3.compose.AsyncImage(
-                                model = avatarUrl,
+                            OrbitAvatarImage(
+                                url = avatarUrl,
                                 contentDescription = "Avatar",
                                 contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize().clip(CircleShape)
@@ -611,6 +673,48 @@ private fun MyAccountPane(
                                 seed = user?.id ?: "me",
                                 modifier = Modifier.fillMaxSize()
                             )
+                        }
+
+                        // Dim sheet overlay on hover or while uploading
+                        if (avatarOverlayAlpha > 0.01f) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clip(CircleShape)
+                                    .graphicsLayer { alpha = avatarOverlayAlpha }
+                                    .background(Color.Black.copy(alpha = 0.55f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (avatarUploading) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp),
+                                        color = Color.White,
+                                        strokeWidth = 2.dp
+                                    )
+                                } else {
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = with(TablerIcons) { CameraPlus },
+                                            contentDescription = "Upload Avatar",
+                                            tint = Color.White.copy(alpha = 0.95f),
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                        Spacer(Modifier.height(2.dp))
+                                        Text(
+                                            text = "CHANGE",
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                color = Color.White.copy(alpha = 0.95f),
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 9.sp,
+                                                letterSpacing = 0.5.sp
+                                            )
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
 

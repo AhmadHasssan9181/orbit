@@ -175,7 +175,7 @@ internal fun MessageInputBar(
         modifier = Modifier
             .fillMaxWidth()
             // .chat-input-area { padding: 0 16px 20px }
-            .padding(start = OrbitSpace.lg, end = OrbitSpace.lg, bottom = 20.dp)
+            .padding(start = OrbitSpace.md, end = OrbitSpace.md, bottom = 8.dp)
     ) {
         // ── Reply banner ────────────────────────────────────────
         // .reply-banner { background-color: var(--bg-secondary);
@@ -340,107 +340,163 @@ private fun ComposerFrame(
     val enterSend = ui.theme.LocalEnterSend.current
 
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .background(t.Input_Bg)
-            .padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Bottom,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // .chat-attach-btn — no background at rest or on hover; only the tint
-        // changes. That is a real difference from `OrbitIconButton`, which floods
-        // `--bg-modifier-hover` behind every icon it draws, and it is right here:
-        // the composer already has a fill, and a second fill inside it reads as a
-        // button sitting on a button.
-        ComposerToolBtn(
-            icon = OrbitIcons.Add,
-            contentDescription = "Attach a file",
-            tooltip = "Attach",
-            iconSize = 22.dp,
-            onClick = onAttach
-        )
-
-        Box(
+        // Message input box: smoothly rounded on the left (24dp) to run seamless with
+        // the message window corner, and subtly rounded on the right (10dp) facing the send button.
+        Row(
             modifier = Modifier
                 .weight(1f)
-                .defaultMinSize(minHeight = 22.dp),
-            contentAlignment = Alignment.CenterStart
+                .defaultMinSize(minHeight = 44.dp)
+                .clip(
+                    RoundedCornerShape(
+                        topStart = 24.dp,
+                        bottomStart = 24.dp,
+                        topEnd = 10.dp,
+                        bottomEnd = 10.dp
+                    )
+                )
+                .background(t.Input_Bg)
+                .padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            if (text.isEmpty()) {
-                Text(
-                    text = placeholder,
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        // .chat-input-field::placeholder { color: var(--text-muted) }
-                        color = t.Text_Muted,
+            ComposerToolBtn(
+                icon = OrbitIcons.Add,
+                contentDescription = "Attach a file",
+                tooltip = "Attach",
+                iconSize = 22.dp,
+                onClick = onAttach
+            )
+
+            Spacer(Modifier.width(6.dp))
+
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .defaultMinSize(minHeight = 22.dp),
+                contentAlignment = Alignment.CenterStart
+            ) {
+                if (text.isEmpty()) {
+                    Text(
+                        text = placeholder,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            // .chat-input-field::placeholder { color: var(--text-muted) }
+                            color = t.Text_Muted,
+                            fontSize = 15.sp,
+                            lineHeight = 20.sp
+                        ),
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
+                }
+                BasicTextField(
+                    value = text,
+                    onValueChange = onTextChange,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onKeyEvent { event ->
+                            if (enterSend && event.key == Key.Enter && event.type == KeyEventType.KeyDown && !event.isShiftPressed) {
+                                onSend()
+                                true
+                            } else {
+                                false
+                            }
+                        },
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(
+                        // .chat-input-field { font-size: 15px; color: var(--text-normal) }
+                        color = t.Text_Secondary,
                         fontSize = 15.sp,
                         lineHeight = 20.sp
                     ),
-                    maxLines = 1,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    cursorBrush = SolidColor(t.Accent),
+                    singleLine = false,
+                    maxLines = 8,
+                    interactionSource = focusSource,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(onSend = { onSend() })
                 )
             }
-            BasicTextField(
-                value = text,
-                onValueChange = onTextChange,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .onKeyEvent { event ->
-                        if (enterSend && event.key == Key.Enter && event.type == KeyEventType.KeyDown && !event.isShiftPressed) {
-                            onSend()
-                            true
-                        } else {
-                            false
-                        }
-                    },
-                textStyle = MaterialTheme.typography.bodyMedium.copy(
-                    // .chat-input-field { font-size: 15px; color: var(--text-normal) }
-                    color = t.Text_Secondary,
-                    fontSize = 15.sp,
-                    lineHeight = 20.sp
-                ),
-                cursorBrush = SolidColor(t.Accent),
-                singleLine = false,
-                maxLines = 8,
-                interactionSource = focusSource,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { onSend() })
+
+            // GIF button first, Emoji second (matching reference image)
+            ComposerToolBtn(
+                icon = OrbitIcons.Gif,
+                contentDescription = "GIF",
+                tooltip = "GIF",
+                iconSize = 20.dp,
+                onClick = onToggleGif
+            )
+            ComposerToolBtn(
+                icon = OrbitIcons.Emoji,
+                contentDescription = "Emoji",
+                tooltip = "Emoji",
+                iconSize = 20.dp,
+                active = emojiPickerOpen,
+                onClick = onToggleEmoji
             )
         }
 
-        // .chat-input-tools { gap: 8px }
-        ComposerToolBtn(
-            icon = OrbitIcons.Emoji,
-            contentDescription = "Emoji",
-            tooltip = "Emoji",
-            iconSize = 20.dp,
-            active = emojiPickerOpen,
-            onClick = onToggleEmoji
+        // Standalone send button: matching input box style, less rounded on the left
+        // (10dp) facing the input box and more rounded on the right (24dp) to run seamless
+        // with the message window's right corner.
+        StandaloneSendButton(
+            canSend = canSend,
+            onSend = onSend
         )
-        ComposerToolBtn(
-            icon = OrbitIcons.Gif,
-            contentDescription = "GIF",
-            tooltip = "GIF",
-            iconSize = 20.dp,
-            onClick = onToggleGif
-        )
-        // `<button type="submit" style="color: inputText.trim()
-        //     ? 'var(--brand-blurple)' : 'var(--text-muted)'}">` — always present,
-        // recoloured. A solid accent disc on a control that is in view at all
-        // times would be the loudest thing in the composer, so the tint carries
-        // the state and the shape stays quiet.
-        ComposerToolBtn(
-            icon = OrbitIcons.Send,
-            contentDescription = "Send message",
-            tooltip = "Send",
-            iconSize = 18.dp,
-            enabled = canSend,
-            // Passing the accent unconditionally and letting `enabled` decide the
-            // tint is what makes the two states one control: the button does not
-            // change identity when the field goes from empty to full, so a screen
-            // reader does not have to re-announce it.
-            accent = t.Accent,
-            onClick = onSend
-        )
+    }
+}
+
+/**
+ * Standalone send button matching the message input box style.
+ * Uses 10dp corner radius on the left facing the input box, and 24dp corner
+ * radius on the right to seamlessly match the rounded message window.
+ */
+@Composable
+private fun StandaloneSendButton(
+    canSend: Boolean,
+    onSend: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val t = rememberCosmicTokens()
+    val light = isLightChatSurface(t)
+    val interaction = rememberOrbitInteraction()
+    val hovered by interaction.hoverSource.collectIsHoveredAsState()
+    val shape = RoundedCornerShape(
+        topStart = 10.dp,
+        bottomStart = 10.dp,
+        topEnd = 24.dp,
+        bottomEnd = 24.dp
+    )
+    val scale by animateFloatAsState(
+        targetValue = if (hovered && canSend) 1.05f else 1f,
+        animationSpec = OrbitMotion.Snappy,
+        label = "sendBtnScale"
+    )
+    val tint = when {
+        !canSend -> t.Text_Muted
+        hovered -> if (light) ChatConcept.headerPrimaryLight else Color.White
+        else -> t.Accent
+    }
+
+    OrbitTooltip("Send") {
+        Box(
+            modifier = modifier
+                .size(width = 46.dp, height = 44.dp)
+                .scale(scale)
+                .clip(shape)
+                .background(t.Input_Bg)
+                .hoverable(interaction.hoverSource, canSend)
+                .orbitClickable(interaction, enabled = canSend, onClick = onSend),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = OrbitIcons.Send,
+                contentDescription = "Send message",
+                tint = tint,
+                modifier = Modifier.size(19.dp)
+            )
+        }
     }
 }
 

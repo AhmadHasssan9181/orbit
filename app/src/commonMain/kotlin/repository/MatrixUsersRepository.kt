@@ -126,20 +126,34 @@ class MatrixUsersRepository(private val context: MatrixContext) : OrbitUsersRepo
         }
     }
 
+    private fun detectImageContentType(bytes: ByteArray): ContentType {
+        if (bytes.size >= 3 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() && bytes[2] == 0xFF.toByte()) {
+            return ContentType.Image.JPEG
+        }
+        if (bytes.size >= 8 && bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() && bytes[2] == 0x4E.toByte() && bytes[3] == 0x47.toByte()) {
+            return ContentType.Image.PNG
+        }
+        if (bytes.size >= 12 && bytes[0] == 'R'.code.toByte() && bytes[1] == 'I'.code.toByte() && bytes[2] == 'F'.code.toByte() && bytes[3] == 'F'.code.toByte()) {
+            return ContentType("image", "webp")
+        }
+        if (bytes.size >= 6 && bytes[0] == 'G'.code.toByte() && bytes[1] == 'I'.code.toByte() && bytes[2] == 'F'.code.toByte()) {
+            return ContentType.Image.GIF
+        }
+        return ContentType.Image.PNG
+    }
+
     override suspend fun uploadAvatar(imageBytes: ByteArray): Result<String> {
         return try {
             val trixnity = context.trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
+            val optimizedBytes = util.compressImage(imageBytes, maxDimension = 512)
+            val contentType = detectImageContentType(optimizedBytes)
             val mxcUrl = trixnity.media.uploadMedia(
-                trixnity.media.prepareUploadMedia(kotlinx.coroutines.flow.flowOf(imageBytes), ContentType.Image.PNG)
+                trixnity.media.prepareUploadMedia(kotlinx.coroutines.flow.flowOf(optimizedBytes), contentType)
             ).getOrThrow()
             trixnity.setProfileField(ProfileField.AvatarUrl(mxcUrl)).getOrThrow()
+            context.userId?.let { context.invalidateUserProfile(it) }
             Result.success(mxcUrl)
         } catch (e: kotlinx.coroutines.CancellationException) {
-            // The `catch (e: Exception)` below would swallow this, so a coroutine
-            // cancelled mid-upload -- the user navigating away, a call starting --
-            // would have its cancellation turned into a returned failure and carry on
-            // running inside a scope that is already gone. uploadBanner below
-            // already rethrows it; this one did not.
             throw e
         } catch (e: Exception) {
             Result.failure(e)
@@ -150,31 +164,15 @@ class MatrixUsersRepository(private val context: MatrixContext) : OrbitUsersRepo
         return context.fetchUserProfile(userId)
     }
 
-    /**
-     * Uploads an image and returns a URL that can be displayed, but does NOT set any
-     * profile field. The banner lives in Orbit's own `im.orbit.profile_extras`
-     * account data, so routing it through uploadAvatar would clobber the real
-     * avatar.
-     *
-     * Returns the CONVERTED http(s) URL rather than the raw `mxc://`. This function
-     * existed with a single caller-shaped hole: it was implemented and declared and
-     * never called, and the comment beside the URL field said no picker was wired to
-     * it "because reusing uploadAvatar would overwrite the avatar" -- a blocker that
-     * this very function already removed, so the reason was stale.
-     *
-     * Converting here rather than at the call site is deliberate. The value it
-     * returns goes straight into the banner field and from there into Coil, and Coil
-     * cannot load an `mxc://` URI -- it fails silently, leaving a blank rectangle
-     * that looks exactly like a room with no banner. Every other avatar in the app
-     * is converted in the repository for the same reason, so the UI has no mxc
-     * handling to get wrong.
-     */
     override suspend fun uploadBanner(imageBytes: ByteArray): Result<String> {
         return try {
             val trixnity = context.trixnityClient ?: return Result.failure(IllegalStateException("Not logged in"))
+            val optimizedBytes = util.compressImage(imageBytes, maxDimension = 1280)
+            val contentType = detectImageContentType(optimizedBytes)
             val mxcUrl = trixnity.media.uploadMedia(
-                trixnity.media.prepareUploadMedia(kotlinx.coroutines.flow.flowOf(imageBytes), ContentType.Image.PNG)
+                trixnity.media.prepareUploadMedia(kotlinx.coroutines.flow.flowOf(optimizedBytes), contentType)
             ).getOrThrow()
+            context.userId?.let { context.invalidateUserProfile(it) }
             Result.success(context.convertMxcUrl(mxcUrl))
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
@@ -346,5 +344,64 @@ class MatrixUsersRepository(private val context: MatrixContext) : OrbitUsersRepo
             println("WARN [MatrixUsersRepository] power-levels read threw for $roomId: ${e.message}")
             null
         }
+    }
+
+    override suspend fun searchUsers(query: String, limit: Int): List<OrbitUser> {
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) return emptyList()
+
+        val domain = context.userId?.removePrefix("@")?.substringAfter(":")
+            ?: context.homeserverUrl.removePrefix("https://").removePrefix("http://").substringBefore("/")
+        val results = mutableListOf<OrbitUser>()
+
+        val cleanLocalpart = trimmed.removePrefix("@").substringBefore(":")
+        if (cleanLocalpart.isNotBlank()) {
+            val synthesizedId = "@$cleanLocalpart:$domain"
+            results.add(
+                OrbitUser(
+                    id = synthesizedId,
+                    username = cleanLocalpart,
+                    displayName = cleanLocalpart,
+                    avatarColor = context.hashToColor(synthesizedId),
+                    status = UserStatus.ONLINE
+                )
+            )
+        }
+
+        try {
+            val response = context.httpClient.post(context.fullUrl("/user_directory/search")) {
+                header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
+                contentType(ContentType.Application.Json)
+                setBody(buildJsonObject {
+                    put("search_term", trimmed)
+                    put("limit", limit)
+                }.toString())
+            }
+            if (response.status.value in 200..299) {
+                val body = Json.parseToJsonElement(response.bodyAsText()).jsonObject
+                val array = body["results"]?.jsonArray
+                array?.mapNotNull { it.jsonObject }?.forEach { userObj ->
+                    val userId = userObj["user_id"]?.jsonPrimitive?.content ?: return@forEach
+                    val displayName = userObj["display_name"]?.jsonPrimitive?.content ?: userId.removePrefix("@").substringBefore(":")
+                    val avatarMxc = userObj["avatar_url"]?.jsonPrimitive?.content
+                    if (results.none { it.id.equals(userId, ignoreCase = true) }) {
+                        results.add(
+                            OrbitUser(
+                                id = userId,
+                                username = userId.removePrefix("@").substringBefore(":"),
+                                displayName = displayName,
+                                avatarUrl = avatarMxc?.let { context.convertMxcUrl(it) },
+                                avatarColor = context.hashToColor(userId),
+                                status = UserStatus.ONLINE
+                            )
+                        )
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // Silently retain synthesized fallback on search failure
+        }
+
+        return results
     }
 }

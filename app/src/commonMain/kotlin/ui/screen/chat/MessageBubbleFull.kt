@@ -1,5 +1,7 @@
 package ui.screen.chat
 
+import ui.components.OrbitAvatarImage
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeIn
@@ -647,8 +649,8 @@ private fun MessageAvatar(message: OrbitMessage) {
         it.id == message.userId || message.userId.endsWith(it.id) || it.id.endsWith(message.userId)
     }
     if (member?.avatarUrl != null) {
-        coil3.compose.AsyncImage(
-            model = member.avatarUrl,
+        OrbitAvatarImage(
+            url = member.avatarUrl,
             contentDescription = member.displayName,
             contentScale = androidx.compose.ui.layout.ContentScale.Crop,
             modifier = Modifier

@@ -32,7 +32,6 @@ import dev.onvoid.webrtc.media.video.VideoDeviceSource
 import dev.onvoid.webrtc.media.video.VideoTrack
 import dev.onvoid.webrtc.media.video.VideoTrackSink
 import dev.onvoid.webrtc.media.video.desktop.ScreenCapturer
-import dev.onvoid.webrtc.media.video.VideoDesktopSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -46,7 +45,15 @@ import kotlinx.coroutines.flow.StateFlow
 import repository.TurnServer
 import repository.sdpMediaSections
 import repository.sdpScreenShareStreamIds
+import livekit.StreamDiag
 import kotlin.math.abs
+import com.sun.jna.Native
+import com.sun.jna.Pointer
+import com.sun.jna.platform.win32.Kernel32
+import com.sun.jna.platform.win32.User32
+import com.sun.jna.platform.win32.WinDef
+import com.sun.jna.platform.win32.WinUser
+import com.sun.jna.ptr.IntByReference
 
 /**
  * How long a desktop-source enumeration stays valid.
@@ -81,6 +88,30 @@ internal fun resolveDesktopSource(
     return id to match.isWindow
 }
 
+/**
+ * Bitrate budget for a screen share at the chosen quality and frame rate.
+ *
+ * Screen content needs far more bits per pixel than a camera. Sending every
+ * quality through the old 2.5 Mbps default made 1440p and Source look worse
+ * than 720p because the encoder had the same budget for four times the pixels.
+ * These are ceilings, not reservations: the encoder still backs off when the
+ * network cannot carry them.
+ */
+internal fun screenShareBitrateBps(quality: String, fps: Int): Int {
+    val base = when (quality.trim().lowercase()) {
+        "720p" -> 2_500_000.0
+        "1440p" -> 8_000_000.0
+        "source" -> 12_000_000.0
+        else -> 5_000_000.0
+    }
+    val frameRateScale = when {
+        fps <= 15 -> 0.6
+        fps <= 30 -> 1.0
+        else -> 1.6
+    }
+    return (base * frameRateScale).toInt().coerceIn(500_000, 25_000_000)
+}
+
 class JvmWebRtcClient : WebRtcClient {
     private val _onIceCandidate = MutableSharedFlow<IceCandidateModel>(extraBufferCapacity = 10)
     override val onIceCandidate: SharedFlow<IceCandidateModel> = _onIceCandidate
@@ -111,7 +142,7 @@ class JvmWebRtcClient : WebRtcClient {
     private var remoteVideoTrack: VideoTrack? = null
     private var remoteScreenVideoTrack: VideoTrack? = null
     private var remoteAudioTrack: AudioTrack? = null
-    private var screenSource: VideoDesktopSource? = null
+    private var screenSource: PacedDesktopVideoSource? = null
     private var screenVideoTrack: VideoTrack? = null
     private var shareWindowTrackingJob: Job? = null
 
@@ -330,6 +361,56 @@ class JvmWebRtcClient : WebRtcClient {
 
         println("DEBUG: [WebRTC] no video m-line to reuse; adding one")
         return pConn.addTrack(currentVideoTrackForNewSender(), listOf("mediaStream"))
+    }
+
+    /**
+     * Gives the P2P video sender the share's bitrate and frame-rate budget.
+     *
+     * A 1:1 call reuses the camera's sender. That sender was negotiated for a
+     * camera -- usually a 30 fps, low-bitrate stream -- and `replaceTrack` does
+     * not change its encoding parameters. The share then reaches the encoder
+     * with a camera-sized budget, so 1080p60 content is squeezed into a stream
+     * that cannot carry it and the remote side sees a slideshow.
+     *
+     * These are ceilings, not reservations: WebRTC still backs off when the
+     * path cannot carry the bitrate. `scaleResolutionDownBy` is reset to 1.0
+     * because camera senders may have been created with a downscale factor,
+     * which would otherwise shrink the share before it is ever encoded.
+     *
+     * Best effort on purpose: if the native sender rejects the parameters the
+     * share must still run with the previous defaults rather than fail.
+     */
+    private fun applyScreenShareSenderEncoding(sender: RTCRtpSender, fps: Int, bitrateBps: Int) {
+        runCatching {
+            val params = sender.getParameters()
+            params.encodings?.forEach { encoding ->
+                encoding.active = true
+                encoding.maxBitrate = bitrateBps
+                encoding.maxFramerate = fps.toDouble()
+                encoding.scaleResolutionDownBy = 1.0
+            }
+            sender.setParameters(params)
+        }.onFailure {
+            println("WARN [WebRTC] could not apply screen-share encoder params: ${it.message}")
+        }
+    }
+
+    /**
+     * Undoes [applyScreenShareSenderEncoding] when the camera comes back, so a
+     * camera is not left with the share's much larger bitrate budget.
+     */
+    private fun clearScreenShareSenderEncoding(sender: RTCRtpSender) {
+        runCatching {
+            val params = sender.getParameters()
+            params.encodings?.forEach { encoding ->
+                encoding.maxBitrate = null
+                encoding.maxFramerate = null
+                encoding.scaleResolutionDownBy = 1.0
+            }
+            sender.setParameters(params)
+        }.onFailure {
+            println("DEBUG [WebRTC] could not reset screen-share encoder params: ${it.message}")
+        }
     }
 
     /**
@@ -947,8 +1028,15 @@ private fun watchTrackEnd(track: MediaStreamTrack, onEnd: () -> Unit) {
     }
 
     override fun startScreenShare(data: Any?) {
-        val sourceId = data as? String
-        println("DEBUG [WebRTC] startScreenShare invoked sourceId=$sourceId isGroupCall=$isGroupCall factory=${factory != null} peerConnection=${peerConnection != null}")
+        val model = data as? DesktopSourceModel
+        val sourceId = when (data) {
+            is DesktopSourceModel -> data.id
+            is Long -> data.toString()
+            is Int -> data.toString()
+            is String -> data
+            else -> null
+        }
+        println("DEBUG [WebRTC] startScreenShare invoked data=$data sourceId=$sourceId isGroupCall=$isGroupCall factory=${factory != null} peerConnection=${peerConnection != null}")
 
         // Take Orbit out of its own capture BEFORE the first frame is produced.
         //
@@ -985,9 +1073,14 @@ private fun watchTrackEnd(track: MediaStreamTrack, onEnd: () -> Unit) {
             var isWindow = false
             var finalSourceId: Long? = null
             val t0 = System.currentTimeMillis()
-            resolveShareSource(sourceId)?.let { (id, window) ->
-                finalSourceId = id
-                isWindow = window
+            if (model != null) {
+                finalSourceId = model.id.toLongOrNull()
+                isWindow = model.isWindow
+            } else {
+                resolveShareSource(sourceId)?.let { (id, window) ->
+                    finalSourceId = id
+                    isWindow = window
+                }
             }
             if (finalSourceId == null) {
                 // Cache miss. Enumerate, as before, and repopulate. Kept so this is
@@ -1002,8 +1095,9 @@ private fun watchTrackEnd(track: MediaStreamTrack, onEnd: () -> Unit) {
                 finalSourceId = wSource?.id ?: sSource?.id ?: screenSources.firstOrNull()?.id
                 cachedDesktopSources = screenSources.map {
                     DesktopSourceModel(it.id.toString(), it.title ?: "Screen ${it.id}", false)
-                } + windowSources.map {
-                    DesktopSourceModel(it.id.toString(), it.title ?: "Window ${it.id}", true)
+                } + windowSources.mapNotNull {
+                    if (!isTaskbarWindow(it.id.toString(), it.title)) null
+                    else DesktopSourceModel(it.id.toString(), it.title ?: "Window ${it.id}", true)
                 }
                 cachedDesktopSourcesAt = System.currentTimeMillis()
                 screenCapturer.dispose()
@@ -1011,51 +1105,63 @@ private fun watchTrackEnd(track: MediaStreamTrack, onEnd: () -> Unit) {
             }
             println(
                 "DEBUG [WebRTC] share source resolved id=$finalSourceId isWindow=$isWindow " +
-                    "in ${System.currentTimeMillis() - t0}ms (cached=${cachedDesktopSources != null})"
+                    "in ${System.currentTimeMillis() - t0}ms (cached=${cachedDesktopSources != null}, directModel=${model != null})"
             )
 
             if (finalSourceId != null) {
-                // If already screen sharing, stop old one
+                // If already screen sharing, stop old one but preserve audio preference
+                val audioWasWanted = streamAudioWanted ||
+                    runCatching { repository.SettingsManager().screenShareAudioSync() }.getOrDefault(false)
                 if (screenVideoTrack != null) {
                     stopScreenShare()
+                    util.SelfCaptureGuard.engage()
                 }
+                streamAudioWanted = audioWasWanted
 
                 val shareSettings = repository.SettingsManager()
                 val quality = runCatching { shareSettings.screenShareQualitySync() }.getOrDefault("1080p")
-                // Ceiling is 30, not 60.
-                //
-                // Inbound video is already capped at 20 fps / 1280 px because a
-                // 1080p share at the sender's rate was pushing 237 MB/s through
-                // JNI and ~1 GB/s once the UI copied each frame. Publishing was
-                // left uncapped and had the same effect on the OTHER direction: at
-                // 60 fps and 1440p this machine was converting ~186 MB/s of I420
-                // while the audio mixer ran, and the mixer lost -- it went from
-                // `starved=10 qDepth=3360` to `starved=283 qDepth=480`, the
-                // playout buffer hit its 10 ms floor and the playback line started
-                // dropping chunks. Everyone else's voice stuttered the moment you
-                // shared your screen.
-                //
-                // A shared window gains nothing from 60 fps anyway: it is text and
-                // static UI, and 30 is what Discord and Element cap at.
+                // 15/30/60 are all real. Screen capture and the native receiver
+                // are exempt from the camera's 20 fps / 1280 px guard so the
+                // selected frame rate and resolution reach the other side.
                 val fps = runCatching { shareSettings.screenShareFpsSync() }.getOrDefault(30)
-                    .coerceIn(5, 30)
+                    .coerceIn(5, 60)
+                val shareBitrateBps = screenShareBitrateBps(quality, fps)
                 val (maxShareWidth, maxShareHeight) = when (quality.lowercase()) {
                     "720p" -> 1280 to 720
                     "1440p" -> 2560 to 1440
                     "source" -> Int.MAX_VALUE to Int.MAX_VALUE
                     else -> 1920 to 1080
                 }
-                println("DEBUG [WebRTC] screen share params quality=$quality fps=$fps max=${maxShareWidth}x$maxShareHeight")
+                val maxShareLabel =
+                    if (maxShareWidth == Int.MAX_VALUE || maxShareHeight == Int.MAX_VALUE) {
+                        "source"
+                    } else {
+                        "${maxShareWidth}x$maxShareHeight"
+                    }
+                println(
+                    "DEBUG [WebRTC] screen share params quality=$quality fps=$fps " +
+                        "max=$maxShareLabel bitrate=$shareBitrateBps"
+                )
+                StreamDiag.log(
+                    "phase=config quality=$quality fps=$fps bitrateBps=$shareBitrateBps " +
+                        "max=$maxShareLabel sourceId=$finalSourceId " +
+                        "window=$isWindow group=$isGroupCall audioShare=$streamAudioWanted"
+                )
 
-                screenSource = VideoDesktopSource()
-                screenSource?.setSourceId(finalSourceId, isWindow)
-                if (maxShareHeight != Int.MAX_VALUE) {
-                    screenSource?.setMaxFrameSize(maxShareWidth, maxShareHeight)
-                }
-                screenSource?.setFrameRate(fps)
-                screenSource?.start()
+                val captureSource = PacedDesktopVideoSource(
+                    sourceId = finalSourceId,
+                    sourceIsWindow = isWindow,
+                    maxFrameWidth = maxShareWidth,
+                    maxFrameHeight = maxShareHeight,
+                    frameRate = fps,
+                )
+                screenSource = captureSource
+                captureSource.start()
 
-                val screenTrack = f.createVideoTrack("screenTrack_${System.currentTimeMillis()}", screenSource)
+                val screenTrack = f.createVideoTrack(
+                    "screenTrack_${System.currentTimeMillis()}",
+                    captureSource.videoSource,
+                )
                 screenTrack.setEnabled(true)
                 screenVideoTrack = screenTrack
 
@@ -1064,16 +1170,24 @@ private fun watchTrackEnd(track: MediaStreamTrack, onEnd: () -> Unit) {
                     screenTrack.addSink(livekit.LiveKitLocalScreenShareTrack.sink)
                     // Native C++ session publishes SOURCE_SCREENSHARE; dims are taken
                     // lazily from the first frame, so no fixed declaration here.
-                    livekit.LiveKitNativeMediaSession.armScreenSharePublish(fps, 0)
+                    livekit.LiveKitNativeMediaSession.armScreenSharePublish(fps, shareBitrateBps)
+                    if (streamAudioWanted && livekit.LiveKitFeatureFlags.cppMedia) {
+                        runCatching { livekit.LiveKitNativeMediaSession.publishScreenShareAudio() }
+                            .onFailure { it.printStackTrace() }
+                    }
                 } else {
                     val pConn = peerConnection ?: return
                     localVideoSender = videoSenderFor(pConn)?.also { sender ->
                         sender.replaceTrack(screenTrack)
+                        applyScreenShareSenderEncoding(sender, fps, shareBitrateBps)
                     }
                     localVideoTrack = screenTrack
                     localRenderer?.isScreenShare = true
                     (localRenderer as? VideoTrackSink)?.let { sink ->
                         screenTrack.addSink(sink)
+                    }
+                    if (streamAudioWanted) {
+                        setStreamAudioEnabled(true)
                     }
                 }
                 
@@ -1089,6 +1203,7 @@ private fun watchTrackEnd(track: MediaStreamTrack, onEnd: () -> Unit) {
                 // on the machine until the call ends.
                 util.SelfCaptureGuard.release()
                 screenSource?.stop()
+                screenSource?.dispose()
                 screenSource = null
             }
 
@@ -1098,6 +1213,7 @@ private fun watchTrackEnd(track: MediaStreamTrack, onEnd: () -> Unit) {
             // every exit out of here that is not a successful share must undo it.
             util.SelfCaptureGuard.release()
             runCatching { screenSource?.stop() }
+            runCatching { screenSource?.dispose() }
             screenSource = null
         }
     }
@@ -1193,6 +1309,7 @@ private fun watchTrackEnd(track: MediaStreamTrack, onEnd: () -> Unit) {
             (localRenderer as? VideoTrackSink)?.let { sink ->
                 runCatching { screenVideoTrack?.removeSink(sink) }
             }
+            runCatching { screenVideoTrack?.removeSink(livekit.LiveKitLocalScreenShareTrack.sink) }
             
             screenSource?.stop()
             screenSource?.dispose()
@@ -1205,7 +1322,10 @@ private fun watchTrackEnd(track: MediaStreamTrack, onEnd: () -> Unit) {
             if (pConn != null) {
                 // Resume camera if it was enabled
                 if (cameraVideoTrack != null) {
-                    localVideoSender?.replaceTrack(cameraVideoTrack)
+                    localVideoSender?.let { sender ->
+                        clearScreenShareSenderEncoding(sender)
+                        sender.replaceTrack(cameraVideoTrack)
+                    }
                     localVideoTrack = cameraVideoTrack
                     localRenderer?.isScreenShare = false
                     (localRenderer as? VideoTrackSink)?.let { sink ->
@@ -1234,6 +1354,7 @@ private fun watchTrackEnd(track: MediaStreamTrack, onEnd: () -> Unit) {
                 runCatching { livekit.LiveKitNativeMediaSession.unpublishScreenShareAudio() }
                     .onFailure { it.printStackTrace() }
             }
+            streamAudioWanted = false
 
             WindowsAudioDucker.unduckVolumes()
         
@@ -1455,7 +1576,10 @@ private fun watchTrackEnd(track: MediaStreamTrack, onEnd: () -> Unit) {
     override fun getRemoteVideoRenderer(): Any? = remoteRenderer
     override fun getRemoteScreenRenderer(): Any? = if (remoteScreenVideoTrack != null) remoteScreenRenderer else null
 
+    private var streamAudioWanted = false
+
     override fun setStreamAudioEnabled(enabled: Boolean) {
+        streamAudioWanted = enabled
         // Group + cppMedia: system audio rides a dedicated SOURCE_SCREENSHARE_AUDIO
         // track fed by WASAPI loopback inside the native session — no mic mixing.
         if (isGroupCall && livekit.LiveKitFeatureFlags.cppMedia) {
@@ -1549,7 +1673,8 @@ private fun watchTrackEnd(track: MediaStreamTrack, onEnd: () -> Unit) {
         screenCapturer.dispose()
 
         val windowCapturer = dev.onvoid.webrtc.media.video.desktop.WindowCapturer()
-        val windowSources = windowCapturer.desktopSources.map {
+        val windowSources = windowCapturer.desktopSources.mapNotNull {
+            if (!isTaskbarWindow(it.id.toString(), it.title)) return@mapNotNull null
             val title = it.title ?: "Window ${it.id}"
             DesktopSourceModel(it.id.toString(), title, true)
         }
@@ -1662,3 +1787,57 @@ private fun watchTrackEnd(track: MediaStreamTrack, onEnd: () -> Unit) {
 }
 
 actual fun createWebRtcClient(): WebRtcClient = JvmWebRtcClient()
+
+/**
+ * Filters out system tray helpers, background workers, and cloaked windows
+ * so only active taskbar application windows are enumerated.
+ */
+private fun isTaskbarWindow(sourceId: String, title: String?): Boolean {
+    if (!System.getProperty("os.name", "").contains("Windows", ignoreCase = true)) return true
+    val trimmed = title?.trim() ?: ""
+    if (trimmed.isEmpty() || trimmed.equals("Program Manager", true) || trimmed.startsWith("Default IME", true)) {
+        return false
+    }
+    val hwndVal = sourceId.toLongOrNull() ?: return false
+    if (hwndVal <= 0L) return false
+
+    return runCatching {
+        val hwnd = WinDef.HWND(Pointer.createConstant(hwndVal))
+        val user32 = User32.INSTANCE
+        if (!user32.IsWindow(hwnd) || !user32.IsWindowVisible(hwnd)) return@runCatching false
+
+        // Exclude Orbit's own windows to avoid self-capture loops
+        val pid = IntByReference()
+        user32.GetWindowThreadProcessId(hwnd, pid)
+        if (pid.value == Kernel32.INSTANCE.GetCurrentProcessId()) return@runCatching false
+
+        // Exclude tool windows (unless explicitly marked app-window) and owned windows
+        val exStyle = user32.GetWindowLong(hwnd, WinUser.GWL_EXSTYLE).toLong()
+        val isAppWindow = (exStyle and 0x00040000L) != 0L // WS_EX_APPWINDOW
+        if ((exStyle and 0x00000080L) != 0L && !isAppWindow) return@runCatching false // WS_EX_TOOLWINDOW
+        val owner = user32.GetWindow(hwnd, WinDef.DWORD(4L)) // GW_OWNER
+        if (owner != null && Pointer.nativeValue(owner.pointer) != 0L && !isAppWindow) return@runCatching false
+
+        // DWM cloaking (Windows 10/11 suspended apps or other virtual desktop)
+        val cloaked = IntByReference()
+        val hr = DwmapiLib.INSTANCE?.DwmGetWindowAttribute(hwnd, 14, cloaked.pointer, 4) // DWMWA_CLOAKED = 14
+        if (hr?.toInt() == 0 && cloaked.value != 0) return@runCatching false
+
+        // Geometry: reject 0x0 or tiny tray hooks (unless minimized)
+        val rect = WinDef.RECT()
+        if (user32.GetWindowRect(hwnd, rect) && (rect.right - rect.left < 100 || rect.bottom - rect.top < 100)) {
+            if (rect.right - rect.left >= 0 && rect.bottom - rect.top >= 0 && rect.left >= 0) return@runCatching false
+        }
+        true
+    }.getOrDefault(true)
+}
+
+private interface DwmapiLib : com.sun.jna.Library {
+    fun DwmGetWindowAttribute(hwnd: WinDef.HWND, dwAttribute: Int, pvAttribute: Pointer, cbAttribute: Int): com.sun.jna.platform.win32.WinNT.HRESULT
+    companion object {
+        val INSTANCE: DwmapiLib? by lazy {
+            runCatching { Native.load("dwmapi", DwmapiLib::class.java, com.sun.jna.win32.W32APIOptions.DEFAULT_OPTIONS) }.getOrNull()
+        }
+    }
+}
+

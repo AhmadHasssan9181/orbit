@@ -188,8 +188,10 @@ object OrbitApm {
         config.echoCanceller.enforceHighPassFiltering = true
         // HPF stays on independently of NS/AGC (voice-path hygiene).
         config.highPassFilter.enabled = true
-        config.noiseSuppression.enabled = nsEnabled
-        config.noiseSuppression.level = AudioProcessingConfig.NoiseSuppression.Level.MODERATE
+        // WebRTC built-in Wiener filter NS is disabled to eliminate breath-cutting & vocal distortion;
+        // neural noise suppression (DeepFilterNet / RNNoise) is applied via OrbitNoiseSuppression.
+        config.noiseSuppression.enabled = false
+        config.noiseSuppression.level = AudioProcessingConfig.NoiseSuppression.Level.LOW
 
         // AGC1 analog control is meaningless on desktop WASAPI lines; AGC2
         // adaptive digital owns loudness management now.
@@ -198,10 +200,10 @@ object OrbitApm {
         config.gainControllerDigital.enabled = agcEnabled
         config.gainControllerDigital.adaptiveDigital.enabled = agcEnabled
         config.gainControllerDigital.adaptiveDigital.headroomDb = 6.0f
-        config.gainControllerDigital.adaptiveDigital.initialGainDb = 15.0f
-        config.gainControllerDigital.adaptiveDigital.maxGainDb = 40.0f
-        config.gainControllerDigital.adaptiveDigital.maxGainChangeDbPerSecond = 6.0f
-        config.gainControllerDigital.adaptiveDigital.maxOutputNoiseLevelDbfs = -50.0f
+        config.gainControllerDigital.adaptiveDigital.initialGainDb = 0.0f
+        config.gainControllerDigital.adaptiveDigital.maxGainDb = 6.0f
+        config.gainControllerDigital.adaptiveDigital.maxGainChangeDbPerSecond = 2.0f
+        config.gainControllerDigital.adaptiveDigital.maxOutputNoiseLevelDbfs = -60.0f
 
         val preGain = configuredCapturePreGain()
         if (preGain != 1.0) {

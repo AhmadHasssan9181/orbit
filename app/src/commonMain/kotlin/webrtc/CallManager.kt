@@ -2,6 +2,7 @@ package webrtc
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -48,6 +49,7 @@ class CallManager(
     val isGroupCall = MutableStateFlow(false)
     val isLocalVideoEnabled = MutableStateFlow(false)
     val isLocalAudioEnabled = MutableStateFlow(true)
+    val isStreamAudioEnabled = MutableStateFlow(false)
     val hasRemoteStream = MutableStateFlow(false)
     val nativeMediaReadiness = MutableStateFlow<livekit.NativeMediaReadiness?>(null)
 
@@ -60,6 +62,11 @@ class CallManager(
     // value and its deferred teardown re-checks it, so a hangup followed by a
     // quick new call cannot have the old teardown close the new call's media.
     private val callGeneration = java.util.concurrent.atomic.AtomicInteger(0)
+    private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // The quit path runs after the window is already closing, so it cannot rely
+    // on a Compose lifetime scope. Keep the membership-leave job here so the
+    // app entry point can wait for the Matrix PUT before exitApplication().
+    private val pendingMembershipLeave = java.util.concurrent.atomic.AtomicReference<Job?>(null)
 
     private fun beginCall() {
         callGeneration.incrementAndGet()
@@ -108,6 +115,9 @@ class CallManager(
     private val _activeSpeakers = MutableStateFlow<Set<String>>(emptySet())
     val activeSpeakers: StateFlow<Set<String>> = _activeSpeakers
 
+    private val _isLocallySpeaking = MutableStateFlow(false)
+    val isLocallySpeaking: StateFlow<Boolean> = _isLocallySpeaking
+
     // LiveKit identities of remote participants whose mic is muted — drives
     // the mic-off badges on call tiles and voice-channel member rows.
     private val _remoteMicMutedIds = MutableStateFlow<Set<String>>(emptySet())
@@ -129,6 +139,9 @@ class CallManager(
     init {
         scope.launch {
             livekit.liveKitActiveSpeakers().collect { _activeSpeakers.value = it }
+        }
+        scope.launch {
+            livekit.liveKitIsLocallySpeaking().collect { _isLocallySpeaking.value = it }
         }
         scope.launch {
             livekit.liveKitRemoteAudioMuted().collect { _remoteMicMutedIds.value = it }
@@ -228,6 +241,7 @@ class CallManager(
      * values for one setting.
      */
     val duckingStrength = MutableStateFlow(0.8f)
+    val noiseSuppressionEngine = MutableStateFlow("DeepFilterNet")
     val noiseSuppression = MutableStateFlow(true)
     val echoCancellation = MutableStateFlow(true)
     val autoGainControl = MutableStateFlow(true)
@@ -380,7 +394,7 @@ class CallManager(
         private const val DEFAULT_RING_TIMEOUT_MS = 60_000L // js-sdk CALL_TIMEOUT_MS
         private const val TOKEN_FETCH_TIMEOUT_MS = 10_000L
         private const val RETRY_BACKOFF_MS = 1_000L
-        private const val MEMBERSHIP_LEAVE_TIMEOUT_MS = 1_500L
+        private const val MEMBERSHIP_LEAVE_TIMEOUT_MS = 4_000L
     }
 
     init {
@@ -443,11 +457,11 @@ class CallManager(
                 //     => report nobody until CONNECTED.
                 //
                 //  2. A call you are alone in. LiveKit is not silent here, it is
-                //     accurate: `onRemoteParticipantConnected` fires for every
-                //     remote whether or not it publishes media, so an empty set
-                //     really does mean nobody else is in the room. Falling back
-                //     to the Matrix record rendered all 8 stale members in the
-                //     drawer beside a stage that read "No one else is here".
+                //     accurate: the store drops opaque subscriber connections
+                //     that never publish media, so an empty set really does mean
+                //     nobody else is in the room. Falling back to the Matrix
+                //     record rendered all 8 stale members in the drawer beside a
+                //     stage that read "No one else is here".
                 //     => report just yourself.
                 //
                 // Case 1 is separated here rather than inside `visibleUserIds`,
@@ -1335,6 +1349,15 @@ class CallManager(
         livekit.setLiveKitAudioProcessingOptions(ns, ec, agc)
     }
 
+    fun setNoiseSuppressionEngine(engine: String) {
+        noiseSuppressionEngine.value = engine
+        val enabled = engine != "Off"
+        noiseSuppression.value = enabled
+        webRtcClient.setAudioOptions(false, echoCancellation.value, autoGainControl.value)
+        livekit.setLiveKitAudioProcessingOptions(false, echoCancellation.value, autoGainControl.value)
+        livekit.setLiveKitNoiseSuppressionEngine(engine)
+    }
+
     fun toggleVirtualBackground() {
         isVirtualBackgroundEnabled.value = !isVirtualBackgroundEnabled.value
         webRtcClient.isVirtualBackgroundEnabled = isVirtualBackgroundEnabled.value
@@ -1390,15 +1413,17 @@ class CallManager(
             } catch (e: Exception) {
                 println("WARN [CallManager] media key exchange stop failed: ${e.message}")
             }
-            // H2 teardown order: unpublish media (peers stop receiving us
-            // immediately) → membership leave (bounded wait) → close engine →
-            // release devices/peer connection.
-            webRtcClient.stopLocalMedia()
+            // H2 teardown order: announce the native teardown synchronously, then
+            // disconnect, then clean up the P2P-side media state. `stopLocalMedia`
+            // used to run here, before the barrier was even marked: closing the
+            // capture line/factory on the UI thread delayed bridge.disconnect(),
+            // so Element kept showing the participant for ~2s after hangup.
             currentRoom?.let { room -> onGroupCallObserversStop?.invoke(room) }
-            if (notifyRemote && currentRoom != null && currentCall != null) {
+            if (currentRoom != null && currentCall != null) {
                 val room = currentRoom
                 val call = currentCall
-                scope.launch {
+                val leaveGroupCall = onLeaveGroupCall
+                pendingMembershipLeave.set(backgroundScope.launch {
                     // Bound BOTH the wait and the work.
                     //
                     // `withTimeoutOrNull { leave.join() }` bounded only the WAIT: it
@@ -1412,7 +1437,7 @@ class CallManager(
                     // actually ends it. If the PUT is genuinely wedged rather than
                     // slow, the timeout returns and the last line logs it, so the
                     // leak is bounded and visible instead of silent.
-                    val leave = launch { onLeaveGroupCall?.invoke(room, call) }
+                    val leave = launch { leaveGroupCall?.invoke(room, call) }
                     val settled = withTimeoutOrNull(MEMBERSHIP_LEAVE_TIMEOUT_MS) {
                         leave.join()
                         true
@@ -1424,19 +1449,13 @@ class CallManager(
                                 "${MEMBERSHIP_LEAVE_TIMEOUT_MS}ms; cancelled"
                         )
                     }
-                    // The membership-leave hop can burn the full 1.5s budget. If a
-                    // newer call started meanwhile it already built its own
-                    // PeerConnection/session, and closing here would tear THAT
-                    // down and null it out from under the new call.
-                    if (callGeneration.get() != teardownGeneration) {
-                        println(
-                            "WARN [CallManager] endCall teardown superseded by a newer call " +
-                                "(generation $teardownGeneration -> ${callGeneration.get()}); skipping peer teardown"
-                        )
-                        return@launch
-                    }
-                    teardownNativeMedia()
-                }
+                })
+            }
+            if (callGeneration.get() != teardownGeneration) {
+                println(
+                    "WARN [CallManager] endCall teardown superseded by a newer call " +
+                        "(generation $teardownGeneration -> ${callGeneration.get()}); skipping peer teardown"
+                )
             } else {
                 teardownNativeMedia()
             }
@@ -1453,7 +1472,7 @@ class CallManager(
             // camera and no indication of why. A silent call with no error, from
             // hanging up too quickly.
             val teardownGeneration = callGeneration.get()
-            scope.launch {
+            backgroundScope.launch {
                 if (callGeneration.get() != teardownGeneration) {
                     println(
                         "WARN [CallManager] 1:1 endCall teardown superseded by a newer call " +
@@ -1491,6 +1510,7 @@ class CallManager(
         }
         _participantGains.value = emptyMap()
         _activeSpeakers.value = emptySet()
+        _isLocallySpeaking.value = false
         // Per-call identity→profile cache. Identities are per-session, so
         // keeping them would hand the NEXT call's tiles a stranger's avatar
         // whenever the new peer reused a device id.
@@ -1501,6 +1521,7 @@ class CallManager(
         pttPreHoldAudioEnabled = null
         isMinimized.value = false
         _isScreenSharing.value = false
+        isStreamAudioEnabled.value = false
         isVideoCall.value = false
         isLocalVideoEnabled.value = false
         isLocalAudioEnabled.value = true
@@ -1543,12 +1564,34 @@ private fun teardownNativeMedia() {
         // way to guarantee that is to announce the teardown before it starts
         // rather than after. Runs on the UI thread and is a field assignment.
         livekit.markNativeTeardownStarting()
-        scope.launch(Dispatchers.IO) {
+        backgroundScope.launch {
             runCatching { livekit.disconnectFromLiveKit(userInitiated = true) }
                 .onFailure { println("WARN [CallManager] native disconnect during teardown failed: ${it.message}") }
+            // Group calls: native disconnect has already stopped capture and
+            // unpublished the tracks. webRtcClient.endCall() then clears the
+            // P2P-side media state (it calls stopLocalMedia itself), keeping the
+            // blocking device/factory teardown off both the UI thread and the
+            // path between hangup and LiveKit seeing us leave.
             runCatching { webRtcClient.endCall() }
                 .onFailure { println("WARN [CallManager] P2P endCall during teardown failed: ${it.message}") }
         }
+    }
+
+    /**
+     * Waits for the membership leave launched by [endCall] to finish.
+     *
+     * Only the app-quit path uses this: `exitApplication()` tears the JVM down
+     * without waiting for background coroutines, which left Orbit's m.call.member
+     * in room state and kept the account visible in Element's call roster after
+     * the process was gone. Bounded so a wedged homeserver cannot hold the app
+     * open past the exit watchdog.
+     */
+    suspend fun awaitMembershipLeave(timeoutMs: Long = MEMBERSHIP_LEAVE_TIMEOUT_MS + 500L): Boolean {
+        val leave = pendingMembershipLeave.getAndSet(null) ?: return true
+        return withTimeoutOrNull(timeoutMs) {
+            leave.join()
+            true
+        } ?: false
     }
 
     /**
@@ -1564,7 +1607,7 @@ private fun teardownNativeMedia() {
     fun release() {
         if (released) return
         released = true
-        scope.launch {
+        backgroundScope.launch {
             runCatching { livekit.releaseNativeLiveKitSession() }
                 .onFailure { println("WARN [CallManager] native session release failed: ${it.message}") }
             runCatching { webRtcClient.endCall() }
@@ -1733,6 +1776,7 @@ private fun teardownNativeMedia() {
     }
 
     fun setStreamAudioEnabled(enabled: Boolean) {
+        isStreamAudioEnabled.value = enabled
         webRtcClient.setStreamAudioEnabled(enabled)
     }
 
@@ -1752,18 +1796,10 @@ private fun teardownNativeMedia() {
                     },
                     onError = {
                         println("ERROR: [WebRTC] Failed to create offer for screen share: $it")
-                        // Roll the share back, because it never went out.
-                        //
-                        // Run 48 failed this offer three times and nothing
-                        // noticed: isScreenSharing stayed true, the grid carried on
-                        // drawing a share tile for a share nobody could receive,
-                        // and the capture guard had already blanked Orbit out of
-                        // every capture on the strength of a negotiation that
-                        // never happened. The peer saw nothing; we showed
-                        // ourselves a share.
                         scope.launch {
                             webRtcClient.stopScreenShare()
                             _isScreenSharing.value = false
+                            isStreamAudioEnabled.value = false
                         }
                     }
                 )
@@ -1772,6 +1808,7 @@ private fun teardownNativeMedia() {
     }
 
     fun stopScreenShare() {
+        isStreamAudioEnabled.value = false
         scope.launch(Dispatchers.Default) {
             webRtcClient.stopScreenShare()
             // Trigger re-negotiation to go back to camera (P2P only)

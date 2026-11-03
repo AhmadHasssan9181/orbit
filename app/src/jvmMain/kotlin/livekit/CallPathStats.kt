@@ -4,6 +4,24 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.concurrent.thread
 
 /**
+ * Unconditional stream diagnostics. Unlike [util.OrbitLog.d], these lines are
+ * always emitted and also go to the rolling orbit.log, so a share test matrix
+ * can be read back without the Gradle console.
+ */
+object StreamDiag {
+    fun log(message: String) {
+        val line = "STREAMDIAG $message"
+        util.OrbitLog.emit(line)
+        util.StreamLogFile.write(line)
+        println(line)
+    }
+
+    fun logNative(line: String) {
+        util.StreamLogFile.write(line)
+    }
+}
+
+/**
  * Per-stage counters along the group-call media path (Phase 0 "black box recorder").
  * A daemon thread prints one rate summary every 5 s so every symptom becomes measurable:
  * silence at a stage shows up as that stage's counter stalling while earlier ones advance.
@@ -135,7 +153,7 @@ object CallPathStats {
         // moves first: `poll` returned null, so the mixer delivered nothing for
         // 50 ms. `droppedOldest` is the consumer being too slow (queue overflow).
         // All three at zero is the healthy call.
-        println(
+        StreamDiag.log(
             "STATS [CallPathStats/5s] mic.read=$read stalls=$stalls muted=$muted clippedSamples=$clipped | " +
                 "jni.push ok=$pOk fail=$pFail | play.arrived=$arrived play.played=$played " +
                 "underruns=$underruns starved=$idlePolls droppedOldest=$dropped writeFails=$writeFails | " +

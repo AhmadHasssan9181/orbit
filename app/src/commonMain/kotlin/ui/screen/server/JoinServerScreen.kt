@@ -65,23 +65,22 @@ import ui.screen.call.*
 import ui.screen.media.*
 import ui.screen.main.*
 import ui.icons.TablerIcons
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.layout.ContentScale
+import ui.icons.CameraPlus
 import ui.icons.DeviceGamepad
 import ui.icons.School
 import ui.icons.Stars
 import ui.icons.Users
 import ui.icons.X
-private enum class ServerDialogMode {
-    Join,
-    Create
-}
 
 // ── Concept modal geometry ────────────────────────────────────────────────
-// CreateServerModal.jsx: a 440px card, `border-radius: 8px`, `padding: 24px`,
+// CreateServerModal.jsx: a 440px card, `border-radius: 16px`, `padding: 24px`,
 // sitting on `.modal-overlay` (rgba(0,0,0,0.75) + blur(6px)).
 private val ConceptModalWidth = 440.dp
 
-/** `border-radius: '8px'` on the modal card. */
-private val ConceptModalShape = RoundedCornerShape(8.dp)
+/** `border-radius: '16px'` on the modal card. */
+private val ConceptModalShape = RoundedCornerShape(16.dp)
 
 /**
  * `.menu-item` is 4px, but every template row overrides it inline with
@@ -219,19 +218,18 @@ fun JoinServerScreen(
     onServerJoined: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    var mode by remember { mutableStateOf(ServerDialogMode.Join) }
     var input by remember { mutableStateOf("") }
     var isWorking by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    val isCreateMode = mode == ServerDialogMode.Create
-    // The concept's step: 1 = pick a template, 2 = name the server. Only the
-    // create path has two steps; joining is one field and one button.
     var createStep by remember { mutableStateOf(1) }
+    var isPublicServer by remember { mutableStateOf(false) }
+    var selectedCategory by remember { mutableStateOf("Gaming") }
+    var selectedAvatarBytes by remember { mutableStateOf<ByteArray?>(null) }
+    var isPickingAvatar by remember { mutableStateOf(false) }
+    val colorScheme = MaterialTheme.colorScheme
+    val tokens = rememberCosmicTokens()
 
-    // A real Dialog window, not a Box with a scrim: the overlay version took no
-    // keyboard focus (keystrokes reached the composer behind it), ignored Esc and
-    // ignored clicks outside, and so could not be dismissed at all.
     Dialog(
         onDismissRequest = onClose,
         properties = DialogProperties(
@@ -242,136 +240,24 @@ fun JoinServerScreen(
     ) {
         Box(
             modifier = modifier
-                // width: 440px
                 .width(ConceptModalWidth)
-                // border-radius: 8px + box-shadow: var(--elevation-floating)
-                // (0 16px 32px rgba(0,0,0,0.4)), which is as close as
-                // Compose's elevation model gets — the shape is passed to
-                // `shadow` so the shadow follows the radius instead of drawing
-                // a rectangle behind a rounded card.
-                .shadow(16.dp, ConceptModalShape)
+                .shadow(24.dp, ConceptModalShape)
                 .clip(ConceptModalShape)
-                // background-color: var(--bg-chat)
-                .background(OrbitConceptTheme.chat)
+                .background(colorScheme.surfaceContainerHigh)
+                .border(1.dp, colorScheme.outlineVariant.copy(alpha = 0.5f), ConceptModalShape)
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    // padding: 24px
                     .padding(OrbitSpace.xxl),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // ── Join / Create switch ────────────────────────────
-                //
-                // Two `.menu-item` halves rather than a `TabRow`: the concept
-                // has no tab component, and a Material tab strip drew an
-                // animated underline and a full-width ripple that appear
-                // nowhere in it.
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(OrbitSpace.sm)
-                ) {
-                    ConceptMenuItem(
-                        label = "Join a Server",
-                        selected = !isCreateMode,
-                        onClick = {
-                            mode = ServerDialogMode.Join
-                            input = ""
-                            errorMsg = null
-                        },
-                        enabled = !isWorking,
-                        modifier = Modifier.weight(1f)
-                    )
-                    ConceptMenuItem(
-                        label = "Create My Own",
-                        selected = isCreateMode,
-                        onClick = {
-                            mode = ServerDialogMode.Create
-                            createStep = 1
-                            input = ""
-                            errorMsg = null
-                        },
-                        enabled = !isWorking,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-
-                Spacer(Modifier.height(OrbitSpace.md))
-
-                if (!isCreateMode) {
-                    // ── Join ────────────────────────────────────────
-                    Text(
-                        text = "Join a Server",
-                        style = MaterialTheme.typography.headlineSmall.copy(
-                            color = OrbitConceptTheme.textPrimary,
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 24.sp,
-                            lineHeight = 30.sp
-                        ),
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(bottom = OrbitSpace.sm)
-                    )
-                    Text(
-                        text = "Paste a room alias or an invite to join a server you are not in yet.",
-                        style = MaterialTheme.typography.bodyMedium.copy(
-                            color = OrbitConceptTheme.textMuted,
-                            fontSize = 14.sp
-                        ),
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(bottom = OrbitSpace.xl)
-                    )
-
-                    ConceptInputField(
-                        value = input,
-                        onValueChange = { input = it; errorMsg = null },
-                        placeholder = "#room:server.com",
-                        modifier = Modifier.fillMaxWidth().padding(bottom = OrbitSpace.lg)
-                    )
-
-                    if (errorMsg != null) {
-                        Text(
-                            text = errorMsg!!,
-                            color = ConceptDangerText,
-                            fontSize = 12.sp,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(bottom = OrbitSpace.md)
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        ConceptTextButton(
-                            text = "Cancel",
-                            onClick = onClose,
-                            enabled = !isWorking
-                        )
-                        Spacer(Modifier.weight(1f))
-                        ConceptFilledButton(
-                            text = "Join",
-                            onClick = {
-                                isWorking = true
-                                errorMsg = null
-                                launchJoinOrCreate(
-                                    repository, scope, mode, input.trim(),
-                                    onServerCreated, onServerJoined,
-                                    { errorMsg = it; isWorking = false },
-                                    onClose
-                                )
-                            },
-                            enabled = !isWorking && input.isNotBlank(),
-                            loading = isWorking
-                        )
-                    }
-                } else if (createStep == 1) {
+                if (createStep == 1) {
                     // ── Step 1: templates ─────────────────────────────
                     Text(
                         text = "Create Your Server",
                         style = MaterialTheme.typography.headlineSmall.copy(
-                            color = OrbitConceptTheme.textPrimary,
+                            color = tokens.Text_White,
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 24.sp,
                             lineHeight = 30.sp
@@ -382,7 +268,7 @@ fun JoinServerScreen(
                     Text(
                         text = "Your server is where you and your friends hang out. Make yours and start talking.",
                         style = MaterialTheme.typography.bodyMedium.copy(
-                            color = OrbitConceptTheme.textMuted,
+                            color = tokens.Text_Muted,
                             fontSize = 14.sp
                         ),
                         textAlign = TextAlign.Center,
@@ -396,20 +282,15 @@ fun JoinServerScreen(
                         ConceptMenuItem(
                             label = "Create My Own",
                             icon = { Icon(with(TablerIcons) { Stars }, null, tint = OrbitConceptDark.brand, modifier = Modifier.size(20.dp)) },
-                            onClick = { input = "My Server's Community"; createStep = 2 },
+                            onClick = { input = "My Server"; selectedCategory = "Community"; createStep = 2 },
                             enabled = !isWorking
                         )
 
-                        // "START FROM A TEMPLATE" — font-size 12px, 700,
-                        // --text-muted, uppercase, margin 8px 0 4px. The 8px of
-                        // top margin lands on top of the 8px column gap, so the
-                        // extra space above the label is 8dp and the run-off
-                        // below it is 4dp.
                         Spacer(Modifier.height(OrbitSpace.sm))
                         Text(
                             text = "START FROM A TEMPLATE",
                             style = MaterialTheme.typography.labelSmall.copy(
-                                color = OrbitConceptTheme.textMuted,
+                                color = tokens.Text_Muted,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 12.sp
                             ),
@@ -419,28 +300,41 @@ fun JoinServerScreen(
                         ConceptMenuItem(
                             label = "Gaming",
                             icon = { Icon(with(TablerIcons) { DeviceGamepad }, null, tint = OrbitConceptStatus.online, modifier = Modifier.size(20.dp)) },
-                            onClick = { input = "Gaming Squad's Community"; createStep = 2 },
+                            onClick = { input = "Gaming Squad"; selectedCategory = "Gaming"; createStep = 2 },
                             enabled = !isWorking
                         )
                         ConceptMenuItem(
                             label = "School Club",
                             icon = { Icon(with(TablerIcons) { School }, null, tint = OrbitConceptStatus.idle, modifier = Modifier.size(20.dp)) },
-                            onClick = { input = "Study Group's Community"; createStep = 2 },
+                            onClick = { input = "Study Group"; selectedCategory = "Community"; createStep = 2 },
                             enabled = !isWorking
                         )
                         ConceptMenuItem(
                             label = "Friends",
                             icon = { Icon(with(TablerIcons) { Users }, null, tint = ConceptPink, modifier = Modifier.size(20.dp)) },
-                            onClick = { input = "Friends Hangout's Community"; createStep = 2 },
+                            onClick = { input = "Friends Hangout"; selectedCategory = "Community"; createStep = 2 },
+                            enabled = !isWorking
+                        )
+                    }
+
+                    Spacer(Modifier.height(OrbitSpace.xl))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        ConceptTextButton(
+                            text = "Cancel",
+                            onClick = onClose,
                             enabled = !isWorking
                         )
                     }
                 } else {
-                    // ── Step 2: name it ───────────────────────────────
+                    // ── Step 2: Name and Icon ─────────────────────────
                     Text(
                         text = "Customize Your Server",
                         style = MaterialTheme.typography.headlineSmall.copy(
-                            color = OrbitConceptTheme.textPrimary,
+                            color = tokens.Text_White,
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 24.sp,
                             lineHeight = 30.sp
@@ -449,14 +343,101 @@ fun JoinServerScreen(
                         modifier = Modifier.padding(bottom = OrbitSpace.sm)
                     )
                     Text(
-                        text = "Give your new server a personality with a name.",
+                        text = "Give your new server a personality with a name and an icon.",
                         style = MaterialTheme.typography.bodyMedium.copy(
-                            color = OrbitConceptTheme.textMuted,
+                            color = tokens.Text_Muted,
                             fontSize = 14.sp
                         ),
                         textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(bottom = OrbitSpace.xxl)
+                        modifier = Modifier.padding(bottom = OrbitSpace.lg)
                     )
+
+                    // ── Server Avatar Upload Circle ──
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = OrbitSpace.lg),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier.size(84.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(80.dp)
+                                    .clip(CircleShape)
+                                    .background(colorScheme.surfaceContainerHighest)
+                                    .border(
+                                        width = 1.5.dp,
+                                        color = if (selectedAvatarBytes != null) colorScheme.primary else colorScheme.outlineVariant,
+                                        shape = CircleShape
+                                    )
+                                    .clickable(enabled = !isWorking && !isPickingAvatar) {
+                                        scope.launch {
+                                            isPickingAvatar = true
+                                            val bytes = util.pickImageFile()
+                                            if (bytes != null) {
+                                                selectedAvatarBytes = bytes
+                                            }
+                                            isPickingAvatar = false
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (selectedAvatarBytes != null) {
+                                    coil3.compose.AsyncImage(
+                                        model = selectedAvatarBytes,
+                                        contentDescription = "Server Icon",
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize().clip(CircleShape)
+                                    )
+                                } else {
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = with(TablerIcons) { CameraPlus },
+                                            contentDescription = "Upload Server Icon",
+                                            tint = colorScheme.primary,
+                                            modifier = Modifier.size(28.dp)
+                                        )
+                                        Spacer(Modifier.height(2.dp))
+                                        Text(
+                                            text = "UPLOAD",
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = colorScheme.primary
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Remove icon badge if selected
+                            if (selectedAvatarBytes != null && !isWorking) {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .size(22.dp)
+                                        .clip(CircleShape)
+                                        .background(colorScheme.errorContainer)
+                                        .border(1.dp, colorScheme.error, CircleShape)
+                                        .clickable { selectedAvatarBytes = null },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = with(TablerIcons) { X },
+                                        contentDescription = "Remove icon",
+                                        tint = colorScheme.onErrorContainer,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
 
                     Column(
                         modifier = Modifier.fillMaxWidth(),
@@ -465,7 +446,7 @@ fun JoinServerScreen(
                         Text(
                             text = "SERVER NAME",
                             style = MaterialTheme.typography.labelSmall.copy(
-                                color = OrbitConceptTheme.textMuted,
+                                color = tokens.Text_Muted,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 12.sp
                             )
@@ -473,7 +454,7 @@ fun JoinServerScreen(
                         ConceptInputField(
                             value = input,
                             onValueChange = { input = it; errorMsg = null },
-                            placeholder = "My Server's Community",
+                            placeholder = "My Server",
                             modifier = Modifier.fillMaxWidth()
                         )
 
@@ -483,6 +464,129 @@ fun JoinServerScreen(
                                 color = ConceptDangerText,
                                 fontSize = 12.sp
                             )
+                        }
+
+                        Spacer(Modifier.height(OrbitSpace.sm))
+
+                        Text(
+                            text = "SERVER CATEGORY",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = tokens.Text_Muted,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
+                            )
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            listOf("Gaming", "Tech", "Community", "Music", "Science").forEach { cat ->
+                                val isCatSelected = selectedCategory == cat
+                                Box(
+                                    modifier = Modifier
+                                        .clip(OrbitRadius.xsShape)
+                                        .background(if (isCatSelected) OrbitConceptDark.brand.copy(alpha = 0.2f) else colorScheme.surfaceContainerHighest)
+                                        .border(
+                                            width = if (isCatSelected) 1.5.dp else 1.dp,
+                                            color = if (isCatSelected) OrbitConceptDark.brand else colorScheme.outlineVariant.copy(alpha = 0.5f),
+                                            shape = OrbitRadius.xsShape
+                                        )
+                                        .clickable { selectedCategory = cat }
+                                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                                ) {
+                                    Text(
+                                        text = cat,
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            color = if (isCatSelected) Color.White else tokens.Text_Muted,
+                                            fontWeight = if (isCatSelected) FontWeight.Bold else FontWeight.Normal,
+                                            fontSize = 11.sp
+                                        )
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(Modifier.height(OrbitSpace.sm))
+
+                        Text(
+                            text = "SERVER PRIVACY",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = tokens.Text_Muted,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
+                            )
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(OrbitSpace.sm)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(OrbitRadius.smShape)
+                                    .background(if (!isPublicServer) OrbitConceptDark.brand.copy(alpha = 0.15f) else colorScheme.surfaceContainerHighest)
+                                    .border(
+                                        width = if (!isPublicServer) 1.5.dp else 1.dp,
+                                        color = if (!isPublicServer) OrbitConceptDark.brand else colorScheme.outlineVariant.copy(alpha = 0.5f),
+                                        shape = OrbitRadius.smShape
+                                    )
+                                    .clickable { isPublicServer = false }
+                                    .padding(OrbitSpace.md)
+                            ) {
+                                Column {
+                                    Text(
+                                        text = "Private Server",
+                                        style = MaterialTheme.typography.labelMedium.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (!isPublicServer) Color.White else tokens.Text_White,
+                                            fontSize = 13.sp
+                                        )
+                                    )
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(
+                                        text = "Invite only. No public link.",
+                                        style = MaterialTheme.typography.bodySmall.copy(
+                                            color = tokens.Text_Muted,
+                                            fontSize = 11.sp
+                                        )
+                                    )
+                                }
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(OrbitRadius.smShape)
+                                    .background(if (isPublicServer) OrbitConceptDark.brand.copy(alpha = 0.15f) else colorScheme.surfaceContainerHighest)
+                                    .border(
+                                        width = if (isPublicServer) 1.5.dp else 1.dp,
+                                        color = if (isPublicServer) OrbitConceptDark.brand else colorScheme.outlineVariant.copy(alpha = 0.5f),
+                                        shape = OrbitRadius.smShape
+                                    )
+                                    .clickable { isPublicServer = true }
+                                    .padding(OrbitSpace.md)
+                            ) {
+                                Column {
+                                    Text(
+                                        text = "Public Server",
+                                        style = MaterialTheme.typography.labelMedium.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isPublicServer) Color.White else tokens.Text_White,
+                                            fontSize = 13.sp
+                                        )
+                                    )
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(
+                                        text = "Discoverable in Explore Servers.",
+                                        style = MaterialTheme.typography.bodySmall.copy(
+                                            color = tokens.Text_Muted,
+                                            fontSize = 11.sp
+                                        )
+                                    )
+                                }
+                            }
                         }
                     }
 
@@ -504,10 +608,15 @@ fun JoinServerScreen(
                                 isWorking = true
                                 errorMsg = null
                                 launchJoinOrCreate(
-                                    repository, scope, mode, input.trim(),
-                                    onServerCreated, onServerJoined,
-                                    { errorMsg = it; isWorking = false },
-                                    onClose
+                                    repository = repository,
+                                    scope = scope,
+                                    value = input.trim(),
+                                    onServerCreated = onServerCreated,
+                                    onFailure = { errorMsg = it; isWorking = false },
+                                    onSuccess = onClose,
+                                    isPublic = isPublicServer,
+                                    category = selectedCategory,
+                                    avatarBytes = selectedAvatarBytes
                                 )
                             },
                             enabled = !isWorking && input.isNotBlank(),
@@ -536,8 +645,7 @@ fun JoinServerScreen(
                 Icon(
                     imageVector = with(TablerIcons) { X },
                     contentDescription = "Close",
-                    // --interactive-normal
-                    tint = OrbitConceptDark.textSecondary,
+                    tint = tokens.Text_Muted,
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -546,49 +654,34 @@ fun JoinServerScreen(
 }
 
 /**
- * The one place the create/join Matrix calls live.
- *
- * Extracted verbatim out of the button's onClick so both the Join footer and
- * the Create footer reach the same code. Nothing about the flow changed: create
- * makes the space and then `#general`, join joins and reports the room id.
+ * The one place the create Matrix calls live.
  */
 private fun launchJoinOrCreate(
     repository: OrbitRepository,
     scope: kotlinx.coroutines.CoroutineScope,
-    mode: ServerDialogMode,
     value: String,
     onServerCreated: (String) -> Unit,
-    onServerJoined: (String) -> Unit,
     onFailure: (String) -> Unit,
-    onSuccess: () -> Unit
+    onSuccess: () -> Unit,
+    isPublic: Boolean = false,
+    category: String = "Community",
+    avatarBytes: ByteArray? = null
 ) {
     if (value.isBlank()) return
     scope.launch {
-        val isCreate = mode == ServerDialogMode.Create
-        val result = if (isCreate) {
-            val spaceResult = repository.createSpace(value)
-            val spaceId = spaceResult.getOrNull()
-            if (spaceId != null) {
-                val channelResult = repository.createChannel(spaceId, "general", ChannelType.TEXT)
-                if (channelResult.isSuccess) {
-                    onServerCreated(spaceId)
-                    spaceResult
-                } else {
-                    Result.failure(channelResult.exceptionOrNull() ?: Exception("Failed to create #general"))
-                }
+        val spaceResult = repository.createSpace(value, isPublic = isPublic, category = category, avatarBytes = avatarBytes)
+        val spaceId = spaceResult.getOrNull()
+        if (spaceId != null) {
+            val textResult = repository.createChannel(spaceId, "general", ChannelType.TEXT, isPublic = isPublic)
+            val voiceResult = repository.createChannel(spaceId, "General", ChannelType.VOICE, isPublic = isPublic)
+            if (textResult.isSuccess || voiceResult.isSuccess) {
+                onServerCreated(spaceId)
+                onSuccess()
             } else {
-                spaceResult
+                onFailure(textResult.exceptionOrNull()?.message ?: "Failed to create default channels")
             }
         } else {
-            repository.joinSpace(value).onSuccess { roomId ->
-                onServerJoined(roomId)
-            }
-        }
-        if (result.isSuccess) {
-            onSuccess()
-        } else {
-            onFailure(result.exceptionOrNull()?.message
-                ?: if (isCreate) "Failed to create server" else "Failed to join")
+            onFailure(spaceResult.exceptionOrNull()?.message ?: "Failed to create server")
         }
     }
 }

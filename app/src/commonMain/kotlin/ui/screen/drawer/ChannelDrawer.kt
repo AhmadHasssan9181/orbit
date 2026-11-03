@@ -32,10 +32,15 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ui.icons.TablerIcons
 import ui.icons.ExternalLink
+import ui.icons.Logout
+import ui.icons.Settings
+import ui.icons.Trash
+import ui.screen.server.ServerSettingsDialog
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import repository.MatrixOrbitRepository
@@ -45,9 +50,16 @@ import ui.components.OrbitSearchField
 import ui.icons.OrbitIcons
 import ui.layout.LocalWindowSizeClass
 import ui.model.ChannelCategory
+import ui.model.ChannelType
 import ui.model.OrbitChannel
 import ui.model.OrbitServer
 import ui.model.OrbitUser
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
+import ui.screen.call.ScreenShareDialog
+import ui.screen.call.SoundboardPanel
 import ui.screen.call.VoiceConnectedPanel
 import ui.screen.server.ServerHeader
 import ui.screen.server.ServerMenuEntry
@@ -93,9 +105,15 @@ fun ChannelDrawer(
      */
     friendsTabActive: Boolean = false,
     onSelectFriendsTab: (() -> Unit)? = null,
+    onServerLeft: (() -> Unit)? = null,
+    drawerWidth: Dp = OrbitConceptMetrics.sidebarWidth,
     modifier: Modifier = Modifier
 ) {
     var showInviteDialog by remember { mutableStateOf(false) }
+    var showServerSettings by remember { mutableStateOf(false) }
+    var showLeaveDialog by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     var channelQuery by remember(server.id) { mutableStateOf("") }
     val t = rememberCosmicTokens()
     // CompactAppLayout hands this drawer `weight(1f)` and expects it to span the
@@ -112,7 +130,48 @@ fun ChannelDrawer(
     }
 
     if (showInviteDialog) {
-        InviteDialog(server = server, onDismiss = { showInviteDialog = false })
+        InviteDialog(server = server, repository = repository, onDismiss = { showInviteDialog = false })
+    }
+    if (showServerSettings) {
+        ServerSettingsDialog(server = server, repository = repository, onClose = { showServerSettings = false })
+    }
+    if (showLeaveDialog) {
+        LeaveServerDialog(
+            server = server,
+            onDismiss = { showLeaveDialog = false },
+            onConfirmLeave = {
+                scope.launch {
+                    val result = repository?.leaveSpace(server.id)
+                    showLeaveDialog = false
+                    if (result?.isSuccess == true) {
+                        OrbitNotices.info("Left ${server.name}")
+                        onServerLeft?.invoke()
+                    } else {
+                        val msg = result?.exceptionOrNull()?.message ?: "Failed to leave server"
+                        OrbitNotices.error(msg)
+                    }
+                }
+            }
+        )
+    }
+    if (showDeleteDialog) {
+        DeleteServerDialog(
+            server = server,
+            onDismiss = { showDeleteDialog = false },
+            onConfirmDelete = {
+                scope.launch {
+                    val result = repository?.deleteSpace(server.id)
+                    showDeleteDialog = false
+                    if (result?.isSuccess == true) {
+                        OrbitNotices.info("Deleted ${server.name}")
+                        onServerLeft?.invoke()
+                    } else {
+                        val msg = result?.exceptionOrNull()?.message ?: "Failed to delete server"
+                        OrbitNotices.error(msg)
+                    }
+                }
+            }
+        )
     }
 
     Column(
@@ -132,7 +191,7 @@ fun ChannelDrawer(
                     // cleanly at the panel border instead of bleeding across the
                     // chat area beside it.
                     Modifier
-                        .width(OrbitConceptMetrics.sidebarWidth)
+                        .width(drawerWidth)
                         .clipToBounds()
                 }
             )
@@ -140,21 +199,34 @@ fun ChannelDrawer(
             .background(conceptSidebarSurface())
     ) {
         // `.server-header` with the concept's dropdown behind it.
-        //
-        // The concept's menu is Server Boost / Invite People / Server Settings /
-        // Notification Settings / Leave Server — all Discord product actions.
-        // Orbit can honestly perform one of those (Invite) and, where the layout
-        // offers it, Create a room. The rest are not rows of "unavailable": they
-        // are not rendered at all, because a menu item that cannot do anything is
-        // worse than a missing one.
         val serverMenuEntries: List<ServerMenuEntry> = if (server.isDM) {
             emptyList()
         } else {
             buildList {
                 add(ServerMenuEntry(label = "Invite people") { showInviteDialog = true })
+                add(
+                    ServerMenuEntry(
+                        label = "Server Settings",
+                        icon = with(TablerIcons) { Settings }
+                    ) { showServerSettings = true }
+                )
                 onCreateRoomClick?.let { createRoom ->
                     add(ServerMenuEntry(label = "Create a room") { createRoom() })
                 }
+                add(
+                    ServerMenuEntry(
+                        label = "Leave Server",
+                        icon = with(TablerIcons) { Logout },
+                        danger = true
+                    ) { showLeaveDialog = true }
+                )
+                add(
+                    ServerMenuEntry(
+                        label = "Delete Server",
+                        icon = with(TablerIcons) { Trash },
+                        danger = true
+                    ) { showDeleteDialog = true }
+                )
             }
         }
         ServerHeader(
@@ -180,7 +252,7 @@ fun ChannelDrawer(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = OrbitSpace.sm, vertical = 1.dp),
+                    .padding(horizontal = 12.dp, vertical = 1.dp),
                 horizontalArrangement = Arrangement.End
             ) {
                 androidx.compose.material3.Text(
@@ -205,7 +277,7 @@ fun ChannelDrawer(
 
         if (server.isDM) {
             val callManager = LocalCallManager.current
-            Column(modifier = Modifier.padding(horizontal = OrbitSpace.sm, vertical = OrbitSpace.sm)) {
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = OrbitSpace.sm)) {
                 OrbitSearchField(
                     value = channelQuery,
                     onValueChange = { channelQuery = it },
@@ -226,7 +298,7 @@ fun ChannelDrawer(
                 modifier = Modifier.weight(1f)
             )
         } else {
-            Column(modifier = Modifier.padding(horizontal = OrbitSpace.sm, vertical = OrbitSpace.xs)) {
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = OrbitSpace.xs)) {
                 OrbitSearchField(
                     value = channelQuery,
                     onValueChange = { channelQuery = it },
@@ -244,6 +316,17 @@ fun ChannelDrawer(
                 currentUser = currentUser,
                 repository = repository,
                 unreadCounts = unreadCounts,
+                spaceId = server.id,
+                onChannelDeleted = { deletedId ->
+                    if (selectedChannelId == deletedId) {
+                        val textChannels = channels.filter { it.type == ChannelType.TEXT && it.id != deletedId }
+                        val target = textChannels.firstOrNull { it.name.equals("general", ignoreCase = true) }
+                            ?: textChannels.firstOrNull()
+                        if (target != null) {
+                            onChannelClick(target.id)
+                        }
+                    }
+                },
                 // Opening the room of a call you are IN gives the room the main
                 // column, and the call carries on in the status pill. Reading the
                 // conversation you are calling from is a normal thing to want and
@@ -325,56 +408,114 @@ fun ChannelDrawer(
         val activeCallState by activeCallStateFlow.collectAsState(initial = webrtc.CallState.IDLE)
         val inCall = activeCallState == webrtc.CallState.CONNECTED || activeCallState == webrtc.CallState.CONNECTING
 
-        if (inCall && activeCallManager != null) {
-            val isLocalAudioEnabled by activeCallManager.isLocalAudioEnabled.collectAsState()
-            val isLocalVideoEnabled by activeCallManager.isLocalVideoEnabled.collectAsState()
-            val isScreenSharing by activeCallManager.isScreenSharing.collectAsState()
-            val activeRoomId by activeCallManager.activeRoomIdFlow.collectAsState()
-            val activeChannelName = channels.find { it.id == activeRoomId }?.name?.let { "#" }
-                ?: server.name.ifBlank { "Voice Connected" }
-            val displayCallMembers by (activeCallManager.displayCallMembers ?: flowOf(emptyList())).collectAsState(emptyList())
+        var showScreenShareDialog by remember { mutableStateOf(false) }
+        var showSoundboard by remember { mutableStateOf(false) }
 
-            VoiceConnectedPanel(
-                channelName = activeChannelName,
-                participantCount = displayCallMembers.size.coerceAtLeast(1),
-                isMuted = !isLocalAudioEnabled,
-                isScreenSharing = isScreenSharing,
-                isVideoEnabled = isLocalVideoEnabled,
-                onToggleMute = { activeCallManager.toggleMute(isLocalAudioEnabled) },
-                onToggleScreenShare = {
-                    if (isScreenSharing) activeCallManager.stopScreenShare() else activeCallManager.expandCallSurface()
-                },
-                onToggleCamera = { activeCallManager.toggleVideo(!isLocalVideoEnabled) },
-                onToggleSoundboard = { activeCallManager.expandCallSurface() },
-                onDisconnect = { activeCallManager.endCall() },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        role = Role.Button,
-                        onClickLabel = "Return to call",
-                        onClick = { activeCallManager.expandCallSurface() }
-                    )
+        LaunchedEffect(inCall) {
+            if (!inCall) {
+                showScreenShareDialog = false
+                showSoundboard = false
+            }
+        }
+
+        if (showScreenShareDialog && activeCallManager != null) {
+            ScreenShareDialog(
+                callManager = activeCallManager,
+                onDismiss = { showScreenShareDialog = false },
+                onSourceSelected = { source ->
+                    activeCallManager.startScreenShare(source)
+                    showScreenShareDialog = false
+                }
             )
         }
-        MiniScreenPreviewSlot(
-            callManager = LocalCallManager.current,
-            modifier = Modifier.fillMaxWidth()
-        )
 
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(1.dp)
-                .background(t.Separator.copy(alpha = 0.25f))
-        )
+        if (showSoundboard && activeCallManager != null) {
+            Popup(
+                alignment = Alignment.BottomStart,
+                offset = IntOffset(x = 248, y = -20),
+                onDismissRequest = { showSoundboard = false },
+                properties = PopupProperties(focusable = true)
+            ) {
+                SoundboardPanel(
+                    callManager = activeCallManager,
+                    onDismiss = { showSoundboard = false }
+                )
+            }
+        }
+
+        val voiceContent: (@Composable () -> Unit)? = if (inCall && activeCallManager != null) {
+            {
+                val isLocalAudioEnabled by activeCallManager.isLocalAudioEnabled.collectAsState()
+                val isLocalVideoEnabled by activeCallManager.isLocalVideoEnabled.collectAsState()
+                val isScreenSharing by activeCallManager.isScreenSharing.collectAsState()
+                val activeRoomId by activeCallManager.activeRoomIdFlow.collectAsState()
+                val rawChannelName = channels.find { it.id == activeRoomId }?.name?.let {
+                    if (it.startsWith("#")) it else "#$it"
+                }
+                val activeChannelName = if (rawChannelName != null && server.name.isNotBlank()) {
+                    "$rawChannelName / ${server.name}"
+                } else {
+                    rawChannelName ?: server.name.ifBlank { "Voice Connected" }
+                }
+                val displayCallMembers by (activeCallManager.displayCallMembers ?: flowOf(emptyList())).collectAsState(emptyList())
+
+                val callState by activeCallManager.callState.collectAsState()
+                val selfNudgeRecovery by activeCallManager.selfNudgeRecovery.collectAsState()
+                val connectionQualityMap by activeCallManager.remoteConnectionQuality.collectAsState()
+                val validSamples = remember(connectionQualityMap) {
+                    connectionQualityMap.values.filter { it.rttMs >= 0 }
+                }
+                val currentPing = when {
+                    callState == webrtc.CallState.CONNECTING || selfNudgeRecovery -> -1L
+                    validSamples.isNotEmpty() -> validSamples.map { it.rttMs }.average().toLong()
+                    else -> 28L
+                }
+                val currentBars = when {
+                    callState == webrtc.CallState.CONNECTING || selfNudgeRecovery -> 3
+                    validSamples.isNotEmpty() -> validSamples.minOf { it.bars }
+                    else -> 3
+                }
+
+                VoiceConnectedPanel(
+                    channelName = activeChannelName,
+                    participantCount = displayCallMembers.size.coerceAtLeast(1),
+                    isMuted = !isLocalAudioEnabled,
+                    isScreenSharing = isScreenSharing,
+                    isVideoEnabled = isLocalVideoEnabled,
+                    isSoundboardOpen = showSoundboard,
+                    pingMs = currentPing,
+                    connectionBars = currentBars,
+                    onToggleMute = { activeCallManager.toggleMute(isLocalAudioEnabled) },
+                    onToggleScreenShare = {
+                        if (isScreenSharing) {
+                            activeCallManager.stopScreenShare()
+                        } else {
+                            showScreenShareDialog = true
+                        }
+                    },
+                    onToggleCamera = { activeCallManager.toggleVideo(!isLocalVideoEnabled) },
+                    onToggleSoundboard = { showSoundboard = !showSoundboard },
+                    onDisconnect = {
+                        showSoundboard = false
+                        showScreenShareDialog = false
+                        activeCallManager.endCall()
+                    },
+                    onReturnToCall = { activeCallManager.expandCallSurface() },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                MiniScreenPreviewSlot(
+                    callManager = activeCallManager,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        } else null
 
         val drawerScope = rememberCoroutineScope()
         val drawerSettings = remember { SettingsManager() }
         UserProfileBar(
             user = currentUser,
             onSettingsClick = onOpenSettings ?: {},
+            modifier = Modifier.fillMaxWidth(),
             onStatusSelected = if (repository != null) { status ->
                 drawerScope.launch {
                     // The local setting was written even when the presence
@@ -385,7 +526,8 @@ fun ChannelDrawer(
                         repository.setPresence(status)
                     }.onSuccess { drawerSettings.setMyStatus(status.name) }
                 }
-            } else null
+            } else null,
+            voiceContent = voiceContent
         )
     }
 }

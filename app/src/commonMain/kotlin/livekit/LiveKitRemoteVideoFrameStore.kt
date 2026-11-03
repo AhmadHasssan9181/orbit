@@ -3,6 +3,7 @@ package livekit
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 data class LiveKitRemoteVideoFrame(
@@ -102,6 +103,7 @@ object LiveKitRemoteVideoFrameStore {
     /** Track sid -> participant identity, for a share with no track behind it. */
     fun trackStuck(participantIdentity: String, trackSid: String) {
         if (trackSid.isBlank()) return
+        markPublishing(participantIdentity)
         if (_stuckTracks.value.containsKey(trackSid)) return
         _stuckTracks.value = _stuckTracks.value + (trackSid to participantIdentity)
     }
@@ -112,8 +114,21 @@ object LiveKitRemoteVideoFrameStore {
     }
     private val _framesByTrack = MutableStateFlow<Map<String, LiveKitRemoteVideoFrame>>(emptyMap())
     val framesByTrack: StateFlow<Map<String, LiveKitRemoteVideoFrame>> = _framesByTrack
+    private val _rawRemoteParticipants = MutableStateFlow<Set<String>>(emptySet())
+    val rawRemoteParticipants: StateFlow<Set<String>> = _rawRemoteParticipants
     private val _remoteParticipants = MutableStateFlow<Set<String>>(emptySet())
     val remoteParticipants: StateFlow<Set<String>> = _remoteParticipants
+    private val publishingParticipants = ConcurrentHashMap.newKeySet<String>()
+
+    private fun isDisplayable(identity: String): Boolean =
+        identity in publishingParticipants || CallRosterReconciliation.userIdOf(identity) != null
+
+    private fun markPublishing(identity: String) {
+        if (identity.isBlank()) return
+        publishingParticipants.add(identity)
+        _rawRemoteParticipants.update { if (identity in it) it else it + identity }
+        _remoteParticipants.update { if (identity in it) it else it + identity }
+    }
 
     // LiveKit identities whose remote mic track is currently muted. Fed from
     // the native room delegate (initial state at subscribe + TrackMuted/Unmuted).
@@ -258,11 +273,16 @@ object LiveKitRemoteVideoFrameStore {
 
     fun participantConnected(participantIdentity: String) {
         if (participantIdentity.isBlank()) return
-        _remoteParticipants.update { it + participantIdentity }
+        _rawRemoteParticipants.update { it + participantIdentity }
+        if (isDisplayable(participantIdentity)) {
+            _remoteParticipants.update { it + participantIdentity }
+        }
     }
 
     fun participantDisconnected(participantIdentity: String) {
         if (participantIdentity.isBlank()) return
+        publishingParticipants.remove(participantIdentity)
+        _rawRemoteParticipants.update { it - participantIdentity }
         _remoteParticipants.update { it - participantIdentity }
         _remoteAudioMuted.update { it - participantIdentity }
         _connectionQuality.update { it - participantIdentity }
@@ -301,6 +321,7 @@ object LiveKitRemoteVideoFrameStore {
         lossPct: Double
     ) {
         if (participantIdentity.isBlank()) return
+        markPublishing(participantIdentity)
         _connectionQuality.update {
             it + (
                 participantIdentity to ConnectionQualitySample(
@@ -314,6 +335,7 @@ object LiveKitRemoteVideoFrameStore {
 
     fun remoteAudioMuteChanged(participantIdentity: String, muted: Boolean) {
         if (participantIdentity.isBlank()) return
+        markPublishing(participantIdentity)
         _remoteAudioMuted.update { current ->
             val updated = if (muted) current + participantIdentity else current - participantIdentity
             if (updated == current) current else updated
@@ -335,6 +357,7 @@ object LiveKitRemoteVideoFrameStore {
      */
     fun trackAnnounced(participantIdentity: String, trackSid: String, trackSource: String = "") {
         if (trackSid.isBlank()) return
+        markPublishing(participantIdentity)
         // An announcement is native telling us this track exists, which is exactly
         // what clears a stop tombstone: the track is back, so frames for it are
         // wanted again.
@@ -353,6 +376,7 @@ object LiveKitRemoteVideoFrameStore {
     }
 
     fun trackStarted(participantIdentity: String, trackSid: String, trackSource: String = "", trackName: String = "") {
+        markPublishing(participantIdentity)
         // A track existing at all beats a tombstone: this is the re-subscribe path,
         // and leaving the tombstone in place would make updateFrame drop the frames
         // for a track that is demonstrably live again.
@@ -363,7 +387,6 @@ object LiveKitRemoteVideoFrameStore {
         if (_stuckTracks.value.containsKey(trackSid)) {
             _stuckTracks.value = _stuckTracks.value - trackSid
         }
-        participantConnected(participantIdentity)
         _activeTracks.update {
             it + (
                 trackSid to LiveKitRemoteVideoTrackState(
@@ -627,7 +650,7 @@ object LiveKitRemoteVideoFrameStore {
         var framesThisCall = 0L
         // Captured before the reset, because after it there is nothing left to
         // count. See the WARN below for why this is captured at all.
-        val participantsLost = _remoteParticipants.value.size
+        val participantsLost = _rawRemoteParticipants.value.size
         val tracksLost = _activeTracks.value.size
         synchronized(commitLock) {
             if (_latestFrame.value != null || activeTrackSid != null) {
@@ -638,7 +661,9 @@ object LiveKitRemoteVideoFrameStore {
             synchronized(stoppedTracks) { stoppedTracks.clear() }
             _activeTracks.value = emptyMap()
             _framesByTrack.value = emptyMap()
+            _rawRemoteParticipants.value = emptySet()
             _remoteParticipants.value = emptySet()
+            publishingParticipants.clear()
             _remoteAudioMuted.value = emptySet()
             _connectionQuality.value = emptyMap()
             _stuckTracks.value = emptyMap()

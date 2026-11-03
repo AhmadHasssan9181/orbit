@@ -89,11 +89,32 @@ class SettingsManager {
     val pushToTalkKeybind = flowSettings.getStringFlow("pushToTalkKeybind", "Unassigned")
     fun setPushToTalkKeybind(value: String) = settings.putString("pushToTalkKeybind", value)
     
+    val noiseSuppressionEngine = flowSettings.getStringFlow("noiseSuppressionEngine", "DeepFilterNet")
+    fun setNoiseSuppressionEngine(value: String) {
+        settings.putString("noiseSuppressionEngine", value)
+        val active = value != "Off"
+        settings.putBoolean("noiseSuppression", active)
+        settings.putBoolean("orbitZeroAiNoiseSuppression", active && value == "DeepFilterNet")
+    }
+
     val orbitZeroAiNoiseSuppression = flowSettings.getBooleanFlow("orbitZeroAiNoiseSuppression", true)
-    fun setOrbitZeroAiNoiseSuppression(value: Boolean) = settings.putBoolean("orbitZeroAiNoiseSuppression", value)
+    fun setOrbitZeroAiNoiseSuppression(value: Boolean) {
+        settings.putBoolean("orbitZeroAiNoiseSuppression", value)
+        setNoiseSuppressionEngine(if (value) "DeepFilterNet" else "RNNoise")
+    }
     
     val noiseSuppression = flowSettings.getBooleanFlow("noiseSuppression", true)
-    fun setNoiseSuppression(value: Boolean) = settings.putBoolean("noiseSuppression", value)
+    fun setNoiseSuppression(value: Boolean) {
+        settings.putBoolean("noiseSuppression", value)
+        if (!value) {
+            settings.putString("noiseSuppressionEngine", "Off")
+        } else {
+            val curr = settings.getString("noiseSuppressionEngine", "DeepFilterNet")
+            if (curr == "Off") {
+                settings.putString("noiseSuppressionEngine", "DeepFilterNet")
+            }
+        }
+    }
     
     val echoCancellation = flowSettings.getBooleanFlow("echoCancellation", true)
     fun setEchoCancellation(value: Boolean) = settings.putBoolean("echoCancellation", value)
@@ -123,7 +144,10 @@ class SettingsManager {
     val screenShareFps = flowSettings.getIntFlow("screenShareFps", 30)
     fun setScreenShareFps(value: Int) = settings.putInt("screenShareFps", value)
     fun screenShareFpsSync(): Int = settings.getInt("screenShareFps", 30)
-    
+
+    val screenShareAudio = flowSettings.getBooleanFlow("screenShareAudio", true)
+    fun setScreenShareAudio(value: Boolean) = settings.putBoolean("screenShareAudio", value)
+    fun screenShareAudioSync(): Boolean = settings.getBoolean("screenShareAudio", true)
     
     val audioBitrate = flowSettings.getFloatFlow("audioBitrate", 64f)
     fun setAudioBitrate(value: Float) = settings.putFloat("audioBitrate", value)

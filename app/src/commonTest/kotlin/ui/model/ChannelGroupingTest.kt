@@ -66,13 +66,16 @@ class ChannelGroupingTest {
     }
 
     @Test
-    fun `a space with no server categories is ONE group, not two`() {
+    fun `a space with no server categories separates text and voice channels into TEXT CHANNELS and VOICE CHANNELS`() {
         val groups = ChannelGrouping.group(
             listOf(text("a", "General"), text("b", "random"), voice("c", "Lounge"))
         )
 
-        assertEquals(1, groups.size, "no Text/Voice split: the drawer had one heading per kind of room")
-        assertEquals(listOf("c", "b", "a").size, groups[0].channels.size)
+        assertEquals(2, groups.size, "uncategorized space separates text and voice channels")
+        assertEquals("TEXT CHANNELS", groups[0].label)
+        assertEquals(listOf("a", "b"), groups[0].channels.map { it.id })
+        assertEquals("VOICE CHANNELS", groups[1].label)
+        assertEquals(listOf("c"), groups[1].channels.map { it.id })
     }
 
     @Test
@@ -145,9 +148,9 @@ class ChannelGroupingTest {
         val emitted = ChannelGrouping.group(listOf(quiet, live)).flatMap { it.channels }
 
         assertEquals(
-            listOf("Alpha", "Zulu"),
+            listOf("Zulu", "Alpha"),
             emitted.map { it.name },
-            "sorting live calls to the top makes the list jump under the user's cursor"
+            "text channels group before voice channels and live call state does not alter channel order"
         )
     }
 

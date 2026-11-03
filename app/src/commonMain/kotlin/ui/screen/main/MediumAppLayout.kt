@@ -21,8 +21,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import ui.components.OrbitMessageSkeleton
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.Alignment
 import ui.icons.*
+import ui.components.VerticalResizeHandle
+import androidx.compose.ui.platform.LocalDensity
 import ui.theme.*
 
 /**
@@ -66,6 +67,8 @@ fun MediumLayout(
     // The rail's compass tile. `ServerRail` has always taken an
     // `onExploreClick` and was never given one, so the tile was a control that
     // did nothing.
+    val density = LocalDensity.current
+    var sidebarWidth by remember { mutableStateOf(220.dp) }
     var showExplore by remember { mutableStateOf(false) }
 
     val categories = remember(channels) {
@@ -116,7 +119,16 @@ fun MediumLayout(
                         onOpenRolesClick = onOpenRoles,
                         friendsTabActive = friendsTabActive,
                         onSelectFriendsTab = onSelectFriendsTab,
-                        modifier = Modifier.width(220.dp).fillMaxHeight()
+                        onServerLeft = { onServerClick("dm") },
+                        drawerWidth = sidebarWidth,
+                        modifier = Modifier.fillMaxHeight()
+                    )
+
+                    VerticalResizeHandle(
+                        onDragDelta = { deltaPx ->
+                            val deltaDp = with(density) { deltaPx.toDp() }
+                            sidebarWidth = (sidebarWidth + deltaDp).coerceIn(180.dp, 450.dp)
+                        }
                     )
 
                     val selectedChannel = channels.find { it.id == selectedChannelId }

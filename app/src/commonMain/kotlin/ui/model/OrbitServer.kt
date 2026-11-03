@@ -14,7 +14,8 @@ data class OrbitServer(
     val description: String = "",
     val isDM: Boolean = false,
     val avatarUrl: String? = null,
-    val bannerUrl: String? = null
+    val bannerUrl: String? = null,
+    val canonicalAlias: String? = null
 )
 
 /**
@@ -31,3 +32,14 @@ fun categoryDisplayName(categoryId: String): String = when (categoryId.lowercase
     "dm", "dms" -> "Direct Messages"
     else -> categoryId.replaceFirstChar { it.uppercase() }
 }
+
+/**
+ * An incoming invite to join a server/space.
+ */
+data class ServerInvite(
+    val spaceId: String,
+    val name: String,
+    val avatarUrl: String? = null,
+    val inviterId: String? = null
+)
+

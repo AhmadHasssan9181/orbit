@@ -1,5 +1,7 @@
 package ui.screen.main
 
+import ui.components.OrbitAvatarImage
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -330,6 +332,7 @@ fun CompactServerList(
                 onOpenSettings = onOpenSettings,
                 onCreateRoomClick = onCreateRoom,
                 onOpenRolesClick = onOpenRoles,
+                onServerLeft = { onServerSelect("dm") },
                 modifier = Modifier.weight(1f)
             )
         } else {
@@ -503,8 +506,8 @@ fun CompactProfilePane(currentUser: OrbitUser?, onOpenSettings: () -> Unit) {
             contentAlignment = Alignment.Center
         ) {
             if (currentUser?.avatarUrl != null) {
-                coil3.compose.AsyncImage(
-                    model = currentUser.avatarUrl,
+                OrbitAvatarImage(
+                    url = currentUser.avatarUrl!!,
                     contentDescription = currentUser.displayName,
                     contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()

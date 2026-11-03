@@ -9,30 +9,34 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asComposeImageBitmap
-import androidx.compose.ui.graphics.toComposeImageBitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.withContext
-import java.awt.image.BufferedImage
-import java.awt.image.DataBufferInt
 import java.util.concurrent.atomic.AtomicReference
 import livekit.LiveKitLocalVideoFrame
 import livekit.LiveKitRemoteVideoFrame
+import org.jetbrains.skia.Bitmap
+import org.jetbrains.skia.ColorAlphaType
+import org.jetbrains.skia.ColorType
+import org.jetbrains.skia.ImageInfo
 
-// RGBA→BufferedImage conversion MUST NOT run inside composition: a 1080p frame
-// is two million pixels of per-pixel work on the Compose main thread, which
-// starves the UI loop completely (window stops painting while audio keeps
-// flowing). Each tile instead owns a conflated Channel<Unit> plus a single
-// long-lived collector coroutine: the LaunchedEffect(frame) only signals "newer
-// data is available", and the collector keeps at most one conversion in flight,
-// so a slow conversion degrades framerate instead of piling up work on
-// Dispatchers.Default.
+// Frame conversion MUST NOT run inside composition: a 1080p frame is two
+// million pixels, and the old implementation walked every pixel twice (RGBA ->
+// BufferedImage -> ARGB bytes) before Compose could draw it. That per-pixel
+// work was the real reason 60 fps shares starved audio. Skia can consume the
+// RGBA buffer directly: installPixels copies it into a Bitmap and
+// asComposeImageBitmap wraps that Bitmap without a colour conversion loop.
+//
+// Each tile still owns a conflated Channel<Unit> plus one long-lived collector:
+// LaunchedEffect(frame) only signals "newer data is available" and the
+// collector keeps at most one conversion in flight, so a slow frame degrades
+// framerate instead of piling up work.
 //
 // Each produced Skia ImageBitmap owns native memory (~8 MB at 1080p) and this
 // runs per frame per tile. See the note below rememberConvertedRgbaFrame for
 // why those are reclaimed by skiko's Cleaner rather than closed explicitly.
 
-internal fun rgbaToBufferedImage(
+internal fun rgbaToImageBitmap(
     buffer: ByteArray,
     width: Int,
     height: Int,
@@ -40,52 +44,43 @@ internal fun rgbaToBufferedImage(
     strideY: Int,
     label: String,
     trackSid: String
-): BufferedImage {
-    val image = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
-    val pixels = (image.raster.dataBuffer as DataBufferInt).data
+): ImageBitmap? {
     val rowStride = if (strideY > 0) strideY else width * 4
-    val minimumBytes = if (height == 0) 0 else ((height - 1) * rowStride) + (width * 4)
-    if (format != 0 || buffer.size < minimumBytes) {
+    val minimumBytes = if (height <= 0) 0 else ((height - 1) * rowStride) + (width * 4)
+    if (format != 0 || width <= 0 || height <= 0 || buffer.size < minimumBytes) {
         util.OrbitLog.w(
             "OrbitCallUI",
             "unsupported $label frame layout trackSid=$trackSid " +
                 "format=$format width=$width height=$height strideY=$strideY bytes=${buffer.size}"
         )
-        return image
+        return null
     }
 
-    var pixelIndex = 0
-    for (y in 0 until height) {
-        var byteIndex = y * rowStride
-        for (x in 0 until width) {
-            val r = buffer[byteIndex].toInt() and 0xFF
-            val g = buffer[byteIndex + 1].toInt() and 0xFF
-            val b = buffer[byteIndex + 2].toInt() and 0xFF
-            val a = buffer[byteIndex + 3].toInt() and 0xFF
-            pixels[pixelIndex] = (a shl 24) or (r shl 16) or (g shl 8) or b
-            pixelIndex += 1
-            byteIndex += 4
-        }
+    val info = ImageInfo(width, height, ColorType.RGBA_8888, ColorAlphaType.UNPREMUL)
+    val bitmap = Bitmap()
+    if (!bitmap.installPixels(info, buffer, rowStride)) {
+        bitmap.close()
+        return null
     }
-    return image
+    return bitmap.asComposeImageBitmap()
 }
 
 @Composable
 internal fun rememberRemoteFrameImage(frame: LiveKitRemoteVideoFrame?): ImageBitmap? =
     rememberConvertedRgbaFrame(frame) { f ->
-        rgbaToBufferedImage(f.buffer, f.width, f.height, f.format, f.strideY, "remote", f.trackSid)
+        rgbaToImageBitmap(f.buffer, f.width, f.height, f.format, f.strideY, "remote", f.trackSid)
     }
 
 @Composable
 internal fun rememberLocalFrameImage(frame: LiveKitLocalVideoFrame?): ImageBitmap? =
     rememberConvertedRgbaFrame(frame) { f ->
-        rgbaToBufferedImage(f.buffer, f.width, f.height, f.format, f.strideY, "local", "preview")
+        rgbaToImageBitmap(f.buffer, f.width, f.height, f.format, f.strideY, "local", "preview")
     }
 
 @Composable
 internal fun rememberLocalSharePreviewImage(frame: livekit.LiveKitLocalScreenShareTrack.LocalSharePreviewFrame?): ImageBitmap? =
     rememberConvertedRgbaFrame(frame) { f ->
-        rgbaToBufferedImage(f.buffer, f.width, f.height, 0, f.width * 4, "local-share", "preview")
+        rgbaToImageBitmap(f.buffer, f.width, f.height, 0, f.width * 4, "local-share", "preview")
     }
 
 /** Null [frame] is wrapped too, so the collector can tell "clear the tile" apart from "no news yet". */
@@ -94,7 +89,7 @@ private class PendingFrame<T : Any>(val frame: T?)
 @Composable
 private fun <T : Any> rememberConvertedRgbaFrame(
     frame: T?,
-    convert: (T) -> BufferedImage
+    convert: (T) -> ImageBitmap?
 ): ImageBitmap? {
     val converter = rememberUpdatedState(convert)
     val requests = remember { AtomicReference<PendingFrame<T>?>(null) }
@@ -112,7 +107,7 @@ private fun <T : Any> rememberConvertedRgbaFrame(
                 continue
             }
             image = withContext(Dispatchers.Default) {
-                converter.value(current).toComposeImageBitmap()
+                converter.value(current)
             }
         }
     }
@@ -140,10 +135,9 @@ private fun <T : Any> rememberConvertedRgbaFrame(
  * which is the real cost: the conflated channel above bounds the native
  * BACKLOG (one conversion in flight per tile, superseded work dropped before it
  * starts) but NOT the allocation rate -- each 1080p frame still costs a ~8 MB
- * BufferedImage plus a ~8 MB Bitmap, at up to 30 fps per tile.
+ * Bitmap at up to 60 fps per tile.
  *
- * If that shows up as native memory pressure, the fix is to stop round-tripping
- * through BufferedImage and hand Compose a pre-allocated skia bitmap updated in
- * place, not to reach past the API for a close().
+ * If that shows up as native memory pressure, the fix is to update a
+ * pre-allocated Skia bitmap in place, not to reach past the API for a close().
  */
 

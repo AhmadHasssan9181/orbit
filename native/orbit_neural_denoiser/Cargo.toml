@@ -1,0 +1,11 @@
+[package]
+name = "orbit_neural_denoiser"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+deep_filter = "0.2.5"
+nnnoiseless = "0.5.2"

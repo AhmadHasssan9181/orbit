@@ -6,6 +6,7 @@ import de.connect2x.trixnity.client.MatrixClient
 import de.connect2x.trixnity.client.MediaStoreModule
 import de.connect2x.trixnity.client.RepositoriesModule
 import de.connect2x.trixnity.client.create
+import de.connect2x.trixnity.client.flattenValues
 import de.connect2x.trixnity.client.media
 import de.connect2x.trixnity.client.room
 import de.connect2x.trixnity.client.cryptodriver.vodozemac.vodozemac
@@ -371,6 +372,8 @@ class MatrixContext(homeserverUrl: String) {
     // Kotlin's ConcurrentMap.getOrPut is atomic (putIfAbsent), so the callers
     // that used to synchronize can just do that.
     val liveMessageStates = java.util.concurrent.ConcurrentHashMap<String, MutableSharedFlow<List<OrbitMessage>>>()
+    val channelNameOverrides = java.util.concurrent.ConcurrentHashMap<String, String>()
+    val channelTypeOverrides = java.util.concurrent.ConcurrentHashMap<String, ChannelType>()
     val activeCalls = java.util.concurrent.ConcurrentHashMap<String, MutableStateFlow<CallEvent.Invite?>>()
     val activeGroupCalls = java.util.concurrent.ConcurrentHashMap<String, MutableStateFlow<String?>>()
     val activeCallMembers = java.util.concurrent.ConcurrentHashMap<String, MutableStateFlow<List<OrbitUser>>>()
@@ -560,20 +563,35 @@ class MatrixContext(homeserverUrl: String) {
 
     suspend fun getAllRoomsSnapshot(): List<de.connect2x.trixnity.client.store.Room> {
         val trixnity = trixnityClient ?: return emptyList()
-        val allRoomsMap = trixnity.room.getAll().first()
-        val snapshot = mutableListOf<de.connect2x.trixnity.client.store.Room>()
-        for (roomFlow in allRoomsMap.values) {
-            val room = roomFlow.first() ?: continue
-            // Left/left-behind rooms and pure invites are not channels: listing
-            // them let the user "open" a room they are not in, which then 403s
-            // on every timeline load.
-            if (room.membership != de.connect2x.trixnity.core.model.events.m.room.Membership.JOIN) continue
-            snapshot.add(room)
+        return try {
+            val allRooms = trixnity.room.getAll().flattenValues().first()
+            allRooms.filter { it.membership == de.connect2x.trixnity.core.model.events.m.room.Membership.JOIN }
+        } catch (e: Exception) {
+            val allRoomsMap = trixnity.room.getAll().first()
+            val list = mutableListOf<de.connect2x.trixnity.client.store.Room>()
+            for (flow in allRoomsMap.values) {
+                val r = flow.first()
+                if (r != null && r.membership == de.connect2x.trixnity.core.model.events.m.room.Membership.JOIN) {
+                    list.add(r)
+                }
+            }
+            list
         }
-        return snapshot
+    }
+
+    suspend fun roomCanonicalAlias(roomId: String): String? {
+        val events = roomStateEvents(roomId)
+        val aliasEvent = events.find { el ->
+            val raw = runCatching { el.jsonObject }.getOrNull() ?: return@find false
+            (raw["type"] as? JsonPrimitive)?.contentOrNull == "m.room.canonical_alias"
+        } ?: return null
+        val raw = runCatching { aliasEvent.jsonObject }.getOrNull() ?: return null
+        val content = raw["content"]?.jsonObject ?: return null
+        return (content["alias"] as? JsonPrimitive)?.contentOrNull
     }
 
     fun roomDisplayName(room: de.connect2x.trixnity.client.store.Room): String {
+        channelNameOverrides[room.roomId.full]?.let { return it }
         return room.name?.explicitName ?: room.name?.heroes?.firstOrNull()?.localpart ?: room.roomId.full.takeLast(8)
     }
 
@@ -617,37 +635,56 @@ class MatrixContext(homeserverUrl: String) {
      * [knownCallRoomIds] short-circuits for rooms with a live call so a room you
      * are standing in never flickers between the two headings.
      */
-    suspend fun isVoiceRoom(roomId: String, knownCallRoomIds: Set<String> = emptySet()): Boolean {
-        if (roomId in knownCallRoomIds) return true
+    suspend fun isVoiceRoom(roomId: String, @Suppress("UNUSED_PARAMETER") knownCallRoomIds: Set<String> = emptySet()): Boolean {
+        channelTypeOverrides[roomId]?.let { return it == ChannelType.VOICE }
         voiceRoomCache[roomId]?.let { return it }
 
-        // Two independent hazards, and this used to hide both.
-        //
-        // 1. `content` is NOT always a string. For `m.call.member` it is a
-        //    populated object, and `?.jsonPrimitive` on a JsonObject THROWS
-        //    IllegalArgumentException rather than returning null -- it is not a
-        //    cast, it is an assertion. So the old `raw["content"]?.jsonPrimitive`
-        //    was a live crash waiting for a room with a member event in its
-        //    state, which is every MatrixRTC room.
-        //
-        // 2. The whole parse used to sit inside `catch (_: Throwable) { false }`,
-        //    so that throw was swallowed and the room was merely misreported as
-        //    not-voice. Moving the fetch into [roomStateEvents] took the `.any {}`
-        //    out of that catch and turned a silent wrong answer into a crash that
-        //    took the drawer down with an error dialog -- confirmed in a real run:
-        //    `Element class kotlinx.serialization.json.JsonObject ... is not a
-        //    JsonPrimitive` at `isVoiceRoom`, on the AWT event thread.
-        //
-        // So: read `content` as a primitive-or-nothing, and keep a catch around
-        // the scan. A state event this function cannot understand must cost one
-        // room its voice badge, never the window.
         val detected = try {
-            roomStateEvents(roomId).any { element ->
+            val events = roomStateEvents(roomId)
+            val orbitTypeElement = events.find { el ->
+                val raw = runCatching { el.jsonObject }.getOrNull() ?: return@find false
+                val t = (raw["type"] as? JsonPrimitive)?.contentOrNull
+                t == "space.orbit.channel" || t == "space.orbit.channel.type"
+            }
+            if (orbitTypeElement != null) {
+                val raw = runCatching { orbitTypeElement.jsonObject }.getOrNull()
+                val content = raw?.get("content")?.jsonObject
+                val cType = (content?.get("type") as? JsonPrimitive)?.contentOrNull
+                if (cType.equals("voice", ignoreCase = true)) {
+                    voiceRoomCache[roomId] = true
+                    return true
+                }
+                if (cType.equals("text", ignoreCase = true)) {
+                    voiceRoomCache[roomId] = false
+                    return false
+                }
+            }
+
+            events.any { element ->
                 val raw = runCatching { element.jsonObject }.getOrNull() ?: return@any false
-                val type = (raw["type"] as? JsonPrimitive)?.contentOrNull
-                type in MATRIXRTC_VOICE_STATE_TYPES &&
-                    callKindOf((raw["content"] as? JsonPrimitive)?.contentOrNull)
-                        ?.equals("voice", ignoreCase = true) == true
+                val type = (raw["type"] as? JsonPrimitive)?.contentOrNull ?: ""
+                val content = raw["content"]
+                val contentStr = content?.toString() ?: ""
+
+                if (type == "m.room.create") {
+                    contentStr.contains("org.matrix.msc3417.call", ignoreCase = true) ||
+                    contentStr.contains("org.matrix.msc3401.call", ignoreCase = true) ||
+                    contentStr.contains("\"room_type\":\"voice\"", ignoreCase = true) ||
+                    contentStr.contains("\"room_type\":\"video\"", ignoreCase = true)
+                } else if (type == "im.vector.modular.widgets" || type == "io.element.call") {
+                    contentStr.contains("element-call", ignoreCase = true) ||
+                    contentStr.contains("msc3401Call", ignoreCase = true) ||
+                    contentStr.contains("call.element.io", ignoreCase = true)
+                } else if (type in MATRIXRTC_VOICE_STATE_TYPES) {
+                    val kind = callKindOf(contentStr)
+                    val isTerminated = contentStr.contains("\"m.terminated\"") || contentStr.contains("\"terminated\"")
+                    !isTerminated && (
+                        kind.equals("voice", ignoreCase = true) ||
+                        kind.equals("video", ignoreCase = true)
+                    )
+                } else {
+                    false
+                }
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
@@ -657,6 +694,25 @@ class MatrixContext(homeserverUrl: String) {
         }
         voiceRoomCache[roomId] = detected
         return detected
+    }
+
+    suspend fun isOrbitServer(spaceId: String): Boolean {
+        if (spaceId.isBlank() || spaceId == "dm") return false
+        val events = roomStateEvents(spaceId)
+        return events.any { el ->
+            val raw = runCatching { el.jsonObject }.getOrNull() ?: return@any false
+            (raw["type"] as? JsonPrimitive)?.contentOrNull == "space.orbit.server"
+        }
+    }
+
+    suspend fun isOrbitChannel(roomId: String): Boolean {
+        if (roomId.isBlank()) return false
+        val events = roomStateEvents(roomId)
+        return events.any { el ->
+            val raw = runCatching { el.jsonObject }.getOrNull() ?: return@any false
+            val t = (raw["type"] as? JsonPrimitive)?.contentOrNull
+            t == "space.orbit.channel" || t == "space.orbit.channel.type"
+        }
     }
 
     /**
@@ -804,39 +860,33 @@ class MatrixContext(homeserverUrl: String) {
     )
 
     /**
-     * Pull `"m.kind"` out of a serialised call-state content object.
+     * Pull `"m.intent"` or `"m.kind"` out of a serialised call-state content object.
      *
-     * `m.kind` is `"voice"` for a voice room and absent for a 1:1 call, which is
-     * exactly the distinction this needs. Read with a regex rather than a typed
-     * decode because the content is attacker-shaped input — anyone in the room
-     * can publish room state — and being wrong here only puts a room under the
-     * wrong heading.
+     * In MSC3401, persistent rooms declare `m.intent`: "m.room" or "voice"/"video".
+     * MatrixRTC calls also declare `m.kind`: "voice" or "video".
      */
     private fun callKindOf(contentJson: String?): String? {
-        if (contentJson == null || !contentJson.contains("m.kind")) return null
-        return Regex("\"m\\.kind\"\\s*:\\s*\"([^\"]+)\"")
-            .find(contentJson)?.groupValues?.get(1)
+        if (contentJson.isNullOrBlank()) return null
+        Regex("\"m\\.intent\"\\s*:\\s*\"([^\"]+)\"").find(contentJson)?.groupValues?.get(1)?.let { return it }
+        Regex("\"m\\.kind\"\\s*:\\s*\"([^\"]+)\"").find(contentJson)?.groupValues?.get(1)?.let { return it }
+        return null
     }
 
     /**
-     * Name-based fallback, used ONLY for rooms this app created itself.
-     *
-     * `createChannel` names voice rooms `"<name>-voice-channel"`, so a room we
-     * made is identifiable without a network round trip. Applying this to
-     * arbitrary rooms is what produced the bug above, so it must not be reached
-     * for one we did not create — hence the suffix requirement.
+     * Name-based fallback for voice rooms.
      */
     fun inferChannelType(roomName: String): ui.model.ChannelType {
-        val looksLikeOurOwnVoiceRoom = Regex(
-            "(?i)[-_\\s]+voice(?:[-_\\s]+channel)?$"
-        ).containsMatchIn(roomName)
-        return if (looksLikeOurOwnVoiceRoom) ui.model.ChannelType.VOICE else ui.model.ChannelType.TEXT
+        val trimmed = roomName.trim()
+        val looksLikeVoiceRoom = Regex(
+            "(?i)(?:^|[-_\\s]+)(?:voice|audio|call|lounge|general\\s*voice)(?:[-_\\s]+(?:channel|room))?$"
+        ).containsMatchIn(trimmed) || trimmed.contains("🔊") || trimmed.contains("🎙️")
+        return if (looksLikeVoiceRoom) ui.model.ChannelType.VOICE else ui.model.ChannelType.TEXT
     }
 
     fun orbitChannelName(roomName: String, type: ui.model.ChannelType): String {
         if (type != ui.model.ChannelType.VOICE) return roomName
         val cleaned = roomName.replace(
-            Regex("(?i)([-_\\s]+voice(?:[-_\\s]+channel)?)$"),
+            Regex("(?i)([-_\\s]+(?:voice|audio|call)(?:[-_\\s]+(?:channel|room))?)$"),
             ""
         ).trim('-', '_', ' ')
         return cleaned.ifBlank { roomName }
@@ -850,6 +900,9 @@ class MatrixContext(homeserverUrl: String) {
         return try {
             val trixnity = trixnityClient ?: return null
             val profile = trixnity.api.user.getProfile(UserId(targetUserId)).getOrThrow()
+            val bannerUrl = if (targetUserId == userId) {
+                (accountDataCache["im.orbit.profile_extras"]?.value as? ui.model.OrbitProfileExtras)?.bannerUrl
+            } else null
             OrbitUser(
                 id = targetUserId,
                 username = targetUserId.split(":").first().removePrefix("@"),
@@ -857,11 +910,16 @@ class MatrixContext(homeserverUrl: String) {
                 avatarColor = hashToColor(targetUserId),
                 status = UserStatus.ONLINE,
                 isBot = false,
-                avatarUrl = profile.avatarUrl?.let { convertMxcUrl(it.toString()) }
+                avatarUrl = profile.avatarUrl?.let { convertMxcUrl(it.toString()) },
+                bannerUrl = bannerUrl
             ).also { userProfileCache[targetUserId] = CachedProfile(it, now) }
         } catch (e: Exception) {
             null
         }
+    }
+
+    fun invalidateUserProfile(targetUserId: String) {
+        userProfileCache.remove(targetUserId)
     }
 
     suspend fun directInviteeForRoom(roomId: RoomId): String? {

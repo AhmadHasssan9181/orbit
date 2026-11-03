@@ -9,6 +9,11 @@ import ui.theme.CosmicTokens
 import ui.theme.OrbitConceptDark
 import ui.theme.OrbitConceptLight
 import ui.theme.OrbitConceptStatus
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.hypot
+import kotlin.math.sin
+import org.jetbrains.skia.Bitmap
 
 /**
  * The call surface's values from the Orbit concept, in one place.
@@ -41,11 +46,100 @@ private fun isDarkScheme(t: CosmicTokens): Boolean = t.Bg.luminance() < 0.5f
 /**
  * `.participant-card` / `.participant-card-2col` background: `--bg-call-card`.
  *
- * Dark is #18191C. The light theme's `[data-theme='light'] .participant-card-2col`
- * is #f2f3f5, which is both its `--bg-call-card` and its sidebar surface.
+ * When [sourceColor] is provided (e.g. sampled from the participant's avatar),
+ * it is transformed into a muted pastel surface matching Orbit's tonal aesthetic.
  */
-internal fun callCardSurface(t: CosmicTokens): Color =
-    if (isDarkScheme(t)) OrbitConceptDark.callCard else OrbitConceptLight.sidebar
+internal fun callCardSurface(t: CosmicTokens, sourceColor: Color? = null): Color {
+    val isDark = isDarkScheme(t)
+    return if (sourceColor != null) {
+        toMutedPastelCardBg(sourceColor, isDark)
+    } else {
+        if (isDark) OrbitConceptDark.callCard else OrbitConceptLight.sidebar
+    }
+}
+
+internal fun toMutedPastelCardBg(sourceColor: Color, isDark: Boolean): Color {
+    val oklab = ui.theme.colorToOklab(sourceColor)
+    val hue = atan2(oklab[2], oklab[1])
+    val rawChroma = hypot(oklab[1], oklab[2])
+
+    return if (isDark) {
+        val cardL = 0.23f
+        val cardChroma = if (rawChroma < 0.02f) {
+            0f
+        } else {
+            (rawChroma * 0.45f).coerceIn(0.030f, 0.065f)
+        }
+        ui.theme.oklabToColor(cardL, cardChroma * cos(hue), cardChroma * sin(hue))
+    } else {
+        val cardL = 0.93f
+        val cardChroma = if (rawChroma < 0.02f) {
+            0f
+        } else {
+            (rawChroma * 0.45f).coerceIn(0.030f, 0.065f)
+        }
+        ui.theme.oklabToColor(cardL, cardChroma * cos(hue), cardChroma * sin(hue))
+    }
+}
+
+internal fun sampleAvatarPerimeterColor(bitmap: Bitmap): Color? {
+    val w = bitmap.width
+    val h = bitmap.height
+    if (w <= 0 || h <= 0) return null
+
+    val insets = listOf(0.06f, 0.12f, 0.18f)
+    var selectedSamples: List<Color> = emptyList()
+
+    for (inset in insets) {
+        val ix = (w * inset).toInt().coerceIn(0, w - 1)
+        val iy = (h * inset).toInt().coerceIn(0, h - 1)
+        val mx = w / 2
+        val my = h / 2
+        val rx = (w - 1 - ix).coerceIn(0, w - 1)
+        val by = (h - 1 - iy).coerceIn(0, h - 1)
+
+        val checkPoints = listOf(
+            ix to iy, rx to iy, ix to by, rx to by,
+            mx to iy, mx to by, ix to my, rx to my,
+            (w * 0.25f).toInt() to iy, (w * 0.75f).toInt() to iy,
+            (w * 0.25f).toInt() to by, (w * 0.75f).toInt() to by
+        )
+
+        val opaque = mutableListOf<Color>()
+        for ((px, py) in checkPoints) {
+            val argb = bitmap.getColor(px, py)
+            val a = (argb ushr 24) and 0xFF
+            if (a >= 100) {
+                val r = ((argb ushr 16) and 0xFF) / 255f
+                val g = ((argb ushr 8) and 0xFF) / 255f
+                val b = (argb and 0xFF) / 255f
+                opaque.add(Color(r, g, b, 1f))
+            }
+        }
+
+        if (opaque.size >= 4) {
+            selectedSamples = opaque
+            break
+        }
+    }
+
+    if (selectedSamples.isEmpty()) return null
+
+    var totalR = 0f
+    var totalG = 0f
+    var totalB = 0f
+    for (c in selectedSamples) {
+        totalR += c.red
+        totalG += c.green
+        totalB += c.blue
+    }
+    return Color(
+        red = totalR / selectedSamples.size,
+        green = totalG / selectedSamples.size,
+        blue = totalB / selectedSamples.size,
+        alpha = 1f
+    )
+}
 
 /**
  * `.call-dock-pill-bar` background: rgba(24, 25, 28, 0.92) in the dark themes
@@ -221,7 +315,7 @@ internal fun callInteractiveActive(t: CosmicTokens): Color =
  * 12. A tile is the largest repeated surface on the call screen, so its corner
  * is the one people actually look at.
  */
-internal val CallTileShape = RoundedCornerShape(12.dp)
+internal val CallTileShape = RoundedCornerShape(24.dp)
 
 /** `.call-dock-pill-bar { border-radius: 30px }`. */
 internal val CallDockShape = RoundedCornerShape(30.dp)
@@ -252,3 +346,17 @@ internal val CallStreamActionsEnd: Dp = 28.dp
  * which lifts instead.
  */
 internal const val CALL_ACTION_HOVER_SCALE = 1.08f
+
+/**
+ * Active speaker stroke color: a light shade of the selected theme color
+ * on dark mode, and a dark shade on light mode.
+ */
+internal fun speakingStrokeColor(tokens: ui.theme.CosmicTokens): Color {
+    val isDark = tokens.Bg.luminance() < 0.5f
+    val accent = tokens.Accent
+    return if (isDark) {
+        androidx.compose.ui.graphics.lerp(accent, Color.White, 0.42f)
+    } else {
+        androidx.compose.ui.graphics.lerp(accent, Color.Black, 0.42f)
+    }
+}

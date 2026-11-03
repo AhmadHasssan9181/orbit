@@ -1,5 +1,7 @@
 package ui.screen.drawer
 
+import ui.components.OrbitAvatarImage
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -40,6 +43,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.theme.rememberCosmicTokens
 import ui.icons.TablerIcons
 import ui.icons.HeadphonesOff
 import ui.icons.Headset
@@ -102,10 +106,11 @@ import webrtc.LocalCallManager
 internal fun UserProfileBar(
     user: OrbitUser,
     onSettingsClick: () -> Unit,
-    onStatusSelected: ((UserStatus) -> Unit)? = null
+    onStatusSelected: ((UserStatus) -> Unit)? = null,
+    voiceContent: (@Composable () -> Unit)? = null,
+    modifier: Modifier = Modifier
 ) {
     var showProfilePopover by remember { mutableStateOf(false) }
-    var showVoicePopover by remember { mutableStateOf(false) }
 
     val callManager = LocalCallManager.current
     // Hoisted so the number of remembered slots does not change when callManager
@@ -122,16 +127,35 @@ internal fun UserProfileBar(
     val infoInteraction = remember { MutableInteractionSource() }
     val infoHovered by infoInteraction.collectIsHoveredAsState()
 
-    Row(
-        modifier = Modifier
+    val tokens = rememberCosmicTokens()
+    val barShape = RoundedCornerShape(12.dp)
+
+    Column(
+        modifier = modifier
             .fillMaxWidth()
-            .height(OrbitConceptMetrics.userBarHeight)
-            // `.user-panel { background-color: var(--bg-secondary) }`.
+            .padding(horizontal = 12.dp)
+            .padding(bottom = 8.dp, top = 4.dp)
+            .clip(barShape)
             .background(conceptSecondarySurface())
-            .padding(horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+            .border(1.dp, tokens.Separator.copy(alpha = 0.20f), barShape)
     ) {
+        if (voiceContent != null) {
+            voiceContent()
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(tokens.Separator.copy(alpha = 0.15f))
+            )
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(OrbitConceptMetrics.userBarHeight)
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
         // ── Identity + presence picker ───────────────────────────
         // The menu must be a child of the node that triggered it: OrbitMenu wraps
         // Material's DropdownMenu, which anchors to its parent layout node. As a
@@ -232,24 +256,6 @@ internal fun UserProfileBar(
         // ── Audio state ─────────────────────────────────────────
         // `.user-controls { display: flex; align-items: center; gap: 2px }`.
         Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            Box {
-                UserControlButton(
-                    icon = with(TablerIcons) { SettingsAutomation },
-                    contentDescription = "Audio devices",
-                    isDanger = false,
-                    onClick = { showVoicePopover = !showVoicePopover }
-                )
-                OrbitMenu(
-                    expanded = showVoicePopover,
-                    onDismissRequest = { showVoicePopover = false },
-                    width = 268.dp
-                ) {
-                    VoiceControlPopover(onSettingsClick = {
-                        showVoicePopover = false
-                        onSettingsClick()
-                    })
-                }
-            }
             UserControlButton(
                 icon = if (isAudioEnabled) OrbitIcons.Mic else OrbitIcons.MicOff,
                 contentDescription = if (isAudioEnabled) "Mute microphone" else "Unmute microphone",
@@ -264,6 +270,7 @@ internal fun UserProfileBar(
             )
         }
     }
+}
 }
 
 /**
@@ -551,8 +558,8 @@ internal fun UserAvatar(
     val t = rememberCosmicTokens()
     Box(modifier = Modifier.size(size)) {
         if (avatarUrl != null) {
-            coil3.compose.AsyncImage(
-                model = avatarUrl,
+            OrbitAvatarImage(
+                url = avatarUrl,
                 contentDescription = displayName,
                 contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                 modifier = Modifier

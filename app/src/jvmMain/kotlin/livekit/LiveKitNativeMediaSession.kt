@@ -515,6 +515,10 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
 
         clearCompletedDeferreds()
         println("DEBUG [LiveKitNativeMediaSession] native media ready")
+        if (screenShareAudioArmed) {
+            println("DEBUG [LiveKitNativeMediaSession] auto-publishing armed screenshare audio post-connect")
+            publishScreenShareAudio()
+        }
         return NativeResult.success(readinessCache)
     }
 
@@ -561,13 +565,10 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
     }
 
     fun armScreenSharePublish(fps: Int, maxBitrateBps: Int) {
-        // 30, not 60. This is the last of three places the ceiling is applied
-        // (settings UI, WebRtcClientImpl, here) so a stale stored value or a
-        // direct caller cannot publish faster than the machine can carry. At 60
-        // and 1440p this box was converting ~186 MB/s of I420 while the audio
-        // mixer ran a 10 ms tick, and the mixer lost: `starved=10 qDepth=3360`
-        // became `starved=283 qDepth=480` with playback dropping chunks.
-        screenShareFps = fps.coerceIn(1, 30)
+        // The UI now exposes 15/30/60, and all three reach the encoder. Keep a
+        // sane floor/ceiling here so a stale preference or a direct caller
+        // cannot publish an invalid rate.
+        screenShareFps = fps.coerceIn(1, 60)
         screenShareMaxBitrateBps = maxBitrateBps
         screenShareWidth = 0
         screenShareHeight = 0
@@ -589,8 +590,14 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
         }
     }
 
+    @Volatile private var screenShareAudioArmed = false
+
     fun publishScreenShareAudio() {
-        if (sessionId == 0L) return
+        screenShareAudioArmed = true
+        if (sessionId == 0L) {
+            println("DEBUG [LiveKitNativeMediaSession] screenshare audio armed (waiting for session connect)")
+            return
+        }
         val result = bridge.publishScreenShareAudio(sessionId, epoch)
         if (result.ok) {
             println("DEBUG [LiveKitNativeMediaSession] screenshare audio published (system loopback)")
@@ -636,6 +643,7 @@ object LiveKitNativeMediaSession : NativeMediaEventSink {
     }
 
     fun unpublishScreenShareAudio() {
+        screenShareAudioArmed = false
         if (sessionId == 0L) return
         // Cancel the probe BEFORE clearing the flag, so it cannot re-assert ducking
         // after this line has turned it off.

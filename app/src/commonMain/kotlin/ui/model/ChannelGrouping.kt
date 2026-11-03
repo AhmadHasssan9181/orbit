@@ -77,9 +77,16 @@ object ChannelGrouping {
 
         val categorised = channels.filter { !it.categoryId.isNullOrBlank() }
         if (categorised.isEmpty()) {
-            // One flat group, server order not available so alphabetical. No type
-            // split — see the class comment.
-            return listOf(
+            val textChannels = channels.filter { it.type == ChannelType.TEXT }.sortedBy { it.name.lowercase() }
+            val voiceChannels = channels.filter { it.type == ChannelType.VOICE }.sortedBy { it.name.lowercase() }
+            val groups = mutableListOf<ChannelGroup>()
+            if (textChannels.isNotEmpty()) {
+                groups.add(ChannelGroup(key = "text_channels", label = "TEXT CHANNELS", channels = textChannels))
+            }
+            if (voiceChannels.isNotEmpty()) {
+                groups.add(ChannelGroup(key = "voice_channels", label = "VOICE CHANNELS", channels = voiceChannels))
+            }
+            return if (groups.isNotEmpty()) groups else listOf(
                 ChannelGroup(
                     key = "flat",
                     label = uncategorisedLabel(spaceName),
@@ -116,11 +123,21 @@ object ChannelGrouping {
 
         val orphans = channels.filter { it.categoryId.isNullOrBlank() }
         if (orphans.isNotEmpty()) {
-            groups += ChannelGroup(
-                key = "orphan:flat",
-                label = uncategorisedLabel(spaceName),
-                channels = orphans.sortedBy { it.name.lowercase() }
-            )
+            val orphanText = orphans.filter { it.type == ChannelType.TEXT }.sortedBy { it.name.lowercase() }
+            val orphanVoice = orphans.filter { it.type == ChannelType.VOICE }.sortedBy { it.name.lowercase() }
+            if (orphanText.isNotEmpty()) {
+                groups += ChannelGroup(key = "orphan:text", label = "TEXT CHANNELS", channels = orphanText)
+            }
+            if (orphanVoice.isNotEmpty()) {
+                groups += ChannelGroup(key = "orphan:voice", label = "VOICE CHANNELS", channels = orphanVoice)
+            }
+            if (orphanText.isEmpty() && orphanVoice.isEmpty()) {
+                groups += ChannelGroup(
+                    key = "orphan:flat",
+                    label = uncategorisedLabel(spaceName),
+                    channels = orphans.sortedBy { it.name.lowercase() }
+                )
+            }
         }
         return groups
     }

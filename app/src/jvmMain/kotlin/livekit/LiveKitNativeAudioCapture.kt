@@ -66,6 +66,11 @@ object LiveKitNativeAudioCapture {
     /** Which generation [activeLine] belongs to, so stop cannot close someone else's. */
     @Volatile private var activeLineGeneration: Long = -1L
 
+    private val _isLocallySpeaking = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val isLocallySpeaking: kotlinx.coroutines.flow.StateFlow<Boolean> = _isLocallySpeaking
+    @Volatile private var localSpeakingEma = 0.0
+    @Volatile private var lastVoiceMs = 0L
+
     @Volatile private var started = false
     @Volatile private var muted = false
     @Volatile private var sessionId = 0L
@@ -322,6 +327,9 @@ object LiveKitNativeAudioCapture {
             activeLine = null
             activeLineGeneration = -1L
         }
+        _isLocallySpeaking.value = false
+        localSpeakingEma = 0.0
+        lastVoiceMs = 0L
         job?.cancel()
         captureJob = null
         sessionId = 0L
@@ -337,6 +345,11 @@ object LiveKitNativeAudioCapture {
 
     fun setMuted(isMuted: Boolean) {
         muted = isMuted
+        if (isMuted) {
+            _isLocallySpeaking.value = false
+            localSpeakingEma = 0.0
+            lastVoiceMs = 0L
+        }
     }
 
     /**
@@ -799,15 +812,47 @@ object LiveKitNativeAudioCapture {
                     if (!resampler.pullFrame(heapBuffer, 0, SAMPLES_PER_CHANNEL)) continue
                 }
 
-                val rawStats = pcmStats(heapBuffer, FRAME_BYTES)
-                observeInputLevel(rawStats)
                 if (!muted && OrbitApm.enabled && OrbitApm.ensureStarted()) {
-                    OrbitApm.processCapture(heapBuffer, FRAME_BYTES, SAMPLE_RATE, CHANNELS)
+                    runCatching {
+                        OrbitApm.processCapture(heapBuffer, FRAME_BYTES, SAMPLE_RATE, CHANNELS)
+                    }.onFailure { error ->
+                        println("WARN [LiveKitNativeAudioCapture] APM processCapture error: ${error.message}")
+                    }
                     if (!apmLogged) {
-                        println("DEBUG [LiveKitNativeAudioCapture] APM capture chain active (aec3+ns+agc2+hpf)")
+                        println("DEBUG [LiveKitNativeAudioCapture] APM capture chain active (aec3+agc2+hpf)")
                         apmLogged = true
                     }
-                } else if (!muted && captureGain != 1.0 && rawStats.peak > 0) {
+                }
+                if (!muted && OrbitNoiseSuppression.currentEngine != "Off") {
+                    runCatching {
+                        OrbitNoiseSuppression.process(heapBuffer, FRAME_BYTES, SAMPLE_RATE, CHANNELS)
+                    }.onFailure { error ->
+                        println("WARN [LiveKitNativeAudioCapture] NoiseSuppression error: ${error.message}")
+                    }
+                }
+
+                val rawStats = pcmStats(heapBuffer, FRAME_BYTES)
+                observeInputLevel(rawStats)
+                val rawRms = rawStats.rmsValue
+                val nowMs = System.currentTimeMillis()
+                if (muted) {
+                    localSpeakingEma = 0.0
+                    lastVoiceMs = 0L
+                    if (_isLocallySpeaking.value) {
+                        _isLocallySpeaking.value = false
+                    }
+                } else {
+                    localSpeakingEma = if (rawRms >= localSpeakingEma) rawRms else 0.85 * localSpeakingEma + 0.15 * rawRms
+                    if (localSpeakingEma >= 280.0) {
+                        lastVoiceMs = nowMs
+                    }
+                    val speaking = localSpeakingEma >= 280.0 || (lastVoiceMs != 0L && nowMs - lastVoiceMs < 450L)
+                    if (_isLocallySpeaking.value != speaking) {
+                        _isLocallySpeaking.value = speaking
+                    }
+                }
+
+                if (!muted && captureGain != 1.0 && rawStats.peak > 0) {
                     applyCaptureGain(heapBuffer, FRAME_BYTES, captureGain)
                     if (!gainLogged) {
                         val gainedStats = pcmStats(heapBuffer, FRAME_BYTES)

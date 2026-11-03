@@ -1,5 +1,7 @@
 package ui.screen.chat
 
+import ui.components.OrbitAvatarImage
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -74,8 +76,8 @@ internal fun SmallUserAvatar(user: OrbitUser, size: Dp) {
     val t = rememberCosmicTokens()
     Box(modifier = Modifier.size(size)) {
         if (user.avatarUrl != null) {
-            coil3.compose.AsyncImage(
-                model = user.avatarUrl,
+            OrbitAvatarImage(
+                url = user.avatarUrl,
                 contentDescription = user.displayName,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize().clip(CircleShape)
@@ -179,7 +181,8 @@ internal fun DirectProfilePanel(
      * nothing in the app ever cleared it — no button, no Escape, no route back.
      * Reported with a screenshot of a window that could not be navigated out of.
      */
-    onClose: (() -> Unit)? = null
+    onClose: (() -> Unit)? = null,
+    modifier: Modifier = Modifier.width(ProfileCardWidth)
 ) {
     val callManager = webrtc.LocalCallManager.current
     val listState = rememberLazyListState()
@@ -187,8 +190,7 @@ internal fun DirectProfilePanel(
     val t = rememberCosmicTokens()
 
     Column(
-        modifier = Modifier
-            .width(ProfileCardWidth)
+        modifier = modifier
             .fillMaxHeight()
             // box-shadow: var(--elevation-floating) — 0 16px 32px rgba(0,0,0,0.4).
             // The shape is passed to `shadow` so the shadow follows the 12px
@@ -391,8 +393,8 @@ private fun ProfileCardAvatar(user: OrbitUser) {
     Box(modifier = Modifier.fillMaxSize().clip(CircleShape)) {
         val avatarUrl = user.avatarUrl
         if (avatarUrl != null) {
-            coil3.compose.AsyncImage(
-                model = avatarUrl,
+            OrbitAvatarImage(
+                url = avatarUrl,
                 contentDescription = user.displayName,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()

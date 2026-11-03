@@ -2,6 +2,7 @@ package livekit
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -148,6 +149,40 @@ class RemoteRosterClearTest {
             LiveKitRemoteVideoFrameStore.participantConnected("")
             LiveKitRemoteVideoFrameStore.participantConnected("   ")
             assertTrue(LiveKitRemoteVideoFrameStore.remoteParticipants.value.isEmpty())
+        } finally {
+            disarm()
+        }
+    }
+
+    @Test
+    fun opaqueSubscriberConnectionStaysOutOfTheVisibleRoster() {
+        arm()
+        try {
+            val ghost = "f".repeat(64)
+            LiveKitRemoteVideoFrameStore.participantConnected(ghost)
+
+            assertTrue(ghost in LiveKitRemoteVideoFrameStore.rawRemoteParticipants.value)
+            assertFalse(ghost in LiveKitRemoteVideoFrameStore.remoteParticipants.value)
+
+            LiveKitRemoteVideoFrameStore.participantDisconnected(ghost)
+            assertTrue(LiveKitRemoteVideoFrameStore.rawRemoteParticipants.value.isEmpty())
+        } finally {
+            disarm()
+        }
+    }
+
+    @Test
+    fun opaqueIdentityBecomesVisibleOnceItPublishesMedia() {
+        arm()
+        try {
+            val opaquePublisher = "opaque-publisher".repeat(4)
+            LiveKitRemoteVideoFrameStore.participantConnected(opaquePublisher)
+            assertFalse(opaquePublisher in LiveKitRemoteVideoFrameStore.remoteParticipants.value)
+
+            LiveKitRemoteVideoFrameStore.trackAnnounced(opaquePublisher, "TR_OPAQUE", "camera")
+
+            assertTrue(opaquePublisher in LiveKitRemoteVideoFrameStore.remoteParticipants.value)
+            assertTrue(opaquePublisher in LiveKitRemoteVideoFrameStore.rawRemoteParticipants.value)
         } finally {
             disarm()
         }

@@ -75,14 +75,26 @@ interface OrbitAuthRepository {
 interface OrbitSpacesRepository {
     suspend fun getSpaces(): List<OrbitServer>
     suspend fun joinSpace(roomIdOrAlias: String): Result<String>
-    suspend fun createSpace(name: String): Result<String>
+    suspend fun createSpace(name: String, isPublic: Boolean = false, category: String = "Community", avatarBytes: ByteArray? = null): Result<String>
+    suspend fun leaveSpace(spaceId: String): Result<Unit>
+    suspend fun deleteSpace(spaceId: String): Result<Unit>
+    suspend fun isSpacePublic(spaceId: String): Boolean
+    suspend fun makeSpacePublic(spaceId: String): Result<Unit>
+    suspend fun inviteUserToSpace(spaceId: String, userId: String): Result<Unit>
+    suspend fun getIncomingInvites(): List<ui.model.ServerInvite>
+    suspend fun acceptInvite(spaceId: String): Result<Unit>
+    suspend fun declineInvite(spaceId: String): Result<Unit>
+    suspend fun getPublicServers(searchTerm: String = ""): List<ui.screen.server.DiscoverServer>
     suspend fun getSpaceHierarchy(spaceId: String): List<OrbitServer>
     fun observeSpaces(): Flow<List<OrbitServer>>
+    suspend fun uploadSpaceBanner(spaceId: String, imageBytes: ByteArray): Result<String>
+    suspend fun uploadSpaceAvatar(spaceId: String, imageBytes: ByteArray): Result<String>
+    suspend fun updateSpaceName(spaceId: String, name: String): Result<Unit>
 }
 
 interface OrbitChannelsRepository {
     suspend fun getChannelsForSpace(spaceId: String): List<OrbitChannel>
-    suspend fun createChannel(spaceId: String, name: String, type: ChannelType, topic: String = ""): Result<String>
+    suspend fun createChannel(spaceId: String, name: String, type: ChannelType, topic: String = "", isPublic: Boolean = false): Result<String>
     suspend fun getChannelById(channelId: String): OrbitChannel?
     suspend fun getRoomMembers(roomId: String): List<OrbitUser>
 
@@ -98,6 +110,9 @@ interface OrbitChannelsRepository {
      */
     suspend fun resolveDmContacts(roomIds: Collection<String>): Map<String, OrbitUser>
     fun observeChannelList(spaceId: String): Flow<List<OrbitChannel>>
+    suspend fun joinChannelIfNeeded(channelId: String): Result<String>
+    suspend fun updateChannel(spaceId: String, channelId: String, name: String, type: ChannelType): Result<Unit>
+    suspend fun deleteChannel(spaceId: String, channelId: String): Result<Unit>
 }
 
 interface OrbitMessagesRepository {
@@ -158,6 +173,7 @@ interface OrbitUsersRepository {
     suspend fun kickUser(roomId: String, userId: String, reason: String?): Result<Unit>
     suspend fun banUser(roomId: String, userId: String, reason: String?): Result<Unit>
     suspend fun setUserPowerLevel(roomId: String, userId: String, level: Long): Result<Unit>
+    suspend fun searchUsers(query: String, limit: Int = 10): List<OrbitUser>
 }
 
 interface OrbitCallsRepository {

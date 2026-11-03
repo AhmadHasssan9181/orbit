@@ -101,7 +101,9 @@ private object OrbitLogFile {
         val local = System.getenv("LOCALAPPDATA")
             ?: System.getProperty("user.home")
             ?: "."
-        return File(local, "Orbit")
+        val profile = OrbitPaths.profile
+        val folder = if (profile.isNotEmpty()) "Orbit-$profile" else "Orbit"
+        return File(local, folder)
     }
 
     /** Open if needed, append, flush. Never throws. */

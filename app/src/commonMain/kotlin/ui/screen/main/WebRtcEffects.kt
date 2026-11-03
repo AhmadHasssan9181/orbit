@@ -82,6 +82,7 @@ fun WebRtcEffects(
     val outputDevice by settingsManager.outputDevice.collectAsState("Default")
     val cameraDevice by settingsManager.cameraDevice.collectAsState("Default")
     val audioBitrateKbps by settingsManager.audioBitrate.collectAsState(64f)
+    val nsEngine by settingsManager.noiseSuppressionEngine.collectAsState("DeepFilterNet")
     val nsEnabled by settingsManager.noiseSuppression.collectAsState(true)
     val ecEnabled by settingsManager.echoCancellation.collectAsState(true)
     val agcEnabled by settingsManager.autoGainControl.collectAsState(true)
@@ -221,8 +222,9 @@ fun WebRtcEffects(
 
     // Settings are the source of truth for voice processing at launch; the in-call
     // More Options menu can override them for the session.
-    LaunchedEffect(nsEnabled, ecEnabled, agcEnabled) {
-        callManager.setAudioOptions(nsEnabled, ecEnabled, agcEnabled)
+    LaunchedEffect(nsEngine, ecEnabled, agcEnabled) {
+        callManager.setAudioOptions(nsEngine != "Off", ecEnabled, agcEnabled)
+        callManager.setNoiseSuppressionEngine(nsEngine)
     }
     LaunchedEffect(inputVolume) {
         callManager.setMicVolume(inputVolume / 100f)

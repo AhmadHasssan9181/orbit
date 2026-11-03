@@ -83,7 +83,9 @@ object WebrtcNativeDepsLoader {
                 "livekit_ffi.dll",
                 "livekit.dll",
                 "orbit_livekit_video.dll",
-                "orbit_livekit_audio.dll"
+                "orbit_livekit_audio.dll",
+                "orbit_neural_denoiser.dll",
+                "deep_filter_ladspa.dll"
             )
 
             val tempDir = Files.createTempDirectory("webrtc-deps").toFile()

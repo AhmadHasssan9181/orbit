@@ -21,7 +21,7 @@ import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 actual fun getRoomDatabaseBuilder(): RoomDatabase.Builder<TrixnityRoomDatabase> = sharedRoomDatabaseBuilder
 
 private val sharedRoomDatabaseBuilder: RoomDatabase.Builder<TrixnityRoomDatabase> by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-    val dbFile = File(System.getProperty("user.home"), ".orbit/trixnity.db")
+    val dbFile = OrbitPaths.databaseFile
     dbFile.parentFile?.mkdirs()
 
     // SECURITY: `trixnity.db` is the most sensitive file the app writes. It holds

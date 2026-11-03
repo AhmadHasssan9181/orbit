@@ -66,6 +66,9 @@ import io.ktor.serialization.kotlinx.json.json
 import io.ktor.utils.io.ByteReadChannel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -133,6 +136,7 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
         "org.matrix.msc4143.rtc_foci"
     )
     private val matrixRtcMembershipShapes = java.util.concurrent.ConcurrentHashMap<String, MatrixRtcMembershipShape>()
+    private val completedGroupCallLeaves = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
 
     private enum class MatrixRtcPublishMode(val label: String, val eventTypes: List<String>) {
@@ -710,6 +714,13 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
 
     private fun membershipShapeMapKey(roomId: String, callId: String): String = "$roomId\u0000$callId"
 
+    private fun recentlyLeftGroupCall(shapeKey: String): Boolean {
+        val now = getTimeMillis()
+        completedGroupCallLeaves.entries.removeAll { now - it.value > 60_000L }
+        val leftAt = completedGroupCallLeaves[shapeKey] ?: return false
+        return now - leftAt <= 60_000L
+    }
+
     private fun String.encodeStateKey(): String =
         replace("%", "%25")
             .replace("@", "%40")
@@ -1258,6 +1269,32 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
         
 
 
+        // 1. Ensure room power levels allow all members (power level 0) to publish call state
+        runCatching {
+            val plResp = context.httpClient.get(context.fullUrl("/rooms/$roomId/state/m.room.power_levels")) {
+                header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
+            }
+            if (plResp.status.value in 200..299) {
+                val plObj = Json.parseToJsonElement(plResp.bodyAsText()).jsonObject
+                val events = plObj["events"]?.jsonObject?.toMutableMap() ?: mutableMapOf()
+                val msc0 = (events["org.matrix.msc3401.call.member"] as? JsonPrimitive)?.intOrNull == 0
+                val m0 = (events["m.call.member"] as? JsonPrimitive)?.intOrNull == 0
+                if (!msc0 || !m0) {
+                    events["org.matrix.msc3401.call.member"] = JsonPrimitive(0)
+                    events["m.call.member"] = JsonPrimitive(0)
+                    val updated = buildJsonObject {
+                        plObj.forEach { (k, v) -> if (k != "events") put(k, v) }
+                        put("events", JsonObject(events))
+                    }
+                    context.httpClient.put(context.fullUrl("/rooms/$roomId/state/m.room.power_levels/")) {
+                        header(HttpHeaders.Authorization, "Bearer ${context.accessToken}")
+                        contentType(ContentType.Application.Json)
+                        setBody(updated.toString())
+                    }
+                }
+            }
+        }
+
         // 2. Publish Call Definition (The Blueprint) to 'm.call' state key for "seamless" support
         try {
             // Also publish to standard m.call
@@ -1297,6 +1334,10 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
     }
 
     override suspend fun endGroupCall(roomId: String, callId: String) {
+        // Leave first. The termination scan below can be slow, and the UI no
+        // longer waits for it, but a quit still needs the membership PUT away
+        // before the process exits.
+        leaveGroupCall(roomId, callId)
         // MSC3401 calls don't really "end" via a single event, everyone just leaves.
         // Only tear down the call definition when no one else is still in the call —
         // otherwise any leaver would kill the call for everyone still connected.
@@ -1347,9 +1388,6 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                 "DEBUG [MatrixCallsRepository] endGroupCall: ${otherActiveMembers.size} other active member(s) remain in $roomId, leaving call definition intact"
             )
         }
-
-        stopCallRosterPolling(roomId)
-        leaveGroupCall(roomId, callId)
     }
 
     override suspend fun joinGroupCall(roomId: String, callId: String) {
@@ -1428,6 +1466,7 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
                 publishMode = publishMode
             )
             matrixRtcMembershipShapes[membershipShapeMapKey(roomId, callId)] = shape
+            completedGroupCallLeaves.remove(membershipShapeMapKey(roomId, callId))
 
             try {
                 // Only clear keys that are actually active in room state (beforeEvents).
@@ -1550,38 +1589,51 @@ class MatrixCallsRepository(private val context: MatrixContext) : OrbitCallsRepo
     override suspend fun leaveGroupCall(roomId: String, callId: String) {
         println("DEBUG [MatrixCallsRepository] LEAVING MSC3401 Call for $roomId")
         stopCallRosterPolling(roomId)
+        val shapeKey = membershipShapeMapKey(roomId, callId)
+        if (recentlyLeftGroupCall(shapeKey)) {
+            println("DEBUG [MatrixCallsRepository] leaveGroupCall already completed for $roomId")
+            context.activeGroupCalls[roomId]?.value = null
+            return
+        }
         val userId = context.userId ?: return
         val deviceId = context.deviceId ?: "ORBIT_DESKTOP"
-        val shape = matrixRtcMembershipShapes.remove(membershipShapeMapKey(roomId, callId))
+        val shape = matrixRtcMembershipShapes[shapeKey]
         val stateKey = shape?.stateKey ?: "_${userId}_${deviceId}_$callId"
         val eventTypes = shape?.publishMode?.eventTypes ?: matrixRtcMemberEventTypes
 
         // Every leave is counted. A silent catch here left our m.call.member in
         // room state until its TTL expired, so peers kept showing us in the call
         // and endGroupCall saw a phantom member.
-        val targets = eventTypes.map { it to stateKey } + matrixRtcMemberEventTypes.map { it to deviceId }
+        val targets = (eventTypes.map { it to stateKey } + matrixRtcMemberEventTypes.map { it to deviceId }).distinct()
         var succeeded = 0
         for (attempt in 1..2) {
-            succeeded = targets.count { (ns, key) ->
-                val ok = try {
-                    clearMatrixRtcMemberEvent(roomId, ns, key) in 200..299
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    println("WARN [MatrixRTCVisibilityAudit] leave PUT threw type=$ns state_key=$key: ${e.message}")
-                    false
-                }
-                if (ok) {
-                    println("DEBUG [MatrixRTCVisibilityAudit] leave published type=$ns state_key=$key")
-                    println("DEBUG [VideoPublish] membership cleared type=$ns state_key=$key")
-                }
-                ok
+            val results = coroutineScope {
+                targets.map { (ns, key) ->
+                    async {
+                        try {
+                            val ok = clearMatrixRtcMemberEvent(roomId, ns, key) in 200..299
+                            if (ok) {
+                                println("DEBUG [MatrixRTCVisibilityAudit] leave published type=$ns state_key=$key")
+                                println("DEBUG [VideoPublish] membership cleared type=$ns state_key=$key")
+                            }
+                            ok
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            println("WARN [MatrixRTCVisibilityAudit] leave PUT threw type=$ns state_key=$key: ${e.message}")
+                            false
+                        }
+                    }
+                }.awaitAll()
             }
+            succeeded = results.count { it }
             if (succeeded == targets.size) break
             if (attempt == 1) println("WARN [MatrixRTCVisibilityAudit] ${targets.size - succeeded} leave PUT(s) failed; retrying once")
         }
 
         if (succeeded == targets.size) {
+            if (shape != null) matrixRtcMembershipShapes.remove(shapeKey, shape)
+            completedGroupCallLeaves[shapeKey] = getTimeMillis()
             context.activeGroupCalls[roomId]?.value = null
         } else {
             println(

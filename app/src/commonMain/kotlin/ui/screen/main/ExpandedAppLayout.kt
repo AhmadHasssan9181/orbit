@@ -21,9 +21,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Alignment
-import ui.icons.*
 import ui.components.OrbitButton
 import ui.components.OrbitButtonTone
+import ui.components.VerticalResizeHandle
+import androidx.compose.ui.platform.LocalDensity
 import ui.theme.*
 
 @Composable
@@ -61,6 +62,8 @@ fun ExpandedLayout(
     // The rail's compass tile. `ServerRail` has always taken an
     // `onExploreClick` and was never given one, so the tile was a control that
     // did nothing.
+    val density = LocalDensity.current
+    var sidebarWidth by remember { mutableStateOf(OrbitConceptMetrics.sidebarWidth) }
     var showExplore by remember { mutableStateOf(false) }
 
     val categories = remember(channels) {
@@ -111,7 +114,16 @@ fun ExpandedLayout(
                         onOpenRolesClick = onOpenRoles,
                         friendsTabActive = friendsTabActive,
                         onSelectFriendsTab = onSelectFriendsTab,
-                        )
+                        onServerLeft = { onServerClick("dm") },
+                        drawerWidth = sidebarWidth
+                    )
+
+                    VerticalResizeHandle(
+                        onDragDelta = { deltaPx ->
+                            val deltaDp = with(density) { deltaPx.toDp() }
+                            sidebarWidth = (sidebarWidth + deltaDp).coerceIn(180.dp, 450.dp)
+                        }
+                    )
 
                     val selectedChannel = channels.find { it.id == selectedChannelId }
                     Box(modifier = Modifier.weight(1f).fillMaxHeight()) {

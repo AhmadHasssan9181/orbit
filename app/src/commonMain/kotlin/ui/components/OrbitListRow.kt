@@ -290,7 +290,7 @@ fun OrbitListRow(
                     color = effectiveTitleColor.copy(alpha = titleAlpha),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false)
+                    modifier = Modifier.weight(1f)
                 )
             } else {
                 Column(modifier = Modifier.weight(1f)) {

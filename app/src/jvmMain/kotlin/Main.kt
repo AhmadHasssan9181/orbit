@@ -126,11 +126,24 @@ fun main() {
     // the main window is gone (iconify is read straight off [state]).
     var mainWindowPresentable by remember { mutableStateOf(true) }
 
-    // Quit: end any active call first (the leave publish races the exit
-    // watchdog inside its grace window, never blocks), then exit.
+    // Quit: end any active call and WAIT for its Matrix membership leave before
+    // exiting. `endCall` hands the publish to a manager-owned IO scope, and
+    // `exitApplication()` used to terminate the JVM while that PUT was still in
+    // flight -- so Orbit's m.call.member survived and Element kept showing the
+    // account in the call. The wait is bounded; the watchdog gets extra budget
+    // so a slow homeserver cannot turn into a zombie process.
     fun quitOrbit() {
-        armForcedExitWatchdog()
+        armForcedExitWatchdog(7_000)
         webrtc.CallShortcuts.onAppQuitRequested?.invoke()
+        val callManager = webrtc.ActiveCallBridge.callManager
+        if (callManager != null) {
+            val settled = kotlinx.coroutines.runBlocking {
+                callManager.awaitMembershipLeave()
+            }
+            if (!settled) {
+                println("WARN [Exit] membership leave did not settle before quit; exiting anyway")
+            }
+        }
         exitApplication()
     }
 

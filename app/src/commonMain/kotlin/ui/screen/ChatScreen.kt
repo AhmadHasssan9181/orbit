@@ -1,5 +1,7 @@
 package ui.screen
 
+import ui.components.OrbitAvatarImage
+
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.tween
@@ -57,6 +59,8 @@ import ui.assets.OrbitDefaultAvatar
 import ui.components.OrbitIconButton
 import ui.components.OrbitScrollbar
 import ui.components.OrbitSearchField
+import ui.components.VerticalResizeHandle
+import androidx.compose.ui.platform.LocalDensity
 import ui.icons.OrbitIcons
 import ui.layout.LocalWindowSizeClass
 import ui.model.ChannelType
@@ -139,6 +143,8 @@ fun ChatScreen(
 ) {
     val t = rememberCosmicTokens()
     val windowSize = LocalWindowSizeClass.current
+    val density = LocalDensity.current
+    var rightPanelWidth by remember { mutableStateOf(OrbitMetrics.sidePanelWidth) }
     val callManager = webrtc.LocalCallManager.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val reduceMotion = ui.theme.LocalReduceMotion.current
@@ -280,6 +286,17 @@ fun ChatScreen(
      */
     fun searchResultLabel(count: Int) = "$count result${if (count == 1) "" else "s"}"
 
+    val sidePanelTarget = when {
+        callOwnsMainColumn -> if (callChatCollapsed) 4 else 3
+        shownProfile != null && windowSize.isExpanded -> 0
+        pinsActive -> 1
+        memberPanelAvailable && memberPanelOpen -> 2
+        else -> -1
+    }
+    val hasSidePanel = !showVoiceChannelUi && sidePanelTarget != -1 && sidePanelTarget != 4
+    val cardStartPadding = 0.dp
+    val cardEndPadding = 0.dp
+
     androidx.compose.runtime.CompositionLocalProvider(ui.theme.LocalRoomMembers provides members) {
         Row(
             modifier = modifier
@@ -369,10 +386,10 @@ fun ChatScreen(
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxWidth()
-                                .padding(start = 6.dp, end = 8.dp, bottom = 8.dp, top = 2.dp)
-                                .clip(RoundedCornerShape(16.dp))
+                                .padding(start = cardStartPadding, end = cardEndPadding, bottom = 6.dp, top = 2.dp)
+                                .clip(RoundedCornerShape(24.dp))
                                 .background(t.Bg)
-                                .border(1.dp, t.Separator.copy(alpha = 0.25f), RoundedCornerShape(16.dp))
+                                .border(1.dp, t.Separator.copy(alpha = 0.25f), RoundedCornerShape(24.dp))
                         )
                     } else {
                         VoiceChannelUnavailable()
@@ -383,10 +400,10 @@ fun ChatScreen(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth()
-                            .padding(start = 6.dp, end = 8.dp, bottom = 8.dp, top = 2.dp)
-                            .clip(RoundedCornerShape(16.dp))
+                            .padding(start = cardStartPadding, end = cardEndPadding, bottom = 6.dp, top = 2.dp)
+                            .clip(RoundedCornerShape(24.dp))
                             .background(t.Bg)
-                            .border(1.dp, t.Separator.copy(alpha = 0.25f), RoundedCornerShape(16.dp))
+                            .border(1.dp, t.Separator.copy(alpha = 0.25f), RoundedCornerShape(24.dp))
                     ) {
                         // Only when a call is live IN THIS ROOM. A call elsewhere
                         // must not displace the room you are reading.
@@ -451,23 +468,18 @@ fun ChatScreen(
             }
 
             // ── Right-hand panel ───────────────────────────────────
+            if (hasSidePanel) {
+                VerticalResizeHandle(
+                    onDragDelta = { deltaPx ->
+                        val deltaDp = with(density) { deltaPx.toDp() }
+                        rightPanelWidth = (rightPanelWidth - deltaDp).coerceIn(180.dp, 450.dp)
+                    }
+                )
+            }
+
             if (!showVoiceChannelUi) {
                 AnimatedContent(
-                    targetState = when {
-                        // A live call displaces the side panel to hold the chat.
-                        //
-                        // This is the one case where the panel slot is not
-                        // optional. Members, pins and a profile are all things you
-                        // open deliberately and can close again; the timeline
-                        // during a call is not a thing you open, and putting it
-                        // behind a Members toggle means the conversation is
-                        // unreachable for exactly as long as the call lasts.
-                        callOwnsMainColumn -> if (callChatCollapsed) 4 else 3
-                        shownProfile != null && windowSize.isExpanded -> 0
-                        pinsActive -> 1
-                        memberPanelAvailable && memberPanelOpen -> 2
-                        else -> -1
-                    },
+                    targetState = sidePanelTarget,
                     transitionSpec = {
                         val forward = targetState > initialState
                         val ms = if (reduceMotion) 0 else 220
@@ -496,7 +508,8 @@ fun ChatScreen(
                             DirectProfilePanel(
                                 user = it,
                                 callRoomId = if (directProfile != null) channel.id else null,
-                                onClose = { memberProfile = null }
+                                onClose = { memberProfile = null },
+                                modifier = Modifier.width(rightPanelWidth)
                             )
                         }
                         1 -> PinnedMessagesPanel(
@@ -506,7 +519,8 @@ fun ChatScreen(
                             // The concept's drawer has a close X in its header;
                             // without it the panel is only reachable by re-pressing
                             // the header's pin button.
-                            onClose = { pinsActive = false }
+                            onClose = { pinsActive = false },
+                            modifier = Modifier.width(rightPanelWidth)
                         )
                         2 -> MemberListPanel(
                             members = members,
@@ -529,7 +543,8 @@ fun ChatScreen(
                                 liveCallRoster
                             } else {
                                 null
-                            }
+                            },
+                            modifier = Modifier.width(rightPanelWidth)
                         )
                         // The room's timeline, in the panel, while the call owns
                         // the main column. Same composable as the main column's —
@@ -539,7 +554,7 @@ fun ChatScreen(
                             channel = channel,
                             liveCallRosterSize = liveCallRoster.size,
                             onCollapse = { callChatCollapsed = true },
-                            modifier = Modifier.width(OrbitMetrics.callChatPanelWidth)
+                            modifier = Modifier.width(rightPanelWidth)
                         ) {
                             ChatTimeline(
                                 modifier = Modifier.weight(1f),
@@ -934,15 +949,15 @@ private fun PinnedMessagesPanel(
     pinned: List<OrbitMessage>,
     canUnpin: Boolean,
     onUnpin: (String) -> Unit,
-    onClose: () -> Unit
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier.width(PinnedDrawerWidth)
 ) {
     val t = rememberCosmicTokens()
     val listState = rememberLazyListState()
     val roomMembers = ui.theme.LocalRoomMembers.current
 
     Row(
-        modifier = Modifier
-            .width(PinnedDrawerWidth)
+        modifier = modifier
             .fillMaxHeight()
             // box-shadow: var(--elevation-floating)
             .shadow(16.dp)
@@ -1136,8 +1151,8 @@ private fun PinnedAuthorAvatar(
     ) {
         val avatarUrl = member?.avatarUrl
         if (avatarUrl != null) {
-            coil3.compose.AsyncImage(
-                model = avatarUrl,
+            OrbitAvatarImage(
+                url = avatarUrl,
                 contentDescription = username,
                 contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()

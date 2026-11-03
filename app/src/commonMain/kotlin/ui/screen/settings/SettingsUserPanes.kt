@@ -1,5 +1,7 @@
 package ui.screen.settings
 
+import ui.components.OrbitAvatarImage
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -123,8 +125,8 @@ internal fun ProfilesPane(repository: OrbitRepository) {
                 ) {
                     val avatarUrl = me?.avatarUrl
                     if (avatarUrl != null) {
-                        coil3.compose.AsyncImage(
-                            model = avatarUrl,
+                        OrbitAvatarImage(
+                            url = avatarUrl,
                             contentDescription = "Your avatar — click to change",
                             contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                             modifier = Modifier.fillMaxSize().clip(CircleShape)

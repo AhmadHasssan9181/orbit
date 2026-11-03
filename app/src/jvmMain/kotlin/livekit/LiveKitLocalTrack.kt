@@ -4,6 +4,8 @@ import dev.onvoid.webrtc.media.video.I420Buffer
 import dev.onvoid.webrtc.media.video.VideoFrame as WrtcVideoFrame
 import dev.onvoid.webrtc.media.video.VideoTrackSink
 import java.nio.ByteBuffer
+import java.util.Locale
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -42,14 +44,43 @@ object LiveKitLocalScreenShareTrack {
                 // the only collector, and since the channel is CONFLATED later
                 // snapshots would still "succeed" at trySend and be discarded
                 // forever.
+                val start = System.nanoTime()
                 runCatching { convertI420ToRgba(snapshot) }
-                    .onSuccess { previewFrame.value = it }
+                    .onSuccess {
+                        val elapsed = System.nanoTime() - start
+                        previewFrames.incrementAndGet()
+                        previewNanos.addAndGet(elapsed)
+                        updateMax(previewMaxNanos, elapsed)
+                        previewFrame.value = it
+                        reportPreviewStatsIfDue(start, snapshot)
+                    }
                     .onFailure { println("WARN [LocalSharePreview] conversion failed: ${it.message}") }
             }
         }
     }
 
     private var lastPreviewNs = 0L
+    private var firstFrameLogged = false
+
+    private val framesIn = AtomicLong()
+    private val framesPushed = AtomicLong()
+    private val pushFailures = AtomicLong()
+    private val nonI420Frames = AtomicLong()
+    private val packNanos = AtomicLong()
+    private val packMaxNanos = AtomicLong()
+    private val pushNanos = AtomicLong()
+    private val pushMaxNanos = AtomicLong()
+    private val frameGapNanos = AtomicLong()
+    private val frameGapMaxNanos = AtomicLong()
+    private val lastFrameNs = AtomicLong()
+    private val lastStatsNs = AtomicLong()
+    private val bytesPushed = AtomicLong()
+    private val previewScheduled = AtomicLong()
+    private val previewDropped = AtomicLong()
+    private val previewFrames = AtomicLong()
+    private val previewNanos = AtomicLong()
+    private val previewMaxNanos = AtomicLong()
+    private val previewLastStatsNs = AtomicLong()
 
     val sink = object : VideoTrackSink {
         override fun onVideoFrame(frame: WrtcVideoFrame) {
@@ -57,40 +88,143 @@ object LiveKitLocalScreenShareTrack {
             // so it must be released on every path or the media engine leaks.
             // OnVoid WebRTC desktop capturers may deliver a generic VideoFrameBuffer
             // that requires .toI420() conversion.
+            val frameStartNs = System.nanoTime()
+            framesIn.incrementAndGet()
+            val previousFrameNs = lastFrameNs.getAndSet(frameStartNs)
+            if (previousFrameNs != 0L) {
+                val gap = frameStartNs - previousFrameNs
+                frameGapNanos.addAndGet(gap)
+                updateMax(frameGapMaxNanos, gap)
+            }
+
             var i420: I420Buffer? = null
             try {
-                val buffer = (frame.buffer as? I420Buffer) ?: runCatching { frame.buffer?.toI420() }.getOrNull() ?: return
+                val rawBuffer = frame.buffer
+                if (rawBuffer !is I420Buffer) nonI420Frames.incrementAndGet()
+                val buffer = (rawBuffer as? I420Buffer)
+                    ?: runCatching { rawBuffer?.toI420() }.getOrNull()
+                    ?: return
                 i420 = buffer
+
+                if (!firstFrameLogged) {
+                    firstFrameLogged = true
+                    StreamDiag.log(
+                        "phase=sink firstFrame width=${buffer.width} height=${buffer.height} " +
+                            "rotation=${frame.rotation} rawFormat=${rawBuffer?.javaClass?.simpleName}"
+                    )
+                }
 
                 maybeEmitPreview(buffer)
 
+                val packStart = System.nanoTime()
                 val packed = packI420(buffer)
-                LiveKitNativeMediaSession.pushScreenShareFrame(
+                val packElapsed = System.nanoTime() - packStart
+                packNanos.addAndGet(packElapsed)
+                updateMax(packMaxNanos, packElapsed)
+                val bytes = packed.remaining()
+
+                val pushStart = System.nanoTime()
+                val pushed = LiveKitNativeMediaSession.pushScreenShareFrame(
                     buffer = packed,
                     width = buffer.width,
                     height = buffer.height,
-                    timestampNs = System.nanoTime(),
+                    timestampNs = frameStartNs,
                     rotation = frame.rotation
                 )
-                CallPathStats.onShareFramePushed(packed.remaining())
+                val pushElapsed = System.nanoTime() - pushStart
+                pushNanos.addAndGet(pushElapsed)
+                updateMax(pushMaxNanos, pushElapsed)
+
+                if (pushed) {
+                    framesPushed.incrementAndGet()
+                    bytesPushed.addAndGet(bytes.toLong())
+                    CallPathStats.onShareFramePushed(bytes)
+                } else {
+                    pushFailures.incrementAndGet()
+                }
             } finally {
                 if (i420 != null && i420 !== frame.buffer) {
                     runCatching { i420.release() }
                 }
                 runCatching { frame.release() }
+                reportStatsIfDue(frameStartNs)
             }
         }
     }
 
-    // ~10 fps is plenty for a "you are sharing this" tile and keeps the
-    // conversion cost off the capture thread's publish path.
+    private fun updateMax(target: AtomicLong, value: Long) {
+        while (true) {
+            val current = target.get()
+            if (value <= current || target.compareAndSet(current, value)) return
+        }
+    }
+
+    private fun reportStatsIfDue(now: Long) {
+        val previous = lastStatsNs.get()
+        if (previous != 0L && now - previous < 1_000_000_000L) return
+        if (!lastStatsNs.compareAndSet(previous, now)) return
+        val elapsedNs = if (previous == 0L) 1_000_000_000L else (now - previous).coerceAtLeast(1L)
+        val elapsedSec = elapsedNs / 1_000_000_000.0
+
+        val inCount = framesIn.getAndSet(0)
+        val pushed = framesPushed.getAndSet(0)
+        val pushFail = pushFailures.getAndSet(0)
+        val nonI420 = nonI420Frames.getAndSet(0)
+        val packNs = packNanos.getAndSet(0)
+        val packMax = packMaxNanos.getAndSet(0)
+        val pushNs = pushNanos.getAndSet(0)
+        val pushMax = pushMaxNanos.getAndSet(0)
+        val gapNs = frameGapNanos.getAndSet(0)
+        val gapMax = frameGapMaxNanos.getAndSet(0)
+        val bytes = bytesPushed.getAndSet(0)
+        val preview = previewScheduled.getAndSet(0)
+        val previewDrop = previewDropped.getAndSet(0)
+
+        StreamDiag.log(
+            "phase=sink fpsIn=${oneDecimal(inCount / elapsedSec)} " +
+                "fpsPushed=${oneDecimal(pushed / elapsedSec)} " +
+                "framesIn=$inCount pushed=$pushed pushFail=$pushFail nonI420=$nonI420 " +
+                "packAvgMs=${millis(packNs, inCount)} packMaxMs=${millis(packMax, 1L)} " +
+                "pushAvgMs=${millis(pushNs, pushed + pushFail)} pushMaxMs=${millis(pushMax, 1L)} " +
+                "preview=$preview previewDrop=$previewDrop bytes=$bytes " +
+                "frameGapAvgMs=${millis(gapNs, (inCount - 1).coerceAtLeast(0L))} " +
+                "frameGapMaxMs=${millis(gapMax, 1L)}"
+        )
+    }
+
+    private fun oneDecimal(value: Double): String = String.format(Locale.US, "%.1f", value)
+
+    private fun millis(nanos: Long, samples: Long): String =
+        String.format(Locale.US, "%.2f", nanos / 1_000_000.0 / samples.coerceAtLeast(1L))
+
+    private fun reportPreviewStatsIfDue(now: Long, snapshot: I420Snapshot) {
+        val previous = previewLastStatsNs.get()
+        if (previous == 0L) {
+            previewLastStatsNs.compareAndSet(0L, now)
+            return
+        }
+        if (now - previous < 5_000_000_000L) return
+        if (!previewLastStatsNs.compareAndSet(previous, now)) return
+        val elapsedNs = (now - previous).coerceAtLeast(1L)
+        val elapsedSec = elapsedNs / 1_000_000_000.0
+        val frames = previewFrames.getAndSet(0)
+        val nanos = previewNanos.getAndSet(0)
+        val max = previewMaxNanos.getAndSet(0)
+        StreamDiag.log(
+            "phase=preview previewFps=${oneDecimal(frames / elapsedSec)} frames=$frames " +
+                "convAvgMs=${millis(nanos, frames)} convMaxMs=${millis(max, 1L)} " +
+                "size=${snapshot.width}x${snapshot.height}"
+        )
+    }
+
+    // Allows full stream frame rate (up to 60fps / 16.6ms) with 12ms min gap.
     private fun maybeEmitPreview(buffer: I420Buffer) {
         val now = System.nanoTime()
-        if (now - lastPreviewNs < 100_000_000L) return
+        if (now - lastPreviewNs < 12_000_000L) return
         lastPreviewNs = now
         val chromaWidth = (buffer.width + 1) / 2
         val chromaHeight = (buffer.height + 1) / 2
-        previewChannel.trySend(
+        val sent = previewChannel.trySend(
             I420Snapshot(
                 y = copyBytes(buffer.dataY, buffer.strideY * buffer.height),
                 u = copyBytes(buffer.dataU, buffer.strideU * chromaHeight),
@@ -102,6 +236,7 @@ object LiveKitLocalScreenShareTrack {
                 strideV = buffer.strideV
             )
         )
+        if (sent.isSuccess) previewScheduled.incrementAndGet() else previewDropped.incrementAndGet()
     }
 
     private fun copyBytes(source: ByteBuffer, byteCount: Int): ByteArray {
@@ -128,22 +263,24 @@ object LiveKitLocalScreenShareTrack {
     }
 
     // BT.601 limited-range YUV → RGBA, matching how remote frames are decoded.
+    // Subsamples 1080p+ down by 2 (e.g. 1920x1080 -> 960x540) to keep conversion
+    // under ~1.5ms and avoid allocating 8MB bitmaps at 60fps.
     private fun convertI420ToRgba(snapshot: I420Snapshot): LocalSharePreviewFrame {
-        val w = snapshot.width
-        val h = snapshot.height
+        val scale = if (snapshot.width > 960) 2 else 1
+        val w = snapshot.width / scale
+        val h = snapshot.height / scale
         val rgba = ByteArray(w * h * 4)
         for (row in 0 until h) {
-            val yRow = row * snapshot.strideY
-            // Each plane is a tight copy of stride*rows bytes, so chroma rows are
-            // addressed with their own stride — the V plane may be padded
-            // differently from U.
-            val uRow = (row / 2) * snapshot.strideU
-            val vRow = (row / 2) * snapshot.strideV
+            val srcRow = row * scale
+            val yRow = srcRow * snapshot.strideY
+            val uRow = (srcRow / 2) * snapshot.strideU
+            val vRow = (srcRow / 2) * snapshot.strideV
             var outIndex = row * w * 4
             for (column in 0 until w) {
-                val y = (snapshot.y[yRow + column].toInt() and 0xFF) - 16
-                val u = (snapshot.u[uRow + (column / 2)].toInt() and 0xFF) - 128
-                val v = (snapshot.v[vRow + (column / 2)].toInt() and 0xFF) - 128
+                val srcCol = column * scale
+                val y = (snapshot.y[yRow + srcCol].toInt() and 0xFF) - 16
+                val u = (snapshot.u[uRow + (srcCol / 2)].toInt() and 0xFF) - 128
+                val v = (snapshot.v[vRow + (srcCol / 2)].toInt() and 0xFF) - 128
                 var r = (1191 * y + 1634 * v) shr 10
                 var g = (1191 * y - 833 * v - 400 * u) shr 10
                 var b = (1191 * y + 2066 * u) shr 10

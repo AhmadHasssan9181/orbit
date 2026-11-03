@@ -70,7 +70,8 @@ fun ActiveCallPipWindow(
         if (!callActive) dismissedThisCall = false
     }
 
-    if (!callActive || mainWindowPresentable || dismissedThisCall) return
+    if (!callActive) return
+    val pipVisible = !mainWindowPresentable && !dismissedThisCall
 
     val pipState = rememberWindowState(
         width = 320.dp,
@@ -81,21 +82,24 @@ fun ActiveCallPipWindow(
     Window(
         onCloseRequest = { dismissedThisCall = true },
         state = pipState,
+        visible = pipVisible,
         title = "Orbit call",
         icon = painterResource("orbit_logo.png"),
         undecorated = true,
         resizable = false,
         alwaysOnTop = true
     ) {
-        PipWindowContent(
-            callManager = callManager,
-            onRestoreMainWindow = onRestoreMainWindow,
-            onDismiss = { dismissedThisCall = true },
-            onEndCall = {
-                dismissedThisCall = true
-                callManager.endCall()
-            }
-        )
+        if (pipVisible) {
+            PipWindowContent(
+                callManager = callManager,
+                onRestoreMainWindow = onRestoreMainWindow,
+                onDismiss = { dismissedThisCall = true },
+                onEndCall = {
+                    dismissedThisCall = true
+                    callManager.endCall()
+                }
+            )
+        }
     }
 }
 

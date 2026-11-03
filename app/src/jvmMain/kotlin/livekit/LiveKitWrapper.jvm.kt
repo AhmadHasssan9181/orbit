@@ -128,6 +128,9 @@ actual fun setLiveKitParticipantGain(identity: String, gain: Float) {
 actual fun liveKitActiveSpeakers(): kotlinx.coroutines.flow.StateFlow<Set<String>> =
     LiveKitNativeMediaSession.activeSpeakers
 
+actual fun liveKitIsLocallySpeaking(): kotlinx.coroutines.flow.StateFlow<Boolean> =
+    LiveKitNativeAudioCapture.isLocallySpeaking
+
 actual fun liveKitRemoteAudioMuted(): kotlinx.coroutines.flow.StateFlow<Set<String>> =
     LiveKitRemoteVideoFrameStore.remoteAudioMuted
 
@@ -144,6 +147,10 @@ actual fun liveKitConnectionQuality(): kotlinx.coroutines.flow.StateFlow<Map<Str
 
 actual fun setLiveKitAudioProcessingOptions(noiseSuppression: Boolean, echoCancellation: Boolean, autoGainControl: Boolean) {
     OrbitApm.setAudioProcessingOptions(noiseSuppression, echoCancellation, autoGainControl)
+}
+
+actual fun setLiveKitNoiseSuppressionEngine(engine: String) {
+    OrbitNoiseSuppression.setEngine(engine)
 }
 
 actual fun prepareNativeE2EE(enabled: Boolean) {

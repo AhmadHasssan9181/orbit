@@ -263,13 +263,17 @@ internal fun VoiceVideoFullPane(settingsManager: SettingsManager) {
         }
 
         SectionHeader("Voice Processing")
-        val orbitZero by settingsManager.orbitZeroAiNoiseSuppression.collectAsState(true)
-        PrefCard("Enhanced noise suppression", "Aggressively mutes steady background noise such as fans and keyboards.") {
-            CosmicSwitch(checked = orbitZero, onCheckedChange = { settingsManager.setOrbitZeroAiNoiseSuppression(it) })
-        }
-        val noiseSuppression by settingsManager.noiseSuppression.collectAsState(true)
-        PrefCard("Standard Noise Reduction", "Traditional filter for steady hums. Skipped while enhanced suppression is on.") {
-            CosmicSwitch(checked = noiseSuppression && !orbitZero, onCheckedChange = { settingsManager.setNoiseSuppression(it) })
+        val nsEngine by settingsManager.noiseSuppressionEngine.collectAsState("DeepFilterNet")
+        PrefCard(
+            title = "Noise Suppression",
+            description = "Deep neural noise cancellation. DeepFilterNet features breath & vocal formant preservation; RNNoise provides ultra-lightweight recurrent filtering.",
+            vertical = true
+        ) {
+            ChipGroup(
+                options = listOf("DeepFilterNet", "RNNoise", "Off"),
+                selected = nsEngine,
+                onSelect = { settingsManager.setNoiseSuppressionEngine(it) }
+            )
         }
         val echoCancellation by settingsManager.echoCancellation.collectAsState(true)
         PrefCard("Echo Cancellation", "Prevents your speakers from feeding back into your mic.") {
@@ -314,24 +318,16 @@ internal fun VoiceVideoFullPane(settingsManager: SettingsManager) {
         val screenShareQuality by settingsManager.screenShareQuality.collectAsState("1080p")
         PrefCard("Resolution", "Quality of your screen capture.") {
             ChipGroup(
-                options = listOf("720p", "1080p", "1440p"),
+                options = listOf("720p", "1080p", "1440p", "Source"),
                 selected = screenShareQuality,
                 onSelect = { settingsManager.setScreenShareQuality(it) }
             )
         }
         val screenShareFps by settingsManager.screenShareFps.collectAsState(30)
-        // 60 is deliberately not offered. Measured on this machine: a 1080p I420
-        // share at 60 fps is ~186 MB/s of frame conversion, and the audio mixer --
-        // which runs a 10 ms tick and cannot be late -- lost to it, collapsing
-        // from `starved=10 qDepth=3360` to `starved=283 qDepth=480` and dropping
-        // playback chunks. Other people's voices stuttered the moment you shared.
-        // A shared window is text and static UI; it gains nothing from 60 fps, and
-        // 30 is what Discord and Element cap at. The publish path coerces to this
-        // ceiling too, so a stale stored 60 cannot sneak past either.
-        PrefCard("Frame Rate", "Smoothness of your screen capture. 30 is the maximum: higher starves call audio.") {
+        PrefCard("Frame Rate", "Smoothness of your screen capture.") {
             ChipGroup(
-                options = listOf("15", "30"),
-                selected = screenShareFps.coerceIn(5, 30).toString(),
+                options = listOf("15", "30", "60"),
+                selected = screenShareFps.coerceIn(5, 60).toString(),
                 onSelect = { settingsManager.setScreenShareFps(it.toInt()) }
             )
         }

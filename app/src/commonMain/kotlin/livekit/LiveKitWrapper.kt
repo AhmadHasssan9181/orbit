@@ -86,6 +86,8 @@ expect fun setLiveKitParticipantGain(identity: String, gain: Float)
 // by the native mixer (change-only updates). Empty while not in a call.
 expect fun liveKitActiveSpeakers(): kotlinx.coroutines.flow.StateFlow<Set<String>>
 
+expect fun liveKitIsLocallySpeaking(): kotlinx.coroutines.flow.StateFlow<Boolean>
+
 // LiveKit identities whose remote mic track is currently muted (native room
 // delegate: subscribe-time state + TrackMuted/TrackUnmuted). Empty while idle.
 expect fun liveKitRemoteAudioMuted(): kotlinx.coroutines.flow.StateFlow<Set<String>>
@@ -105,6 +107,7 @@ expect fun showCallNotification(title: String, body: String)
 
 // Voice & Video settings: NS/EC/AGC for the native group-call APM chain
 expect fun setLiveKitAudioProcessingOptions(noiseSuppression: Boolean, echoCancellation: Boolean, autoGainControl: Boolean)
+expect fun setLiveKitNoiseSuppressionEngine(engine: String)
 
 // matrixRTC E2EE media: arm the native KeyProvider path before connectAsync
 // (encrypted rooms only) and feed per-participant media keys received through
