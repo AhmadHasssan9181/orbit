@@ -34,6 +34,13 @@ import kotlin.test.fail
  */
 class NativeSymbolAvailabilityTest {
 
+    // The bundled denoiser libraries are Windows PE binaries. CI runs the JVM
+    // suite on Linux, where they cannot be loaded at all, so the tests below
+    // that actually execute them are meaningless off Windows. The symbol-scan
+    // tests still run everywhere because reading the bytes needs no loader.
+    private val isWindows: Boolean =
+        System.getProperty("os.name")?.lowercase()?.contains("windows") == true
+
     private fun shippedDllBytes(): ByteArray {
         val resource = "webrtc-deps/webrtc-java-orbit-windows-x86_64.dll"
         val url = javaClass.classLoader.getResource(resource)
@@ -110,6 +117,10 @@ class NativeSymbolAvailabilityTest {
 
     @Test
     fun neuralDenoiserLoadsSuccessfully() {
+        if (!isWindows) {
+            println("Skipping neuralDenoiserLoadsSuccessfully: orbit_neural_denoiser is a Windows DLL")
+            return
+        }
         assertNotNull(
             livekit.OrbitRNNoiseLib.INSTANCE,
             "OrbitRNNoiseLib.INSTANCE failed to load!"
@@ -118,6 +129,10 @@ class NativeSymbolAvailabilityTest {
 
     @Test
     fun neuralDenoiserProcessesAudio() {
+        if (!isWindows) {
+            println("Skipping neuralDenoiserProcessesAudio: orbit_neural_denoiser is a Windows DLL")
+            return
+        }
         val lib = assertNotNull(livekit.OrbitRNNoiseLib.INSTANCE, "OrbitRNNoiseLib.INSTANCE failed to load!")
         val handle = assertNotNull(lib.orbit_rnnoise_create(), "orbit_rnnoise_create returned null")
 
@@ -159,8 +174,15 @@ class NativeSymbolAvailabilityTest {
 
     @Test
     fun deepFilterLadspaLoads() {
-        val path = "G:/projects/orbit/deep_filter_ladspa.dll"
-        val lib = com.sun.jna.NativeLibrary.getInstance(path)
+        if (!isWindows) {
+            println("Skipping deepFilterLadspaLoads: deep_filter_ladspa is a Windows DLL")
+            return
+        }
+        // Resolve the DLL the same way the app does: the checked-in resource is
+        // extracted and loaded by WebrtcNativeDepsLoader, so this test does not
+        // depend on one developer's absolute path.
+        webrtc.WebrtcNativeDepsLoader.load()
+        val lib = com.sun.jna.NativeLibrary.getInstance("deep_filter_ladspa")
         val func = lib.getFunction("ladspa_descriptor")
         assertNotNull(func, "ladspa_descriptor not found in deep_filter_ladspa.dll")
         val descPtr = func.invokePointer(arrayOf(0L))
